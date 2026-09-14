@@ -1,0 +1,17 @@
+import "fmt"
+
+class Person {
+    Name string
+
+    func Speak() string {
+        return "Hello " + this.Name
+    }
+}
+
+func main() {
+    var person *Person
+
+    // Safe access returns the member's zero value when person is nil.
+    fmt.Println(person?.Name)
+    fmt.Println(person?.Speak())
+}

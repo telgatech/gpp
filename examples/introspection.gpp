@@ -1,0 +1,26 @@
+package main
+
+import "fmt"
+
+class Model {
+    Id string
+}
+
+class Employee: Model {
+    Name string
+    Age int
+
+    func Label() string {
+        return this.class.name
+    }
+}
+
+func main() {
+    employee := Employee("id", "Bob", 42)
+    fmt.Println(employee.Label())
+    fmt.Println(Employee.class.name)
+
+    for f := range employee.class.fields {
+        fmt.Println(f.owner.name, f.name, f.type.name, f.get(employee))
+    }
+}

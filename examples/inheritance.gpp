@@ -1,0 +1,27 @@
+import "fmt"
+
+class Named {
+    Name string
+}
+
+class Salaried {
+    Salary int
+}
+
+class Employee: Named, Salaried {
+    Role string
+
+    func Summary() string {
+        return fmt.Sprintf(
+            "%s is a %s earning %d",
+            this.Named.Name,
+            this.Role,
+            this.Salaried.Salary,
+        )
+    }
+}
+
+func main() {
+    employee := Employee("Bob", 100000, "engineer")
+    fmt.Println(employee.Summary())
+}

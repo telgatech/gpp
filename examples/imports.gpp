@@ -1,0 +1,9 @@
+import (
+    "fmt"
+    json "encoding/json"
+)
+
+func main() {
+    payload, _ := json.Marshal(map[string]int{"answer": 42})
+    fmt.Println(string(payload))
+}

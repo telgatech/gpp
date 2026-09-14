@@ -1,0 +1,36 @@
+import "fmt"
+
+class Person {
+    Name string
+
+    func Speak() string {
+        return "Person: " + this.Name
+    }
+}
+
+class Employee: Person {
+    func Speak() string {
+        return "Employee: " + this.Name
+    }
+}
+
+class Holder {
+    Value Person
+}
+
+func Announce(person Person) string {
+    return person.Speak()
+}
+
+func MakeEmployee() Employee {
+    return Employee("Carol")
+}
+
+func main() {
+    var person Person = Employee("Bob")
+    holder := Holder(Employee("Alice"))
+
+    fmt.Println(Announce(person))
+    fmt.Println(holder.Value.Speak())
+    fmt.Println(Announce(MakeEmployee()))
+}

@@ -1,0 +1,43 @@
+import "fmt"
+
+class Printer {
+    func Print() string {
+        return "empty"
+    }
+
+    func Print(value string) string {
+        return value
+    }
+
+    func Describe() string {
+        return this.Print() + ": " + this.Print("value")
+    }
+}
+
+func Add(value int) int {
+    return value
+}
+
+func Add(left int, right int) int {
+    return left + right
+}
+
+func Format(value int) string {
+    return "int"
+}
+
+func Format(value string) string {
+    return "string"
+}
+
+func Greet(name string, punctuation string = "!") string {
+    return name + punctuation
+}
+
+func main() {
+    printer := Printer()
+    fmt.Println(printer.Describe())
+    fmt.Println(Add(1), Add(1, 2))
+    fmt.Println(Format(42), Format("value"))
+    fmt.Println(Greet(name: "Bob"))
+}

@@ -1,0 +1,11 @@
+package demo.people
+
+class Person {
+    Name string
+
+    func Greet() string {
+        return "Hello " + this.Name
+    }
+}
+
+class Employee: Person {}

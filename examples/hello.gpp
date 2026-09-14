@@ -1,0 +1,16 @@
+import "fmt"
+
+class Person {
+    Name string
+    Age int
+
+    func Greet() string {
+        return "Hello {{this.Name}}, age {{this.Age}}"
+    }
+}
+
+func main() {
+    p := Person("Bob", 42)
+
+    fmt.Println(p.Greet())
+}

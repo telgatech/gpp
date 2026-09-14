@@ -1,0 +1,14 @@
+package main
+
+import (
+    "fmt"
+    "generated/demo/people"
+)
+
+func main() {
+    person := people.Person("Bob")
+    employee := people.Employee("Ada")
+
+    fmt.Println(person.Greet())
+    fmt.Println(employee.Greet())
+}

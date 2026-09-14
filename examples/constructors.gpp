@@ -1,0 +1,17 @@
+import "fmt"
+
+class Person {
+    Name string
+    Age int
+}
+
+func main() {
+    positional := Person("Bob", 42)
+    named := Person(
+        Name: "Ada",
+        Age: 37,
+    )
+
+    fmt.Println(positional.Name, positional.Age)
+    fmt.Println(named.Name, named.Age)
+}
