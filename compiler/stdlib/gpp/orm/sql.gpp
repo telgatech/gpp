@@ -83,7 +83,7 @@ func gppORMColumns(descriptor any) ([]gppORMColumn, error) {
 	columns := []gppORMColumn{}
 	for index := 0; index < fields.Len(); index++ {
 		field := gppORMReflectIndex(fields, index)
-		args := gppORMAnnotationArgs(gppORMFieldAnnotations(field.Interface()), "gpp.orm.Column")
+		args := gppORMAnnotationArgs(field.Interface(), "gpp.orm.Column")
 		if len(args) == 0 {
 			continue
 		}

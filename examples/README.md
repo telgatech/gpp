@@ -7,6 +7,14 @@ go run ./cmd/gpp examples/<name>.gpp
 (cd .gpp && go run .)
 ```
 
+For a complete build or run, use the CLI subcommands. They clear stale
+generated source and resolve Go dependencies automatically:
+
+```bash
+go run ./cmd/gpp build examples/hello.gpp
+go run ./cmd/gpp run examples/hello.gpp
+```
+
 The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
@@ -36,8 +44,8 @@ The examples cover:
   annotated models, runtime metadata inspection, model validation, lifecycle
   hooks, and ordinary `database/sql`, including `Get` for one model and
   `Select` for model slices on both `*sql.DB` and `*sql.Tx`.
-  It uses the pure-Go `modernc.org/sqlite` driver; run `go get
-  modernc.org/sqlite` in the generated module before running this example.
+  It uses the pure-Go `modernc.org/sqlite` driver; `gpp build` and `gpp run`
+  resolve it through `go mod tidy`.
   Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and
   PostgreSQL. Lifecycle hooks receive a shared `SQLExecutor`, so child writes
   use the active transaction automatically.

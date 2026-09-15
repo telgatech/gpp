@@ -32,12 +32,54 @@ A tiny source-to-source compiler that emits ordinary Go.
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.
 
-## Run
+## Build and run
+
+The compiler can still be used as a transpiler:
 
 ```bash
 go run ./cmd/gpp examples/hello.gpp
 cd .gpp
 go run .
+```
+
+For a complete project build, use the `build` subcommand. It clears stale
+generated source, runs `go mod tidy` to resolve imports, and runs `go build`:
+
+```bash
+go run ./cmd/gpp build examples/hello.gpp
+```
+
+Use `run` for the same generation and dependency setup followed by execution:
+
+```bash
+go run ./cmd/gpp run examples/hello.gpp
+```
+
+Use a separate output directory when switching between standalone examples:
+
+```bash
+go run ./cmd/gpp run -output /tmp/gpp-orm examples/orm.gpp
+```
+
+Multiple Go++ files can be passed to the same build. For example, the
+cross-package example is built and run as one generated project:
+
+```bash
+go run ./cmd/gpp run \
+  examples/packages/people.gpp \
+  examples/packages/main.gpp
+```
+
+The ORM example also resolves its SQLite dependency automatically:
+
+```bash
+go run ./cmd/gpp run -output /tmp/gpp-orm examples/orm.gpp
+```
+
+Build an executable at a chosen path with `-o`:
+
+```bash
+go run ./cmd/gpp build -o ./hello examples/hello.gpp
 ```
 
 Generated Go is written to `.gpp/`. The CLI creates `.gpp/go.mod` with the

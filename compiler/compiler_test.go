@@ -273,7 +273,11 @@ class Employee : orm.Model @{orm.Table("employees")} {
     Id int64 @{orm.Column("id"), orm.PK}
 }
 
-func useORM(db *sql.DB) error {
+func useORM(exec orm.SQLExecutor) error {
+    db, ok := exec.(*sql.DB)
+    if !ok {
+        return nil
+    }
     employee := Employee()
     return db.Insert(&employee)
 }
@@ -365,6 +369,43 @@ func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "generated module is") {
 		t.Fatalf("expected module mismatch error, got %v", err)
+	}
+}
+
+func TestCompileFilesWithOptionsCleansGeneratedOutput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(sourcePath, []byte("func main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "stale.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(outputDir, "stale"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "stale", "nested.go"), []byte("package stale\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions(
+		[]string{sourcePath},
+		outputDir,
+		CompileOptions{ModulePath: "generated", CleanOutput: true},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(outputDir, "stale.go")); !os.IsNotExist(err) {
+		t.Fatalf("stale generated file still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "stale")); !os.IsNotExist(err) {
+		t.Fatalf("stale generated directory still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "go.mod")); err != nil {
+		t.Fatalf("generated module was not created: %v", err)
 	}
 }
 

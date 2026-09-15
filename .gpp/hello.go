@@ -5,7 +5,6 @@ import "fmt"
 type GppType struct {
 	Name string
 }
-
 type GppAnnotationType struct {
 	Name     string
 	FullName string
@@ -81,11 +80,22 @@ type GppField struct {
 
 type GppMethod struct {
 	Name        string
+	Owner       *GppClass
+	Parameters  []GppParameter
+	Result      *GppType
+	Static      bool
+	Annotations GppAnnotations
+}
+
+type GppParameter struct {
+	Name        string
+	Type        *GppType
 	Annotations GppAnnotations
 }
 
 type GppClass struct {
 	Name        string
+	Parents     []*GppClass
 	Fields      []GppField
 	Methods     []GppMethod
 	Annotations GppAnnotations
@@ -113,8 +123,8 @@ func (this Person) GppRuntimeClass() *GppClass {
 	return GppPersonClass
 }
 
-var GppPersonClass = &GppClass{Name: "Person", Annotations: GppAnnotations{}, Methods: []GppMethod{
-	{Name: "Greet", Annotations: GppAnnotations{}},
+var GppPersonClass = &GppClass{Name: "Person", Parents: nil, Annotations: GppAnnotations{}, Methods: []GppMethod{
+	{Name: "Greet", Parameters: nil, Result: &GppType{Name: "string"}, Annotations: GppAnnotations{}},
 }, Fields: []GppField{
 	{Name: "Name", Owner: nil, Type: &GppType{Name: "string"}, Annotations: GppAnnotations{},
 		Get: func(root any) any {
@@ -182,6 +192,7 @@ var GppPersonClass = &GppClass{Name: "Person", Annotations: GppAnnotations{}, Me
 func init() {
 	GppPersonClass.Fields[0].Owner = GppPersonClass
 	GppPersonClass.Fields[1].Owner = GppPersonClass
+	GppPersonClass.Methods[0].Owner = GppPersonClass
 }
 
 func main() {

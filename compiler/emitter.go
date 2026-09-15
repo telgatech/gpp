@@ -1222,6 +1222,10 @@ func polymorphicValueTypes(root ast.Node, context constructorContext) map[string
 
 func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes map[string]string) string {
 	switch value := expr.(type) {
+	case *ast.TypeAssertExpr:
+		if typeName, err := formatNode(value.Type); err == nil {
+			return strings.TrimSpace(typeName)
+		}
 	case *ast.UnaryExpr:
 		if value.Op == token.AND {
 			name := expressionStaticType(value.X, context, valueTypes)

@@ -9,9 +9,10 @@ import (
 )
 
 type CompileOptions struct {
-	ModulePath string
-	NoPrelude  bool
-	NoStdlib   bool
+	ModulePath  string
+	NoPrelude   bool
+	NoStdlib    bool
+	CleanOutput bool
 }
 
 func CompileFiles(files []string, outputDir string) error {
@@ -40,6 +41,12 @@ func availableImportsForFile(file *File, model *SemanticModel, modulePath string
 }
 
 func CompileFilesWithOptions(files []string, outputDir string, options CompileOptions) error {
+	if options.CleanOutput {
+		if err := cleanGeneratedOutput(outputDir); err != nil {
+			return err
+		}
+	}
+
 	program := &Program{}
 
 	for _, filename := range files {
@@ -192,6 +199,35 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			code,
 			0644,
 		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// cleanGeneratedOutput removes files from the compiler-owned output workspace
+// while preserving Go module resolution state. Build and run commands use it
+// so stale generated source cannot be compiled alongside the current project.
+func cleanGeneratedOutput(outputDir string) error {
+	clean := filepath.Clean(outputDir)
+	if clean == "." || clean == string(filepath.Separator) {
+		return fmt.Errorf("refusing to clean unsafe generated output directory %q", outputDir)
+	}
+
+	entries, err := os.ReadDir(outputDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == "go.mod" || entry.Name() == "go.sum" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(outputDir, entry.Name())); err != nil {
 			return err
 		}
 	}
