@@ -1380,6 +1380,33 @@ func main() {
 	}
 }
 
+func TestEmitLowersVariadicExtensionCalls(t *testing.T) {
+	file, err := ParseFile("variadic_extensions.gpp", `
+extend string {
+    func Join(prefix string, values ...any) string {
+        return prefix + this
+    }
+}
+
+func main() {
+    value := "go"
+    _ = value.Join(":", 1, "two")
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "func GppExt_string_Join_") ||
+		!strings.Contains(generated, `value, ":", 1, "two")`) {
+		t.Fatalf("variadic extension call was not lowered:\n%s", code)
+	}
+}
+
 func TestEmitLowersIntrospectionOnExtensionParameters(t *testing.T) {
 	file, err := ParseFile("extension_introspection.gpp", `
 import "database/sql"

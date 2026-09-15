@@ -28,10 +28,11 @@ The examples cover:
   including a generic extension method.
 - `annotations.gpp` — declared annotations, target restrictions, field/method
   usage, and annotation introspection.
-- `database.gpp` — a mini in-memory SQLite ORM built from annotated models,
-  runtime metadata inspection, and ordinary `database/sql`. It uses the
-  pure-Go `modernc.org/sqlite` driver; run `go get modernc.org/sqlite` in the
-  generated module before running this example.
+- `orm.gpp` — a mini in-memory SQLite ORM built from annotated models,
+  runtime metadata inspection, model validation, lifecycle hooks, and ordinary
+  `database/sql`, including `Get` for one model and `Select` for model slices.
+  It uses the pure-Go `modernc.org/sqlite` driver; run `go get
+  modernc.org/sqlite` in the generated module before running this example.
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.

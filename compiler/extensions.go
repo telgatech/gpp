@@ -384,15 +384,27 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		}
 	}
 	signature := callableSignature{Name: extension.Method.Name, Parameters: parameters}
-	resolved, changed, err := resolveCallableCall(extension.Method.Name, argumentText, []callableSignature{signature})
-	if err != nil {
-		return nil, false
-	}
-	if !changed {
-		if len(args) != len(parameters) {
+	variadic := len(parameters) > 0 && strings.HasPrefix(strings.TrimSpace(parameters[len(parameters)-1].Type), "...")
+	var resolved []string
+	var changed bool
+	if variadic {
+		fixedCount := len(parameters) - 1
+		if len(args) < fixedCount {
 			return nil, false
 		}
 		resolved = argumentText
+		changed = true
+	} else {
+		resolved, changed, err = resolveCallableCall(extension.Method.Name, argumentText, []callableSignature{signature})
+		if err != nil {
+			return nil, false
+		}
+		if !changed {
+			if len(args) != len(parameters) {
+				return nil, false
+			}
+			resolved = argumentText
+		}
 	}
 	for index, argument := range resolved {
 		parsed, err := parser.ParseExpr(argument)
@@ -404,11 +416,32 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		for name := range extensionTargetTypeParameterNames(extension.Target) {
 			generic[name] = true
 		}
-		if actual != "" && index < len(parameters) && !generic[parameters[index].Type] && actual != parameters[index].Type && !isAssignableStaticType(actual, parameters[index].Type, context) {
+		parameterIndex := index
+		if variadic && parameterIndex >= len(parameters)-1 {
+			parameterIndex = len(parameters) - 1
+		}
+		if parameterIndex >= len(parameters) {
+			return nil, false
+		}
+		expected := parameters[parameterIndex].Type
+		if strings.HasPrefix(strings.TrimSpace(expected), "...") {
+			expected = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expected), "..."))
+		}
+		if actual != "" && !generic[expected] && !extensionArgumentMatches(actual, expected, argument, context) {
 			return nil, false
 		}
 	}
 	return resolved, true
+}
+
+func extensionArgumentMatches(actual, expected, argument string, context constructorContext) bool {
+	if expected == "any" || expected == "interface{}" {
+		return true
+	}
+	if strings.HasSuffix(strings.TrimSpace(argument), "...") {
+		return strings.TrimSpace(actual) == "[]"+strings.TrimSpace(expected)
+	}
+	return actual == expected || isAssignableStaticType(actual, expected, context)
 }
 
 func extensionTypeParameterNames(typeParams string) map[string]bool {
