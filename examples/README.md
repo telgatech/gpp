@@ -30,7 +30,8 @@ The examples cover:
   usage, and annotation introspection.
 - `orm.gpp` — a mini in-memory SQLite ORM built from annotated models,
   runtime metadata inspection, model validation, lifecycle hooks, and ordinary
-  `database/sql`, including `Get` for one model and `Select` for model slices.
+  `database/sql`, including `Get` for one model and `Select` for model slices
+  on both `*sql.DB` and `*sql.Tx`.
   It uses the pure-Go `modernc.org/sqlite` driver; run `go get
   modernc.org/sqlite` in the generated module before running this example.
   Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and

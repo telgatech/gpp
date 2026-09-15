@@ -44,7 +44,7 @@ class Model {
 	}
 }
 
-extend *sql.DB {
+extend *sql.DB, *sql.Tx {
 	func Get(target any, where string, args ...any) error {
 		entity, ok := target.(interface {
 			GppRuntimeClass() *GppClass
@@ -288,28 +288,50 @@ func main() {
 	if err := db.Insert(&employee); err != nil {
 		panic(err)
 	}
+
 	second := Employee(2, "Grace Hopper", "grace@example.com")
-	if err := db.Insert(&second); err != nil {
+	var tx *sql.Tx
+	tx, err = db.Begin()
+	if err != nil {
+		panic(err)
+	}
+	if err := tx.Insert(&second); err != nil {
+		tx.Rollback()
 		panic(err)
 	}
 	employee.Email = " ADA@ANALYTICAL.EXAMPLE "
-	if err := db.Update(&employee); err != nil {
+	if err := tx.Update(&employee); err != nil {
+		tx.Rollback()
 		panic(err)
 	}
 	employees := []Employee{}
-	if err := db.Select(&employees, "email LIKE $1", "%example.com"); err != nil {
+	if err := tx.Select(&employees, "email LIKE $1", "%example.com"); err != nil {
+		tx.Rollback()
 		panic(err)
 	}
 	target := Employee()
-	if err := db.Get(&target, "name = $1", "Ada Lovelace"); err != nil {
+	if err := tx.Get(&target, "name = $1", "Ada Lovelace"); err != nil {
+		tx.Rollback()
 		panic(err)
 	}
-	fmt.Println("selected:", len(employees), "get:", target.Name)
+	if err := tx.Commit(); err != nil {
+		panic(err)
+	}
+	fmt.Println("transaction:", len(employees), "selected, get:", target.Name)
+
 	loaded := Employee()
 	if err := db.Get(&loaded, "id = $1", employee.Id); err != nil {
 		panic(err)
 	}
-	if err := db.Delete(&loaded); err != nil {
+	tx, err = db.Begin()
+	if err != nil {
+		panic(err)
+	}
+	if err := tx.Delete(&loaded); err != nil {
+		tx.Rollback()
+		panic(err)
+	}
+	if err := tx.Commit(); err != nil {
 		panic(err)
 	}
 	deleted := db.Get(&loaded, "id = $1", employee.Id) == sql.ErrNoRows
