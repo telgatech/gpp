@@ -84,7 +84,12 @@ func astExpressionTypeKeyWithEnv(expr ast.Expr, types map[string]string) string 
 		}
 	case *ast.CompositeLit:
 		name, _ := astTypeName(value)
-		return name
+		if name != "" {
+			return name
+		}
+		if typeName, err := formatNode(value.Type); err == nil {
+			return typeName
+		}
 	case *ast.UnaryExpr:
 		if value.Op == token.AND {
 			name := astExpressionTypeKey(value.X)
@@ -93,6 +98,12 @@ func astExpressionTypeKeyWithEnv(expr ast.Expr, types map[string]string) string 
 			}
 		}
 	case *ast.Ident:
+		if value.Name == "true" || value.Name == "false" {
+			return "bool"
+		}
+		if value.Name == "nil" {
+			return "nil"
+		}
 		if types != nil {
 			if typeName := types[value.Name]; typeName != "" {
 				return typeName
@@ -149,7 +160,7 @@ func functionSignaturesForFile(file *File) (map[string][]callableSignature, erro
 		if !ok {
 			continue
 		}
-		signatures, err := collectFunctionSignatures(raw.Code)
+		signatures, err := collectFunctionSignatures(stripAnnotationSyntaxPreserve(raw.Code))
 		if err != nil {
 			return nil, err
 		}
@@ -224,6 +235,9 @@ func configureFunctionOverloads(overloads *overloadContext, signatures map[strin
 }
 
 func parseParameterInfos(params string) ([]parameterInfo, error) {
+	if strings.TrimSpace(params) == "" {
+		return nil, nil
+	}
 	parts, err := splitTopLevel(params, ',')
 	if err != nil {
 		return nil, err
@@ -526,7 +540,7 @@ func resolveCallableCall(name string, args []string, signatures []callableSignat
 				continue
 			}
 			if len(args) == len(signature.Parameters) || callableHasDefaults(signature) {
-				result := append([]string(nil), args...)
+				result := append([]string{}, args...)
 				for index := len(args); index < len(signature.Parameters); index++ {
 					if !signature.Parameters[index].HasDefault {
 						result = nil

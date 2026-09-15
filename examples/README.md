@@ -23,6 +23,11 @@ The examples cover:
 - `records.gpp` — anonymous structural records, nested records, inferred
   return types, and `let` bindings.
 - `introspection.gpp` — runtime class names, inherited field metadata, and field access.
+- `extension_methods.gpp` — extensions on strings and Go++ classes.
+- `multi_extension.gpp` — one extension block shared by strings and slices,
+  including a generic extension method.
+- `annotations.gpp` — declared annotations, target restrictions, field/method
+  usage, and annotation introspection.
 
 The dotted-package example is compiled as a pair:
 

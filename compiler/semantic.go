@@ -15,9 +15,11 @@ type SemanticModel struct {
 }
 
 type PackageSymbols struct {
-	Name       string
-	Classes    map[string]*ClassDecl
-	Extensions []*ExtendDecl
+	Name        string
+	Classes     map[string]*ClassDecl
+	Extensions  []*ExtendDecl
+	Annotations map[string]*AnnotationDecl
+	Functions   map[string]bool
 }
 
 func classLocation(class *ClassDecl) string {
@@ -36,14 +38,27 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 		pkg, ok := model.Packages[file.Package]
 		if !ok {
 			pkg = &PackageSymbols{
-				Name:       file.Package,
-				Classes:    map[string]*ClassDecl{},
-				Extensions: []*ExtendDecl{},
+				Name:        file.Package,
+				Classes:     map[string]*ClassDecl{},
+				Extensions:  []*ExtendDecl{},
+				Annotations: map[string]*AnnotationDecl{},
+				Functions:   map[string]bool{},
 			}
 			model.Packages[file.Package] = pkg
 		}
 
 		for _, decl := range file.Decls {
+			if annotation, ok := decl.(*AnnotationDecl); ok {
+				annotation.Package = file.Package
+				if previous, exists := pkg.Annotations[annotation.Name]; exists {
+					return nil, fmt.Errorf(
+						"%s: duplicate annotation %s in package %s; first declared in %s",
+						annotationLocation(annotation), annotation.Name, file.Package, annotationLocation(previous),
+					)
+				}
+				pkg.Annotations[annotation.Name] = annotation
+				continue
+			}
 			if extension, ok := decl.(*ExtendDecl); ok {
 				pkg.Extensions = append(pkg.Extensions, extension)
 				continue
@@ -64,6 +79,18 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			}
 
 			pkg.Classes[class.Name] = class
+		}
+		for _, file := range program.Files {
+			if file.Package != pkg.Name {
+				continue
+			}
+			for _, decl := range file.Decls {
+				if raw, ok := decl.(*RawDecl); ok {
+					for _, signature := range rawFunctionNames(raw.Code) {
+						pkg.Functions[signature] = true
+					}
+				}
+			}
 		}
 	}
 
@@ -87,30 +114,87 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 		if err := validateExtensions(pkg); err != nil {
 			return nil, err
 		}
+		if err := validateAnnotationDeclarations(pkg); err != nil {
+			return nil, err
+		}
+		for _, file := range program.Files {
+			if file.Package != pkg.Name {
+				continue
+			}
+			if err := validateFileAnnotations(file, pkg, pkg.Annotations, true); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return model, nil
 }
 
+func annotationLocation(annotation *AnnotationDecl) string {
+	if annotation.SourceLine > 0 {
+		return fmt.Sprintf("%s:%d", annotation.SourceFile, annotation.SourceLine)
+	}
+	return annotation.SourceFile
+}
+
+func rawFunctionNames(src string) []string {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "raw.go", "package main\n\n"+stripAnnotationSyntaxPreserve(src), 0)
+	if err != nil {
+		return nil
+	}
+	result := []string{}
+	for _, declaration := range parsed.Decls {
+		if function, ok := declaration.(*ast.FuncDecl); ok && function.Recv == nil {
+			result = append(result, function.Name.Name)
+		}
+	}
+	return result
+}
+
 func validateExtensions(pkg *PackageSymbols) error {
 	seen := map[string]bool{}
 	for _, extension := range pkg.Extensions {
-		if strings.TrimSpace(extension.Target) == "" {
+		if len(extension.Targets) == 0 {
 			return fmt.Errorf("%s: extension target cannot be empty", extension.SourceFile)
+		}
+		targets := map[string]bool{}
+		for _, rawTarget := range extension.Targets {
+			target := strings.TrimSpace(rawTarget)
+			if target == "" {
+				return fmt.Errorf("%s: extension target cannot be empty", extension.SourceFile)
+			}
+			normalized := normalizeExtensionTarget(target)
+			if targets[normalized] {
+				return fmt.Errorf("%s: duplicate extension target %s", extension.SourceFile, target)
+			}
+			targets[normalized] = true
 		}
 		for _, method := range extension.Methods {
 			parameters, err := parseParameterInfos(method.Parameters)
 			if err != nil {
-				return fmt.Errorf("%s: extension %s.%s has invalid parameters: %w", extension.SourceFile, extension.Target, method.Name, err)
+				return fmt.Errorf("%s: extension %s.%s has invalid parameters: %w", extension.SourceFile, strings.Join(extension.Targets, ", "), method.Name, err)
 			}
-			key := strings.TrimSpace(extension.Target) + "/" + method.Name + "/" + parameterSignatureKey(parameters)
-			if seen[key] {
-				return fmt.Errorf("%s: extension method %s for %s is declared more than once with parameter types %s", extension.SourceFile, method.Name, extension.Target, parameterSignatureKey(parameters))
+			for _, rawTarget := range extension.Targets {
+				target := strings.TrimSpace(rawTarget)
+				key := normalizeExtensionTarget(target) + "/" + method.Name + "/" + parameterSignatureKey(parameters)
+				if seen[key] {
+					return fmt.Errorf("%s: extension method %s for %s is declared more than once with parameter types %s", extension.SourceFile, method.Name, target, parameterSignatureKey(parameters))
+				}
+				seen[key] = true
 			}
-			seen[key] = true
 		}
 	}
 	return nil
+}
+
+func normalizeExtensionTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if parsed, err := parser.ParseExpr(target); err == nil {
+		if formatted, err := formatNode(parsed); err == nil {
+			return strings.TrimSpace(formatted)
+		}
+	}
+	return strings.Join(strings.Fields(target), " ")
 }
 
 func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
@@ -369,6 +453,8 @@ func joinNames(names []string) string {
 func constructorContextForFile(file *File, model *SemanticModel, modulePath string) (constructorContext, error) {
 	localClasses := model.Packages[file.Package].Classes
 	context := localConstructorContext(localClasses)
+	context.Package = file.Package
+	context.Annotations, _ = annotationScopeForFile(file, model, modulePath)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
 
 	if modulePath == "" {
@@ -442,7 +528,22 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 			)
 			addMethodOverload(&context.Overloads, class, key)
 		}
-		context.Extensions = append(context.Extensions, extensionMethodsForDeclarations(pkg.Extensions, alias)...)
+		importedExtensions := extensionMethodsForDeclarations(pkg.Extensions, alias)
+		if qualifier != "" {
+			for index := range importedExtensions {
+				baseTarget := strings.TrimPrefix(importedExtensions[index].Target, "*")
+				if _, ok := pkg.Classes[baseTarget]; !ok {
+					continue
+				}
+				importedExtensions[index].Target = qualifier + "." + importedExtensions[index].Target
+				if strings.HasPrefix(importedExtensions[index].ReceiverType, "*") {
+					importedExtensions[index].ReceiverType = "*" + qualifier + "." + strings.TrimPrefix(importedExtensions[index].ReceiverType, "*")
+				} else {
+					importedExtensions[index].ReceiverType = qualifier + "." + importedExtensions[index].ReceiverType
+				}
+			}
+		}
+		context.Extensions = append(context.Extensions, importedExtensions...)
 	}
 
 	return context, nil
@@ -517,7 +618,7 @@ func goImports(file *File) ([]*ast.ImportSpec, error) {
 	var raw strings.Builder
 	for _, decl := range file.Decls {
 		if code, ok := decl.(*RawDecl); ok {
-			raw.WriteString(code.Code)
+			raw.WriteString(stripAnnotationSyntaxPreserve(code.Code))
 		}
 	}
 

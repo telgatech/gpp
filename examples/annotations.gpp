@@ -1,0 +1,31 @@
+package main
+
+import "fmt"
+
+annotation (
+    Table(name string) on class
+    PK on field
+    Required on field, parameter
+    Trace on method, function
+)
+
+class Employee @{Table("employees")} {
+    Id string @{PK}
+    Email string @{Required}
+
+    func Label(prefix string @{Required}) string @{Trace} {
+        return prefix + this.Email
+    }
+}
+
+func main() {
+    descriptor := Employee.class
+    table := descriptor.annotations.get(Table)
+    fmt.Println(table.args[0])
+
+    for field := range descriptor.fields {
+        if field.annotations.has(PK) {
+            fmt.Println("primary key:", field.name)
+        }
+    }
+}

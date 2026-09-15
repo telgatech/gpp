@@ -22,6 +22,9 @@ A tiny source-to-source compiler that emits ordinary Go.
 - explicit `?.` safe access for nullable class values
 - anonymous structural records with deterministic generated Go structs
 - compile-time-generated class metadata through `obj.class` and `Class.fields`
+- declared, typed annotations with target validation and runtime metadata
+- compile-time extension methods that lower to ordinary package-level functions
+- multi-target extension blocks, such as `extend string, []byte { ... }`
 
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.
@@ -48,6 +51,6 @@ Choose a different generated output directory with `-output`:
 go run ./cmd/gopp -output build/gopp examples/hello.gpp
 ```
 
-Class introspection exposes generated `name`, `fields`, `owner`, `type`,
-`get`, `set`, and `addr` metadata while preserving ordinary Go structs and
-stdlib interoperability.
+Class introspection exposes generated `name`, `fields`, `methods`,
+`annotations`, `owner`, `type`, `get`, `set`, and `addr` metadata while
+preserving ordinary Go structs and stdlib interoperability.

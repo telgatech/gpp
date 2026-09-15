@@ -2,6 +2,9 @@ package compiler
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"strings"
 	"unicode"
@@ -36,11 +39,14 @@ func ParseFile(name, src string) (*File, error) {
 			}
 
 			end := lineEnd(src, pos)
-
 			line := strings.TrimSpace(src[pos:end])
-			parts := strings.Fields(line)
-
-			if len(parts) != 2 || !isLogicalPackageName(parts[1]) {
+			packageText := strings.TrimSpace(strings.TrimPrefix(line, "package"))
+			nameEnd := 0
+			for nameEnd < len(packageText) && !unicode.IsSpace(rune(packageText[nameEnd])) {
+				nameEnd++
+			}
+			packageName := packageText[:nameEnd]
+			if !isLogicalPackageName(packageName) {
 				return nil, fmt.Errorf(
 					"%s:%d: invalid package declaration",
 					name,
@@ -48,7 +54,16 @@ func ParseFile(name, src string) (*File, error) {
 				)
 			}
 
-			file.Package = parts[1]
+			file.Package = packageName
+			rest := strings.TrimSpace(packageText[nameEnd:])
+			if rest != "" {
+				uses, _, err := parseAnnotationUses(rest, 0)
+				if err != nil {
+					return nil, fmt.Errorf("%s:%d: invalid package annotations: %w", name, sourceLine(src, pos), err)
+				}
+				setAnnotationUseLocations(uses, name, sourceLine(src, pos))
+				file.Annotations = append(file.Annotations, uses...)
+			}
 			hasPackage = true
 			pos = end
 
@@ -66,6 +81,7 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			class.SourceFile = name
 			class.SourceLine = sourceLine(src, pos)
+			setClassAnnotationLocations(class, name)
 
 			file.Decls = append(file.Decls, class)
 			pos = end
@@ -77,7 +93,23 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			extend.SourceFile = name
 			extend.SourceLine = sourceLine(src, pos)
+			for index := range extend.Methods {
+				setMethodAnnotationLocations(&extend.Methods[index], name, extend.SourceLine)
+			}
 			file.Decls = append(file.Decls, extend)
+			pos = end
+
+		case keywordAt(src, pos, "annotation"):
+			declarations, end, err := parseAnnotationDecls(src, pos)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+			}
+			for _, declaration := range declarations {
+				declaration.SourceFile = name
+				declaration.SourceLine = sourceLine(src, pos)
+				declaration.Exported = isExportedIdentifier(declaration.Name)
+			}
+			file.Decls = append(file.Decls, declarationsToDecls(declarations)...)
 			pos = end
 
 		default:
@@ -101,8 +133,13 @@ func ParseFile(name, src string) (*File, error) {
 			code := src[start:next]
 
 			if strings.TrimSpace(code) != "" {
+				placements, err := collectRawAnnotationPlacements(code, name)
+				if err != nil {
+					return nil, fmt.Errorf("%s:%d: invalid annotation use: %w", name, sourceLine(src, start), err)
+				}
 				file.Decls = append(file.Decls, &RawDecl{
-					Code: code,
+					Code:                 code,
+					AnnotationPlacements: placements,
 				})
 			}
 
@@ -182,6 +219,14 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 	}
 
 	pos = skipSpace(src, pos)
+	annotations, next, err := parseOptionalAnnotationUses(src, pos)
+	if err != nil {
+		return nil, 0, err
+	}
+	if next != pos {
+		class.Annotations = annotations
+		pos = skipSpace(src, next)
+	}
 
 	if pos >= len(src) || src[pos] != '{' {
 		return nil, 0, fmt.Errorf(
@@ -228,11 +273,13 @@ func parseClassBody(class *ClassDecl, body string) error {
 
 		end := lineEnd(body, pos)
 		line := strings.TrimSpace(body[pos:end])
+		field, err := parseFieldLine(line)
+		if err != nil {
+			return err
+		}
 
 		if line != "" {
-			parts := strings.Fields(line)
-
-			if len(parts) < 2 {
+			if field.Name == "" {
 				return fmt.Errorf(
 					"invalid field in class %s: %s",
 					class.Name,
@@ -240,10 +287,7 @@ func parseClassBody(class *ClassDecl, body string) error {
 				)
 			}
 
-			class.Fields = append(class.Fields, Field{
-				Name: parts[0],
-				Type: strings.Join(parts[1:], " "),
-			})
+			class.Fields = append(class.Fields, field)
 		}
 
 		pos = end
@@ -252,15 +296,462 @@ func parseClassBody(class *ClassDecl, body string) error {
 	return nil
 }
 
+func parseFieldLine(line string) (Field, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return Field{}, nil
+	}
+	base := line
+	annotations := []AnnotationUse{}
+	if at := findAnnotationStart(line, 0); at >= 0 {
+		uses, end, err := parseAnnotationUses(line, at)
+		if err != nil {
+			return Field{}, err
+		}
+		if strings.TrimSpace(line[end:]) != "" {
+			return Field{}, fmt.Errorf("field annotations must appear at the end of a field declaration")
+		}
+		base = strings.TrimSpace(line[:at])
+		annotations = uses
+	}
+	parts := strings.Fields(base)
+	if len(parts) < 2 {
+		return Field{}, nil
+	}
+	return Field{
+		Name:        parts[0],
+		Type:        strings.Join(parts[1:], " "),
+		Annotations: annotations,
+	}, nil
+}
+
+func parseAnnotationDecls(src string, start int) ([]*AnnotationDecl, int, error) {
+	pos := skipSpace(src, start+len("annotation"))
+	if pos < len(src) && src[pos] == '(' {
+		close, err := findMatchingParen(src, pos)
+		if err != nil {
+			return nil, 0, err
+		}
+		declarations := []*AnnotationDecl{}
+		body := src[pos+1 : close]
+		for cursor := 0; cursor < len(body); {
+			cursor = skipSpace(body, cursor)
+			if cursor >= len(body) {
+				break
+			}
+			end := lineEnd(body, cursor)
+			line := strings.TrimSpace(body[cursor:end])
+			if line != "" {
+				declaration, err := parseAnnotationSpec(line)
+				if err != nil {
+					return nil, 0, err
+				}
+				declarations = append(declarations, declaration)
+			}
+			cursor = end
+		}
+		if len(declarations) == 0 {
+			return nil, 0, fmt.Errorf("annotation group cannot be empty")
+		}
+		return declarations, close + 1, nil
+	}
+
+	end := lineEnd(src, pos)
+	line := strings.TrimSpace(src[pos:end])
+	if line == "" {
+		return nil, 0, fmt.Errorf("annotation declaration requires a name")
+	}
+	declaration, err := parseAnnotationSpec(line)
+	if err != nil {
+		return nil, 0, err
+	}
+	return []*AnnotationDecl{declaration}, end, nil
+}
+
+func declarationsToDecls(declarations []*AnnotationDecl) []Decl {
+	result := make([]Decl, len(declarations))
+	for index, declaration := range declarations {
+		result[index] = declaration
+	}
+	return result
+}
+
+func parseAnnotationSpec(src string) (*AnnotationDecl, error) {
+	pos := 0
+	name, length := readIdent(src)
+	if length == 0 {
+		return nil, fmt.Errorf("annotation declaration requires a name")
+	}
+	pos += length
+	pos = skipSpace(src, pos)
+	params := ""
+	if pos < len(src) && src[pos] == '(' {
+		close, err := findMatchingParen(src, pos)
+		if err != nil {
+			return nil, err
+		}
+		params = src[pos+1 : close]
+		pos = close + 1
+	}
+	rest := strings.TrimSpace(src[pos:])
+	targets := []AnnotationTarget{}
+	if rest != "" {
+		if len(rest) < 2 || rest[:2] != "on" || (len(rest) > 2 && isIdentPart(rest[2])) {
+			return nil, fmt.Errorf("invalid annotation declaration suffix %q", rest)
+		}
+		targetText := strings.TrimSpace(rest[2:])
+		if targetText == "" {
+			return nil, fmt.Errorf("annotation %s requires a target after on", name)
+		}
+		parts, err := splitTopLevel(targetText, ',')
+		if err != nil {
+			return nil, err
+		}
+		seen := map[AnnotationTarget]bool{}
+		for _, part := range parts {
+			target := AnnotationTarget(strings.TrimSpace(part))
+			if !validAnnotationTarget(target) {
+				return nil, fmt.Errorf("unknown annotation target %s", target)
+			}
+			if seen[target] {
+				return nil, fmt.Errorf("annotation target %s is listed more than once", target)
+			}
+			seen[target] = true
+			targets = append(targets, target)
+		}
+	}
+	if _, err := parseParameterInfos(params); err != nil {
+		return nil, fmt.Errorf("annotation %s has invalid parameters: %w", name, err)
+	}
+	return &AnnotationDecl{Name: name, Params: params, Targets: targets}, nil
+}
+
+func validAnnotationTarget(target AnnotationTarget) bool {
+	switch target {
+	case AnnotationTargetClass, AnnotationTargetField, AnnotationTargetMethod,
+		AnnotationTargetFunction, AnnotationTargetParameter, AnnotationTargetType,
+		AnnotationTargetPackage:
+		return true
+	default:
+		return false
+	}
+}
+
+func isExportedIdentifier(name string) bool {
+	for _, r := range name {
+		return unicode.IsUpper(r)
+	}
+	return false
+}
+
+func setAnnotationUseLocations(uses []AnnotationUse, fileName string, line int) {
+	for index := range uses {
+		uses[index].SourceFile = fileName
+		if uses[index].SourceLine == 0 {
+			uses[index].SourceLine = line
+		}
+	}
+}
+
+func setClassAnnotationLocations(class *ClassDecl, fileName string) {
+	setAnnotationUseLocations(class.Annotations, fileName, class.SourceLine)
+	for index := range class.Fields {
+		setAnnotationUseLocations(class.Fields[index].Annotations, fileName, class.SourceLine)
+	}
+	for index := range class.Methods {
+		setMethodAnnotationLocations(&class.Methods[index], fileName, class.SourceLine)
+	}
+}
+
+func setMethodAnnotationLocations(method *Method, fileName string, line int) {
+	setAnnotationUseLocations(method.Annotations, fileName, line)
+	for _, uses := range method.ParameterAnnotations {
+		setAnnotationUseLocations(uses, fileName, line)
+	}
+}
+
+func parseOptionalAnnotationUses(src string, start int) ([]AnnotationUse, int, error) {
+	start = skipSpace(src, start)
+	if start >= len(src) || src[start] != '@' {
+		return nil, start, nil
+	}
+	uses, end, err := parseAnnotationUses(src, start)
+	return uses, end, err
+}
+
+func parseAnnotationUses(src string, start int) ([]AnnotationUse, int, error) {
+	if start < 0 || start+2 > len(src) || src[start] != '@' || src[start+1] != '{' {
+		return nil, 0, fmt.Errorf("annotation use must start with @{")
+	}
+	close, err := findMatchingBrace(src, start+1)
+	if err != nil {
+		return nil, 0, err
+	}
+	body := strings.TrimSpace(src[start+2 : close])
+	if body == "" {
+		return nil, 0, fmt.Errorf("annotation use cannot be empty")
+	}
+	parts, err := splitTopLevel(body, ',')
+	if err != nil {
+		return nil, 0, err
+	}
+	uses := make([]AnnotationUse, 0, len(parts))
+	for _, part := range parts {
+		use, err := parseAnnotationUseSpec(strings.TrimSpace(part))
+		if err != nil {
+			return nil, 0, err
+		}
+		uses = append(uses, use)
+	}
+	return uses, close + 1, nil
+}
+
+func parseAnnotationUseSpec(src string) (AnnotationUse, error) {
+	pos := 0
+	first, length := readIdent(src)
+	if length == 0 {
+		return AnnotationUse{}, fmt.Errorf("annotation use requires a name")
+	}
+	pos += length
+	for {
+		pos = skipSpace(src, pos)
+		if pos >= len(src) || src[pos] != '.' {
+			break
+		}
+		pos = skipSpace(src, pos+1)
+		part, partLength := readIdent(src[pos:])
+		if partLength == 0 {
+			return AnnotationUse{}, fmt.Errorf("invalid qualified annotation name")
+		}
+		first += "." + part
+		pos += partLength
+	}
+	pos = skipSpace(src, pos)
+	use := AnnotationUse{Name: first}
+	if pos < len(src) {
+		if src[pos] != '(' {
+			return AnnotationUse{}, fmt.Errorf("unexpected annotation use suffix %q", src[pos:])
+		}
+		close, err := findMatchingParen(src, pos)
+		if err != nil {
+			return AnnotationUse{}, err
+		}
+		if strings.TrimSpace(src[close+1:]) != "" {
+			return AnnotationUse{}, fmt.Errorf("unexpected annotation use suffix %q", src[close+1:])
+		}
+		use.HasArguments = true
+		use.Arguments = strings.TrimSpace(src[pos+1 : close])
+	}
+	return use, nil
+}
+
+func findAnnotationStart(src string, start int) int {
+	for index := start; index+1 < len(src); index++ {
+		if end, ok, _ := copyIgnoredSource(src, index, &strings.Builder{}); ok {
+			index = end - 1
+			continue
+		}
+		if src[index] == '@' && src[index+1] == '{' {
+			return index
+		}
+	}
+	return -1
+}
+
+func findMethodBodyOpen(src string, start int) (int, error) {
+	for index := start; index < len(src); index++ {
+		if end, ok, err := copyIgnoredSource(src, index, &strings.Builder{}); err != nil {
+			return -1, err
+		} else if ok {
+			index = end - 1
+			continue
+		}
+		if src[index] == '@' && index+1 < len(src) && src[index+1] == '{' {
+			end, err := findMatchingBrace(src, index+1)
+			if err != nil {
+				return -1, err
+			}
+			index = end
+			continue
+		}
+		if src[index] == '{' {
+			return index, nil
+		}
+	}
+	return -1, fmt.Errorf("method missing body")
+}
+
+func parseMethodAnnotations(signature string) ([]AnnotationUse, string, error) {
+	at := findAnnotationStart(signature, 0)
+	if at < 0 {
+		return nil, strings.TrimSpace(signature), nil
+	}
+	uses, end, err := parseAnnotationUses(signature, at)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(signature[end:]) != "" {
+		return nil, "", fmt.Errorf("method annotations must appear at the end of a method declaration")
+	}
+	return uses, strings.TrimSpace(signature[:at]), nil
+}
+
+func extractParameterAnnotations(params string) (string, map[string][]AnnotationUse, error) {
+	parts, err := splitTopLevel(params, ',')
+	if err != nil {
+		return "", nil, err
+	}
+	annotations := map[string][]AnnotationUse{}
+	for index, part := range parts {
+		at := findAnnotationStart(part, 0)
+		if at < 0 {
+			continue
+		}
+		uses, end, err := parseAnnotationUses(part, at)
+		if err != nil {
+			return "", nil, err
+		}
+		if strings.TrimSpace(part[end:]) != "" {
+			return "", nil, fmt.Errorf("parameter annotations must appear at the end of a parameter")
+		}
+		clean := strings.TrimSpace(part[:at])
+		parameters, err := parseParameterInfos(clean)
+		if err != nil || len(parameters) == 0 {
+			return "", nil, fmt.Errorf("invalid annotated parameter %q", part)
+		}
+		for _, parameter := range parameters {
+			annotations[parameter.Name] = uses
+		}
+		parts[index] = clean
+	}
+	return strings.Join(parts, ","), annotations, nil
+}
+
+func collectRawAnnotationPlacements(src, fileName string) ([]AnnotationPlacement, error) {
+	type pending struct {
+		use AnnotationUse
+		pos int
+	}
+	pendingUses := []pending{}
+	for index := 0; index < len(src); index++ {
+		if end, ok, err := copyIgnoredSource(src, index, &strings.Builder{}); err != nil {
+			return nil, err
+		} else if ok {
+			index = end - 1
+			continue
+		}
+		if src[index] != '@' || index+1 >= len(src) || src[index+1] != '{' {
+			continue
+		}
+		uses, end, err := parseAnnotationUses(src, index)
+		if err != nil {
+			return nil, err
+		}
+		for _, use := range uses {
+			use.SourceFile = fileName
+			use.SourceLine = sourceLine(src, index)
+			pendingUses = append(pendingUses, pending{use: use, pos: index})
+		}
+		index = end - 1
+	}
+	if len(pendingUses) == 0 {
+		return nil, nil
+	}
+	stripped := stripAnnotationSyntaxPreserve(src)
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, fileName, "package main\n\n"+stripped, 0)
+	if err != nil {
+		return nil, nil
+	}
+	prefix := len("package main\n\n")
+	placements := make([]AnnotationPlacement, len(pendingUses))
+	for index, item := range pendingUses {
+		absolute := token.Pos(prefix + item.pos + 1)
+		target := AnnotationTargetFunction
+		lineStart := strings.LastIndex(src[:item.pos], "\n") + 1
+		linePrefix := strings.TrimSpace(src[lineStart:item.pos])
+		if strings.HasPrefix(linePrefix, "type ") {
+			target = AnnotationTargetType
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			function, ok := node.(*ast.FuncDecl)
+			if !ok {
+				return true
+			}
+			if function.Type.Params != nil && absolute >= function.Type.Params.Pos() && absolute <= function.Type.Params.End() {
+				target = AnnotationTargetParameter
+				return false
+			}
+			if function.Body != nil && absolute >= function.Type.End() && absolute <= function.Body.Pos() {
+				if function.Recv != nil {
+					target = AnnotationTargetMethod
+				}
+				return false
+			}
+			return true
+		})
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			declaration, ok := node.(*ast.GenDecl)
+			if ok && declaration.Tok.String() == "type" && absolute >= declaration.Pos() && absolute <= declaration.End() {
+				target = AnnotationTargetType
+			}
+			return true
+		})
+		placements[index] = AnnotationPlacement{Use: item.use, Target: target}
+	}
+	return placements, nil
+}
+
+func stripAnnotationSyntaxPreserve(src string) string {
+	var out strings.Builder
+	for index := 0; index < len(src); {
+		if end, ok, _ := copyIgnoredSource(src, index, &out); ok {
+			index = end
+			continue
+		}
+		if src[index] == '@' && index+1 < len(src) && src[index+1] == '{' {
+			end, err := findMatchingBrace(src, index+1)
+			if err != nil {
+				out.WriteByte(src[index])
+				index++
+				continue
+			}
+			for _, char := range src[index : end+1] {
+				if char == '\n' || char == '\r' {
+					out.WriteRune(char)
+				} else {
+					out.WriteByte(' ')
+				}
+			}
+			index = end + 1
+			continue
+		}
+		out.WriteByte(src[index])
+		index++
+	}
+	return out.String()
+}
+
 func parseExtend(src string, start int) (*ExtendDecl, int, error) {
 	pos := skipSpace(src, start+len("extend"))
 	bodyOpen := findExtendBodyOpen(src, pos)
 	if bodyOpen < 0 {
 		return nil, 0, fmt.Errorf("extend declaration requires a target and body")
 	}
-	target := strings.TrimSpace(src[pos:bodyOpen])
-	if target == "" {
+	targets, err := splitTopLevel(src[pos:bodyOpen], ',')
+	if err != nil {
+		return nil, 0, err
+	}
+	for index := range targets {
+		targets[index] = strings.TrimSpace(targets[index])
+	}
+	if len(targets) == 0 || (len(targets) == 1 && targets[0] == "") {
 		return nil, 0, fmt.Errorf("extend declaration requires a target type")
+	}
+	for _, target := range targets {
+		if target == "" {
+			return nil, 0, fmt.Errorf("extend declaration contains an empty target type")
+		}
 	}
 	close, err := findMatchingBrace(src, bodyOpen)
 	if err != nil {
@@ -273,7 +764,7 @@ func parseExtend(src string, start int) (*ExtendDecl, int, error) {
 	if len(container.Fields) > 0 {
 		return nil, 0, fmt.Errorf("extension declarations may contain methods only")
 	}
-	return &ExtendDecl{Target: target, Methods: container.Methods}, close + 1, nil
+	return &ExtendDecl{Targets: targets, Methods: container.Methods}, close + 1, nil
 }
 
 func findExtendBodyOpen(src string, start int) int {
@@ -356,37 +847,38 @@ func parseMethod(src string, start int) (Method, int, error) {
 		return Method{}, 0, err
 	}
 
-	params := src[pos+1 : paramEnd]
+	params, parameterAnnotations, err := extractParameterAnnotations(src[pos+1 : paramEnd])
+	if err != nil {
+		return Method{}, 0, err
+	}
 
 	pos = paramEnd + 1
 	pos = skipSpace(src, pos)
 
 	resultStart := pos
-
-	for pos < len(src) && src[pos] != '{' {
-		pos++
+	bodyOpen, err := findMethodBodyOpen(src, pos)
+	if err != nil {
+		return Method{}, 0, fmt.Errorf("method %s: %w", name, err)
 	}
 
-	if pos >= len(src) {
-		return Method{}, 0, fmt.Errorf(
-			"method %s missing body",
-			name,
-		)
+	annotations, result, err := parseMethodAnnotations(src[resultStart:bodyOpen])
+	if err != nil {
+		return Method{}, 0, err
 	}
 
-	result := strings.TrimSpace(src[resultStart:pos])
-
-	close, err := findMatchingBrace(src, pos)
+	close, err := findMatchingBrace(src, bodyOpen)
 	if err != nil {
 		return Method{}, 0, err
 	}
 
 	return Method{
-		Name:       name,
-		TypeParams: typeParams,
-		Parameters: params,
-		Result:     result,
-		Body:       src[pos+1 : close],
+		Name:                 name,
+		TypeParams:           typeParams,
+		Parameters:           params,
+		Result:               result,
+		ParameterAnnotations: parameterAnnotations,
+		Annotations:          annotations,
+		Body:                 src[bodyOpen+1 : close],
 	}, close + 1, nil
 }
 
@@ -491,7 +983,7 @@ func findNextExtension(src string, start int) int {
 			p := skipHorizontal(src, i)
 
 			if keywordAt(src, p, "class") || keywordAt(src, p, "extend") ||
-				keywordAt(src, p, "package") {
+				keywordAt(src, p, "annotation") || keywordAt(src, p, "package") {
 				return p
 			}
 		}

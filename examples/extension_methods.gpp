@@ -1,0 +1,37 @@
+package main
+
+import "fmt"
+
+extend string {
+    func Empty() bool {
+        return len(this) == 0
+    }
+
+    func Surround(left string, right string = "!") string {
+        return left + this + right
+    }
+
+    func Identity[T](value T) T {
+        return value
+    }
+}
+
+class Person {
+    Name string
+}
+
+extend Person {
+    func Greeting() string {
+        return "Hello, " + this.Name
+    }
+}
+
+func main() {
+    name := ""
+    fmt.Println(name.Empty())
+    fmt.Println("go".Surround(right: "?", left: "["))
+    fmt.Println("go".Identity[int](42))
+
+    person := Person("Ada")
+    fmt.Println(person.Greeting())
+}

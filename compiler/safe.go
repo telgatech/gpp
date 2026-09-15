@@ -21,6 +21,12 @@ func fileHasSafeAccess(file *File) bool {
 					return true
 				}
 			}
+		case *ExtendDecl:
+			for _, method := range value.Methods {
+				if strings.Contains(method.Body, "?.") {
+					return true
+				}
+			}
 		}
 	}
 	return false

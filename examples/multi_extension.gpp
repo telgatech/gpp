@@ -1,0 +1,29 @@
+package main
+
+import "fmt"
+
+extend string, []byte, []rune {
+    func Empty() bool {
+        return len(this) == 0
+    }
+
+    func Size() int {
+        return len(this)
+    }
+
+    func Identity[T](value T) T {
+        return value
+    }
+}
+
+func main() {
+    text := "go++"
+    bytes := []byte{'g', 'o'}
+    runes := []rune{'g', 'o', '+'}
+
+    fmt.Println(text.Empty(), text.Size())
+    fmt.Println(bytes.Empty(), bytes.Size())
+    fmt.Println(runes.Empty(), runes.Size())
+    fmt.Println(text.Identity[string]("multi-target"))
+    fmt.Println(bytes.Identity[int](42))
+}

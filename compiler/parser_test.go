@@ -59,3 +59,31 @@ func TestParseIgnoresExtensionsInsideGoBodiesAndStrings(t *testing.T) {
 		t.Fatalf("expected RealClass after Go body, got %#v", file.Decls[1])
 	}
 }
+
+func TestParseMultiTargetExtension(t *testing.T) {
+	file, err := ParseFile("multi_extension.gpp", `
+extend
+    string,
+    []byte,
+    map[string]int
+{
+    func Empty() bool {
+        return len(this) == 0
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one declaration, got %d", len(file.Decls))
+	}
+	extension, ok := file.Decls[0].(*ExtendDecl)
+	if !ok {
+		t.Fatalf("expected extension declaration, got %#v", file.Decls[0])
+	}
+	expected := []string{"string", "[]byte", "map[string]int"}
+	if strings.Join(extension.Targets, "|") != strings.Join(expected, "|") {
+		t.Fatalf("unexpected extension targets: %#v", extension.Targets)
+	}
+}

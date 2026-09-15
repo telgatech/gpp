@@ -42,6 +42,15 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	if err != nil {
 		return err
 	}
+	for _, file := range program.Files {
+		scope, err := annotationScopeForFile(file, model, options.ModulePath)
+		if err != nil {
+			return fmt.Errorf("%s: %w", file.Name, err)
+		}
+		if err := validateFileAnnotations(file, model.Packages[file.Package], scope, false); err != nil {
+			return err
+		}
+	}
 	functionSignatures, err := functionSignaturesForProgram(program)
 	if err != nil {
 		return err
@@ -74,7 +83,9 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 		context.Introspection = introspectionContexts[file.Package]
 		context.Introspection.Enabled = usesIntrospection
-		context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
+		context.Annotations = model.Packages[file.Package].Annotations
+		context.Package = file.Package
+		configureNativeExtensionMethods(&context, file)
 		context.FunctionSignatures = functionSignatures[file.Package]
 		if err := configureFunctionOverloads(&context.Overloads, context.FunctionSignatures); err != nil {
 			return fmt.Errorf("%s: %w", file.Name, err)

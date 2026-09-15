@@ -108,13 +108,49 @@ class Formatter {
 func TestResolveProgramRejectsDuplicateTypedMethodOverloads(t *testing.T) {
 	program := parseProgram(t, `
 class Formatter {
-    func Format(value int) string { return "one" }
-    func Format(other int) string { return "two" }
+	func Format(value int) string { return "one" }
+	func Format(other int) string { return "two" }
 }
 `)
 
 	_, err := ResolveProgram(program)
 	if err == nil || !strings.Contains(err.Error(), "parameter types int") {
 		t.Fatalf("expected duplicate typed overload error, got %v", err)
+	}
+}
+
+func TestResolveProgramValidatesAnnotationPlacement(t *testing.T) {
+	program := parseProgram(t, `
+annotation PK on field
+class Employee @{PK} {}
+`)
+	_, err := ResolveProgram(program)
+	if err == nil || !strings.Contains(err.Error(), "annotation PK cannot be applied to class") {
+		t.Fatalf("expected annotation placement error, got %v", err)
+	}
+}
+
+func TestResolveProgramValidatesAnnotationArguments(t *testing.T) {
+	program := parseProgram(t, `
+annotation Min(value int) on field
+class Employee {
+    Age int @{Min("18")}
+}
+`)
+	_, err := ResolveProgram(program)
+	if err == nil || !strings.Contains(err.Error(), "expected int, got string") {
+		t.Fatalf("expected annotation argument type error, got %v", err)
+	}
+}
+
+func TestResolveProgramRejectsUnknownAnnotation(t *testing.T) {
+	program := parseProgram(t, `
+class Employee {
+    Name string @{Required}
+}
+`)
+	_, err := ResolveProgram(program)
+	if err == nil || !strings.Contains(err.Error(), "undefined annotation Required") {
+		t.Fatalf("expected unknown annotation error, got %v", err)
 	}
 }

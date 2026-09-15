@@ -130,7 +130,6 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	code, err := Emit(file)
 	if err != nil {
 		t.Fatal(err)
@@ -1296,6 +1295,7 @@ import "net/http"
 func main() {
     _ = http.Request.class
 }
+
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -1304,5 +1304,179 @@ func main() {
 	_, err = Emit(file)
 	if err == nil || !strings.Contains(err.Error(), "http.Request.class") {
 		t.Fatalf("expected native type introspection error, got %v", err)
+	}
+}
+
+func TestEmitLowersExtensionMethods(t *testing.T) {
+	file, err := ParseFile("extensions.gpp", `
+extend string {
+    func Empty() bool {
+        return len(this) == 0
+    }
+
+    func Identity[T](value T) T {
+        return value
+    }
+
+    func Surround(left string, right string = "!") string {
+        return left + this + right
+    }
+}
+
+func main() {
+    value := ""
+    _ = value.Empty()
+    _ = "go".Surround(right: "?", left: "[")
+    _ = "go".Identity[int](42)
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"func GoppExt_string_Empty_",
+		"func GoppExt_string_Identity_",
+		"GoppExt_string_Empty_5037a682(value)",
+		"GoppExt_string_Identity_40a61015[int](\"go\", 42)",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("extension method output missing %q:\n%s", expected, code)
+		}
+	}
+}
+
+func TestEmitRejectsExtensionFields(t *testing.T) {
+	_, err := ParseFile("extension_field.gpp", `
+extend string {
+    Value int
+}
+`)
+	if err == nil || !strings.Contains(err.Error(), "methods only") {
+		t.Fatalf("expected extension field error, got %v", err)
+	}
+}
+
+func TestEmitLowersMultiTargetExtensionMethods(t *testing.T) {
+	file, err := ParseFile("multi_extensions.gpp", `
+extend string, []byte {
+    func Empty() bool {
+        return len(this) == 0
+    }
+
+    func Identity[T](value T) T {
+        return value
+    }
+}
+
+func main() {
+    text := ""
+    bytes := []byte{}
+    _ = text.Empty()
+    _ = bytes.Empty()
+    _ = text.Identity[int](42)
+    _ = bytes.Identity[string]("go")
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if strings.Count(generated, "func GoppExt_") != 4 {
+		t.Fatalf("expected one generated function per target/method combination:\n%s", generated)
+	}
+	for _, expected := range []string{
+		"func GoppExt_string_Empty_",
+		"func GoppExt___byte_Empty_",
+		"GoppExt_string_Identity_40a61015[int](text, 42)",
+		"GoppExt___byte_Identity_143efffa[string](bytes, \"go\")",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("multi-target extension output missing %q:\n%s", expected, generated)
+		}
+	}
+}
+
+func TestEmitRejectsDuplicateMultiTargetExtension(t *testing.T) {
+	file, err := ParseFile("duplicate_extension_target.gpp", `
+extend string, string {
+    func Empty() bool { return true }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Emit(file)
+	if err == nil || !strings.Contains(err.Error(), "duplicate extension target string") {
+		t.Fatalf("expected duplicate extension target error, got %v", err)
+	}
+}
+
+func TestEmitAnnotationsAndIntrospection(t *testing.T) {
+	file, err := ParseFile("annotations.gpp", `
+annotation (
+    Table(name string) on class
+    PK on field
+    Required on field, parameter
+    Trace on method, function
+)
+
+class Employee @{Table("employees")} {
+    Id string @{PK}
+    Email string @{Required}
+
+    func Lookup(id int @{Required}) string @{Trace} {
+        return this.Id
+    }
+}
+
+func Helper(value string @{Required}) string @{Trace} {
+    return value
+}
+
+func main() {
+    descriptor := Employee.class
+    table := descriptor.annotations.get(Table)
+    _ = table.name
+    _ = table.fullName
+    _ = table.args[0]
+    for field := range descriptor.fields {
+        _ = field.annotations.has(PK)
+        _ = field.annotations.all(Required)
+    }
+    for method := range descriptor.methods {
+        _ = method.annotations.has(Trace)
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"var GoppAnnotation_Table =",
+		"Args: []any{\"employees\"}",
+		"Annotations: GoppAnnotations{",
+		"GoppAnnotation_Table",
+		".Has(GoppAnnotation_PK)",
+		".All(GoppAnnotation_Required)",
+		".FullName",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("annotation output missing %q:\n%s", expected, generated)
+		}
 	}
 }

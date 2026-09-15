@@ -5,9 +5,10 @@ type Program struct {
 }
 
 type File struct {
-	Name    string
-	Package string
-	Decls   []Decl
+	Name        string
+	Package     string
+	Annotations []AnnotationUse
+	Decls       []Decl
 }
 
 type Decl interface {
@@ -15,24 +16,26 @@ type Decl interface {
 }
 
 type RawDecl struct {
-	Code string
+	Code                 string
+	AnnotationPlacements []AnnotationPlacement
 }
 
 func (*RawDecl) decl() {}
 
 type ClassDecl struct {
-	Name       string
-	SourceFile string
-	SourceLine int
-	Parents    []string
-	Fields     []Field
-	Methods    []Method
+	Name        string
+	SourceFile  string
+	SourceLine  int
+	Parents     []string
+	Annotations []AnnotationUse
+	Fields      []Field
+	Methods     []Method
 }
 
 func (*ClassDecl) decl() {}
 
 type ExtendDecl struct {
-	Target     string
+	Targets    []string
 	SourceFile string
 	SourceLine int
 	Methods    []Method
@@ -41,15 +44,56 @@ type ExtendDecl struct {
 func (*ExtendDecl) decl() {}
 
 type Field struct {
-	Name string
-	Type string
+	Name        string
+	Type        string
+	Annotations []AnnotationUse
 }
 
 type Method struct {
+	Name                 string
+	TypeParams           string
+	GoName               string
+	Parameters           string
+	ParameterAnnotations map[string][]AnnotationUse
+	Result               string
+	Body                 string
+	Annotations          []AnnotationUse
+}
+
+type AnnotationTarget string
+
+const (
+	AnnotationTargetClass     AnnotationTarget = "class"
+	AnnotationTargetField     AnnotationTarget = "field"
+	AnnotationTargetMethod    AnnotationTarget = "method"
+	AnnotationTargetFunction  AnnotationTarget = "function"
+	AnnotationTargetParameter AnnotationTarget = "parameter"
+	AnnotationTargetType      AnnotationTarget = "type"
+	AnnotationTargetPackage   AnnotationTarget = "package"
+)
+
+type AnnotationDecl struct {
 	Name       string
-	TypeParams string
-	GoName     string
-	Parameters string
-	Result     string
-	Body       string
+	Params     string
+	Targets    []AnnotationTarget
+	Package    string
+	SourceFile string
+	SourceLine int
+	Exported   bool
+}
+
+func (*AnnotationDecl) decl() {}
+
+type AnnotationUse struct {
+	Name         string
+	Arguments    string
+	HasArguments bool
+	SourceFile   string
+	SourceLine   int
+	Declaration  *AnnotationDecl
+}
+
+type AnnotationPlacement struct {
+	Use    AnnotationUse
+	Target AnnotationTarget
 }

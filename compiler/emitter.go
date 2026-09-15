@@ -21,11 +21,21 @@ func Emit(file *File) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope, err := annotationScopeForFile(file, model, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateFileAnnotations(file, model.Packages[file.Package], scope, false); err != nil {
+		return nil, err
+	}
 
 	context := localConstructorContext(model.Packages[file.Package].Classes)
+	context.Annotations = model.Packages[file.Package].Annotations
+	context.Package = file.Package
 	context.Records = newRecordContext()
 	context.Introspection.Enabled = fileUsesIntrospection(file)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
+	configureNativeExtensionMethods(&context, file)
 	if err := addFunctionOverloads(&context, file); err != nil {
 		return nil, err
 	}
@@ -56,17 +66,21 @@ type overloadContext struct {
 }
 
 type constructorContext struct {
-	Targets               map[string]constructorTarget
-	Overloads             overloadContext
-	FunctionSignatures    map[string][]callableSignature
-	MethodSignatures      map[string][]callableSignature
-	ClassMethodSignatures map[string]map[string][]callableSignature
-	Records               *recordContext
-	Introspection         *introspectionContext
-	Extensions            []extensionMethod
-	CurrentClass          string
-	CurrentMethod         string
-	CurrentResult         string
+	Targets                  map[string]constructorTarget
+	Overloads                overloadContext
+	FunctionSignatures       map[string][]callableSignature
+	MethodSignatures         map[string][]callableSignature
+	ClassMethodSignatures    map[string]map[string][]callableSignature
+	Records                  *recordContext
+	Introspection            *introspectionContext
+	Extensions               []extensionMethod
+	Annotations              map[string]*AnnotationDecl
+	Package                  string
+	NativeMethods            map[string]map[string]bool
+	CurrentClass             string
+	CurrentMethod            string
+	CurrentResult            string
+	CurrentExtensionReceiver string
 }
 
 func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
@@ -93,6 +107,7 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 		MethodSignatures:      map[string][]callableSignature{},
 		ClassMethodSignatures: map[string]map[string][]callableSignature{},
 		Introspection:         newIntrospectionContext(classes),
+		Annotations:           map[string]*AnnotationDecl{},
 	}
 
 	for _, class := range classes {
@@ -157,11 +172,14 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if context.Records != nil {
 		declarationsPrefix += context.Records.definitions()
 	}
-	if context.Introspection != nil && len(context.Introspection.Classes) > 0 &&
+	if context.Introspection != nil && (len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
 		!context.Introspection.RuntimeEmitted {
 		declarationsPrefix += introspectionRuntimeDefinitions()
 		context.Introspection.RuntimeEmitted = true
 	}
+	var annotationDescriptors strings.Builder
+	emitAnnotationDescriptors(&annotationDescriptors, file, context)
+	declarationsPrefix += annotationDescriptors.String()
 
 	out.WriteString(insertAfterImports(body, declarationsPrefix))
 
@@ -208,7 +226,7 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *RawDecl:
-			code := transformInterpolationWithName(d.Code, interpolationName)
+			code := transformInterpolationWithName(stripAnnotationSyntaxPreserve(d.Code), interpolationName)
 			code, err := transformSafeAccess(code, context)
 			if err != nil {
 				return "", err
@@ -254,6 +272,11 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 
 		case *ClassDecl:
 			if err := emitClass(&out, d, context, interpolationName); err != nil {
+				return "", err
+			}
+
+		case *ExtendDecl:
+			if err := emitExtension(&out, d, context, interpolationName); err != nil {
 				return "", err
 			}
 		}
@@ -1203,7 +1226,7 @@ func interpolationImport(file *File) (string, bool, error) {
 	var raw strings.Builder
 	for _, decl := range file.Decls {
 		if code, ok := decl.(*RawDecl); ok {
-			raw.WriteString(code.Code)
+			raw.WriteString(stripAnnotationSyntaxPreserve(code.Code))
 		}
 	}
 
@@ -1248,6 +1271,12 @@ func fileHasInterpolation(file *File) bool {
 				return true
 			}
 		case *ClassDecl:
+			for _, method := range d.Methods {
+				if strings.Contains(method.Body, "{{") {
+					return true
+				}
+			}
+		case *ExtendDecl:
 			for _, method := range d.Methods {
 				if strings.Contains(method.Body, "{{") {
 					return true
@@ -1406,10 +1435,11 @@ func transformConstructors(src string, context constructorContext) (string, erro
 }
 
 type constructorField struct {
-	Name  string
-	Type  string
-	Path  []string
-	Owner string
+	Name        string
+	Type        string
+	Path        []string
+	Owner       string
+	Annotations []AnnotationUse
 }
 
 type constructorLiteral struct {
@@ -1554,10 +1584,11 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 
 	for _, field := range class.Fields {
 		fields = append(fields, constructorField{
-			Name:  field.Name,
-			Type:  field.Type,
-			Path:  append([]string(nil), prefix...),
-			Owner: class.Name,
+			Name:        field.Name,
+			Type:        field.Type,
+			Path:        append([]string(nil), prefix...),
+			Owner:       class.Name,
+			Annotations: field.Annotations,
 		})
 	}
 

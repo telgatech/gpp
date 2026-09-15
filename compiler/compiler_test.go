@@ -482,3 +482,182 @@ func main() {
 		t.Fatalf("unexpected cross-package introspection output: %s", output)
 	}
 }
+
+func TestCompileFilesPrefersNativeMethodsOverExtensions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+
+	source := `
+import "database/sql"
+
+extend *sql.DB {
+    func Ping() bool {
+        return true
+    }
+}
+
+func Use(db *sql.DB) error {
+    return db.Ping()
+}
+
+func main() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "test", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("native method precedence did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesSupportsMultiTargetImportedExtensions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+
+	source := `
+import "database/sql"
+
+extend *sql.DB, *sql.Tx {
+    func ExecOne(query string, args ...any) error {
+        _, err := this.Exec(query, args...)
+        return err
+    }
+}
+
+func main() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "test", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("multi-target imported extension did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesSupportsImportedGoPlusExtensions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	people := filepath.Join(inputDir, "people.gpp")
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(people, []byte(`package demo.people
+
+class Person {
+    Name string
+}
+
+extend Person {
+    func Greeting() string {
+        return "Hello, " + this.Name
+    }
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, []byte(`package main
+
+import (
+    "fmt"
+    "generated/demo/people"
+)
+
+func main() {
+    person := people.Person("Ada")
+    fmt.Println(person.Greeting())
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{people, main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("imported Go++ extension did not run: %v\n%s", err, output)
+	}
+	if string(output) != "Hello, Ada\n" {
+		t.Fatalf("unexpected imported extension output: %s", output)
+	}
+}
+
+func TestCompileFilesSupportsExportedImportedAnnotations(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	model := filepath.Join(inputDir, "model.gpp")
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(model, []byte(`package demo.model
+
+annotation Public on class
+annotation private on class
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, []byte(`package main
+
+import "generated/demo/model"
+
+class Employee @{model.Public} {}
+
+func main() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{model, main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "test", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("imported annotation did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesRejectsUnexportedImportedAnnotations(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	model := filepath.Join(inputDir, "model.gpp")
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(model, []byte(`package demo.model
+
+annotation private on class
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, []byte(`package main
+
+import "generated/demo/model"
+
+class Employee @{model.private} {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CompileFilesWithOptions([]string{model, main}, outputDir, CompileOptions{ModulePath: "generated"})
+	if err == nil || !strings.Contains(err.Error(), "undefined annotation model.private") {
+		t.Fatalf("expected unexported annotation error, got %v", err)
+	}
+}
