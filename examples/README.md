@@ -35,7 +35,8 @@ The examples cover:
   It uses the pure-Go `modernc.org/sqlite` driver; run `go get
   modernc.org/sqlite` in the generated module before running this example.
   Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and
-  PostgreSQL.
+  PostgreSQL. Lifecycle hooks receive a shared `SQLExecutor`, so child writes
+  use the active transaction automatically.
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.
