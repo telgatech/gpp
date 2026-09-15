@@ -70,6 +70,13 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	if err != nil {
 		return err
 	}
+	if err := expandSerializableClasses(program, model, options.ModulePath); err != nil {
+		return err
+	}
+	model, err = ResolveProgram(program)
+	if err != nil {
+		return err
+	}
 	for _, file := range program.Files {
 		scope, err := annotationScopeForFile(file, model, options.ModulePath)
 		if err != nil {

@@ -5,9 +5,9 @@ import (
 	http "gpp/http"
 )
 
-class App : http.Server @{http.Port(8080), http.Prefix("/api")} {
+class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api")} {
 	func BeforeListen() error {
-		fmt.Println("server starting")
+		fmt.Println("server starting on", this.HTTPServer.Addr)
 		return nil
 	}
 

@@ -62,6 +62,147 @@ func TestEmitNamedConstructor(t *testing.T) {
 	}
 }
 
+func TestEmitStaticMethods(t *testing.T) {
+	file, err := ParseFile("static.gpp", `
+import "strings"
+
+class User {
+    Name string
+
+    static func Guest() User {
+        return User(Name: "Guest")
+    }
+
+    static func Parse(name string) User {
+        return User(Name: strings.TrimSpace(name))
+    }
+
+    static func Identity[T any](value T) T {
+        return value
+    }
+
+    func Greeting() string {
+        return "Hello " + this.Name
+    }
+}
+
+func main() {
+    guest := User.Guest()
+    parsed := User.Parse(input)
+    number := User.Identity[int](42)
+    _ = guest.Greeting()
+    _ = parsed.Greeting()
+    _ = number
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"func GppStatic_User_Guest() User",
+		"func GppStatic_User_Parse(name string) User",
+		"func GppStatic_User_Identity[T any](value T) T",
+		"guest := GppStatic_User_Guest()",
+		"parsed := GppStatic_User_Parse(input)",
+		"number := GppStatic_User_Identity[int](42)",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("static method lowering missing %q:\n%s", expected, code)
+		}
+	}
+	if strings.Contains(generated, "func GppStatic_User_Guest(this") {
+		t.Fatalf("static method unexpectedly has a receiver:\n%s", code)
+	}
+}
+
+func TestEmitInheritedAndShadowedStaticMethods(t *testing.T) {
+	file, err := ParseFile("static_inheritance.gpp", `
+class A {
+    static func Version() string {
+        return "A"
+    }
+}
+
+class B: A {}
+
+class C: A {
+    static func Version() string {
+        return "C"
+    }
+}
+
+func main() {
+    _ = A.Version()
+    _ = B.Version()
+    _ = C.Version()
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if strings.Count(generated, "GppStatic_A_Version()") < 2 {
+		t.Fatalf("inherited static method did not resolve to A:\n%s", code)
+	}
+	if !strings.Contains(generated, "GppStatic_C_Version()") {
+		t.Fatalf("shadowed static method did not resolve to C:\n%s", code)
+	}
+}
+
+func TestEmitRejectsThisInStaticMethod(t *testing.T) {
+	file, err := ParseFile("static_this.gpp", `
+class User {
+    Name string
+
+    static func Guest() User {
+        return User(Name: this.Name)
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Emit(file)
+	if err == nil || !strings.Contains(err.Error(), "static method Guest has no this") {
+		t.Fatalf("expected static this error, got %v", err)
+	}
+}
+
+func TestEmitMarksStaticMethodsInMetadata(t *testing.T) {
+	file, err := ParseFile("static_metadata.gpp", `
+annotation Marker on method
+
+class User {
+    static func Guest() User @{Marker} {
+        return User()
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(code), `{Name: "Guest", Static: true`) {
+		t.Fatalf("static method metadata was not emitted:\n%s", code)
+	}
+}
+
 func TestEmitConstructorHandlesNestedExpressions(t *testing.T) {
 	file := testPersonFile(t)
 	file.Decls = append(file.Decls, &RawDecl{

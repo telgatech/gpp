@@ -234,19 +234,19 @@ class Server {
 		}
 		descriptor := gppRuntimeClass(app)
 		network := "tcp"
-		address := ":8080"
+		address := ":0"
 		if args := gppAnnotationArgs(descriptor, "gpp.http.Unix"); len(args) > 0 {
 			network = "unix"
 			address = fmt.Sprint(args[0])
 		}
 		if network == "tcp" {
 			if args := gppAnnotationArgs(descriptor, "gpp.http.Port"); len(args) > 0 {
-			address = ":" + fmt.Sprint(args[0])
+				address = ":" + fmt.Sprint(args[0])
 			}
 		}
 		if network == "tcp" {
 			if args := gppAnnotationArgs(descriptor, "gpp.http.IP"); len(args) > 0 {
-			address = fmt.Sprint(args[0]) + address[strings.Index(address, ":"):]
+				address = fmt.Sprint(args[0]) + address[strings.Index(address, ":"):]
 			}
 		}
 		listener, err := net.Listen(network, address)
@@ -273,7 +273,7 @@ class Server {
 			mux.Handle(path, stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory))))
 		}
 		gppRegisterRoutes(mux, app, descriptor, prefix)
-		this.HTTPServer = &stdhttp.Server{Handler: mux}
+		this.HTTPServer = &stdhttp.Server{Handler: mux, Addr: listener.Addr().String()}
 		if err := gppCallHook(app, "SetupShutdownHandler", nil); err != nil {
 			_ = listener.Close()
 			return err

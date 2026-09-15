@@ -17,18 +17,18 @@ func TestCompileFilesRunsBundledHTTPServer(t *testing.T) {
 package main
 
 import (
-    "context"
-    "fmt"
-    "io"
-    "net"
-    stdhttp "net/http"
-    "strings"
-    http "gpp/http"
+	"context"
+	"fmt"
+	"io"
+	stdhttp "net/http"
+	"strings"
+	"time"
+	http "gpp/http"
 )
 
 var events []string
 
-class App : http.Server {
+class App : http.Server @{http.IP("127.0.0.1")} {
     func BeforeListen() error {
         events = append(events, "before-listen")
         return nil
@@ -68,13 +68,22 @@ class App : http.Server {
 
 func main() {
     app := App()
-    listener, err := net.Listen("tcp", "127.0.0.1:0")
-    if err != nil { fmt.Println("SKIP:", err); return }
     done := make(chan error, 1)
-    go func() { done <- app.Serve(listener) }()
+    go func() { done <- app.Listen() }()
 
-    response, err := stdhttp.Get("http://" + listener.Addr().String() + "/hello/Go")
-    if err != nil { panic(err) }
+    var response *stdhttp.Response
+    var err error
+    for response == nil {
+        select {
+        case err := <-done:
+            if err != nil { fmt.Println("SKIP:", err); return }
+        default:
+        }
+        if app.HTTPServer != nil {
+            response, err = stdhttp.Get("http://" + app.HTTPServer.Addr + "/hello/Go")
+        }
+        if response == nil { time.Sleep(time.Millisecond) }
+    }
     body, err := io.ReadAll(response.Body)
     if err != nil { panic(err) }
     response.Body.Close()
@@ -105,6 +114,82 @@ func main() {
 	}
 	if string(output) != "200 shared Go\nbefore-listen,after-listen,before-request,route,after-request,before-shutdown,after-shutdown\n" {
 		t.Fatalf("unexpected HTTP response:\n%s", output)
+	}
+}
+
+func TestCompileFilesGeneratesSerializationMethodsAndTags(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "gpp/encoding"
+
+class User @{encoding.Serializable} {
+    Id int @{encoding.Name("id")}
+    Password string @{encoding.Ignore}
+    Nickname string @{encoding.OmitEmpty}
+}
+
+func main() {
+    user := User(Id: 1)
+    data, _ := user.ToJSON()
+    _, _ = User.FromJSON(data)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(generated)
+	for _, expected := range []string{
+		"Id               int       `json:\"id\" yaml:\"id\"`",
+		"Password         string    `json:\"-\" yaml:\"-\"`",
+		"Nickname         string    `json:\",omitempty\" yaml:\",omitempty\"`",
+		"func (this *User) ToJSON() ([]byte, error)",
+		"func (this *User) ToGOB() ([]byte, error)",
+		"func GppStatic_User_FromJSON(data []byte) (User, error)",
+		"return encoding.FromJSON[User](data)",
+		"func (this User) GobEncode() ([]byte, error)",
+		"func (this *User) GobDecode(data []byte) error",
+		"func GppStatic_User_FromGOB(data []byte) (User, error)",
+		"return encoding.FromGOB[User](data)",
+		`{Name: "FromJSON", Static: true`,
+		`{Name: "FromGOB", Static: true`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("generated serialization code is missing %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestCompileFilesRejectsIncompatibleSerializationMethod(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "gpp/encoding"
+
+class User @{encoding.Serializable} {
+    func ToJSON() string { return "custom" }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"})
+	if err == nil || !strings.Contains(err.Error(), "encoding.Serializable requires User.ToJSON") {
+		t.Fatalf("expected serialization method conflict, got %v", err)
 	}
 }
 
@@ -782,6 +867,58 @@ func main() {
 	}
 	if string(output) != "Hello, Ada\n" {
 		t.Fatalf("unexpected imported extension output: %s", output)
+	}
+}
+
+func TestCompileFilesSupportsImportedStaticMethods(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	modelFile := filepath.Join(inputDir, "model.gpp")
+	mainFile := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(modelFile, []byte(`package demo.model
+
+class User {
+    Name string
+
+    static func Guest() User {
+        return User(Name: "Guest")
+    }
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainFile, []byte(`package main
+
+import (
+    "fmt"
+    "generated/demo/model"
+)
+
+func main() {
+    user := model.User.Guest()
+    fmt.Println(user.Name)
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions(
+		[]string{modelFile, mainFile},
+		outputDir,
+		CompileOptions{ModulePath: "generated"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("imported static method did not run: %v\n%s", err, output)
+	}
+	if string(output) != "Guest\n" {
+		t.Fatalf("unexpected imported static method output: %s", output)
 	}
 }
 

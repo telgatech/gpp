@@ -297,6 +297,13 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	methods := map[string][]methodEntry{}
 	for index, method := range class.Methods {
+		if method.IsStatic && sourceContainsIdentifier(method.Body, "this") {
+			return fmt.Errorf(
+				"%s: static method %s has no this",
+				classLocation(class),
+				method.Name,
+			)
+		}
 		if method.Name == "GppRuntimeClass" {
 			return fmt.Errorf(
 				"%s: class %s method %s is reserved for Go++ runtime metadata",
@@ -335,7 +342,11 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			)
 		}
 		typeKey := parameterSignatureKey(parameters)
-		for _, previous := range methods[method.Name] {
+		methodKey := method.Name
+		if method.IsStatic {
+			methodKey += "\x00static"
+		}
+		for _, previous := range methods[methodKey] {
 			if previous.typeKey == typeKey {
 				return fmt.Errorf(
 					"%s: class %s declares method %s more than once with parameter types %s",
@@ -346,7 +357,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 				)
 			}
 		}
-		methods[method.Name] = append(methods[method.Name], methodEntry{
+		methods[methodKey] = append(methods[methodKey], methodEntry{
 			index:     index,
 			arity:     arity,
 			typeKey:   typeKey,
@@ -398,6 +409,25 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 
 	return nil
+}
+
+func sourceContainsIdentifier(source, wanted string) bool {
+	for index := 0; index < len(source); {
+		if end, ok, _ := copyIgnoredSource(source, index, &strings.Builder{}); ok {
+			index = end
+			continue
+		}
+		name, length := readIdent(source[index:])
+		if length > 0 {
+			if name == wanted {
+				return true
+			}
+			index += length
+			continue
+		}
+		index++
+	}
+	return false
 }
 
 func parameterCount(params string) (int, error) {
@@ -586,6 +616,11 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 				pkg.Classes,
 				map[string]bool{},
 			)
+			context.StaticMethodSignatures[methodKey] = staticMethodSignaturesForClass(
+				class,
+				pkg.Classes,
+				map[string]bool{},
+			)
 			context.Overloads.ClassMethods[methodKey] = methodOverloadsForClass(
 				class,
 				pkg.Classes,
@@ -631,6 +666,14 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		context.Extensions = append(context.Extensions, importedExtensions...)
 	}
 
+	for name, class := range localClasses {
+		context.StaticMethodSignatures[name] = staticMethodSignaturesForClass(
+			class,
+			classesForClass(context, class),
+			map[string]bool{},
+		)
+	}
+
 	return context, nil
 }
 
@@ -652,7 +695,7 @@ func addMethodOverload(overloads *overloadContext, class *ClassDecl, className s
 	}
 
 	for _, method := range class.Methods {
-		if method.GoName == "" {
+		if method.GoName == "" || method.IsStatic {
 			continue
 		}
 		arity, err := parameterCount(method.Parameters)

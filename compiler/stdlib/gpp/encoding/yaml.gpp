@@ -1,0 +1,13 @@
+package gpp.encoding
+
+import "gopkg.in/yaml.v3"
+
+func ToYAML(value any) ([]byte, error) {
+	return yaml.Marshal(value)
+}
+
+func FromYAML[T any](data []byte) (T, error) {
+	var value T
+	err := yaml.Unmarshal(data, &value)
+	return value, err
+}

@@ -12,6 +12,7 @@ The examples cover:
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
 - `foo.gpp` — an ordinary package declaration and generated package directory.
 - `constructors.gpp` — positional and named construction.
+- `static_methods.gpp` — class-qualified factory and parsing methods.
 - `inheritance.gpp` — multiple inheritance, embedded parents, and qualified
   parent access.
 - `imports.gpp` — ordinary grouped Go imports and aliases.
@@ -40,6 +41,10 @@ The examples cover:
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.
+- `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
+  methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
+  `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
+  before running it.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
   annotated routes, path parameters, JSON responses, request context values,
   lifecycle hooks, graceful shutdown, and a configurable port.

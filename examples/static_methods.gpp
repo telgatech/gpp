@@ -1,0 +1,34 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+class User {
+	Name string
+
+	static func Guest() User {
+		return User(
+			Name: "Guest",
+		)
+	}
+
+	static func Parse(name string) User {
+		return User(
+			Name: strings.TrimSpace(name),
+		)
+	}
+
+	func Greeting() string {
+		return "Hello " + this.Name
+	}
+}
+
+func main() {
+	guest := User.Guest()
+	user := User.Parse(" Ada ")
+
+	fmt.Println(guest.Greeting())
+	fmt.Println(user.Greeting())
+}

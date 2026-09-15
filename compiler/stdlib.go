@@ -44,7 +44,7 @@ func appendOfficialStdlib(program *Program) error {
 }
 
 func loadOfficialPackage(importPath string) ([]*File, error) {
-	if importPath != "gpp/http" && importPath != "gpp/orm" {
+	if importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" {
 		return nil, fmt.Errorf("official package %q is not bundled with this compiler", importPath)
 	}
 

@@ -135,6 +135,7 @@ type GppField struct {
 
 type GppMethod struct {
 	Name string
+	Static bool
 	Annotations GppAnnotations
 }
 
@@ -180,6 +181,13 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	}
 	for _, method := range methods {
 		fmt.Fprintf(out, "\t{Name: %q, Annotations: %s},\n", method.Name, annotationUsesLiteral(method.Annotations, context))
+	}
+	staticMethods, err := staticMethodsForClass(class, classes, map[string]bool{})
+	if err != nil {
+		return err
+	}
+	for _, method := range staticMethods {
+		fmt.Fprintf(out, "\t{Name: %q, Static: true, Annotations: %s},\n", method.Name, annotationUsesLiteral(method.Annotations, context))
 	}
 	out.WriteString("}, Fields: []GppField{\n")
 	for _, field := range fields {
@@ -272,6 +280,7 @@ var introspectionSelectorNames = map[string]string{
 	"addr":        "Addr",
 	"annotations": "Annotations",
 	"methods":     "Methods",
+	"static":      "Static",
 	"has":         "Has",
 	"all":         "All",
 	"fullName":    "FullName",
@@ -536,7 +545,7 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 		if replacement, ok := introspectionSelectorNames[selector.Sel.Name]; ok {
 			valid := (kind == introspectionClass && (selector.Sel.Name == "name" || selector.Sel.Name == "fields" || selector.Sel.Name == "annotations" || selector.Sel.Name == "methods")) ||
 				(kind == introspectionField && (selector.Sel.Name == "name" || selector.Sel.Name == "owner" || selector.Sel.Name == "type" || selector.Sel.Name == "get" || selector.Sel.Name == "set" || selector.Sel.Name == "addr" || selector.Sel.Name == "annotations")) ||
-				(kind == introspectionMethod && (selector.Sel.Name == "name" || selector.Sel.Name == "annotations")) ||
+				(kind == introspectionMethod && (selector.Sel.Name == "name" || selector.Sel.Name == "annotations" || selector.Sel.Name == "static")) ||
 				(kind == introspectionAnnotations && (selector.Sel.Name == "has" || selector.Sel.Name == "get" || selector.Sel.Name == "all")) ||
 				(kind == introspectionAnnotation && (selector.Sel.Name == "name" || selector.Sel.Name == "fullName" || selector.Sel.Name == "args")) ||
 				(kind == introspectionType && selector.Sel.Name == "name")

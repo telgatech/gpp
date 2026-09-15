@@ -183,6 +183,9 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 
 	result := map[string][]callableSignature{}
 	for _, method := range class.Methods {
+		if method.IsStatic {
+			continue
+		}
 		parameters, err := parseParameterInfos(method.Parameters)
 		if err != nil {
 			continue
@@ -203,6 +206,79 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 		}
 	}
 	return result
+}
+
+func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string][]callableSignature {
+	if visiting[class.Name] {
+		return map[string][]callableSignature{}
+	}
+	visiting[class.Name] = true
+	defer delete(visiting, class.Name)
+
+	result := map[string][]callableSignature{}
+	localNames := map[string]bool{}
+	for _, method := range class.Methods {
+		if !method.IsStatic {
+			continue
+		}
+		localNames[method.Name] = true
+		parameters, err := parseParameterInfos(method.Parameters)
+		if err != nil {
+			continue
+		}
+		result[method.Name] = append(result[method.Name], callableSignature{
+			Name:       method.Name,
+			GoName:     staticMethodGoName(class, method),
+			Parameters: parameters,
+			Result:     strings.TrimSpace(method.Result),
+		})
+	}
+	for _, parentName := range class.Parents {
+		parent, ok := classes[parentName]
+		if !ok {
+			continue
+		}
+		for name, signatures := range staticMethodSignaturesForClass(parent, classes, visiting) {
+			if localNames[name] {
+				continue
+			}
+			result[name] = append(result[name], signatures...)
+		}
+	}
+	return result
+}
+
+func staticMethodsForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]Method, error) {
+	if visiting[class.Name] {
+		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
+	}
+	visiting[class.Name] = true
+	defer delete(visiting, class.Name)
+
+	methods := []Method{}
+	localNames := map[string]bool{}
+	for _, method := range class.Methods {
+		if method.IsStatic {
+			methods = append(methods, method)
+			localNames[method.Name] = true
+		}
+	}
+	for _, parentName := range class.Parents {
+		parent, ok := classes[parentName]
+		if !ok {
+			continue
+		}
+		inherited, err := staticMethodsForClass(parent, classes, visiting)
+		if err != nil {
+			return nil, err
+		}
+		for _, method := range inherited {
+			if !localNames[method.Name] {
+				methods = append(methods, method)
+			}
+		}
+	}
+	return methods, nil
 }
 
 func functionSignaturesForFile(file *File) (map[string][]callableSignature, error) {
@@ -687,6 +763,67 @@ func transformCallableCallsInRange(src string, context constructorContext, _ int
 			i++
 			continue
 		}
+		if name != "this" {
+			qualified, qualifiedLength := readQualifiedIdent(src[i:])
+			if lastDot := strings.LastIndex(qualified, "."); lastDot > 0 {
+				className := qualified[:lastDot]
+				methodName := qualified[lastDot+1:]
+				open := skipSpace(src, i+qualifiedLength)
+				typeArguments := ""
+				if open < len(src) && src[open] == '[' {
+					closeBracket, err := findMatchingBracket(src, open)
+					if err != nil {
+						return "", err
+					}
+					typeArguments = src[open : closeBracket+1]
+					open = skipSpace(src, closeBracket+1)
+				}
+				if _, ok := context.Targets[className]; ok && methodName != "" &&
+					open < len(src) && src[open] == '(' {
+					signatures := context.StaticMethodSignatures[className][methodName]
+					if len(signatures) > 0 {
+						close, err := findMatchingParen(src, open)
+						if err != nil {
+							return "", err
+						}
+						args, err := splitTopLevel(src[open+1:close], ',')
+						if err != nil {
+							return "", err
+						}
+						for len(args) > 0 && strings.TrimSpace(args[len(args)-1]) == "" {
+							args = args[:len(args)-1]
+						}
+						goName, resolved, err := resolveStaticMethodCall(
+							className,
+							methodName,
+							args,
+							signatures,
+							context,
+						)
+						if err != nil {
+							return "", err
+						}
+						for index := range resolved {
+							resolved[index], err = transformCallableCallsInRange(strings.TrimSpace(resolved[index]), context, 0)
+							if err != nil {
+								return "", err
+							}
+						}
+						if strings.Contains(className, ".") &&
+							!isExportedGoPlusName(methodName) {
+							return "", fmt.Errorf("cannot access unexported static method %s.%s", className, methodName)
+						}
+						functionName := goName
+						if dot := strings.LastIndex(className, "."); dot > 0 {
+							functionName = className[:dot] + "." + functionName
+						}
+						out.WriteString(functionName + typeArguments + "(" + strings.Join(resolved, ", ") + ")")
+						i = close + 1
+						continue
+					}
+				}
+			}
+		}
 		if name == "this" {
 			dot := skipSpace(src, i+n)
 			if dot < len(src) && src[dot] == '.' {
@@ -774,6 +911,70 @@ func transformCallableCallsInRange(src string, context constructorContext, _ int
 		i = close + 1
 	}
 	return out.String(), nil
+}
+
+func resolveStaticMethodCall(
+	className string,
+	methodName string,
+	args []string,
+	signatures []callableSignature,
+	context constructorContext,
+) (string, []string, error) {
+	var matches []struct {
+		signature callableSignature
+		args      []string
+	}
+	for _, signature := range signatures {
+		resolved, _, err := resolveCallableCall(
+			methodName,
+			args,
+			[]callableSignature{signature},
+		)
+		if err != nil {
+			continue
+		}
+		if len(signatures) == 1 {
+			return signature.GoName, resolved, nil
+		}
+		match := true
+		for index, argument := range resolved {
+			if index >= len(signature.Parameters) {
+				match = false
+				break
+			}
+			expression, err := parser.ParseExpr(strings.TrimSpace(argument))
+			if err != nil {
+				match = false
+				break
+			}
+			actual := expressionStaticType(expression, context, nil)
+			expected := signature.Parameters[index].Type
+			if actual != "" && actual != expected &&
+				!isAssignableStaticType(actual, expected, context) &&
+				!isUnknownStaticArgument(expression) {
+				match = false
+				break
+			}
+		}
+		if match {
+			matches = append(matches, struct {
+				signature callableSignature
+				args      []string
+			}{signature: signature, args: resolved})
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0].signature.GoName, matches[0].args, nil
+	}
+	if len(matches) > 1 {
+		return "", nil, fmt.Errorf("ambiguous static method %s.%s", className, methodName)
+	}
+	return "", nil, fmt.Errorf("no matching static method %s.%s", className, methodName)
+}
+
+func isUnknownStaticArgument(expression ast.Expr) bool {
+	_, ok := expression.(*ast.Ident)
+	return ok
 }
 
 func copyIgnoredSource(src string, start int, out *strings.Builder) (int, bool, error) {

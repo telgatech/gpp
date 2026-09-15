@@ -283,6 +283,11 @@ class App : http.Server @{http.Port(8080)} {
 
 App().Listen()
 
+If neither Port nor Unix is specified, Listen() must bind a TCP listener
+on port 0, allowing the operating system to assign an available ephemeral
+port. The bound address must be available through Server.HTTPServer.Addr
+before BeforeListen() runs.
+
 `Server.Listen()` must discover App routes/configuration.
 
 ==================================================

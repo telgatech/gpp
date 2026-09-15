@@ -1,0 +1,46 @@
+package main
+
+import (
+	"fmt"
+	"gpp/encoding"
+)
+
+class Address @{encoding.Serializable} {
+	City string
+}
+
+class User @{encoding.Serializable} {
+	Id int @{encoding.Name("id")}
+	Name string @{encoding.Name("name")}
+	Password string @{encoding.Ignore}
+	Nickname string @{encoding.OmitEmpty}
+	Address Address
+}
+
+func main() {
+	user := User(
+		Id: 1,
+		Name: "Ada",
+		Password: "private",
+		Address: Address(City: "Paris"),
+	)
+
+	jsonData, err := user.ToJSON()
+	if err != nil {
+		panic(err)
+	}
+	decoded, err := User.FromJSON(jsonData)
+	if err != nil {
+		panic(err)
+	}
+
+	gobData, err := user.ToGOB()
+	if err != nil {
+		panic(err)
+	}
+	gobDecoded, err := User.FromGOB(gobData)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(jsonData), decoded.Name, decoded.Address.City, len(gobData), gobDecoded.Name, gobDecoded.Address.City)
+}

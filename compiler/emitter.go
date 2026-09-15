@@ -81,6 +81,7 @@ type constructorContext struct {
 	FunctionSignatures         map[string][]callableSignature
 	MethodSignatures           map[string][]callableSignature
 	ClassMethodSignatures      map[string]map[string][]callableSignature
+	StaticMethodSignatures     map[string]map[string][]callableSignature
 	Records                    *recordContext
 	Introspection              *introspectionContext
 	Extensions                 []extensionMethod
@@ -122,11 +123,12 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 			ClassMethods:     map[string]map[string]map[int]string{},
 			ClassMethodTypes: map[string]map[string]map[string]string{},
 		},
-		FunctionSignatures:    map[string][]callableSignature{},
-		MethodSignatures:      map[string][]callableSignature{},
-		ClassMethodSignatures: map[string]map[string][]callableSignature{},
-		Introspection:         newIntrospectionContext(classes),
-		Annotations:           map[string]*AnnotationDecl{},
+		FunctionSignatures:     map[string][]callableSignature{},
+		MethodSignatures:       map[string][]callableSignature{},
+		ClassMethodSignatures:  map[string]map[string][]callableSignature{},
+		StaticMethodSignatures: map[string]map[string][]callableSignature{},
+		Introspection:          newIntrospectionContext(classes),
+		Annotations:            map[string]*AnnotationDecl{},
 	}
 
 	for _, class := range classes {
@@ -145,8 +147,13 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 			classes,
 			map[string]bool{},
 		)
+		context.StaticMethodSignatures[class.Name] = staticMethodSignaturesForClass(
+			class,
+			classes,
+			map[string]bool{},
+		)
 		for _, method := range class.Methods {
-			if method.GoName == "" {
+			if method.GoName == "" || method.IsStatic {
 				continue
 			}
 			arity, err := parameterCount(method.Parameters)
@@ -416,22 +423,35 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		fieldType := transformPolymorphicType(field.Type, context)
 		fmt.Fprintf(
 			out,
-			"\t%s %s\n",
+			"\t%s %s%s\n",
 			field.Name,
 			fieldType,
+			serializationFieldTag(field.Annotations),
 		)
 	}
 	if context.Introspection != nil && context.Introspection.Enabled {
-		out.WriteString("\tGppDynamicClass *GppClass\n")
-		out.WriteString("\tGppDynamicObject any\n")
+		out.WriteString("\tGppDynamicClass *GppClass `json:\"-\" yaml:\"-\"`\n")
+		out.WriteString("\tGppDynamicObject any `json:\"-\" yaml:\"-\"`\n")
 	}
 
 	out.WriteString("}\n\n")
+	if err := emitGeneratedGobSupport(out, class, context); err != nil {
+		return err
+	}
 
 	classes := classesForClass(context, class)
 	methods, err := interfaceMethods(class, classes, map[string]bool{})
 	if err != nil {
 		return err
+	}
+
+	for _, method := range class.Methods {
+		if !method.IsStatic {
+			continue
+		}
+		if err := emitStaticMethod(out, class, method, context, interpolationName); err != nil {
+			return err
+		}
 	}
 
 	for methodIndex := range methods {
@@ -721,6 +741,9 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 	methods := []Method{}
 	seen := map[string]bool{}
 	for _, method := range class.Methods {
+		if method.IsStatic {
+			continue
+		}
 		methods = append(methods, method)
 		arity, err := parameterCount(method.Parameters)
 		if err != nil {
@@ -766,6 +789,85 @@ func methodOutputName(method Method) string {
 	return method.Name
 }
 
+func staticMethodGoName(class *ClassDecl, method Method) string {
+	prefix := "__gpp_static_"
+	if isExportedGoPlusName(method.Name) {
+		prefix = "GppStatic_"
+	}
+	return prefix + class.Name + "_" + methodOutputName(method)
+}
+
+func isExportedGoPlusName(name string) bool {
+	return name != "" && name[0] >= 'A' && name[0] <= 'Z'
+}
+
+func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
+	body := transformInterpolationWithName(method.Body, interpolationName)
+	methodResult, body, err := transformRecordMethodResult(
+		method.Result,
+		body,
+		context,
+	)
+	if err != nil {
+		return err
+	}
+	parameters, err := transformParameterList(method.Parameters, context)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "func %s%s(%s)", staticMethodGoName(class, method), method.TypeParams, parameters)
+	result := strings.TrimSpace(methodResult)
+	if !method.Generated {
+		result = transformPolymorphicResultType(result, context)
+	}
+	if result != "" {
+		fmt.Fprintf(out, " %s", result)
+	}
+	out.WriteString(" {\n")
+
+	methodContext := context
+	methodContext.CurrentClass = ""
+	methodContext.CurrentMethod = method.Name
+	methodContext.CurrentResult = strings.TrimSpace(methodResult)
+	methodContext.MethodSignatures = nil
+	body, err = transformLambdas(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformSafeAccess(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformCallableCalls(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformConstructors(body, context)
+	if err != nil {
+		return err
+	}
+	body, err = transformPolymorphicDeclarations(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformIntrospection(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformExtensions(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformOverloads(body, context.Overloads)
+	if err != nil {
+		return err
+	}
+	out.WriteString(body)
+	out.WriteString("\n}\n\n")
+	return nil
+}
+
 func contextForMethod(context constructorContext, class *ClassDecl, methodName string) constructorContext {
 	methodContext := context
 	methodContext.CurrentClass = class.Name
@@ -809,7 +911,7 @@ func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 
 	overloads := map[string]map[int]string{}
 	for _, method := range class.Methods {
-		if method.GoName == "" {
+		if method.GoName == "" || method.IsStatic {
 			continue
 		}
 		arity, err := parameterCount(method.Parameters)
@@ -851,7 +953,7 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 
 	overloads := map[string]map[string]string{}
 	for _, method := range class.Methods {
-		if method.GoName == "" {
+		if method.GoName == "" || method.IsStatic {
 			continue
 		}
 		parameters, err := parseParameterInfos(method.Parameters)
@@ -1175,11 +1277,15 @@ func callResultType(call *ast.CallExpr, context constructorContext, valueTypes m
 		candidates = context.FunctionSignatures[function.Name]
 	case *ast.SelectorExpr:
 		if receiver, ok := function.X.(*ast.Ident); ok {
-			className := context.CurrentClass
-			if receiver.Name != "this" {
-				className = strings.TrimPrefix(valueTypes[receiver.Name], "*")
+			if _, isClass := context.Targets[receiver.Name]; isClass {
+				candidates = context.StaticMethodSignatures[receiver.Name][function.Sel.Name]
+			} else {
+				className := context.CurrentClass
+				if receiver.Name != "this" {
+					className = strings.TrimPrefix(valueTypes[receiver.Name], "*")
+				}
+				candidates = context.ClassMethodSignatures[className][function.Sel.Name]
 			}
-			candidates = context.ClassMethodSignatures[className][function.Sel.Name]
 		}
 	}
 
@@ -1197,6 +1303,13 @@ func callResultType(call *ast.CallExpr, context constructorContext, valueTypes m
 			}
 		}
 		if matches {
+			if function, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if receiver, ok := function.X.(*ast.Ident); ok {
+					if _, isClass := context.Targets[receiver.Name]; isClass {
+						return candidate.Result
+					}
+				}
+			}
 			return transformPolymorphicResultType(candidate.Result, context)
 		}
 	}

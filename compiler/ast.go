@@ -54,6 +54,8 @@ type Method struct {
 	Name                 string
 	TypeParams           string
 	GoName               string
+	IsStatic             bool
+	Generated            bool
 	Parameters           string
 	ParameterAnnotations map[string][]AnnotationUse
 	Result               string

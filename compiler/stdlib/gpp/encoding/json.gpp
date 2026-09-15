@@ -1,0 +1,13 @@
+package gpp.encoding
+
+import "encoding/json"
+
+func ToJSON(value any) ([]byte, error) {
+	return json.Marshal(value)
+}
+
+func FromJSON[T any](data []byte) (T, error) {
+	var value T
+	err := json.Unmarshal(data, &value)
+	return value, err
+}

@@ -1,0 +1,8 @@
+package gpp.encoding
+
+annotation (
+	Serializable on class
+	Name(name string) on field
+	Ignore on field
+	OmitEmpty on field
+)

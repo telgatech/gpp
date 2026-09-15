@@ -276,6 +276,28 @@ func parseClassBody(class *ClassDecl, body string) error {
 			break
 		}
 
+		if keywordAt(body, pos, "static") {
+			staticPos := pos
+			pos = skipSpace(body, pos+len("static"))
+			if !keywordAt(body, pos, "func") {
+				return fmt.Errorf(
+					"class %s: static must be followed by func",
+					class.Name,
+				)
+			}
+			method, end, err := parseMethod(body, pos)
+			if err != nil {
+				return err
+			}
+			method.IsStatic = true
+			if end <= staticPos {
+				return fmt.Errorf("class %s: invalid static method", class.Name)
+			}
+			class.Methods = append(class.Methods, method)
+			pos = end
+			continue
+		}
+
 		if keywordAt(body, pos, "func") {
 			method, end, err := parseMethod(body, pos)
 
