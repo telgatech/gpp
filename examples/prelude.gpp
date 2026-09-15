@@ -1,0 +1,37 @@
+package main
+
+import "fmt"
+
+class User {
+	Name string
+	Active bool
+}
+
+func main() {
+	users := []User{User("Ada", true), User("Bob", false), User("Cara", true)}
+	active := users.Filter(user => user.Active)
+	found, ok := users.Find(user => user.Name == "Bob")
+
+	names := []string{"Cara", "Ada", "Bob"}
+	numbers := []int{3, 1, 2}
+	numbers.Sort()
+	min, hasMin := numbers.Min()
+	numbers.SortDesc()
+	max, hasMax := numbers.Max()
+
+	config := map[string]string{"port": "8080"}
+	fmt.Println(
+		users.Any(user => user.Active),
+		users.All(user => user.Active),
+		len(active), found.Name, ok,
+		names.Contains("Ada"), names.Index("Bob"),
+		min, hasMin, max, hasMax,
+		config.Has("port"), config.GetOr("host", "localhost"),
+		"   ".Blank(), "name".Empty(),
+	)
+
+	names.Reverse()
+	names.Sort((left, right) => left < right)
+	_ = config.Keys()
+	_ = config.Values()
+}

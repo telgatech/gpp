@@ -1,0 +1,162 @@
+package prelude
+
+import (
+	"cmp"
+	"sort"
+	"strings"
+)
+
+extend []T {
+	func Any(fn func(T) bool) bool {
+		for _, value := range this {
+			if fn(value) {
+				return true
+			}
+		}
+		return false
+	}
+
+	func All(fn func(T) bool) bool {
+		for _, value := range this {
+			if !fn(value) {
+				return false
+			}
+		}
+		return true
+	}
+
+	func Find(fn func(T) bool) (T, bool) {
+		for _, value := range this {
+			if fn(value) {
+				return value, true
+			}
+		}
+		var zero T
+		return zero, false
+	}
+
+	func Filter(fn func(T) bool) []T {
+		result := []T{}
+		for _, value := range this {
+			if fn(value) {
+				result = append(result, value)
+			}
+		}
+		return result
+	}
+
+	func Reverse() {
+		for left, right := 0, len(this)-1; left < right; left, right = left+1, right-1 {
+			this[left], this[right] = this[right], this[left]
+		}
+	}
+
+	func Sort(less func(T, T) bool) {
+		sort.Slice(this, func(left, right int) bool {
+			return less(this[left], this[right])
+		})
+	}
+}
+
+extend []T where T comparable {
+	func Contains(value T) bool {
+		for _, candidate := range this {
+			if candidate == value {
+				return true
+			}
+		}
+		return false
+	}
+
+	func Index(value T) int {
+		for index, candidate := range this {
+			if candidate == value {
+				return index
+			}
+		}
+		return -1
+	}
+}
+
+extend []T where T cmp.Ordered {
+	func Sort() {
+		sort.Slice(this, func(left, right int) bool {
+			return this[left] < this[right]
+		})
+	}
+
+	func SortDesc() {
+		sort.Slice(this, func(left, right int) bool {
+			return this[left] > this[right]
+		})
+	}
+
+	func Min() (T, bool) {
+		if len(this) == 0 {
+			var zero T
+			return zero, false
+		}
+		result := this[0]
+		for _, value := range this[1:] {
+			if value < result {
+				result = value
+			}
+		}
+		return result, true
+	}
+
+	func Max() (T, bool) {
+		if len(this) == 0 {
+			var zero T
+			return zero, false
+		}
+		result := this[0]
+		for _, value := range this[1:] {
+			if value > result {
+				result = value
+			}
+		}
+		return result, true
+	}
+}
+
+extend string {
+	func Empty() bool {
+		return len(this) == 0
+	}
+
+	func Blank() bool {
+		return len(strings.TrimSpace(this)) == 0
+	}
+}
+
+extend map[K]V {
+	func Keys() []K {
+		result := make([]K, 0, len(this))
+		for key := range this {
+			result = append(result, key)
+		}
+		return result
+	}
+
+	func Values() []V {
+		result := make([]V, 0, len(this))
+		for _, value := range this {
+			result = append(result, value)
+		}
+		return result
+	}
+
+	func Has(key K) bool {
+		_, ok := this[key]
+		return ok
+	}
+
+	func GetOr(key K, fallback V) V {
+		value, ok := this[key]
+		if !ok {
+			return fallback
+		}
+		return value
+	}
+}

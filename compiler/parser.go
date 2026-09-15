@@ -738,7 +738,11 @@ func parseExtend(src string, start int) (*ExtendDecl, int, error) {
 	if bodyOpen < 0 {
 		return nil, 0, fmt.Errorf("extend declaration requires a target and body")
 	}
-	targets, err := splitTopLevel(src[pos:bodyOpen], ',')
+	targetText, constraints, err := splitExtensionTargetConstraints(src[pos:bodyOpen])
+	if err != nil {
+		return nil, 0, err
+	}
+	targets, err := splitTopLevel(targetText, ',')
 	if err != nil {
 		return nil, 0, err
 	}
@@ -764,7 +768,36 @@ func parseExtend(src string, start int) (*ExtendDecl, int, error) {
 	if len(container.Fields) > 0 {
 		return nil, 0, fmt.Errorf("extension declarations may contain methods only")
 	}
-	return &ExtendDecl{Targets: targets, Methods: container.Methods}, close + 1, nil
+	return &ExtendDecl{Targets: targets, TargetConstraints: constraints, Methods: container.Methods}, close + 1, nil
+}
+
+func splitExtensionTargetConstraints(src string) (string, map[string]string, error) {
+	src = strings.TrimSpace(src)
+	where := strings.Index(src, " where ")
+	if where < 0 {
+		return src, nil, nil
+	}
+	targets := strings.TrimSpace(src[:where])
+	constraintText := strings.TrimSpace(src[where+len(" where "):])
+	if targets == "" || constraintText == "" {
+		return "", nil, fmt.Errorf("extension target constraints require a target and constraint")
+	}
+	constraints := map[string]string{}
+	parts, err := splitTopLevel(constraintText, ',')
+	if err != nil {
+		return "", nil, err
+	}
+	for _, part := range parts {
+		fields := strings.Fields(part)
+		if len(fields) < 2 {
+			return "", nil, fmt.Errorf("invalid extension target constraint %q", strings.TrimSpace(part))
+		}
+		if !isTypeParameterName(fields[0]) {
+			return "", nil, fmt.Errorf("invalid extension target parameter %q", fields[0])
+		}
+		constraints[fields[0]] = strings.Join(fields[1:], " ")
+	}
+	return targets, constraints, nil
 }
 
 func findExtendBodyOpen(src string, start int) int {

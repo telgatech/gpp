@@ -19,12 +19,17 @@ func main() {
 		".gpp",
 		"directory for generated Go code",
 	)
+	noPrelude := flag.Bool(
+		"no-prelude",
+		false,
+		"disable the implicit Go++ prelude",
+	)
 	flag.Parse()
 
 	if flag.NArg() == 0 {
 		fmt.Fprintln(
 			os.Stderr,
-			"usage: gpp [-module module/path] [-output directory] file.gpp [file.gpp ...]",
+			"usage: gpp [-module module/path] [-output directory] [-no-prelude] file.gpp [file.gpp ...]",
 		)
 
 		os.Exit(1)
@@ -33,7 +38,7 @@ func main() {
 	err := compiler.CompileFilesWithOptions(
 		flag.Args(),
 		*outputDir,
-		compiler.CompileOptions{ModulePath: *modulePath},
+		compiler.CompileOptions{ModulePath: *modulePath, NoPrelude: *noPrelude},
 	)
 
 	if err != nil {

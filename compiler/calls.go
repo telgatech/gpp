@@ -110,8 +110,60 @@ func astExpressionTypeKeyWithEnv(expr ast.Expr, types map[string]string) string 
 			}
 		}
 		return value.Name
+	case *ast.FuncLit:
+		return astFunctionTypeKey(value.Type)
 	}
 	return ""
+}
+
+func astFunctionTypeKey(function *ast.FuncType) string {
+	if function == nil || function.Params == nil {
+		return ""
+	}
+	parameters := []string{}
+	for _, field := range function.Params.List {
+		typeName, err := formatNode(field.Type)
+		if err != nil {
+			return ""
+		}
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			parameters = append(parameters, strings.Join(strings.Fields(typeName), " "))
+		}
+	}
+	result := ""
+	if function.Results != nil {
+		parts := []string{}
+		for _, field := range function.Results.List {
+			typeName, err := formatNode(field.Type)
+			if err != nil {
+				return ""
+			}
+			count := len(field.Names)
+			if count == 0 {
+				count = 1
+			}
+			for range count {
+				parts = append(parts, strings.Join(strings.Fields(typeName), " "))
+			}
+		}
+		if len(parts) == 1 {
+			result = parts[0]
+		} else {
+			result = "(" + strings.Join(parts, ", ") + ")"
+		}
+	}
+	return "func(" + strings.Join(parameters, ", ") + ")" + funcResultSuffix(result)
+}
+
+func funcResultSuffix(result string) string {
+	if result == "" {
+		return ""
+	}
+	return " " + result
 }
 
 func astArgumentSignatureKey(call *ast.CallExpr, types map[string]string) string {

@@ -17,6 +17,10 @@ var interpolationRE = regexp.MustCompile(
 )
 
 func Emit(file *File) ([]byte, error) {
+	return EmitWithOptions(file, CompileOptions{})
+}
+
+func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	model, err := ResolveProgram(&Program{Files: []*File{file}})
 	if err != nil {
 		return nil, err
@@ -35,6 +39,11 @@ func Emit(file *File) ([]byte, error) {
 	context.Records = newRecordContext()
 	context.Introspection.Enabled = fileUsesIntrospection(file)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
+	if !options.NoPrelude {
+		if err := configurePrelude(&context, true); err != nil {
+			return nil, err
+		}
+	}
 	configureNativeExtensionMethods(&context, file)
 	if err := addFunctionOverloads(&context, file); err != nil {
 		return nil, err
@@ -74,6 +83,10 @@ type constructorContext struct {
 	Records                  *recordContext
 	Introspection            *introspectionContext
 	Extensions               []extensionMethod
+	PreludeExtensions        []extensionMethod
+	PreludeImports           []string
+	EmitPrelude              bool
+	EmitPreludeAll           bool
 	Annotations              map[string]*AnnotationDecl
 	Package                  string
 	NativeMethods            map[string]map[string]bool
@@ -158,6 +171,14 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if context.EmitPrelude {
+		preludeBody, err := emitPreludeExtensions(context, body)
+		if err != nil {
+			return nil, err
+		}
+		body = prependPreludeImports(body, preludeImportsForBody(preludeBody, context.PreludeImports))
+		body = insertAfterImports(body, preludeBody)
+	}
 
 	declarationsPrefix := ""
 	if needsFmtImport {
@@ -227,7 +248,11 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 		switch d := decl.(type) {
 		case *RawDecl:
 			code := transformInterpolationWithName(stripAnnotationSyntaxPreserve(d.Code), interpolationName)
-			code, err := transformSafeAccess(code, context)
+			code, err := transformLambdas(code, context)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformSafeAccess(code, context)
 			if err != nil {
 				return "", err
 			}
@@ -340,6 +365,10 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		methodContext.CurrentMethod = method.Name
 		methodContext.CurrentResult = strings.TrimSpace(method.Result)
 		methodContext.MethodSignatures = context.ClassMethodSignatures[class.Name]
+		body, err = transformLambdas(body, methodContext)
+		if err != nil {
+			return err
+		}
 		body, err = transformSafeAccess(body, methodContext)
 		if err != nil {
 			return err
@@ -841,6 +870,20 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 	case *ast.CallExpr:
 		if result := callResultType(value, context, valueTypes); result != "" {
 			return result
+		}
+	case *ast.SelectorExpr:
+		baseType := strings.TrimPrefix(strings.TrimSpace(expressionStaticType(value.X, context, valueTypes)), "*")
+		if target, ok := context.Targets[baseType]; ok {
+			for _, field := range target.Class.Fields {
+				if field.Name == value.Sel.Name {
+					return field.Type
+				}
+			}
+			for _, signature := range context.ClassMethodSignatures[baseType][value.Sel.Name] {
+				if signature.Result != "" {
+					return signature.Result
+				}
+			}
 		}
 	case *ast.Ident:
 		if valueTypes != nil && valueTypes[value.Name] != "" {

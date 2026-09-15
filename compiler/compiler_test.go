@@ -82,6 +82,53 @@ func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	}
 }
 
+func TestCompileFilesEmitsPreludeOncePerPackage(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	first := filepath.Join(inputDir, "first.gpp")
+	second := filepath.Join(inputDir, "second.gpp")
+
+	if err := os.WriteFile(first, []byte(`package demo
+
+func First() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte(`package demo
+
+func Second() bool {
+    values := []int{1, 2}
+    return values.Any(func(value int) bool { return value == 2 })
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions(
+		[]string{first, second},
+		outputDir,
+		CompileOptions{ModulePath: "generated"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(outputDir, "demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(outputDir, "demo", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		count += strings.Count(string(data), "func GppPreludeExt___T_Any_")
+	}
+	if count != 1 {
+		t.Fatalf("expected one generated prelude helper for the package, got %d", count)
+	}
+}
+
 func TestCompileFilesLowersQualifiedCrossPackageConstructor(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

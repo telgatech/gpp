@@ -28,6 +28,9 @@ The examples cover:
   including a generic extension method.
 - `annotations.gpp` — declared annotations, target restrictions, field/method
   usage, and annotation introspection.
+- `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
+- `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
+  parameter types, ordinary function arguments, and closure capture.
 
 The dotted-package example is compiled as a pair:
 

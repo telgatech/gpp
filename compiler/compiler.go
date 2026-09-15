@@ -10,6 +10,7 @@ import (
 
 type CompileOptions struct {
 	ModulePath string
+	NoPrelude  bool
 }
 
 func CompileFiles(files []string, outputDir string) error {
@@ -63,6 +64,19 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	}
 	recordContexts := map[string]*recordContext{}
 	introspectionContexts := map[string]*introspectionContext{}
+	preludeEmitted := map[string]bool{}
+	preludeNeeded := map[string]bool{}
+	if !options.NoPrelude {
+		for _, file := range program.Files {
+			used, err := preludeUsedInFile(file)
+			if err != nil {
+				return err
+			}
+			if used {
+				preludeNeeded[file.Package] = true
+			}
+		}
+	}
 	usesIntrospection := programUsesIntrospection(program)
 
 	for _, file := range program.Files {
@@ -85,6 +99,14 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		context.Introspection.Enabled = usesIntrospection
 		context.Annotations = model.Packages[file.Package].Annotations
 		context.Package = file.Package
+		if !options.NoPrelude {
+			context.EmitPrelude = !preludeEmitted[file.Package]
+			context.EmitPreludeAll = context.EmitPrelude && preludeNeeded[file.Package]
+			preludeEmitted[file.Package] = true
+			if err := configurePrelude(&context, context.EmitPrelude); err != nil {
+				return fmt.Errorf("%s: %w", file.Name, err)
+			}
+		}
 		configureNativeExtensionMethods(&context, file)
 		context.FunctionSignatures = functionSignatures[file.Package]
 		if err := configureFunctionOverloads(&context.Overloads, context.FunctionSignatures); err != nil {

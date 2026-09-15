@@ -9,16 +9,19 @@ import (
 	"go/token"
 	"go/types"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 type extensionMethod struct {
-	Target       string
-	ReceiverType string
-	Qualifier    string
-	GoName       string
-	Method       Method
+	Target            string
+	TargetConstraints map[string]string
+	ReceiverType      string
+	Qualifier         string
+	GoName            string
+	Method            Method
+	Prelude           bool
 }
 
 func extensionMethodsForDeclarations(declarations []*ExtendDecl, qualifier string) []extensionMethod {
@@ -28,11 +31,12 @@ func extensionMethodsForDeclarations(declarations []*ExtendDecl, qualifier strin
 			target := normalizeExtensionTarget(rawTarget)
 			for _, method := range declaration.Methods {
 				methods = append(methods, extensionMethod{
-					Target:       target,
-					ReceiverType: extensionReceiverType(target, nil),
-					Qualifier:    qualifier,
-					GoName:       extensionGoName(target, method),
-					Method:       method,
+					Target:            target,
+					TargetConstraints: cloneStringMap(declaration.TargetConstraints),
+					ReceiverType:      extensionReceiverType(target, nil),
+					Qualifier:         qualifier,
+					GoName:            extensionGoName(target, method),
+					Method:            method,
 				})
 			}
 		}
@@ -79,6 +83,17 @@ func extensionGoName(target string, method Method) string {
 	return fmt.Sprintf("GppExt_%s_%s_%x", base, method.Name, hash[:4])
 }
 
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
 func sanitizeExtensionName(name string) string {
 	var output strings.Builder
 	for _, r := range name {
@@ -109,7 +124,9 @@ func transformExtensions(src string, context constructorContext) (string, error)
 		return src, nil
 	}
 	valueTypes := polymorphicValueTypes(parsed, context)
-	if context.CurrentExtensionReceiver != "" {
+	if context.CurrentClass != "" {
+		valueTypes["this"] = "*" + context.CurrentClass
+	} else if context.CurrentExtensionReceiver != "" {
 		valueTypes["this"] = context.CurrentExtensionReceiver
 	}
 
@@ -332,19 +349,32 @@ func applicableExtensions(name, actualType string, args []ast.Expr, typeArgument
 		if len(typeArguments) > 0 && extensionTypeParameterCount(extension.Method.TypeParams) != len(typeArguments) {
 			continue
 		}
-		resolved, ok := resolveExtensionArguments(extension, args, valueTypes, context)
+		resolved, ok := resolveExtensionArguments(extension, actualType, args, valueTypes, context)
 		if !ok {
 			continue
 		}
 		result = append(result, applicableExtension{Method: extension, Arguments: resolved})
 	}
+	userExtensions := result[:0]
+	for _, candidate := range result {
+		if !candidate.Method.Prelude {
+			userExtensions = append(userExtensions, candidate)
+		}
+	}
+	if len(userExtensions) > 0 {
+		return userExtensions
+	}
 	return result
 }
 
-func resolveExtensionArguments(extension extensionMethod, args []ast.Expr, valueTypes map[string]string, context constructorContext) ([]string, bool) {
+func resolveExtensionArguments(extension extensionMethod, actualType string, args []ast.Expr, valueTypes map[string]string, context constructorContext) ([]string, bool) {
 	parameters, err := parseParameterInfos(extension.Method.Parameters)
 	if err != nil {
 		return nil, false
+	}
+	bindings := extensionTargetBindings(extension.Target, actualType)
+	for index := range parameters {
+		parameters[index].Type = substituteLambdaType(parameters[index].Type, bindings)
 	}
 	argumentText := make([]string, len(args))
 	for index, argument := range args {
@@ -371,6 +401,9 @@ func resolveExtensionArguments(extension extensionMethod, args []ast.Expr, value
 		}
 		actual := expressionStaticType(parsed, context, valueTypes)
 		generic := extensionTypeParameterNames(extension.Method.TypeParams)
+		for name := range extensionTargetTypeParameterNames(extension.Target) {
+			generic[name] = true
+		}
 		if actual != "" && index < len(parameters) && !generic[parameters[index].Type] && actual != parameters[index].Type && !isAssignableStaticType(actual, parameters[index].Type, context) {
 			return nil, false
 		}
@@ -403,6 +436,9 @@ func extensionTargetMatches(target, receiverType, actual string) bool {
 	if actual == "" {
 		return false
 	}
+	if extensionGenericTargetMatches(target, actual) {
+		return true
+	}
 	if strings.HasPrefix(target, "*") {
 		return actual == target || actual == strings.TrimPrefix(target, "*")
 	}
@@ -410,6 +446,63 @@ func extensionTargetMatches(target, receiverType, actual string) bool {
 		return actual == target
 	}
 	return actual == target || actual == "*"+target || actual == receiverType
+}
+
+func extensionTargetTypeParameterNames(target string) map[string]bool {
+	result := map[string]bool{}
+	target = strings.TrimSpace(target)
+	if strings.HasPrefix(target, "[]") {
+		name := strings.TrimSpace(target[2:])
+		if isTypeParameterName(name) {
+			result[name] = true
+		}
+		return result
+	}
+	if !strings.HasPrefix(target, "map[") {
+		return result
+	}
+	close := strings.IndexByte(target, ']')
+	if close < 0 || close+1 >= len(target) {
+		return result
+	}
+	key := strings.TrimSpace(target[len("map["):close])
+	value := strings.TrimSpace(target[close+1:])
+	if isTypeParameterName(key) {
+		result[key] = true
+	}
+	if isTypeParameterName(value) {
+		result[value] = true
+	}
+	return result
+}
+
+func isTypeParameterName(name string) bool {
+	switch name {
+	case "T", "K", "V", "E":
+		return true
+	default:
+		return false
+	}
+}
+
+func extensionGenericTargetMatches(target, actual string) bool {
+	parameters := extensionTargetTypeParameterNames(target)
+	if len(parameters) == 0 {
+		return false
+	}
+	target = strings.TrimSpace(target)
+	actual = strings.TrimSpace(actual)
+	if strings.HasPrefix(target, "[]") && strings.HasPrefix(actual, "[]") {
+		return strings.TrimSpace(target[2:]) != "" && strings.TrimSpace(actual[2:]) != ""
+	}
+	if strings.HasPrefix(target, "map[") && strings.HasPrefix(actual, "map[") {
+		targetClose := strings.IndexByte(target, ']')
+		actualClose := strings.IndexByte(actual, ']')
+		return targetClose > 4 && actualClose > 4 &&
+			strings.TrimSpace(target[targetClose+1:]) != "" &&
+			strings.TrimSpace(actual[actualClose+1:]) != ""
+	}
+	return false
 }
 
 func extensionNeedsAddress(receiverType, actualType string) bool {
@@ -526,15 +619,71 @@ func extensionTypeParameters(typeParams string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+func extensionTargetTypeParameters(target string, constraints map[string]string) string {
+	names := extensionTargetTypeParameterNames(target)
+	if len(names) == 0 {
+		return ""
+	}
+	ordered := []string{}
+	for name := range names {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	parts := make([]string, len(ordered))
+	for index, name := range ordered {
+		constraint := strings.TrimSpace(constraints[name])
+		if constraint == "" {
+			if name == extensionMapKeyParameter(target) {
+				constraint = "comparable"
+			} else {
+				constraint = "any"
+			}
+		}
+		parts[index] = name + " " + constraint
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func extensionMapKeyParameter(target string) string {
+	target = strings.TrimSpace(target)
+	if !strings.HasPrefix(target, "map[") {
+		return ""
+	}
+	close := strings.IndexByte(target, ']')
+	if close < 0 {
+		return ""
+	}
+	key := strings.TrimSpace(target[len("map["):close])
+	if isTypeParameterName(key) {
+		return key
+	}
+	return ""
+}
+
+func extensionFunctionTypeParameters(extension extensionMethod) string {
+	targetParameters := extensionTargetTypeParameters(extension.Target, extension.TargetConstraints)
+	methodParameters := extensionTypeParameters(extension.Method.TypeParams)
+	if targetParameters == "" {
+		return methodParameters
+	}
+	if methodParameters == "" {
+		return targetParameters
+	}
+	targetParts := strings.TrimSuffix(strings.TrimPrefix(targetParameters, "["), "]")
+	methodParts := strings.TrimSuffix(strings.TrimPrefix(methodParameters, "["), "]")
+	return "[" + targetParts + ", " + methodParts + "]"
+}
+
 func emitExtension(out *strings.Builder, declaration *ExtendDecl, context constructorContext, interpolationName string) error {
 	for _, target := range declaration.Targets {
 		target = normalizeExtensionTarget(target)
 		for _, method := range declaration.Methods {
 			extension := extensionMethod{
-				Target:       target,
-				ReceiverType: extensionReceiverType(target, context.Introspection.Classes),
-				GoName:       extensionGoName(target, method),
-				Method:       method,
+				Target:            target,
+				TargetConstraints: cloneStringMap(declaration.TargetConstraints),
+				ReceiverType:      extensionReceiverType(target, context.Introspection.Classes),
+				GoName:            extensionGoName(target, method),
+				Method:            method,
 			}
 			if err := emitExtensionMethod(out, extension, context, interpolationName); err != nil {
 				return fmt.Errorf("extension method %s for target %s: %w", method.Name, target, err)
@@ -554,7 +703,7 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		return err
 	}
 	name := extension.GoName
-	fmt.Fprintf(out, "func %s%s(this %s", name, extensionTypeParameters(extension.Method.TypeParams), extension.ReceiverType)
+	fmt.Fprintf(out, "func %s%s(this %s", name, extensionFunctionTypeParameters(extension), extension.ReceiverType)
 	if parameters != "" {
 		fmt.Fprintf(out, ", %s", parameters)
 	}
@@ -568,6 +717,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	methodContext := context
 	methodContext.CurrentExtensionReceiver = extension.ReceiverType
 	body := transformInterpolationWithName(extension.Method.Body, interpolationName)
+	body, err = transformLambdas(body, methodContext)
+	if err != nil {
+		return err
+	}
 	body, err = transformSafeAccess(body, methodContext)
 	if err != nil {
 		return err

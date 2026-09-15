@@ -71,6 +71,7 @@ extend
         return len(this) == 0
     }
 }
+
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -85,5 +86,26 @@ extend
 	expected := []string{"string", "[]byte", "map[string]int"}
 	if strings.Join(extension.Targets, "|") != strings.Join(expected, "|") {
 		t.Fatalf("unexpected extension targets: %#v", extension.Targets)
+	}
+}
+
+func TestParseGenericExtensionTargetConstraint(t *testing.T) {
+	file, err := ParseFile("generic_extension.gpp", `
+extend []T where T cmp.Ordered {
+    func Min() (T, bool) { return this[0], true }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extension, ok := file.Decls[0].(*ExtendDecl)
+	if !ok {
+		t.Fatalf("expected extension declaration, got %#v", file.Decls[0])
+	}
+	if len(extension.Targets) != 1 || extension.Targets[0] != "[]T" {
+		t.Fatalf("unexpected generic target: %#v", extension.Targets)
+	}
+	if extension.TargetConstraints["T"] != "cmp.Ordered" {
+		t.Fatalf("unexpected target constraints: %#v", extension.TargetConstraints)
 	}
 }

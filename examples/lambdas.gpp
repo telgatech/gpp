@@ -1,0 +1,46 @@
+package main
+
+import "fmt"
+
+class User {
+	Name string
+	Active bool
+}
+
+class Team {
+	Users []User
+	Enabled bool
+
+	func Active() []User {
+		return this.Users.Filter(user => this.Enabled && user.Active)
+	}
+}
+
+func Apply(value int, transform func(int) int) int {
+	return transform(value)
+}
+
+func main() {
+	users := []User{
+		User("Ada", true),
+		User("Bob", false),
+	}
+	team := Team(users, true)
+
+	limit := 0
+	active := users.Filter(user => user.Active)
+	selected := users.Filter(user => user.Active && limit == 0)
+	teamActive := team.Active()
+	users.Sort((left, right) => left.Name < right.Name)
+
+	var predicate func(User) bool
+	predicate = (user User) => user.Active
+
+	count := 0
+	users.Any(user => {
+		count++
+		return user.Active
+	})
+
+	fmt.Println(len(active), len(selected), len(teamActive), predicate(users[0]), Apply(2, value => value*2), count)
+}

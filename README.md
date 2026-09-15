@@ -23,6 +23,9 @@ A tiny source-to-source compiler that emits ordinary Go.
 - anonymous structural records with deterministic generated Go structs
 - compile-time-generated class metadata through `obj.class` and `Class.fields`
 - declared, typed annotations with target validation and runtime metadata
+- implicit prelude extensions for slices, maps, and strings
+- concise lambda expressions such as `users.Any(user => user.Active)` that
+  lower to ordinary Go function literals
 - compile-time extension methods that lower to ordinary package-level functions
 - multi-target extension blocks, such as `extend string, []byte { ... }`
 
@@ -50,6 +53,9 @@ Choose a different generated output directory with `-output`:
 ```bash
 go run ./cmd/gpp -output build/gpp examples/hello.gpp
 ```
+
+The standard Go++ prelude is available automatically. Disable it for minimal
+or diagnostic builds with `-no-prelude`.
 
 Class introspection exposes generated `name`, `fields`, `methods`,
 `annotations`, `owner`, `type`, `get`, `set`, and `addr` metadata while

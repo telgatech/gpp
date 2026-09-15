@@ -213,7 +213,10 @@ Current v0.2 implementation scope
   `spec.records.md`
 - compile-time-generated class descriptors through `obj.class` and
   `Class.fields`; see `spec.introspection.md`
+- an implicit standard prelude for small slice, map, and string helpers; see
+  `spec/prelude.md`
 - extension methods on native Go and Go++ types; see `spec.extension-methods.md`
+- lambda expressions with contextual parameter inference; see `spec/lambdas.md`
 
 Explicit v0.1 boundaries (historical baseline)
 - Go nil behavior is unchanged; safe member access is deferred.

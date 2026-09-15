@@ -1480,3 +1480,186 @@ func main() {
 		}
 	}
 }
+
+func TestEmitImplicitPrelude(t *testing.T) {
+	file, err := ParseFile("prelude.gpp", `
+func main() {
+    values := []int{3, 1, 2}
+    _ = values.Any(func(value int) bool { return value == 2 })
+    _ = values.Contains(2)
+    _ = values.Filter(func(value int) bool { return value > 1 })
+    _, _ = values.Find(func(value int) bool { return value == 1 })
+    values.Sort()
+    values.SortDesc()
+    _, _ = values.Min()
+    _, _ = values.Max()
+    values.Reverse()
+
+    text := " value "
+    _ = text.Empty()
+    _ = text.Blank()
+
+    options := map[string]string{"mode": "test"}
+    _ = options.Has("mode")
+    _ = options.GetOr("missing", "default")
+    _ = options.Keys()
+    _ = options.Values()
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"func GppPreludeExt___T_Any_",
+		"func GppPreludeExt___T_Contains_",
+		"func GppPreludeExt___T_Sort_",
+		"func GppPreludeExt___T_SortDesc_",
+		"func GppPreludeExt___T_Min_",
+		"func GppPreludeExt___T_Max_",
+		"func GppPreludeExt_string_Empty_",
+		"func GppPreludeExt_string_Blank_",
+		"func GppPreludeExt_map_K_V_Has_",
+		"import (",
+		"\"cmp\"",
+		"\"sort\"",
+		"\"strings\"",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("implicit prelude output missing %q:\n%s", expected, generated)
+		}
+	}
+}
+
+func TestEmitCanDisablePrelude(t *testing.T) {
+	file, err := ParseFile("no_prelude.gpp", `
+func main() {
+    values := []int{1}
+    _ = values.Any(func(value int) bool { return value == 1 })
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := EmitWithOptions(file, CompileOptions{NoPrelude: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(code), "GppExt_") {
+		t.Fatalf("no-prelude output unexpectedly contains generated prelude code:\n%s", code)
+	}
+	if !strings.Contains(string(code), ".Any(") {
+		t.Fatalf("no-prelude output unexpectedly lowered the prelude call:\n%s", code)
+	}
+}
+
+func TestEmitLowersContextualLambdas(t *testing.T) {
+	file, err := ParseFile("lambdas.gpp", `
+class User {
+    Name string
+    Active bool
+}
+
+class Team {
+    Users []User
+    Enabled bool
+
+    func Active() []User {
+        return this.Users.Filter(user => this.Enabled && user.Active)
+    }
+}
+
+func Apply(value int, fn func(int) int) int {
+    return fn(value)
+}
+
+func Choose(fn func(User) bool) string {
+    return "bool"
+}
+
+func Choose(fn func(User) string) string {
+    return "string"
+}
+
+func Run(fn func() string) string {
+    return fn()
+}
+
+func main() {
+    users := []User{User("Ada", true)}
+	team := Team(users, true)
+	_ = team.Active()
+    _ = users.Any(user => user.Active)
+    _ = users.Filter(user => {
+        return user.Active
+    })
+    _ = users.Sort((left, right) => left.Name < right.Name)
+    _ = Apply(2, value => value * 2)
+    _ = Choose(user => user.Active)
+    _ = Run(() => "done")
+
+    var predicate func(User) bool
+    predicate = user => user.Active
+    _ = predicate
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"func(user User) bool {",
+		"func(left User, right User) bool {",
+		"func(value int) int { return value * 2 }",
+		"Choose__gpp_1_func_User__bool(func(user User) bool {",
+		"func() string { return \"done\" }",
+		"predicate = func(user User) bool { return user.Active }",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("lambda output missing %q:\n%s", expected, generated)
+		}
+	}
+}
+
+func TestEmitRejectsUntypedStandaloneLambda(t *testing.T) {
+	file, err := ParseFile("untyped_lambda.gpp", `
+func main() {
+    predicate := value => value
+    _ = predicate
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Emit(file)
+	if err == nil || !strings.Contains(err.Error(), "cannot infer type of lambda parameter") {
+		t.Fatalf("expected standalone lambda inference error, got %v", err)
+	}
+}
+
+func TestEmitRejectsValueLambdaWithoutReturn(t *testing.T) {
+	file, err := ParseFile("missing_lambda_return.gpp", `
+func Consume(fn func(int) bool) {}
+
+func main() {
+    Consume(value => {
+        _ = value
+    })
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Emit(file)
+	if err == nil || !strings.Contains(err.Error(), "lambda does not match any expected function type") {
+		t.Fatalf("expected missing lambda return error, got %v", err)
+	}
+}

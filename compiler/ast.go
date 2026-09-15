@@ -35,10 +35,11 @@ type ClassDecl struct {
 func (*ClassDecl) decl() {}
 
 type ExtendDecl struct {
-	Targets    []string
-	SourceFile string
-	SourceLine int
-	Methods    []Method
+	Targets           []string
+	TargetConstraints map[string]string
+	SourceFile        string
+	SourceLine        int
+	Methods           []Method
 }
 
 func (*ExtendDecl) decl() {}
