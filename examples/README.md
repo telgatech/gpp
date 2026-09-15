@@ -33,6 +33,8 @@ The examples cover:
   `database/sql`, including `Get` for one model and `Select` for model slices.
   It uses the pure-Go `modernc.org/sqlite` driver; run `go get
   modernc.org/sqlite` in the generated module before running this example.
+  Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and
+  PostgreSQL.
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.

@@ -148,8 +148,8 @@ extend *sql.DB {
 			values = append(values, field.get(any(entity)))
 		}
 		placeholders := []string{}
-		for range columns {
-			placeholders = append(placeholders, "?")
+		for index := range columns {
+			placeholders = append(placeholders, "$"+fmt.Sprint(index+1))
 		}
 		query := fmt.Sprintf(
 			"INSERT INTO %s (%s) VALUES (%s)",
@@ -182,13 +182,13 @@ extend *sql.DB {
 				}
 				continue
 			}
-			assignments = append(assignments, fmt.Sprint(column.args[0])+" = ?")
+			assignments = append(assignments, fmt.Sprint(column.args[0])+" = $"+fmt.Sprint(len(values)+1))
 			values = append(values, field.get(any(entity)))
 		}
 		values = append(values, primaryValue)
 		query := fmt.Sprintf(
-			"UPDATE %s SET %s WHERE %s = ?",
-			fmt.Sprint(table.args[0]), strings.Join(assignments, ", "), primaryKey,
+			"UPDATE %s SET %s WHERE %s = $%d",
+			fmt.Sprint(table.args[0]), strings.Join(assignments, ", "), primaryKey, len(values),
 		)
 		if _, err := this.Exec(query, values...); err != nil {
 			return err
@@ -210,7 +210,7 @@ extend *sql.DB {
 				primaryValue = field.get(any(entity))
 			}
 		}
-		query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", fmt.Sprint(table.args[0]), primaryKey)
+		query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", fmt.Sprint(table.args[0]), primaryKey)
 		if _, err := this.Exec(query, primaryValue); err != nil {
 			return err
 		}
@@ -297,22 +297,22 @@ func main() {
 		panic(err)
 	}
 	employees := []Employee{}
-	if err := db.Select(&employees, "email LIKE ?", "%example.com"); err != nil {
+	if err := db.Select(&employees, "email LIKE $1", "%example.com"); err != nil {
 		panic(err)
 	}
 	target := Employee()
-	if err := db.Get(&target, "name = ?", "Ada Lovelace"); err != nil {
+	if err := db.Get(&target, "name = $1", "Ada Lovelace"); err != nil {
 		panic(err)
 	}
 	fmt.Println("selected:", len(employees), "get:", target.Name)
 	loaded := Employee()
-	if err := db.Get(&loaded, "id = ?", employee.Id); err != nil {
+	if err := db.Get(&loaded, "id = $1", employee.Id); err != nil {
 		panic(err)
 	}
 	if err := db.Delete(&loaded); err != nil {
 		panic(err)
 	}
-	deleted := db.Get(&loaded, "id = ?", employee.Id) == sql.ErrNoRows
+	deleted := db.Get(&loaded, "id = $1", employee.Id) == sql.ErrNoRows
 
 	fmt.Println("loaded after update:", loaded.Name, loaded.Email)
 	fmt.Println("deleted:", deleted)
