@@ -161,8 +161,10 @@ func main() {
 		"func (this *User) GobDecode(data []byte) error",
 		"func GppStatic_User_FromGOB(data []byte) (User, error)",
 		"return encoding.FromGOB[User](data)",
-		`{Name: "FromJSON", Static: true`,
-		`{Name: "FromGOB", Static: true`,
+		`{Name: "FromJSON", Parameters:`,
+		`{Name: "FromGOB", Parameters:`,
+		`FromJSON", Parameters: []GppParameter`,
+		`FromGOB", Parameters: []GppParameter`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("generated serialization code is missing %q:\n%s", expected, text)
@@ -190,6 +192,67 @@ class User @{encoding.Serializable} {
 	err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"})
 	if err == nil || !strings.Contains(err.Error(), "encoding.Serializable requires User.ToJSON") {
 		t.Fatalf("expected serialization method conflict, got %v", err)
+	}
+}
+
+func TestCompileFilesPreservesAnnotationInheritanceMetadata(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "fmt"
+
+annotation (
+    Foo on class, field, method
+    Bar on class
+    Query on parameter
+)
+
+class Base @{Foo} {
+    Id int @{Foo}
+
+    func Search(q string @{Query}) string @{Foo} { return q }
+    func Run() string @{Foo} { return "base" }
+}
+
+class Child : Base @{Bar} {
+    func Run() string { return "child" }
+}
+
+func main() {
+    fmt.Println(Child.class.annotations.has(Foo), Child.class.annotations.has(Bar))
+    for parent := range Child.class.parents {
+        fmt.Println(parent.name, parent.annotations.has(Foo))
+    }
+    for field := range Child.class.fields {
+        fmt.Println(field.name, field.owner.name, field.annotations.has(Foo))
+    }
+    for method := range Child.class.methods {
+        fmt.Println(method.name, method.owner.name, method.annotations.has(Foo))
+        for parameter := range method.parameters {
+            fmt.Println(parameter.name, parameter.annotations.has(Query))
+        }
+    }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("annotation inheritance example did not run: %v\n%s", err, output)
+	}
+	expected := "false true\nBase true\nId Base true\nRun Child false\nSearch Base true\nq true\n"
+	if string(output) != expected {
+		t.Fatalf("unexpected annotation inheritance metadata:\n%s", output)
 	}
 }
 

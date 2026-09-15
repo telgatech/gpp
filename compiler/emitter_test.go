@@ -198,7 +198,7 @@ class User {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(code), `{Name: "Guest", Static: true`) {
+	if !strings.Contains(string(code), `{Name: "Guest",`) || !strings.Contains(string(code), `Static: true`) {
 		t.Fatalf("static method metadata was not emitted:\n%s", code)
 	}
 }

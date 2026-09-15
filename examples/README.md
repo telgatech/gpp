@@ -29,6 +29,9 @@ The examples cover:
   including a generic extension method.
 - `annotations.gpp` — declared annotations, target restrictions, field/method
   usage, and annotation introspection.
+- `annotation_inheritance.gpp` — direct class annotations, inherited field and
+  method metadata, original owners, parameter annotations, and unannotated
+  overrides.
 - `orm.gpp` — a mini in-memory SQLite app using the bundled `gpp/orm` package,
   annotated models, runtime metadata inspection, model validation, lifecycle
   hooks, and ordinary `database/sql`, including `Get` for one model and

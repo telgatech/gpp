@@ -1,0 +1,43 @@
+package main
+
+import "fmt"
+
+annotation (
+	Foo on class, field, method
+	Bar on class
+	Query on parameter
+)
+
+class Base @{Foo} {
+	Id int @{Foo}
+
+	func Search(q string @{Query}) string @{Foo} {
+		return q
+	}
+
+	func Run() string @{Foo} {
+		return "base"
+	}
+}
+
+class Child : Base @{Bar} {
+	func Run() string {
+		return "child"
+	}
+}
+
+func main() {
+	fmt.Println("child-direct", Child.class.annotations.has(Foo), Child.class.annotations.has(Bar))
+	for parent := range Child.class.parents {
+		fmt.Println("parent", parent.name, parent.annotations.has(Foo))
+	}
+	for field := range Child.class.fields {
+		fmt.Println("field", field.name, field.owner.name, field.annotations.has(Foo))
+	}
+	for method := range Child.class.methods {
+		fmt.Println("method", method.name, method.owner.name, method.annotations.has(Foo))
+		for parameter := range method.parameters {
+			fmt.Println("parameter", parameter.name, parameter.annotations.has(Query))
+		}
+	}
+}

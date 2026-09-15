@@ -134,13 +134,23 @@ type GppField struct {
 }
 
 type GppMethod struct {
-	Name string
-	Static bool
+	Name        string
+	Owner       *GppClass
+	Parameters  []GppParameter
+	Result      *GppType
+	Static      bool
+	Annotations GppAnnotations
+}
+
+type GppParameter struct {
+	Name        string
+	Type        *GppType
 	Annotations GppAnnotations
 }
 
 type GppClass struct {
 	Name        string
+	Parents     []*GppClass
 	Fields      []GppField
 	Methods     []GppMethod
 	Annotations GppAnnotations
@@ -156,6 +166,7 @@ type GppAnnotation = gppRuntime.GppAnnotation
 type GppAnnotations = gppRuntime.GppAnnotations
 type GppField = gppRuntime.GppField
 type GppMethod = gppRuntime.GppMethod
+type GppParameter = gppRuntime.GppParameter
 type GppClass = gppRuntime.GppClass
 
 `
@@ -174,20 +185,30 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		return err
 	}
 
-	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, annotationUsesLiteral(class.Annotations, context))
-	methods, err := interfaceMethods(class, classes, map[string]bool{})
+	parentReferences := make([]string, 0, len(class.Parents))
+	for _, parent := range class.Parents {
+		if reference := classDescriptorReference(parent, classes, context); reference != "" {
+			parentReferences = append(parentReferences, reference)
+		}
+	}
+	parents := "nil"
+	if len(parentReferences) > 0 {
+		parents = "[]*GppClass{" + strings.Join(parentReferences, ", ") + "}"
+	}
+	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Parents: %s, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, parents, annotationUsesLiteral(class.Annotations, context))
+	methods, err := effectiveMethodDescriptors(class, classes, map[string]bool{})
 	if err != nil {
 		return err
 	}
-	for _, method := range methods {
-		fmt.Fprintf(out, "\t{Name: %q, Annotations: %s},\n", method.Name, annotationUsesLiteral(method.Annotations, context))
+	for _, descriptor := range methods {
+		fmt.Fprintf(out, "\t{Name: %q, Parameters: %s, Result: %s, Annotations: %s},\n", descriptor.Method.Name, methodParametersLiteral(descriptor.Method, context), methodResultLiteral(descriptor.Method), annotationUsesLiteral(descriptor.Method.Annotations, context))
 	}
-	staticMethods, err := staticMethodsForClass(class, classes, map[string]bool{})
+	staticMethods, err := effectiveStaticMethodDescriptors(class, classes, map[string]bool{})
 	if err != nil {
 		return err
 	}
-	for _, method := range staticMethods {
-		fmt.Fprintf(out, "\t{Name: %q, Static: true, Annotations: %s},\n", method.Name, annotationUsesLiteral(method.Annotations, context))
+	for _, descriptor := range staticMethods {
+		fmt.Fprintf(out, "\t{Name: %q, Parameters: %s, Result: %s, Static: true, Annotations: %s},\n", descriptor.Method.Name, methodParametersLiteral(descriptor.Method, context), methodResultLiteral(descriptor.Method), annotationUsesLiteral(descriptor.Method.Annotations, context))
 	}
 	out.WriteString("}, Fields: []GppField{\n")
 	for _, field := range fields {
@@ -226,13 +247,166 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		if owner == "" {
 			owner = class.Name
 		}
-		if !isLocalClassName(classes, owner) {
-			continue
+		if reference := classDescriptorReference(owner, classes, context); reference != "" {
+			fmt.Fprintf(out, "\tGpp%sClass.Fields[%d].Owner = %s\n", class.Name, index, reference)
 		}
-		fmt.Fprintf(out, "\tGpp%sClass.Fields[%d].Owner = Gpp%sClass\n", class.Name, index, owner)
+	}
+	methodIndex := 0
+	for _, descriptor := range methods {
+		if reference := classDescriptorReference(descriptor.Owner, classes, context); reference != "" {
+			fmt.Fprintf(out, "\tGpp%sClass.Methods[%d].Owner = %s\n", class.Name, methodIndex, reference)
+		}
+		methodIndex++
+	}
+	for _, descriptor := range staticMethods {
+		if reference := classDescriptorReference(descriptor.Owner, classes, context); reference != "" {
+			fmt.Fprintf(out, "\tGpp%sClass.Methods[%d].Owner = %s\n", class.Name, methodIndex, reference)
+		}
+		methodIndex++
 	}
 	out.WriteString("}\n\n")
 	return nil
+}
+
+type methodDescriptor struct {
+	Method Method
+	Owner  string
+}
+
+func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]methodDescriptor, error) {
+	if visiting[class.Name] {
+		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
+	}
+	visiting[class.Name] = true
+	defer delete(visiting, class.Name)
+
+	result := []methodDescriptor{}
+	seen := map[string]bool{}
+	for _, method := range class.Methods {
+		if method.IsStatic {
+			continue
+		}
+		result = append(result, methodDescriptor{Method: method, Owner: class.Name})
+		arity, err := parameterCount(method.Parameters)
+		if err != nil {
+			return nil, err
+		}
+		seen[method.Name+fmt.Sprintf("/%d", arity)] = true
+	}
+	for _, parentName := range class.Parents {
+		parent, ok := classes[parentName]
+		if !ok {
+			return nil, fmt.Errorf("class %s has unresolved parent %s", class.Name, parentName)
+		}
+		inherited, err := effectiveMethodDescriptors(parent, classes, visiting)
+		if err != nil {
+			return nil, err
+		}
+		for _, descriptor := range inherited {
+			arity, err := parameterCount(descriptor.Method.Parameters)
+			if err != nil {
+				return nil, err
+			}
+			key := descriptor.Method.Name + fmt.Sprintf("/%d", arity)
+			if seen[key] {
+				continue
+			}
+			if strings.Contains(parentName, ".") && !strings.Contains(descriptor.Owner, ".") {
+				descriptor.Owner = parentName[:strings.Index(parentName, ".")] + "." + descriptor.Owner
+			}
+			result = append(result, descriptor)
+			seen[key] = true
+		}
+	}
+	return result, nil
+}
+
+func effectiveStaticMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]methodDescriptor, error) {
+	if visiting[class.Name] {
+		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
+	}
+	visiting[class.Name] = true
+	defer delete(visiting, class.Name)
+
+	result := []methodDescriptor{}
+	localNames := map[string]bool{}
+	for _, method := range class.Methods {
+		if !method.IsStatic {
+			continue
+		}
+		result = append(result, methodDescriptor{Method: method, Owner: class.Name})
+		localNames[method.Name] = true
+	}
+	for _, parentName := range class.Parents {
+		parent, ok := classes[parentName]
+		if !ok {
+			continue
+		}
+		inherited, err := effectiveStaticMethodDescriptors(parent, classes, visiting)
+		if err != nil {
+			return nil, err
+		}
+		for _, descriptor := range inherited {
+			if localNames[descriptor.Method.Name] {
+				continue
+			}
+			if strings.Contains(parentName, ".") && !strings.Contains(descriptor.Owner, ".") {
+				descriptor.Owner = parentName[:strings.Index(parentName, ".")] + "." + descriptor.Owner
+			}
+			result = append(result, descriptor)
+			localNames[descriptor.Method.Name] = true
+		}
+	}
+	return result, nil
+}
+
+func methodParametersLiteral(method Method, context constructorContext) string {
+	parameters, err := parseParameterInfos(method.Parameters)
+	if err != nil || len(parameters) == 0 {
+		return "nil"
+	}
+	parts := make([]string, 0, len(parameters))
+	for _, parameter := range parameters {
+		parts = append(parts, fmt.Sprintf("GppParameter{Name: %q, Type: &GppType{Name: %q}, Annotations: %s}", parameter.Name, parameter.Type, annotationUsesLiteral(method.ParameterAnnotations[parameter.Name], context)))
+	}
+	return "[]GppParameter{" + strings.Join(parts, ", ") + "}"
+}
+
+func methodResultLiteral(method Method) string {
+	result := strings.TrimSpace(method.Result)
+	if result == "" {
+		return "nil"
+	}
+	return "&GppType{Name: " + strconv.Quote(result) + "}"
+}
+
+func classDescriptorReference(name string, classes map[string]*ClassDecl, context constructorContext) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if target, ok := context.Targets[name]; ok {
+		if target.Qualifier == "" {
+			return "Gpp" + target.Class.Name + "Class"
+		}
+		return target.Qualifier + ".Gpp" + target.Class.Name + "Class"
+	}
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		return name[:dot] + ".Gpp" + name[dot+1:] + "Class"
+	}
+	if _, ok := classes[name]; ok {
+		candidate := classes[name]
+		for qualified, imported := range classes {
+			if !strings.Contains(qualified, ".") || imported != candidate {
+				continue
+			}
+			if target, ok := context.Targets[qualified]; ok {
+				return target.Qualifier + ".Gpp" + target.Class.Name + "Class"
+			}
+		}
+		return "Gpp" + name + "Class"
+	}
+	return ""
 }
 
 func isLocalClassName(classes map[string]*ClassDecl, name string) bool {
@@ -266,6 +440,9 @@ const (
 	introspectionType
 	introspectionMethods
 	introspectionMethod
+	introspectionParents
+	introspectionParameters
+	introspectionParameter
 	introspectionAnnotations
 	introspectionAnnotation
 )
@@ -280,6 +457,9 @@ var introspectionSelectorNames = map[string]string{
 	"addr":        "Addr",
 	"annotations": "Annotations",
 	"methods":     "Methods",
+	"parents":     "Parents",
+	"parameters":  "Parameters",
+	"result":      "Result",
 	"static":      "Static",
 	"has":         "Has",
 	"all":         "All",
@@ -298,6 +478,8 @@ func transformIntrospection(src string, context constructorContext) (string, err
 			!strings.Contains(src, ".set") && !strings.Contains(src, ".addr") &&
 			!strings.Contains(src, ".owner") && !strings.Contains(src, ".annotations") &&
 			!strings.Contains(src, ".methods") && !strings.Contains(src, ".has") &&
+			!strings.Contains(src, ".parents") && !strings.Contains(src, ".parameters") &&
+			!strings.Contains(src, ".result") &&
 			!strings.Contains(src, ".get") && !strings.Contains(src, ".all") &&
 			!strings.Contains(src, ".fullName") && !strings.Contains(src, ".args") {
 			return src, nil
@@ -479,6 +661,12 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 			} else if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
 				introspectionExpressionKind(statement.X, metadataTypes) == introspectionMethods {
 				metadataTypes[key.Name] = int(introspectionMethod)
+			} else if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
+				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParents {
+				metadataTypes[key.Name] = int(introspectionClass)
+			} else if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
+				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParameters {
+				metadataTypes[key.Name] = int(introspectionParameter)
 			}
 		case *ast.ValueSpec:
 			for index, name := range statement.Names {
@@ -534,6 +722,18 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 				if start >= 0 && start <= len(src) {
 					edits = append(edits, edit{start: start, end: start, text: "_, "})
 				}
+			} else if key, keyOK := statement.Key.(*ast.Ident); keyOK && key.Name != "_" &&
+				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParents {
+				start := fileSet.Position(key.Pos()).Offset - prefixLength
+				if start >= 0 && start <= len(src) {
+					edits = append(edits, edit{start: start, end: start, text: "_, "})
+				}
+			} else if key, keyOK := statement.Key.(*ast.Ident); keyOK && key.Name != "_" &&
+				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParameters {
+				start := fileSet.Position(key.Pos()).Offset - prefixLength
+				if start >= 0 && start <= len(src) {
+					edits = append(edits, edit{start: start, end: start, text: "_, "})
+				}
 			}
 			return true
 		}
@@ -543,9 +743,10 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 		}
 		kind := introspectionExpressionKind(selector.X, metadataTypes)
 		if replacement, ok := introspectionSelectorNames[selector.Sel.Name]; ok {
-			valid := (kind == introspectionClass && (selector.Sel.Name == "name" || selector.Sel.Name == "fields" || selector.Sel.Name == "annotations" || selector.Sel.Name == "methods")) ||
+			valid := (kind == introspectionClass && (selector.Sel.Name == "name" || selector.Sel.Name == "fields" || selector.Sel.Name == "annotations" || selector.Sel.Name == "methods" || selector.Sel.Name == "parents")) ||
 				(kind == introspectionField && (selector.Sel.Name == "name" || selector.Sel.Name == "owner" || selector.Sel.Name == "type" || selector.Sel.Name == "get" || selector.Sel.Name == "set" || selector.Sel.Name == "addr" || selector.Sel.Name == "annotations")) ||
-				(kind == introspectionMethod && (selector.Sel.Name == "name" || selector.Sel.Name == "annotations" || selector.Sel.Name == "static")) ||
+				(kind == introspectionMethod && (selector.Sel.Name == "name" || selector.Sel.Name == "owner" || selector.Sel.Name == "parameters" || selector.Sel.Name == "result" || selector.Sel.Name == "annotations" || selector.Sel.Name == "static")) ||
+				(kind == introspectionParameter && (selector.Sel.Name == "name" || selector.Sel.Name == "type" || selector.Sel.Name == "annotations")) ||
 				(kind == introspectionAnnotations && (selector.Sel.Name == "has" || selector.Sel.Name == "get" || selector.Sel.Name == "all")) ||
 				(kind == introspectionAnnotation && (selector.Sel.Name == "name" || selector.Sel.Name == "fullName" || selector.Sel.Name == "args")) ||
 				(kind == introspectionType && selector.Sel.Name == "name")
@@ -668,6 +869,8 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 			return introspectionField
 		case introspectionMethods:
 			return introspectionMethod
+		case introspectionParameters:
+			return introspectionParameter
 		case introspectionAnnotations:
 			return introspectionAnnotation
 		}
@@ -677,6 +880,8 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 			return introspectionField
 		case introspectionMethods:
 			return introspectionMethod
+		case introspectionParameters:
+			return introspectionParameter
 		case introspectionAnnotations:
 			return introspectionAnnotation
 		}
@@ -694,8 +899,16 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 			if base == introspectionClass {
 				return introspectionMethods
 			}
+		case "parents", "Parents":
+			if base == introspectionClass {
+				return introspectionParents
+			}
+		case "parameters", "Parameters":
+			if base == introspectionMethod {
+				return introspectionParameters
+			}
 		case "annotations", "Annotations":
-			if base == introspectionClass || base == introspectionField || base == introspectionMethod {
+			if base == introspectionClass || base == introspectionField || base == introspectionMethod || base == introspectionParameter {
 				return introspectionAnnotations
 			}
 		case "has", "Has", "get", "Get", "all", "All":
@@ -706,12 +919,23 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 				return introspectionAnnotations
 			}
 		case "type", "Type":
-			if base == introspectionField {
+			if base == introspectionField || base == introspectionParameter {
 				return introspectionType
 			}
 		case "owner", "Owner":
 			if base == introspectionField {
 				return introspectionClass
+			}
+			if base == introspectionMethod {
+				return introspectionClass
+			}
+		case "result", "Result":
+			if base == introspectionMethod {
+				return introspectionType
+			}
+		case "name", "Name":
+			if base == introspectionParameter {
+				return introspectionParameter
 			}
 		}
 		if base == introspectionAnnotation {

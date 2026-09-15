@@ -207,10 +207,33 @@ func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) str
 			declaration.Name,
 			annotationFullName(declaration),
 			arguments,
-			annotationDescriptorReference(use, declaration),
+			annotationDescriptorReferenceForContext(use, declaration, context),
 		))
 	}
 	return "GppAnnotations{" + strings.Join(parts, ", ") + "}"
+}
+
+func annotationDescriptorReferenceForContext(use AnnotationUse, declaration *AnnotationDecl, context constructorContext) string {
+	if dot := strings.LastIndex(use.Name, "."); dot >= 0 {
+		return use.Name[:dot] + ".GppAnnotation_" + declaration.Name
+	}
+	if declaration.Package == "" || declaration.Package == "main" || declaration.Package == context.Package {
+		return "GppAnnotation_" + declaration.Name
+	}
+	for alias, importPath := range context.AvailableImports {
+		logical, ok := officialLogicalPackage(importPath)
+		if !ok && context.ModulePath != "" && strings.HasPrefix(importPath, context.ModulePath+"/") {
+			logical = strings.ReplaceAll(strings.TrimPrefix(importPath, context.ModulePath+"/"), "/", ".")
+			ok = true
+		}
+		if ok && logical == declaration.Package {
+			if alias == "." {
+				return "GppAnnotation_" + declaration.Name
+			}
+			return alias + ".GppAnnotation_" + declaration.Name
+		}
+	}
+	return "GppAnnotation_" + declaration.Name
 }
 
 func mustParameterInfos(params string) []parameterInfo {
