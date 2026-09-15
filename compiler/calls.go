@@ -270,7 +270,7 @@ func parseParameterInfos(params string) ([]parameterInfo, error) {
 		parsed, err := parser.ParseFile(
 			token.NewFileSet(),
 			"parameters.go",
-			"package main\nfunc __gopp_parameters("+left+") {}\n",
+			"package main\nfunc __gpp_parameters("+left+") {}\n",
 			0,
 		)
 		if err != nil {

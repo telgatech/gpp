@@ -75,7 +75,7 @@ func (context *recordContext) register(fields []recordFieldType) *recordShape {
 	hash := sha256.Sum256([]byte(key))
 	shape := &recordShape{
 		Key:    key,
-		GoName: fmt.Sprintf("__gopp_record_%x", hash[:4]),
+		GoName: fmt.Sprintf("__gpp_record_%x", hash[:4]),
 		Fields: sorted,
 	}
 	context.Shapes[key] = shape
@@ -346,9 +346,9 @@ func rewriteRecordCollectionLiterals(src string, context constructorContext) (st
 
 func firstRecordTypeName(src string) string {
 	for index := 0; index < len(src); index++ {
-		if strings.HasPrefix(src[index:], "__gopp_record_") &&
+		if strings.HasPrefix(src[index:], "__gpp_record_") &&
 			(index == 0 || !isIdentPart(src[index-1])) {
-			end := index + len("__gopp_record_")
+			end := index + len("__gpp_record_")
 			for end < len(src) && isIdentPart(src[end]) {
 				end++
 			}
@@ -452,7 +452,7 @@ func (context *recordContext) recordByGoName(name string) *recordShape {
 }
 
 func formatRecordTypeExpr(expr ast.Expr) string {
-	if ident, ok := expr.(*ast.Ident); ok && strings.HasPrefix(ident.Name, "__gopp_record_") {
+	if ident, ok := expr.(*ast.Ident); ok && strings.HasPrefix(ident.Name, "__gpp_record_") {
 		return ident.Name
 	}
 	return ""
@@ -518,7 +518,7 @@ func collectRecordValueTypes(src string, context constructorContext) map[string]
 	result := map[string]string{}
 	parsed, err := parser.ParseFile(token.NewFileSet(), "records.go", "package main\n\n"+src, 0)
 	if err != nil {
-		parsed, err = parser.ParseFile(token.NewFileSet(), "records.go", "package main\n\nfunc __gopp_scope() {\n"+src+"\n}\n", 0)
+		parsed, err = parser.ParseFile(token.NewFileSet(), "records.go", "package main\n\nfunc __gpp_scope() {\n"+src+"\n}\n", 0)
 	}
 	if err != nil {
 		return result
@@ -614,7 +614,7 @@ func rewriteRecordFunctionResults(src string, context constructorContext) (strin
 				functions[index].goType = goType
 				changed = true
 			}
-			if context.CurrentClass != "" && declaration.Name.Name == "__gopp_scope" {
+			if context.CurrentClass != "" && declaration.Name.Name == "__gpp_scope" {
 				if context.Records.MethodResults[context.CurrentClass] == nil {
 					context.Records.MethodResults[context.CurrentClass] = map[string]string{}
 				}
@@ -684,7 +684,7 @@ func parseRecordSource(src string) (*ast.File, *token.FileSet, int, error) {
 	if err == nil {
 		return parsed, fileSet, len(filePrefix), nil
 	}
-	functionPrefix := "package main\n\nfunc __gopp_scope() {\n"
+	functionPrefix := "package main\n\nfunc __gpp_scope() {\n"
 	fileSet = token.NewFileSet()
 	parsed, err = parser.ParseFile(fileSet, "records.go", functionPrefix+src+"\n}\n", 0)
 	if err != nil {
@@ -769,13 +769,13 @@ func rewriteRecordFunctionParameters(src string, context constructorContext) (st
 
 func recordTypeMatchesKind(typeName, kind string) bool {
 	if kind == "record" {
-		return strings.HasPrefix(typeName, "__gopp_record_")
+		return strings.HasPrefix(typeName, "__gpp_record_")
 	}
 	if kind == "slice" {
-		return strings.HasPrefix(typeName, "[]__gopp_record_")
+		return strings.HasPrefix(typeName, "[]__gpp_record_")
 	}
 	if kind == "map" {
-		return strings.Contains(typeName, "]__gopp_record_")
+		return strings.Contains(typeName, "]__gpp_record_")
 	}
 	return false
 }
@@ -822,13 +822,13 @@ func inferRecordFunctionResult(declaration *ast.FuncDecl, kind string, valueType
 					value = pair.Value
 				}
 				typeName := inferRecordASTType(value, valueTypes, context)
-				if strings.HasPrefix(typeName, "__gopp_record_") {
+				if strings.HasPrefix(typeName, "__gpp_record_") {
 					results = append(results, typeName)
 				}
 			}
 		} else {
 			typeName := inferRecordASTType(returnStmt.Results[0], valueTypes, context)
-			if strings.HasPrefix(typeName, "__gopp_record_") {
+			if strings.HasPrefix(typeName, "__gpp_record_") {
 				results = append(results, typeName)
 			}
 		}
@@ -866,7 +866,7 @@ func transformRecordMethodResult(result, body string, context constructorContext
 	if context.Records == nil || (!strings.Contains(result, "record") && !strings.Contains(body, "record") && !strings.Contains(body, "let")) {
 		return result, body, nil
 	}
-	wrapped := "func __gopp_scope()"
+	wrapped := "func __gpp_scope()"
 	if strings.TrimSpace(result) != "" {
 		wrapped += " " + strings.TrimSpace(result)
 	}

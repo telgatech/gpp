@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopp/compiler"
+	"gpp/compiler"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 	)
 	outputDir := flag.String(
 		"output",
-		".gopp",
+		".gpp",
 		"directory for generated Go code",
 	)
 	flag.Parse()
@@ -24,7 +24,7 @@ func main() {
 	if flag.NArg() == 0 {
 		fmt.Fprintln(
 			os.Stderr,
-			"usage: gopp [-module module/path] [-output directory] file.gpp [file.gpp ...]",
+			"usage: gpp [-module module/path] [-output directory] file.gpp [file.gpp ...]",
 		)
 
 		os.Exit(1)

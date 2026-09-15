@@ -121,7 +121,7 @@ func transformSafeAccess(src string, context constructorContext) (string, error)
 		}
 		out.Reset()
 		out.WriteString(previous[:len(previous)-len(prefix)])
-		fmt.Fprintf(&out, "__gopp_safe(%s == nil, func() %s { return %s })", receiver, memberType, access)
+		fmt.Fprintf(&out, "__gpp_safe(%s == nil, func() %s { return %s })", receiver, memberType, access)
 		i = end
 	}
 	return out.String(), nil
@@ -132,7 +132,7 @@ func safeValueTypes(src string) map[string]string {
 	sanitized := strings.ReplaceAll(src, "?.", ".")
 	parsed, err := parser.ParseFile(token.NewFileSet(), "safe.go", "package main\n\n"+sanitized, 0)
 	if err != nil {
-		parsed, err = parser.ParseFile(token.NewFileSet(), "safe.go", "package main\n\nfunc __gopp_scope() {\n"+sanitized+"\n}\n", 0)
+		parsed, err = parser.ParseFile(token.NewFileSet(), "safe.go", "package main\n\nfunc __gpp_scope() {\n"+sanitized+"\n}\n", 0)
 	}
 	if err != nil {
 		return result
@@ -202,7 +202,7 @@ func safeTargetForType(typeName string, context constructorContext) (constructor
 
 func safeReceiverCanBeNil(typeName string, target constructorTarget) bool {
 	name := strings.TrimSpace(typeName)
-	return strings.HasPrefix(name, "*") || name == target.InterfaceName || name == "__gopp_"+target.Class.Name || name == "Gopp"+target.Class.Name
+	return strings.HasPrefix(name, "*") || name == target.InterfaceName || name == "__gpp_"+target.Class.Name || name == "Gpp"+target.Class.Name
 }
 
 func safeMemberType(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[string]bool) (string, bool, error) {

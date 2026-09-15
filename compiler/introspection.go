@@ -64,58 +64,58 @@ func programUsesIntrospection(program *Program) bool {
 }
 
 func introspectionRuntimeDefinitions() string {
-	return `type GoppType struct {
+	return `type GppType struct {
 	Name string
 }
 
-type GoppAnnotationType struct {
+type GppAnnotationType struct {
 	Name     string
 	FullName string
 }
 
-func (annotation *GoppAnnotationType) GoppAnnotationFullName() string {
+func (annotation *GppAnnotationType) GppAnnotationFullName() string {
 	if annotation == nil { return "" }
 	return annotation.FullName
 }
 
-type GoppAnnotation struct {
+type GppAnnotation struct {
 	Name     string
 	FullName string
 	Args     []any
 	Type     any
 }
 
-type GoppAnnotations []GoppAnnotation
+type GppAnnotations []GppAnnotation
 
-func (annotations GoppAnnotations) Has(annotation any) bool {
+func (annotations GppAnnotations) Has(annotation any) bool {
 	return annotations.find(annotation) >= 0
 }
 
-func (annotations GoppAnnotations) Get(annotation any) *GoppAnnotation {
+func (annotations GppAnnotations) Get(annotation any) *GppAnnotation {
 	index := annotations.find(annotation)
 	if index < 0 { return nil }
 	return &annotations[index]
 }
 
-func (annotations GoppAnnotations) All(annotation any) []GoppAnnotation {
-	result := []GoppAnnotation{}
+func (annotations GppAnnotations) All(annotation any) []GppAnnotation {
+	result := []GppAnnotation{}
 	for _, value := range annotations {
 		if annotationMatches(value, annotation) { result = append(result, value) }
 	}
 	return result
 }
 
-func (annotations GoppAnnotations) find(annotation any) int {
+func (annotations GppAnnotations) find(annotation any) int {
 	for index, value := range annotations {
 		if annotationMatches(value, annotation) { return index }
 	}
 	return -1
 }
 
-func annotationMatches(value GoppAnnotation, annotation any) bool {
+func annotationMatches(value GppAnnotation, annotation any) bool {
 	switch key := annotation.(type) {
-	case interface{ GoppAnnotationFullName() string }:
-		return value.FullName == key.GoppAnnotationFullName()
+	case interface{ GppAnnotationFullName() string }:
+		return value.FullName == key.GppAnnotationFullName()
 	case string:
 		return value.Name == key || value.FullName == key
 	default:
@@ -123,26 +123,26 @@ func annotationMatches(value GoppAnnotation, annotation any) bool {
 	}
 }
 
-type GoppField struct {
+type GppField struct {
 	Name  string
-	Owner *GoppClass
-	Type  *GoppType
+	Owner *GppClass
+	Type  *GppType
 	Get   func(any) any
 	Set   func(any, any)
 	Addr  func(any) any
-	Annotations GoppAnnotations
+	Annotations GppAnnotations
 }
 
-type GoppMethod struct {
+type GppMethod struct {
 	Name string
-	Annotations GoppAnnotations
+	Annotations GppAnnotations
 }
 
-type GoppClass struct {
+type GppClass struct {
 	Name        string
-	Fields      []GoppField
-	Methods     []GoppMethod
-	Annotations GoppAnnotations
+	Fields      []GppField
+	Methods     []GppMethod
+	Annotations GppAnnotations
 }
 
 `
@@ -154,7 +154,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		return err
 	}
 
-	fmt.Fprintf(out, "var Gopp%sClass = &GoppClass{Name: %q, Annotations: %s, Methods: []GoppMethod{\n", class.Name, class.Name, annotationUsesLiteral(class.Annotations, context))
+	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, annotationUsesLiteral(class.Annotations, context))
 	methods, err := interfaceMethods(class, classes, map[string]bool{})
 	if err != nil {
 		return err
@@ -162,7 +162,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	for _, method := range methods {
 		fmt.Fprintf(out, "\t{Name: %q, Annotations: %s},\n", method.Name, annotationUsesLiteral(method.Annotations, context))
 	}
-	out.WriteString("}, Fields: []GoppField{\n")
+	out.WriteString("}, Fields: []GppField{\n")
 	for _, field := range fields {
 		path := append(append([]string(nil), field.Path...), field.Name)
 		access := strings.Join(path, ".")
@@ -171,7 +171,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 			owner = class.Name
 		}
 
-		fmt.Fprintf(out, "\t{Name: %q, Owner: nil, Type: &GoppType{Name: %q}, Annotations: %s,\n", field.Name, field.Type, annotationUsesLiteral(field.Annotations, context))
+		fmt.Fprintf(out, "\t{Name: %q, Owner: nil, Type: &GppType{Name: %q}, Annotations: %s,\n", field.Name, field.Type, annotationUsesLiteral(field.Annotations, context))
 		fmt.Fprintf(out, "\t\tGet: func(root any) any {\n")
 		fmt.Fprintf(out, "\t\t\tswitch value := root.(type) {\n")
 		fmt.Fprintf(out, "\t\t\tcase *%s:\n\t\t\t\treturn value.%s\n", class.Name, access)
@@ -199,7 +199,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		if owner == "" {
 			owner = class.Name
 		}
-		fmt.Fprintf(out, "\tGopp%sClass.Fields[%d].Owner = Gopp%sClass\n", class.Name, index, owner)
+		fmt.Fprintf(out, "\tGpp%sClass.Fields[%d].Owner = Gpp%sClass\n", class.Name, index, owner)
 	}
 	out.WriteString("}\n\n")
 	return nil
@@ -307,7 +307,7 @@ func transformIntrospection(src string, context constructorContext) (string, err
 			invalidClassAccess = receiver
 			return true
 		}
-		addEdit(selector, receiver+".GoppRuntimeClass()")
+		addEdit(selector, receiver+".GppRuntimeClass()")
 		return true
 	})
 
@@ -363,7 +363,7 @@ func parseIntrospectionSource(src string, context constructorContext) (ast.Node,
 		return parsed, fileSet, len(prefix), nil
 	}
 
-	functionPrefix := prefix + "func __gopp_scope()"
+	functionPrefix := prefix + "func __gpp_scope()"
 	if strings.TrimSpace(context.CurrentResult) != "" {
 		functionPrefix += " " + strings.TrimSpace(context.CurrentResult)
 	}
@@ -400,16 +400,16 @@ func introspectionClassName(expr ast.Expr, context constructorContext, valueType
 	if target, ok := context.Targets[typeName]; ok {
 		return target.Class.Name
 	}
-	if strings.HasPrefix(typeName, "__gopp_") {
-		name := strings.TrimPrefix(typeName, "__gopp_")
+	if strings.HasPrefix(typeName, "__gpp_") {
+		name := strings.TrimPrefix(typeName, "__gpp_")
 		if _, ok := context.Targets[name]; ok {
 			return name
 		}
 	}
 	for key, target := range context.Targets {
-		if strings.HasSuffix(typeName, ".Gopp"+target.Class.Name) ||
-			strings.HasSuffix(typeName, ".__gopp_"+target.Class.Name) ||
-			(typeName == "Gopp"+target.Class.Name && key == target.Class.Name) {
+		if strings.HasSuffix(typeName, ".Gpp"+target.Class.Name) ||
+			strings.HasSuffix(typeName, ".__gpp_"+target.Class.Name) ||
+			(typeName == "Gpp"+target.Class.Name && key == target.Class.Name) {
 			return target.Class.Name
 		}
 	}
@@ -596,14 +596,14 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 		if kind, ok := variables[value.Name]; ok {
 			return introspectionExprKind(kind)
 		}
-		if strings.HasPrefix(value.Name, "Gopp") && strings.HasSuffix(value.Name, "Class") {
+		if strings.HasPrefix(value.Name, "Gpp") && strings.HasSuffix(value.Name, "Class") {
 			return introspectionClass
 		}
 	case *ast.ParenExpr:
 		return introspectionExpressionKind(value.X, variables)
 	case *ast.CallExpr:
 		if selector, ok := value.Fun.(*ast.SelectorExpr); ok &&
-			(selector.Sel.Name == "__gopp_class" || selector.Sel.Name == "GoppRuntimeClass") {
+			(selector.Sel.Name == "__gpp_class" || selector.Sel.Name == "GppRuntimeClass") {
 			return introspectionClass
 		}
 		if selector, ok := value.Fun.(*ast.SelectorExpr); ok {
@@ -637,7 +637,7 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 			return introspectionAnnotation
 		}
 	case *ast.SelectorExpr:
-		if strings.HasPrefix(value.Sel.Name, "Gopp") && strings.HasSuffix(value.Sel.Name, "Class") {
+		if strings.HasPrefix(value.Sel.Name, "Gpp") && strings.HasSuffix(value.Sel.Name, "Class") {
 			return introspectionClass
 		}
 		base := introspectionExpressionKind(value.X, variables)

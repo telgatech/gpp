@@ -1,3 +1,3 @@
-module gopp
+module gpp
 
 go 1.26

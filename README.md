@@ -32,23 +32,23 @@ access is opt-in with `?.`; exceptions remain deferred.
 ## Run
 
 ```bash
-go run ./cmd/gopp examples/hello.gpp
-cd .gopp
+go run ./cmd/gpp examples/hello.gpp
+cd .gpp
 go run .
 ```
 
-Generated Go is written to `.gopp/`. The CLI creates `.gopp/go.mod` with the
+Generated Go is written to `.gpp/`. The CLI creates `.gpp/go.mod` with the
 default module path `generated`; choose another path with `-module` when local
 Go package imports need a real module path:
 
 ```bash
-go run ./cmd/gopp -module example.com/myapp examples/*.gpp
+go run ./cmd/gpp -module example.com/myapp examples/*.gpp
 ```
 
 Choose a different generated output directory with `-output`:
 
 ```bash
-go run ./cmd/gopp -output build/gopp examples/hello.gpp
+go run ./cmd/gpp -output build/gpp examples/hello.gpp
 ```
 
 Class introspection exposes generated `name`, `fields`, `methods`,

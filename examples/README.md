@@ -3,8 +3,8 @@
 Each standalone `.gpp` file can be compiled with:
 
 ```bash
-go run ./cmd/gopp examples/<name>.gpp
-(cd .gopp && go run .)
+go run ./cmd/gpp examples/<name>.gpp
+(cd .gpp && go run .)
 ```
 
 The examples cover:
@@ -32,8 +32,8 @@ The examples cover:
 The dotted-package example is compiled as a pair:
 
 ```bash
-go run ./cmd/gopp examples/packages/people.gpp examples/packages/main.gpp
-(cd .gopp && go run .)
+go run ./cmd/gpp examples/packages/people.gpp examples/packages/main.gpp
+(cd .gpp && go run .)
 ```
 
 It demonstrates logical dotted packages and a qualified cross-package class

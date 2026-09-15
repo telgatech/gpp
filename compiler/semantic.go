@@ -198,7 +198,7 @@ func normalizeExtensionTarget(target string) string {
 }
 
 func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
-	for _, reserved := range []string{"GoppClass", "GoppField", "GoppType"} {
+	for _, reserved := range []string{"GppClass", "GppField", "GppType"} {
 		if class.Name == reserved {
 			return fmt.Errorf(
 				"%s: class name %s is reserved for Go++ introspection metadata",
@@ -209,7 +209,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	fields := map[string]bool{}
 	for _, field := range class.Fields {
-		if field.Name == "GoppDynamicClass" {
+		if field.Name == "GppDynamicClass" {
 			return fmt.Errorf(
 				"%s: class %s field %s is reserved for Go++ runtime metadata",
 				classLocation(class),
@@ -236,7 +236,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	methods := map[string][]methodEntry{}
 	for index, method := range class.Methods {
-		if method.Name == "GoppRuntimeClass" {
+		if method.Name == "GppRuntimeClass" {
 			return fmt.Errorf(
 				"%s: class %s method %s is reserved for Go++ runtime metadata",
 				classLocation(class),
@@ -348,7 +348,7 @@ func parameterCount(params string) (int, error) {
 	parsed, err := parser.ParseFile(
 		token.NewFileSet(),
 		"parameters.go",
-		"package main\nfunc __gopp_parameters("+params+") {}\n",
+		"package main\nfunc __gpp_parameters("+params+") {}\n",
 		0,
 	)
 	if err != nil {
@@ -367,11 +367,11 @@ func parameterCount(params string) (int, error) {
 }
 
 func overloadedName(name string, arity int) string {
-	return fmt.Sprintf("%s__gopp_%d", name, arity)
+	return fmt.Sprintf("%s__gpp_%d", name, arity)
 }
 
 func overloadedTypedName(name string, arity int, typeKey string) string {
-	return fmt.Sprintf("%s__gopp_%d_%s", name, arity, mangleTypeKey(typeKey))
+	return fmt.Sprintf("%s__gpp_%d_%s", name, arity, mangleTypeKey(typeKey))
 }
 
 func mangleTypeKey(typeKey string) string {
@@ -505,7 +505,7 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 				Class:         class,
 				Classes:       pkg.Classes,
 				Qualifier:     qualifier,
-				InterfaceName: "Gopp" + className,
+				InterfaceName: "Gpp" + className,
 			}
 			methodKey := key
 			if alias == "." {
@@ -558,9 +558,9 @@ func addMethodOverload(overloads *overloadContext, class *ClassDecl, className s
 	}
 	interfaceName := className
 	if dot := strings.LastIndex(interfaceName, "."); dot >= 0 {
-		interfaceName = interfaceName[:dot+1] + "Gopp" + interfaceName[dot+1:]
+		interfaceName = interfaceName[:dot+1] + "Gpp" + interfaceName[dot+1:]
 	} else {
-		interfaceName = "Gopp" + interfaceName
+		interfaceName = "Gpp" + interfaceName
 	}
 	if overloads.ClassMethods[interfaceName] == nil {
 		overloads.ClassMethods[interfaceName] = map[string]map[int]string{}

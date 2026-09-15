@@ -417,10 +417,10 @@ func main() {
 	}
 
 	generated := string(code)
-	if !strings.Contains(generated, "type __gopp_Person interface") {
+	if !strings.Contains(generated, "type __gpp_Person interface") {
 		t.Fatalf("base dispatch interface was not generated:\n%s", code)
 	}
-	if !strings.Contains(generated, "var person __gopp_Person = &Employee{}") {
+	if !strings.Contains(generated, "var person __gpp_Person = &Employee{}") {
 		t.Fatalf("base-typed assignment was not lowered:\n%s", code)
 	}
 }
@@ -457,8 +457,8 @@ func MakePerson() Person {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func SpeakFor(person __gopp_Person) string",
-		"func MakePerson() __gopp_Person",
+		"func SpeakFor(person __gpp_Person) string",
+		"func MakePerson() __gpp_Person",
 		"return &Employee{}",
 	} {
 		if !strings.Contains(generated, expected) {
@@ -496,7 +496,7 @@ func main() {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func SpeakFor(person __gopp_Person) string",
+		"func SpeakFor(person __gpp_Person) string",
 		"_ = SpeakFor(&Employee{})",
 	} {
 		if !strings.Contains(generated, expected) {
@@ -535,7 +535,7 @@ func main() {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func (this *Person) Use(other __gopp_Person) string",
+		"func (this *Person) Use(other __gpp_Person) string",
 		"_ = person.Use(&Employee{})",
 	} {
 		if !strings.Contains(generated, expected) {
@@ -572,9 +572,9 @@ func main() {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func MakePerson() __gopp_Person",
+		"func MakePerson() __gpp_Person",
 		"return &Person{}",
-		"var person __gopp_Person = &Person{}",
+		"var person __gpp_Person = &Person{}",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("base constructor was not lowered to a pointer for dispatch, missing %q:\n%s", expected, code)
@@ -605,7 +605,7 @@ class Holder {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), "Value __gopp_Person") {
+	if !strings.Contains(string(code), "Value __gpp_Person") {
 		t.Fatalf("polymorphic field was not lowered to the dispatch interface:\n%s", code)
 	}
 }
@@ -670,10 +670,10 @@ class Printer {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func (this *Printer) Print__gopp_0() string",
-		"func (this *Printer) Print__gopp_1(value string) string",
-		"this.Print__gopp_0()",
-		"this.Print__gopp_1(\"value\")",
+		"func (this *Printer) Print__gpp_0() string",
+		"func (this *Printer) Print__gpp_1(value string) string",
+		"this.Print__gpp_0()",
+		"this.Print__gpp_1(\"value\")",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("method overload output missing %q:\n%s", expected, code)
@@ -728,10 +728,10 @@ func main() {
 		!strings.Contains(generated, "this.Print(\"a\")") {
 		t.Fatalf("unrelated class method was incorrectly renamed:\n%s", code)
 	}
-	if !strings.Contains(generated, "func (this *B) Print__gopp_1(value string)") ||
-		!strings.Contains(generated, "this.Print__gopp_1(\"b\")") ||
+	if !strings.Contains(generated, "func (this *B) Print__gpp_1(value string)") ||
+		!strings.Contains(generated, "this.Print__gpp_1(\"b\")") ||
 		!strings.Contains(generated, "a.Print(\"a\")") ||
-		!strings.Contains(generated, "b.Print__gopp_1(\"b\")") {
+		!strings.Contains(generated, "b.Print__gpp_1(\"b\")") {
 		t.Fatalf("overloaded class method was not renamed:\n%s", code)
 	}
 }
@@ -761,9 +761,9 @@ func Use() int {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func Add__gopp_1(value int) int",
-		"func Add__gopp_2(left int, right int) int",
-		"return Add__gopp_1(1) + Add__gopp_2(1, 2)",
+		"func Add__gpp_1(value int) int",
+		"func Add__gpp_2(left int, right int) int",
+		"return Add__gpp_1(1) + Add__gpp_2(1, 2)",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("function overload output missing %q:\n%s", expected, code)
@@ -860,9 +860,9 @@ func main() {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func __gopp_safe[R any]",
-		"name := __gopp_safe(person == nil, func() string { return person.Name })",
-		"greeting := __gopp_safe(person == nil, func() string { return person.Speak() })",
+		"func __gpp_safe[R any]",
+		"name := __gpp_safe(person == nil, func() string { return person.Name })",
+		"greeting := __gpp_safe(person == nil, func() string { return person.Speak() })",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("safe access output missing %q:\n%s", expected, code)
@@ -899,10 +899,10 @@ func UseVariable(value int) string {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func Format__gopp_1_int(value int) string",
-		"func Format__gopp_1_string(value string) string",
-		"return Format__gopp_1_int(1) + Format__gopp_1_string(\"value\")",
-		"return Format__gopp_1_int(value)",
+		"func Format__gpp_1_int(value int) string",
+		"func Format__gpp_1_string(value string) string",
+		"return Format__gpp_1_int(1) + Format__gpp_1_string(\"value\")",
+		"return Format__gpp_1_int(value)",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("typed function overload output missing %q:\n%s", expected, code)
@@ -941,10 +941,10 @@ class Formatter {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"func (this *Formatter) Format__gopp_1_int(value int) string",
-		"func (this *Formatter) Format__gopp_1_string(value string) string",
-		"this.Format__gopp_1_int(1) + this.Format__gopp_1_string(\"value\")",
-		"return this.Format__gopp_1_int(value)",
+		"func (this *Formatter) Format__gpp_1_int(value int) string",
+		"func (this *Formatter) Format__gpp_1_string(value string) string",
+		"this.Format__gpp_1_int(1) + this.Format__gpp_1_string(\"value\")",
+		"return this.Format__gpp_1_int(value)",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("typed method overload output missing %q:\n%s", expected, code)
@@ -1006,7 +1006,7 @@ func main() {
 	for _, expected := range []string{
 		"func MakeEmployee() *Employee",
 		"return &Employee{}",
-		"func SpeakFor(person __gopp_Person) string",
+		"func SpeakFor(person __gpp_Person) string",
 		"_ = SpeakFor(MakeEmployee())",
 	} {
 		if !strings.Contains(generated, expected) {
@@ -1088,8 +1088,8 @@ func main() {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"type __gopp_record_",
-		"func GetUser() __gopp_record_",
+		"type __gpp_record_",
+		"func GetUser() __gpp_record_",
 		"name: \"Bob\"",
 		"age: 42",
 	} {
@@ -1145,7 +1145,7 @@ func main() {
 	}
 
 	generated := string(code)
-	if !strings.Contains(generated, "func Users() []__gopp_record_") {
+	if !strings.Contains(generated, "func Users() []__gpp_record_") {
 		t.Fatalf("record slice return type was not inferred:\n%s", code)
 	}
 }
@@ -1168,7 +1168,7 @@ func Users() map[string]record {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), "func Users() map[string]__gopp_record_") {
+	if !strings.Contains(string(code), "func Users() map[string]__gpp_record_") {
 		t.Fatalf("record map return type was not inferred:\n%s", code)
 	}
 }
@@ -1222,7 +1222,7 @@ func main() {
 	}
 
 	generated := string(code)
-	if !strings.Contains(generated, "func PrintUser(user __gopp_record_") {
+	if !strings.Contains(generated, "func PrintUser(user __gpp_record_") {
 		t.Fatalf("record function parameter was not inferred:\n%s", code)
 	}
 }
@@ -1267,11 +1267,11 @@ func main() {
 
 	generated := string(code)
 	for _, expected := range []string{
-		"type GoppClass struct",
-		"var GoppEmployeeClass = &GoppClass{Name: \"Employee\"",
-		"func (this Employee) GoppRuntimeClass() *GoppClass",
-		"return this.GoppRuntimeClass().Name",
-		"for _, f := range employee.GoppRuntimeClass().Fields",
+		"type GppClass struct",
+		"var GppEmployeeClass = &GppClass{Name: \"Employee\"",
+		"func (this Employee) GppRuntimeClass() *GppClass",
+		"return this.GppRuntimeClass().Name",
+		"for _, f := range employee.GppRuntimeClass().Fields",
 		"_ = f.Name",
 		"_ = f.Owner.Name",
 		"_ = f.Type.Name",
@@ -1340,10 +1340,10 @@ func main() {
 	}
 	generated := string(code)
 	for _, expected := range []string{
-		"func GoppExt_string_Empty_",
-		"func GoppExt_string_Identity_",
-		"GoppExt_string_Empty_5037a682(value)",
-		"GoppExt_string_Identity_40a61015[int](\"go\", 42)",
+		"func GppExt_string_Empty_",
+		"func GppExt_string_Identity_",
+		"GppExt_string_Empty_5037a682(value)",
+		"GppExt_string_Identity_40a61015[int](\"go\", 42)",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("extension method output missing %q:\n%s", expected, code)
@@ -1391,14 +1391,14 @@ func main() {
 		t.Fatal(err)
 	}
 	generated := string(code)
-	if strings.Count(generated, "func GoppExt_") != 4 {
+	if strings.Count(generated, "func GppExt_") != 4 {
 		t.Fatalf("expected one generated function per target/method combination:\n%s", generated)
 	}
 	for _, expected := range []string{
-		"func GoppExt_string_Empty_",
-		"func GoppExt___byte_Empty_",
-		"GoppExt_string_Identity_40a61015[int](text, 42)",
-		"GoppExt___byte_Identity_143efffa[string](bytes, \"go\")",
+		"func GppExt_string_Empty_",
+		"func GppExt___byte_Empty_",
+		"GppExt_string_Identity_40a61015[int](text, 42)",
+		"GppExt___byte_Identity_143efffa[string](bytes, \"go\")",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("multi-target extension output missing %q:\n%s", expected, generated)
@@ -1467,12 +1467,12 @@ func main() {
 	}
 	generated := string(code)
 	for _, expected := range []string{
-		"var GoppAnnotation_Table =",
+		"var GppAnnotation_Table =",
 		"Args: []any{\"employees\"}",
-		"Annotations: GoppAnnotations{",
-		"GoppAnnotation_Table",
-		".Has(GoppAnnotation_PK)",
-		".All(GoppAnnotation_Required)",
+		"Annotations: GppAnnotations{",
+		"GppAnnotation_Table",
+		".Has(GppAnnotation_PK)",
+		".All(GppAnnotation_Required)",
 		".FullName",
 	} {
 		if !strings.Contains(generated, expected) {

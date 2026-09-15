@@ -76,7 +76,7 @@ func extensionGoName(target string, method Method) string {
 	base := strings.NewReplacer(".", "_", "*", "ptr_", "[", "_", "]", "_").Replace(strings.TrimSpace(target))
 	base = sanitizeExtensionName(base)
 	hash := sha256.Sum256([]byte(strings.TrimSpace(target) + "\x00" + method.Name + "\x00" + method.TypeParams + "\x00" + method.Parameters))
-	return fmt.Sprintf("GoppExt_%s_%s_%x", base, method.Name, hash[:4])
+	return fmt.Sprintf("GppExt_%s_%s_%x", base, method.Name, hash[:4])
 }
 
 func sanitizeExtensionName(name string) string {
@@ -288,7 +288,7 @@ func parseExtensionSource(src string) (ast.Node, *token.FileSet, int, error) {
 	if err == nil {
 		return parsed, fileSet, len(prefix), nil
 	}
-	functionPrefix := prefix + "func __gopp_scope() {\n"
+	functionPrefix := prefix + "func __gpp_scope() {\n"
 	functionSet := token.NewFileSet()
 	parsed, err = parser.ParseFile(functionSet, "", functionPrefix+src+"\n}\n", 0)
 	if err != nil {

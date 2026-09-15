@@ -176,7 +176,7 @@ func annotationNumericCompatible(actual, expected string) bool {
 
 func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) string {
 	if len(uses) == 0 {
-		return "GoppAnnotations{}"
+		return "GppAnnotations{}"
 	}
 	parts := make([]string, 0, len(uses))
 	for _, use := range uses {
@@ -203,14 +203,14 @@ func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) str
 			}
 		}
 		parts = append(parts, fmt.Sprintf(
-			"GoppAnnotation{Name: %q, FullName: %q, Args: %s, Type: %s}",
+			"GppAnnotation{Name: %q, FullName: %q, Args: %s, Type: %s}",
 			declaration.Name,
 			annotationFullName(declaration),
 			arguments,
 			annotationDescriptorReference(use, declaration),
 		))
 	}
-	return "GoppAnnotations{" + strings.Join(parts, ", ") + "}"
+	return "GppAnnotations{" + strings.Join(parts, ", ") + "}"
 }
 
 func mustParameterInfos(params string) []parameterInfo {
@@ -226,7 +226,7 @@ func annotationFullName(declaration *AnnotationDecl) string {
 }
 
 func annotationDescriptorReference(use AnnotationUse, declaration *AnnotationDecl) string {
-	name := "GoppAnnotation_" + declaration.Name
+	name := "GppAnnotation_" + declaration.Name
 	if dot := strings.LastIndex(use.Name, "."); dot >= 0 {
 		return use.Name[:dot] + "." + name
 	}
@@ -244,7 +244,7 @@ func emitAnnotationDescriptors(out *strings.Builder, file *File, context constru
 		if declaration.SourceFile != "" && declaration.SourceFile != file.Name {
 			continue
 		}
-		fmt.Fprintf(out, "var GoppAnnotation_%s = &GoppAnnotationType{Name: %q, FullName: %q}\n", declaration.Name, declaration.Name, annotationFullName(declaration))
+		fmt.Fprintf(out, "var GppAnnotation_%s = &GppAnnotationType{Name: %q, FullName: %q}\n", declaration.Name, declaration.Name, annotationFullName(declaration))
 	}
 	if len(context.Annotations) > 0 {
 		out.WriteByte('\n')

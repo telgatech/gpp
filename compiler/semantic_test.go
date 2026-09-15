@@ -100,7 +100,7 @@ class Formatter {
 		t.Fatal(err)
 	}
 	methods := program.Files[0].Decls[0].(*ClassDecl).Methods
-	if methods[0].GoName != "Format__gopp_1_int" || methods[1].GoName != "Format__gopp_1_string" {
+	if methods[0].GoName != "Format__gpp_1_int" || methods[1].GoName != "Format__gpp_1_string" {
 		t.Fatalf("typed overloads were not assigned stable Go names: %#v", methods)
 	}
 }

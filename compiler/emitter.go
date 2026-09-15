@@ -89,7 +89,7 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 		targets[name] = constructorTarget{
 			Class:         class,
 			Classes:       classes,
-			InterfaceName: "__gopp_" + name,
+			InterfaceName: "__gpp_" + name,
 		}
 	}
 
@@ -117,10 +117,10 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 			map[string]bool{},
 		)
 		context.Overloads.ClassMethods[class.Name] = methodSet
-		context.Overloads.ClassMethods["__gopp_"+class.Name] = methodSet
+		context.Overloads.ClassMethods["__gpp_"+class.Name] = methodSet
 		typeSet := methodOverloadTypesForClass(class, classes, map[string]bool{})
 		context.Overloads.ClassMethodTypes[class.Name] = typeSet
-		context.Overloads.ClassMethodTypes["__gopp_"+class.Name] = typeSet
+		context.Overloads.ClassMethodTypes["__gpp_"+class.Name] = typeSet
 		context.ClassMethodSignatures[class.Name] = methodSignaturesForClass(
 			class,
 			classes,
@@ -164,7 +164,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		declarationsPrefix += "import \"fmt\"\n\n"
 	}
 	if fileHasSafeAccess(file) {
-		declarationsPrefix += "func __gopp_safe[R any](isNil bool, access func() R) R {\n"
+		declarationsPrefix += "func __gpp_safe[R any](isNil bool, access func() R) R {\n"
 		declarationsPrefix += "\tif isNil { var zero R; return zero }\n"
 		declarationsPrefix += "\treturn access()\n"
 		declarationsPrefix += "}\n\n"
@@ -302,7 +302,7 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		)
 	}
 	if context.Introspection != nil && context.Introspection.Enabled {
-		out.WriteString("\tGoppDynamicClass *GoppClass\n")
+		out.WriteString("\tGppDynamicClass *GppClass\n")
 	}
 
 	out.WriteString("}\n\n")
@@ -396,8 +396,8 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		return err
 	}
 
-	fmt.Fprintf(out, "type __gopp_%s interface {\n", class.Name)
-	out.WriteString("\tGoppRuntimeClass() *GoppClass\n")
+	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
+	out.WriteString("\tGppRuntimeClass() *GppClass\n")
 	for _, method := range methods {
 		parameters, err := transformParameterList(method.Parameters, context)
 		if err != nil {
@@ -411,12 +411,12 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		out.WriteByte('\n')
 	}
 	out.WriteString("}\n\n")
-	fmt.Fprintf(out, "type Gopp%s = __gopp_%s\n\n", class.Name, class.Name)
-	fmt.Fprintf(out, "func (this %s) GoppRuntimeClass() *GoppClass {\n", class.Name)
+	fmt.Fprintf(out, "type Gpp%s = __gpp_%s\n\n", class.Name, class.Name)
+	fmt.Fprintf(out, "func (this %s) GppRuntimeClass() *GppClass {\n", class.Name)
 	if context.Introspection != nil && context.Introspection.Enabled {
-		out.WriteString("\tif this.GoppDynamicClass != nil { return this.GoppDynamicClass }\n")
+		out.WriteString("\tif this.GppDynamicClass != nil { return this.GppDynamicClass }\n")
 	}
-	fmt.Fprintf(out, "\treturn Gopp%sClass\n}\n\n", class.Name)
+	fmt.Fprintf(out, "\treturn Gpp%sClass\n}\n\n", class.Name)
 	if err := emitClassDescriptor(out, class, classes, context); err != nil {
 		return err
 	}
@@ -605,7 +605,7 @@ func transformPolymorphicDeclarations(src string, context constructorContext) (s
 	parsed, err := parser.ParseFile(fileSet, "", filePrefix+src, 0)
 	prefixLength := len(filePrefix)
 	if err != nil {
-		functionPrefix := "package main\n\nfunc __gopp_scope()"
+		functionPrefix := "package main\n\nfunc __gpp_scope()"
 		if strings.TrimSpace(context.CurrentResult) != "" {
 			functionPrefix += " " + strings.TrimSpace(context.CurrentResult)
 		}
@@ -988,7 +988,7 @@ func dispatchInterfaceType(target constructorTarget) string {
 	if target.Qualifier == "" {
 		return target.InterfaceName
 	}
-	return target.Qualifier + ".Gopp" + target.Class.Name
+	return target.Qualifier + ".Gpp" + target.Class.Name
 }
 
 func sameConstructorPackage(base, derived constructorTarget) bool {
@@ -1016,7 +1016,7 @@ func transformOverloads(src string, overloads overloadContext) (string, error) {
 	parsed, err := parser.ParseFile(fileSet, "", filePrefix+src, 0)
 	prefixLength := len(filePrefix)
 	if err != nil {
-		const functionPrefix = "package main\n\nfunc __gopp_scope() {\n"
+		const functionPrefix = "package main\n\nfunc __gpp_scope() {\n"
 		functionSet := token.NewFileSet()
 		parsed, err = parser.ParseFile(functionSet, "", functionPrefix+src+"\n}", 0)
 		if err != nil {
@@ -1756,15 +1756,15 @@ func writeConstructorMembers(out *strings.Builder, class *ClassDecl, literal *co
 		}
 	}
 	if withDynamicClass {
-		writeMember("GoppDynamicClass", dynamicDescriptor)
+		writeMember("GppDynamicClass", dynamicDescriptor)
 	}
 }
 
 func descriptorName(qualifier, className string) string {
 	if qualifier == "" {
-		return "Gopp" + className + "Class"
+		return "Gpp" + className + "Class"
 	}
-	return qualifier + ".Gopp" + className + "Class"
+	return qualifier + ".Gpp" + className + "Class"
 }
 
 func qualifyTypeName(name, qualifier string) string {

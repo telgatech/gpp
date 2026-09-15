@@ -173,8 +173,8 @@ func MakePerson() web.Person {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"func SpeakFor(person web.GoppPerson) string",
-		"func MakePerson() web.GoppPerson",
+		"func SpeakFor(person web.GppPerson) string",
+		"func MakePerson() web.GppPerson",
 		"return &web.Employee{}",
 	} {
 		if !strings.Contains(string(generated), expected) {
@@ -211,8 +211,8 @@ func TestCompileFilesResolvesFunctionOverloadsAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), "Add__gopp_1(1)") ||
-		!strings.Contains(string(generated), "Add__gopp_2(1, 2)") {
+	if !strings.Contains(string(generated), "Add__gpp_1(1)") ||
+		!strings.Contains(string(generated), "Add__gpp_2(1, 2)") {
 		t.Fatalf("cross-file overload calls were not resolved:\n%s", generated)
 	}
 }
@@ -279,7 +279,7 @@ func main() {
 
 	command := exec.Command("go", "test", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated Go did not build: %v\n%s", err, output)
@@ -318,7 +318,7 @@ func TestCompileFilesDeduplicatesRecordShapesAcrossFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		count += strings.Count(string(data), "type __gopp_record_")
+		count += strings.Count(string(data), "type __gpp_record_")
 	}
 	if count != 1 {
 		t.Fatalf("expected one generated record type across package files, got %d", count)
@@ -365,7 +365,7 @@ func main() {
 
 	command := exec.Command("go", "test", "./...")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated cross-package record code did not build: %v\n%s", err, output)
@@ -423,7 +423,7 @@ func main() {
 
 	command := exec.Command("go", "run", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated introspection Go did not run: %v\n%s", err, output)
@@ -473,7 +473,7 @@ func main() {
 
 	command := exec.Command("go", "run", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated cross-package introspection Go did not run: %v\n%s", err, output)
@@ -512,7 +512,7 @@ func main() {}
 
 	command := exec.Command("go", "test", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("native method precedence did not produce buildable Go: %v\n%s", err, output)
 	}
@@ -544,7 +544,7 @@ func main() {}
 
 	command := exec.Command("go", "test", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("multi-target imported extension did not produce buildable Go: %v\n%s", err, output)
 	}
@@ -590,7 +590,7 @@ func main() {
 	}
 	command := exec.Command("go", "run", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("imported Go++ extension did not run: %v\n%s", err, output)
@@ -629,7 +629,7 @@ func main() {}
 	}
 	command := exec.Command("go", "test", ".")
 	command.Dir = outputDir
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/gopp-go-cache")
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("imported annotation did not produce buildable Go: %v\n%s", err, output)
 	}
