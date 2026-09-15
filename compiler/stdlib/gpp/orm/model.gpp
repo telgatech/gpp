@@ -1,0 +1,31 @@
+package gpp.orm
+
+class Model {
+	func Validate(exec SQLExecutor) error {
+		return nil
+	}
+
+	func BeforeCreate(exec SQLExecutor) error {
+		return nil
+	}
+
+	func AfterCreate(exec SQLExecutor) error {
+		return nil
+	}
+
+	func BeforeUpdate(exec SQLExecutor) error {
+		return nil
+	}
+
+	func AfterUpdate(exec SQLExecutor) error {
+		return nil
+	}
+
+	func BeforeDelete(exec SQLExecutor) error {
+		return nil
+	}
+
+	func AfterDelete(exec SQLExecutor) error {
+		return nil
+	}
+}

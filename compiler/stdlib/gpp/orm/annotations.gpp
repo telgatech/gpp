@@ -1,0 +1,7 @@
+package gpp.orm
+
+annotation (
+	Table(name string) on class
+	Column(name string) on field
+	PK on field
+)

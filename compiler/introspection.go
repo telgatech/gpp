@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -67,7 +68,6 @@ func introspectionRuntimeDefinitions() string {
 	return `type GppType struct {
 	Name string
 }
-
 type GppAnnotationType struct {
 	Name     string
 	FullName string
@@ -148,6 +148,25 @@ type GppClass struct {
 `
 }
 
+func introspectionRuntimeAliases() string {
+	return `type GppType = gppRuntime.GppType
+type GppAnnotationType = gppRuntime.GppAnnotationType
+type GppAnnotation = gppRuntime.GppAnnotation
+type GppAnnotations = gppRuntime.GppAnnotations
+type GppField = gppRuntime.GppField
+type GppMethod = gppRuntime.GppMethod
+type GppClass = gppRuntime.GppClass
+
+`
+}
+
+func ensureIntrospectionRuntimeImport(body, importPath string) string {
+	if importPath == "" {
+		return body
+	}
+	return "import gppRuntime " + strconv.Quote(importPath) + "\n\n" + body
+}
+
 func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[string]*ClassDecl, context constructorContext) error {
 	fields, err := constructorFields(class, classes, nil, map[string]bool{})
 	if err != nil {
@@ -199,10 +218,26 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		if owner == "" {
 			owner = class.Name
 		}
+		if !isLocalClassName(classes, owner) {
+			continue
+		}
 		fmt.Fprintf(out, "\tGpp%sClass.Fields[%d].Owner = Gpp%sClass\n", class.Name, index, owner)
 	}
 	out.WriteString("}\n\n")
 	return nil
+}
+
+func isLocalClassName(classes map[string]*ClassDecl, name string) bool {
+	class, ok := classes[name]
+	if !ok {
+		return false
+	}
+	for qualified, imported := range classes {
+		if strings.Contains(qualified, ".") && imported == class {
+			return false
+		}
+	}
+	return true
 }
 
 func isNilableGoType(typeName string) bool {

@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -75,26 +76,30 @@ type overloadContext struct {
 }
 
 type constructorContext struct {
-	Targets                  map[string]constructorTarget
-	Overloads                overloadContext
-	FunctionSignatures       map[string][]callableSignature
-	MethodSignatures         map[string][]callableSignature
-	ClassMethodSignatures    map[string]map[string][]callableSignature
-	Records                  *recordContext
-	Introspection            *introspectionContext
-	Extensions               []extensionMethod
-	PreludeExtensions        []extensionMethod
-	PreludeImports           []string
-	EmitPrelude              bool
-	EmitPreludeAll           bool
-	Annotations              map[string]*AnnotationDecl
-	Package                  string
-	NativeMethods            map[string]map[string]bool
-	CurrentClass             string
-	CurrentMethod            string
-	CurrentResult            string
-	CurrentExtensionReceiver string
-	CurrentParameterTypes    map[string]string
+	Targets                    map[string]constructorTarget
+	Overloads                  overloadContext
+	FunctionSignatures         map[string][]callableSignature
+	MethodSignatures           map[string][]callableSignature
+	ClassMethodSignatures      map[string]map[string][]callableSignature
+	Records                    *recordContext
+	Introspection              *introspectionContext
+	Extensions                 []extensionMethod
+	PreludeExtensions          []extensionMethod
+	PreludeImports             []string
+	EmitPrelude                bool
+	EmitPreludeAll             bool
+	Annotations                map[string]*AnnotationDecl
+	Package                    string
+	ModulePath                 string
+	AvailableImports           map[string]string
+	IntrospectionRuntimeImport string
+	ImportedTypes              map[string]map[string]bool
+	NativeMethods              map[string]map[string]bool
+	CurrentClass               string
+	CurrentMethod              string
+	CurrentResult              string
+	CurrentExtensionReceiver   string
+	CurrentParameterTypes      map[string]string
 }
 
 func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
@@ -172,6 +177,13 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	body = rewriteOfficialImports(body, context.ModulePath)
+	body = ensureGeneratedImports(body, context)
+	if context.Introspection != nil &&
+		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
+		!context.Introspection.RuntimeEmitted {
+		body = ensureIntrospectionRuntimeImport(body, context.IntrospectionRuntimeImport)
+	}
 	if context.EmitPrelude {
 		preludeBody, err := emitPreludeExtensions(context, body)
 		if err != nil {
@@ -196,7 +208,11 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 	if context.Introspection != nil && (len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
 		!context.Introspection.RuntimeEmitted {
-		declarationsPrefix += introspectionRuntimeDefinitions()
+		if context.IntrospectionRuntimeImport == "" {
+			declarationsPrefix += introspectionRuntimeDefinitions()
+		} else {
+			declarationsPrefix += introspectionRuntimeAliases()
+		}
 		context.Introspection.RuntimeEmitted = true
 	}
 	var annotationDescriptors strings.Builder
@@ -240,6 +256,84 @@ func insertAfterImports(body, insertion string) string {
 		return insertion + body
 	}
 	return body[:offset] + "\n\n" + insertion + body[offset:]
+}
+
+func rewriteOfficialImports(body, modulePath string) string {
+	if modulePath == "" {
+		return body
+	}
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", prefix+body, 0)
+	if err != nil {
+		return body
+	}
+	type edit struct {
+		start int
+		end   int
+		text  string
+	}
+	edits := []edit{}
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || !strings.HasPrefix(importPath, "gpp/") {
+			continue
+		}
+		start := fileSet.Position(spec.Path.Pos()).Offset - len(prefix)
+		end := fileSet.Position(spec.Path.End()).Offset - len(prefix)
+		if start >= 0 && end <= len(body) {
+			edits = append(edits, edit{start: start, end: end, text: strconv.Quote(modulePath + "/" + importPath)})
+		}
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, change := range edits {
+		body = body[:change.start] + change.text + body[change.end:]
+	}
+	return body
+}
+
+func ensureGeneratedImports(body string, context constructorContext) string {
+	if len(context.AvailableImports) == 0 {
+		return body
+	}
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", prefix+body, 0)
+	if err != nil {
+		return body
+	}
+	existing := map[string]bool{}
+	for _, spec := range parsed.Imports {
+		alias := path.Base(strings.Trim(spec.Path.Value, `"`))
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		existing[alias] = true
+	}
+
+	aliases := make([]string, 0)
+	for alias := range context.AvailableImports {
+		if existing[alias] || !strings.Contains(body, alias+".") {
+			continue
+		}
+		aliases = append(aliases, alias)
+	}
+	if len(aliases) == 0 {
+		return body
+	}
+	sort.Strings(aliases)
+	var imports strings.Builder
+	imports.WriteString("import (\n")
+	for _, alias := range aliases {
+		importPath := context.AvailableImports[alias]
+		if alias == path.Base(importPath) {
+			fmt.Fprintf(&imports, "\t%q\n", importPath)
+		} else {
+			fmt.Fprintf(&imports, "\t%s %q\n", alias, importPath)
+		}
+	}
+	imports.WriteString(")\n\n")
+	return imports.String() + body
 }
 
 func emitDecls(file *File, context constructorContext, interpolationName string) (string, error) {
@@ -329,14 +423,12 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 	}
 	if context.Introspection != nil && context.Introspection.Enabled {
 		out.WriteString("\tGppDynamicClass *GppClass\n")
+		out.WriteString("\tGppDynamicObject any\n")
 	}
 
 	out.WriteString("}\n\n")
 
-	classes := map[string]*ClassDecl{}
-	if target, ok := context.Targets[class.Name]; ok {
-		classes = target.Classes
-	}
+	classes := classesForClass(context, class)
 	methods, err := interfaceMethods(class, classes, map[string]bool{})
 	if err != nil {
 		return err
@@ -344,6 +436,12 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 
 	for methodIndex := range methods {
 		method := methods[methodIndex]
+		if parentName, ok := importedParentForMethod(class, method, classes); ok {
+			if err := emitImportedInheritedMethod(out, class, parentName, method, context); err != nil {
+				return err
+			}
+			continue
+		}
 		methodName := methodOutputName(method)
 		body := transformInterpolationWithName(method.Body, interpolationName)
 		methodResult, body, err := transformRecordMethodResult(method.Result, body, contextForMethod(context, class, method.Name))
@@ -428,12 +526,18 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
 	out.WriteString("\tGppRuntimeClass() *GppClass\n")
 	for _, method := range methods {
-		parameters, err := transformParameterList(method.Parameters, context)
+		parameterSource := method.Parameters
+		resultSource := method.Result
+		if parentName, imported := importedParentForMethod(class, method, classes); imported {
+			parameterSource = qualifyImportedTypeNames(parameterSource, parentName, classes, context.ImportedTypes)
+			resultSource = qualifyImportedTypeNames(resultSource, parentName, classes, context.ImportedTypes)
+		}
+		parameters, err := transformParameterList(parameterSource, context)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "\t%s(%s)", methodOutputName(method), parameters)
-		result := transformPolymorphicResultType(strings.TrimSpace(method.Result), context)
+		result := transformPolymorphicResultType(strings.TrimSpace(resultSource), context)
 		if result != "" {
 			fmt.Fprintf(out, " %s", result)
 		}
@@ -451,6 +555,142 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 	}
 
 	return nil
+}
+
+// importedParentForMethod identifies inherited methods whose implementation
+// belongs to another generated package. Their bodies must remain in that
+// package so references to package-local helpers and imports stay valid.
+func importedParentForMethod(class *ClassDecl, method Method, classes map[string]*ClassDecl) (string, bool) {
+	if classDeclaresMethod(class, method) {
+		return "", false
+	}
+	for _, parentName := range class.Parents {
+		if !strings.Contains(parentName, ".") {
+			continue
+		}
+		parent := classes[parentName]
+		if parent == nil {
+			continue
+		}
+		parentMethods, err := interfaceMethods(parent, classes, map[string]bool{})
+		if err != nil {
+			continue
+		}
+		for _, parentMethod := range parentMethods {
+			if methodSignatureKey(parentMethod) == methodSignatureKey(method) {
+				return parentName, true
+			}
+		}
+	}
+	return "", false
+}
+
+func classDeclaresMethod(class *ClassDecl, method Method) bool {
+	key := methodSignatureKey(method)
+	for _, declared := range class.Methods {
+		if methodSignatureKey(declared) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func methodSignatureKey(method Method) string {
+	return method.Name + "/" + parameterSignatureKeyFromSource(method.Parameters)
+}
+
+func parameterSignatureKeyFromSource(params string) string {
+	parameters, err := parseParameterInfos(params)
+	if err != nil {
+		return strings.TrimSpace(params)
+	}
+	parts := make([]string, 0, len(parameters))
+	for _, parameter := range parameters {
+		parts = append(parts, strings.TrimSpace(parameter.Type))
+	}
+	return strings.Join(parts, ",")
+}
+
+func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentName string, method Method, context constructorContext) error {
+	parameters, err := parseParameterInfos(method.Parameters)
+	if err != nil {
+		return err
+	}
+	parameterParts := make([]string, 0, len(parameters))
+	arguments := make([]string, 0, len(parameters))
+	for index, parameter := range parameters {
+		name := parameter.Name
+		if name == "" {
+			name = fmt.Sprintf("arg%d", index)
+		}
+		parameterType := qualifyImportedTypeNames(parameter.Type, parentName, classesForClass(context, class), context.ImportedTypes)
+		parameterParts = append(parameterParts, name+" "+transformPolymorphicType(parameterType, context))
+		arguments = append(arguments, name)
+	}
+
+	methodName := methodOutputName(method)
+	resultType := qualifyImportedTypeNames(method.Result, parentName, classesForClass(context, class), context.ImportedTypes)
+	result := transformPolymorphicResultType(strings.TrimSpace(resultType), context)
+	fieldName := classParentFieldName(parentName)
+	fmt.Fprintf(out, "func (this *%s) %s(%s)", class.Name, methodName, strings.Join(parameterParts, ", "))
+	if result != "" {
+		fmt.Fprintf(out, " %s", result)
+	}
+	out.WriteString(" {\n")
+	fmt.Fprintf(out, "\tthis.%s.GppDynamicObject = this\n", fieldName)
+	call := fmt.Sprintf("this.%s.%s(%s)", fieldName, methodName, strings.Join(arguments, ", "))
+	if result != "" {
+		fmt.Fprintf(out, "\treturn %s\n", call)
+	} else {
+		fmt.Fprintf(out, "\t%s\n", call)
+	}
+	out.WriteString("}\n\n")
+	return nil
+}
+
+func qualifyImportedTypeNames(typeName, parentName string, classes map[string]*ClassDecl, importedTypes map[string]map[string]bool) string {
+	dot := strings.Index(parentName, ".")
+	if dot <= 0 {
+		return typeName
+	}
+	qualifier := parentName[:dot]
+	for name := range classes {
+		if name == "" {
+			continue
+		}
+		typeName = qualifyImportedTypeIdentifier(typeName, name, qualifier+"."+name)
+	}
+	for name := range importedTypes[qualifier] {
+		typeName = qualifyImportedTypeIdentifier(typeName, name, qualifier+"."+name)
+	}
+	return typeName
+}
+
+func qualifyImportedTypeIdentifier(source, name, replacement string) string {
+	var out strings.Builder
+	for index := 0; index < len(source); {
+		if !isASCIIIdentStart(source[index]) {
+			out.WriteByte(source[index])
+			index++
+			continue
+		}
+		end := index + 1
+		for end < len(source) && isIdentPart(source[end]) {
+			end++
+		}
+		word := source[index:end]
+		if word == name && (index == 0 || source[index-1] != '.') {
+			out.WriteString(replacement)
+		} else {
+			out.WriteString(word)
+		}
+		index = end
+	}
+	return out.String()
+}
+
+func isASCIIIdentStart(value byte) bool {
+	return value == '_' || (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
 }
 
 func transformParameterList(params string, context constructorContext) (string, error) {
@@ -536,10 +776,28 @@ func contextForMethod(context constructorContext, class *ClassDecl, methodName s
 }
 
 func classesForClass(context constructorContext, class *ClassDecl) map[string]*ClassDecl {
+	classes := map[string]*ClassDecl{}
 	if target, ok := context.Targets[class.Name]; ok {
-		return target.Classes
+		for name, value := range target.Classes {
+			classes[name] = value
+		}
+	} else {
+		classes[class.Name] = class
 	}
-	return map[string]*ClassDecl{class.Name: class}
+	for name, target := range context.Targets {
+		if target.Qualifier == "" {
+			continue
+		}
+		classes[name] = target.Class
+		for className, imported := range target.Classes {
+			qualified := target.Qualifier + "." + className
+			classes[qualified] = imported
+			if _, exists := classes[className]; !exists {
+				classes[className] = imported
+			}
+		}
+	}
+	return classes
 }
 
 func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string]map[int]string {
@@ -949,15 +1207,44 @@ func isAssignableStaticType(actual, expected string, context constructorContext)
 	actualName := strings.TrimPrefix(strings.TrimSpace(actual), "*")
 	expectedTarget, expectedIsClass := context.Targets[strings.TrimPrefix(strings.TrimSpace(expected), "*")]
 	actualTarget, actualIsClass := context.Targets[actualName]
-	if !expectedIsClass || !actualIsClass || !sameConstructorPackage(expectedTarget, actualTarget) {
+	if !expectedIsClass || !actualIsClass {
 		return false
 	}
-	return actualTarget.Class == expectedTarget.Class || classInherits(
-		actualTarget.Class,
-		expectedTarget.Class,
-		actualTarget.Classes,
-		map[string]bool{},
-	)
+	return classInheritsTarget(actualTarget, expectedTarget, context)
+}
+
+// classInheritsTarget follows both local and imported parents. An application
+// class can therefore satisfy an interface-like class imported from a bundled
+// package (for example, Employee : orm.Model).
+func classInheritsTarget(actual, expected constructorTarget, context constructorContext) bool {
+	visited := map[*ClassDecl]bool{}
+	var visit func(constructorTarget) bool
+	visit = func(current constructorTarget) bool {
+		if current.Class == nil || visited[current.Class] {
+			return false
+		}
+		visited[current.Class] = true
+		if current.Class == expected.Class {
+			return true
+		}
+
+		for _, parentName := range current.Class.Parents {
+			parent := constructorTarget{Classes: current.Classes, Qualifier: current.Qualifier}
+			if local, ok := current.Classes[parentName]; ok {
+				parent.Class = local
+			} else if imported, ok := context.Targets[parentName]; ok {
+				parent = imported
+			} else if current.Qualifier != "" {
+				parent, _ = context.Targets[current.Qualifier+"."+parentName]
+			}
+			if parent.Class != nil && visit(parent) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return visit(actual)
 }
 
 func shouldPointerCoerce(expectedType string, argument ast.Expr, context constructorContext) bool {
@@ -1495,7 +1782,7 @@ type constructorLiteral struct {
 
 func emitConstructor(name string, target constructorTarget, context constructorContext, argsSource string) (string, error) {
 	class := target.Class
-	classes := target.Classes
+	classes := classesForClass(context, class)
 	args, err := splitTopLevel(argsSource, ',')
 	if err != nil {
 		return "", fmt.Errorf("%s constructor: %w", name, err)
@@ -1619,7 +1906,7 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 		parentFields, err := constructorFields(
 			parent,
 			classes,
-			append(prefix, parentName),
+			append(prefix, classParentFieldName(parentName)),
 			visiting,
 		)
 		if err != nil {
@@ -1639,6 +1926,13 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 	}
 
 	return fields, nil
+}
+
+func classParentFieldName(parentName string) string {
+	if dot := strings.LastIndex(parentName, "."); dot >= 0 {
+		return parentName[dot+1:]
+	}
+	return parentName
 }
 
 func transformPolymorphicValue(value, fieldType string, context constructorContext) string {
@@ -1778,6 +2072,10 @@ func writeConstructorMembers(out *strings.Builder, class *ClassDecl, literal *co
 
 	for _, parentName := range class.Parents {
 		child, ok := literal.Children[parentName]
+		parentFieldName := classParentFieldName(parentName)
+		if !ok {
+			child, ok = literal.Children[parentFieldName]
+		}
 		if !ok && !withDynamicClass {
 			continue
 		}
@@ -1793,7 +2091,7 @@ func writeConstructorMembers(out *strings.Builder, class *ClassDecl, literal *co
 		fmt.Fprintf(&nested, "%s{", qualifyTypeName(parentName, qualifier))
 		writeConstructorMembers(&nested, parent, child, classes, qualifier, dynamicDescriptor, withDynamicClass)
 		nested.WriteByte('}')
-		writeMember(parentName, nested.String())
+		writeMember(parentFieldName, nested.String())
 	}
 
 	for _, field := range class.Fields {

@@ -1,0 +1,20 @@
+package gpp.http
+
+annotation (
+	IP(addr string) on class
+	Port(port int) on class
+	Unix(path string) on class
+	Prefix(path string) on class
+
+	GET(path string) on method
+	POST(path string) on method
+	PUT(path string) on method
+	PATCH(path string) on method
+	DELETE(path string) on method
+
+	WebSocket(path string) on method
+	Files(path string, dir string) on class
+	Auth on class, method
+	NoAuth on method
+	Role(name string) on class, method
+)

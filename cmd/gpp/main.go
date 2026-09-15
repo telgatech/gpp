@@ -24,6 +24,11 @@ func main() {
 		false,
 		"disable the implicit Go++ prelude",
 	)
+	noStdlib := flag.Bool(
+		"no-stdlib",
+		false,
+		"disable the bundled official gpp standard module",
+	)
 	flag.Parse()
 
 	if flag.NArg() == 0 {
@@ -38,7 +43,7 @@ func main() {
 	err := compiler.CompileFilesWithOptions(
 		flag.Args(),
 		*outputDir,
-		compiler.CompileOptions{ModulePath: *modulePath, NoPrelude: *noPrelude},
+		compiler.CompileOptions{ModulePath: *modulePath, NoPrelude: *noPrelude, NoStdlib: *noStdlib},
 	)
 
 	if err != nil {

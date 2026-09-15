@@ -1,0 +1,46 @@
+package gpp.http
+
+import (
+	"encoding/json"
+	stdhttp "net/http"
+)
+
+class Context {
+	Response stdhttp.ResponseWriter
+	Request *stdhttp.Request
+	Values map[string]any
+
+	func Set(name string, value any) {
+		if this.Values == nil {
+			this.Values = map[string]any{}
+		}
+		this.Values[name] = value
+	}
+
+	func Get(name string) any {
+		return this.Values[name]
+	}
+
+	func Param(name string) string {
+		return this.Request.PathValue(name)
+	}
+
+	func Query(name string) string {
+		return this.Request.URL.Query().Get(name)
+	}
+
+	func Text(value string) error {
+		this.Response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, err := this.Response.Write([]byte(value))
+		return err
+	}
+
+	func JSON(value any) error {
+		this.Response.Header().Set("Content-Type", "application/json")
+		return json.NewEncoder(this.Response).Encode(value)
+	}
+
+	func Redirect(url string, status int) {
+		stdhttp.Redirect(this.Response, this.Request, url, status)
+	}
+}

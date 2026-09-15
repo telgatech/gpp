@@ -198,7 +198,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 		for {
 			pos = skipSpace(src, pos)
 
-			parent, n := readIdent(src[pos:])
+			parent, n := readQualifiedIdent(src[pos:])
 			if n == 0 {
 				return nil, 0, fmt.Errorf(
 					"expected parent class",
@@ -247,6 +247,23 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 	}
 
 	return class, close + 1, nil
+}
+
+func readQualifiedIdent(src string) (string, int) {
+	name, n := readIdent(src)
+	if n == 0 {
+		return "", 0
+	}
+	end := n
+	for end < len(src) && src[end] == '.' {
+		part, partLength := readIdent(src[end+1:])
+		if partLength == 0 {
+			break
+		}
+		name += "." + part
+		end += 1 + partLength
+	}
+	return name, end
 }
 
 func parseClassBody(class *ClassDecl, body string) error {

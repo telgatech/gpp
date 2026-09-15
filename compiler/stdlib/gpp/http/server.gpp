@@ -1,0 +1,322 @@
+package gpp.http
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	stdhttp "net/http"
+	"reflect"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+type gppReadyListener struct {
+	net.Listener
+	ready chan bool
+	once sync.Once
+}
+
+func (listener *gppReadyListener) Accept() (net.Conn, error) {
+	listener.once.Do(func() { close(listener.ready) })
+	return listener.Listener.Accept()
+}
+
+func gppServe(server *stdhttp.Server, listener net.Listener, ready chan bool, done chan error) {
+	done <- server.Serve(&gppReadyListener{Listener: listener, ready: ready})
+}
+
+func gppErrorResult(result []reflect.Value) error {
+	if len(result) == 0 || result[0].IsNil() {
+		return nil
+	}
+	if err, ok := result[0].Interface().(error); ok {
+		return err
+	}
+	return nil
+}
+
+func gppCallHook(app any, name string, ctx *Context) error {
+	handler := reflect.ValueOf(app).MethodByName(name)
+	if !handler.IsValid() {
+		return nil
+	}
+	if ctx == nil {
+		return gppErrorResult(handler.Call(nil))
+	}
+	return gppErrorResult(handler.Call([]reflect.Value{reflect.ValueOf(ctx)}))
+}
+
+func gppCallShutdown(app any, ctx context.Context) error {
+	handler := reflect.ValueOf(app).MethodByName("Shutdown")
+	if !handler.IsValid() {
+		return nil
+	}
+	return gppErrorResult(handler.Call([]reflect.Value{reflect.ValueOf(ctx)}))
+}
+
+func gppHandleError(w stdhttp.ResponseWriter, err error) {
+	if err != nil {
+		stdhttp.Error(w, err.Error(), stdhttp.StatusInternalServerError)
+	}
+}
+
+func gppRouteHandler(app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	handler := reflect.ValueOf(app).MethodByName(methodName)
+	if !handler.IsValid() {
+		stdhttp.Error(w, "route handler not found", stdhttp.StatusInternalServerError)
+		return
+	}
+	ctx := Context(Response: w, Request: r, Values: map[string]any{})
+	if err := gppCallHook(app, "BeforeRequest", &ctx); err != nil {
+		gppHandleError(w, err)
+		return
+	}
+	result := handler.Call([]reflect.Value{reflect.ValueOf(&ctx)})
+	routeErr := gppErrorResult(result)
+	afterErr := gppCallHook(app, "AfterRequest", &ctx)
+	if routeErr != nil {
+		gppHandleError(w, routeErr)
+		return
+	}
+	if afterErr != nil {
+		gppHandleError(w, afterErr)
+	}
+}
+
+func gppRuntimeClass(value any) any {
+	method := reflect.ValueOf(value).MethodByName("GppRuntimeClass")
+	if !method.IsValid() {
+		return nil
+	}
+	result := method.Call(nil)
+	if len(result) == 0 || !result[0].IsValid() || result[0].IsNil() {
+		return nil
+	}
+	return result[0].Interface()
+}
+
+func gppReflectIndex(value reflect.Value, index int) reflect.Value {
+	return value.Index(index)
+}
+
+func gppAnnotationArgs(owner any, name string) []any {
+	if owner == nil {
+		return nil
+	}
+	value := reflect.ValueOf(owner)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() {
+		return nil
+	}
+	annotations := value.FieldByName("Annotations")
+	if !annotations.IsValid() {
+		return nil
+	}
+	for index := 0; index < annotations.Len(); index++ {
+		annotation := gppReflectIndex(annotations, index)
+		annotationName := fmt.Sprint(annotation.FieldByName("Name").Interface())
+		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
+		if annotationName == name || fullName == name {
+			arguments := annotation.FieldByName("Args")
+			result := make([]any, arguments.Len())
+			for argIndex := 0; argIndex < arguments.Len(); argIndex++ {
+				result[argIndex] = gppReflectIndex(arguments, argIndex).Interface()
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) {
+	if descriptor == nil {
+		return
+	}
+	value := reflect.ValueOf(descriptor)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	methods := value.FieldByName("Methods")
+	for index := 0; index < methods.Len(); index++ {
+		method := gppReflectIndex(methods, index)
+		methodName := fmt.Sprint(method.FieldByName("Name").Interface())
+		register := func(routePath string, httpMethod string) {
+			path := routePath
+			if prefix != "" {
+				path = strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(path, "/")
+			}
+			mux.HandleFunc(path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+				if r.Method != httpMethod {
+					w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+					return
+				}
+				gppRouteHandler(app, methodName, w, r)
+			})
+		}
+		for _, route := range []struct {
+			annotation string
+			method     string
+		}{
+			{annotation: "gpp.http.GET", method: "GET"},
+			{annotation: "gpp.http.POST", method: "POST"},
+			{annotation: "gpp.http.PUT", method: "PUT"},
+			{annotation: "gpp.http.PATCH", method: "PATCH"},
+			{annotation: "gpp.http.DELETE", method: "DELETE"},
+		} {
+			if arguments := gppAnnotationArgs(method.Interface(), route.annotation); len(arguments) > 0 {
+				register(fmt.Sprint(arguments[0]), route.method)
+			}
+		}
+	}
+}
+
+class Server {
+	HTTPServer *stdhttp.Server
+	ShutdownSetup *sync.Once
+	ShutdownLifecycle *sync.Once
+	ShutdownResult error
+
+	func SetupShutdownHandler() {
+		app := any(this)
+		if this.GppDynamicObject != nil {
+			app = this.GppDynamicObject
+		}
+		if this.ShutdownSetup == nil {
+			this.ShutdownSetup = &sync.Once{}
+		}
+		this.ShutdownSetup.Do(func() {
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-signals
+				signal.Stop(signals)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				gppCallShutdown(app, ctx)
+			}()
+		})
+	}
+
+	func BeforeListen() error {
+		return nil
+	}
+
+	func AfterListen() error {
+		return nil
+	}
+
+	func BeforeShutdown() error {
+		return nil
+	}
+
+	func AfterShutdown() error {
+		return nil
+	}
+
+	func BeforeRequest(ctx *Context) error {
+		return nil
+	}
+
+	func AfterRequest(ctx *Context) error {
+		return nil
+	}
+
+	func Listen() error {
+		app := any(this)
+		if this.GppDynamicObject != nil {
+			app = this.GppDynamicObject
+		}
+		descriptor := gppRuntimeClass(app)
+		network := "tcp"
+		address := ":8080"
+		if args := gppAnnotationArgs(descriptor, "gpp.http.Unix"); len(args) > 0 {
+			network = "unix"
+			address = fmt.Sprint(args[0])
+		}
+		if network == "tcp" {
+			if args := gppAnnotationArgs(descriptor, "gpp.http.Port"); len(args) > 0 {
+			address = ":" + fmt.Sprint(args[0])
+			}
+		}
+		if network == "tcp" {
+			if args := gppAnnotationArgs(descriptor, "gpp.http.IP"); len(args) > 0 {
+			address = fmt.Sprint(args[0]) + address[strings.Index(address, ":"):]
+			}
+		}
+		listener, err := net.Listen(network, address)
+		if err != nil {
+			return err
+		}
+		return this.Serve(listener)
+	}
+
+	func Serve(listener net.Listener) error {
+		app := any(this)
+		if this.GppDynamicObject != nil {
+			app = this.GppDynamicObject
+		}
+		descriptor := gppRuntimeClass(app)
+		mux := stdhttp.NewServeMux()
+		prefix := ""
+		if args := gppAnnotationArgs(descriptor, "gpp.http.Prefix"); len(args) > 0 {
+			prefix = fmt.Sprint(args[0])
+		}
+		if args := gppAnnotationArgs(descriptor, "gpp.http.Files"); len(args) > 1 {
+			path := fmt.Sprint(args[0])
+			directory := fmt.Sprint(args[1])
+			mux.Handle(path, stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory))))
+		}
+		gppRegisterRoutes(mux, app, descriptor, prefix)
+		this.HTTPServer = &stdhttp.Server{Handler: mux}
+		if err := gppCallHook(app, "SetupShutdownHandler", nil); err != nil {
+			_ = listener.Close()
+			return err
+		}
+		if err := gppCallHook(app, "BeforeListen", nil); err != nil {
+			_ = listener.Close()
+			return err
+		}
+		ready := make(chan bool)
+		done := make(chan error, 1)
+		go gppServe(this.HTTPServer, listener, ready, done)
+		<-ready
+		if err := gppCallHook(app, "AfterListen", nil); err != nil {
+			_ = this.Shutdown(context.Background())
+			<-done
+			return err
+		}
+		return <-done
+	}
+
+	func Shutdown(ctx context.Context) error {
+		app := any(this)
+		if this.GppDynamicObject != nil {
+			app = this.GppDynamicObject
+		}
+		if this.ShutdownLifecycle == nil {
+			this.ShutdownLifecycle = &sync.Once{}
+		}
+		this.ShutdownLifecycle.Do(func() {
+			beforeErr := gppCallHook(app, "BeforeShutdown", nil)
+			shutdownErr := error(nil)
+			if this.HTTPServer != nil {
+				shutdownErr = this.HTTPServer.Shutdown(ctx)
+			}
+			afterErr := gppCallHook(app, "AfterShutdown", nil)
+			this.ShutdownResult = shutdownErr
+			if this.ShutdownResult == nil {
+				this.ShutdownResult = beforeErr
+			}
+			if this.ShutdownResult == nil {
+				this.ShutdownResult = afterErr
+			}
+		})
+		return this.ShutdownResult
+	}
+}

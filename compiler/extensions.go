@@ -615,6 +615,43 @@ func configureNativeExtensionMethods(context *constructorContext, file *File) {
 			context.NativeMethods["*"+target][method.Name()] = true
 		}
 	}
+
+	// Generic extensions must yield to native methods on imported named types
+	// as well. This matters for APIs such as reflect.Value, whose native Index
+	// method would otherwise be mistaken for the prelude slice extension.
+	extensionNames := map[string]bool{}
+	for _, extension := range context.Extensions {
+		extensionNames[extension.Method.Name] = true
+	}
+	for alias, importPath := range paths {
+		pkg, err := importer.Default().Import(importPath)
+		if err != nil {
+			continue
+		}
+		for _, name := range pkg.Scope().Names() {
+			object := pkg.Scope().Lookup(name)
+			typeName, ok := object.(*types.TypeName)
+			if !ok {
+				continue
+			}
+			named, ok := typeName.Type().(*types.Named)
+			if !ok {
+				continue
+			}
+			methods := types.NewMethodSet(types.NewPointer(named))
+			for index := 0; index < methods.Len(); index++ {
+				method := methods.At(index).Obj()
+				if !extensionNames[method.Name()] {
+					continue
+				}
+				target := alias + "." + name
+				if context.NativeMethods[target] == nil {
+					context.NativeMethods[target] = map[string]bool{}
+				}
+				context.NativeMethods[target][method.Name()] = true
+			}
+		}
+	}
 }
 
 func extensionTypeParameterCount(typeParams string) int {
@@ -731,7 +768,7 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if err != nil {
 		return err
 	}
-	parameters, err = transformParameterList(parameters, context)
+	parameters, err = transformExtensionParameterList(parameters, context)
 	if err != nil {
 		return err
 	}
@@ -797,4 +834,30 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	out.WriteString(body)
 	out.WriteString("\n}\n\n")
 	return nil
+}
+
+// Extension parameters that name a Go++ class are exposed through the
+// generated class interface. This lets an extension package accept derived
+// classes without knowing which packages will define those derived classes.
+func transformExtensionParameterList(params string, context constructorContext) (string, error) {
+	parameters, err := parseParameterInfos(params)
+	if err != nil {
+		return "", err
+	}
+	parts := make([]string, 0, len(parameters))
+	for _, parameter := range parameters {
+		typeName := transformPolymorphicType(parameter.Type, context)
+		if typeName == parameter.Type {
+			name := strings.TrimSpace(parameter.Type)
+			if target, ok := context.Targets[name]; ok && target.Qualifier == "" {
+				typeName = "Gpp" + target.Class.Name
+			}
+		}
+		if parameter.Name == "" {
+			parts = append(parts, typeName)
+		} else {
+			parts = append(parts, parameter.Name+" "+typeName)
+		}
+	}
+	return strings.Join(parts, ", "), nil
 }

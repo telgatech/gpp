@@ -1,0 +1,350 @@
+package gpp.orm
+
+import (
+	"database/sql"
+	"fmt"
+	"reflect"
+	"strings"
+)
+
+type gppORMColumn struct {
+	Name string
+	Field any
+}
+
+func gppORMReflectIndex(value reflect.Value, index int) reflect.Value {
+	return value.Index(index)
+}
+
+func gppORMRuntimeClass(value any) any {
+	if value == nil {
+		return nil
+	}
+	handler := reflect.ValueOf(value).MethodByName("GppRuntimeClass")
+	if !handler.IsValid() {
+		return nil
+	}
+	result := handler.Call(nil)
+	if len(result) == 0 || !result[0].IsValid() || result[0].IsNil() {
+		return nil
+	}
+	return result[0].Interface()
+}
+
+func gppORMAnnotationArgs(owner any, name string) []any {
+	if owner == nil {
+		return nil
+	}
+	value := reflect.ValueOf(owner)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() {
+		return nil
+	}
+	annotations := value.FieldByName("Annotations")
+	if !annotations.IsValid() {
+		return nil
+	}
+	for index := 0; index < annotations.Len(); index++ {
+		annotation := gppORMReflectIndex(annotations, index)
+		annotationName := fmt.Sprint(annotation.FieldByName("Name").Interface())
+		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
+		if annotationName != name && fullName != name {
+			continue
+		}
+		arguments := annotation.FieldByName("Args")
+		result := make([]any, arguments.Len())
+		for argIndex := 0; argIndex < arguments.Len(); argIndex++ {
+			result[argIndex] = gppORMReflectIndex(arguments, argIndex).Interface()
+		}
+		return result
+	}
+	return nil
+}
+
+func gppORMFieldAnnotations(field any) any {
+	value := reflect.ValueOf(field)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	return value.FieldByName("Annotations").Interface()
+}
+
+func gppORMColumns(descriptor any) ([]gppORMColumn, error) {
+	if descriptor == nil {
+		return nil, fmt.Errorf("orm: target has no Go++ runtime class")
+	}
+	value := reflect.ValueOf(descriptor)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	fields := value.FieldByName("Fields")
+	columns := []gppORMColumn{}
+	for index := 0; index < fields.Len(); index++ {
+		field := gppORMReflectIndex(fields, index)
+		args := gppORMAnnotationArgs(gppORMFieldAnnotations(field.Interface()), "gpp.orm.Column")
+		if len(args) == 0 {
+			continue
+		}
+		columns = append(columns, gppORMColumn{Name: fmt.Sprint(args[0]), Field: field.Interface()})
+	}
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("orm: %s has no persisted columns", fmt.Sprint(value.FieldByName("Name").Interface()))
+	}
+	return columns, nil
+}
+
+func gppORMTable(descriptor any) (string, error) {
+	args := gppORMAnnotationArgs(descriptor, "gpp.orm.Table")
+	if len(args) == 0 {
+		name := "model"
+		if descriptor != nil {
+			value := reflect.ValueOf(descriptor)
+			if value.Kind() == reflect.Pointer {
+				value = value.Elem()
+			}
+			if value.IsValid() {
+				name = fmt.Sprint(value.FieldByName("Name").Interface())
+			}
+		}
+		return "", fmt.Errorf("orm: %s has no Table annotation", name)
+	}
+	return fmt.Sprint(args[0]), nil
+}
+
+func gppORMFieldGet(field any, object any) any {
+	value := reflect.ValueOf(field)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	getter := value.FieldByName("Get")
+	return getter.Call([]reflect.Value{reflect.ValueOf(object)})[0].Interface()
+}
+
+func gppORMFieldAddr(field any, object any) any {
+	value := reflect.ValueOf(field)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	addr := value.FieldByName("Addr")
+	return addr.Call([]reflect.Value{reflect.ValueOf(object)})[0].Interface()
+}
+
+func gppORMHasPK(field any) bool {
+	return gppORMHasAnnotation(gppORMFieldAnnotations(field), "gpp.orm.PK")
+}
+
+func gppORMHasAnnotation(owner any, name string) bool {
+	if owner == nil {
+		return false
+	}
+	value := reflect.ValueOf(owner)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	annotations := value
+	for index := 0; index < annotations.Len(); index++ {
+		annotation := gppORMReflectIndex(annotations, index)
+		if fmt.Sprint(annotation.FieldByName("Name").Interface()) == name || fmt.Sprint(annotation.FieldByName("FullName").Interface()) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func gppORMCallHook(entity any, name string, exec SQLExecutor) error {
+	handler := reflect.ValueOf(entity).MethodByName(name)
+	if !handler.IsValid() {
+		return nil
+	}
+	result := handler.Call([]reflect.Value{reflect.ValueOf(exec)})
+	if len(result) == 0 || result[0].IsNil() {
+		return nil
+	}
+	return result[0].Interface().(error)
+}
+
+func gppORMQuery(descriptor any, where string, limit string) (string, []gppORMColumn, error) {
+	table, err := gppORMTable(descriptor)
+	if err != nil {
+		return "", nil, err
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return "", nil, err
+	}
+	names := []string{}
+	for _, column := range columns {
+		names = append(names, column.Name)
+	}
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(names, ", "), table)
+	if strings.TrimSpace(where) != "" {
+		query += " WHERE " + where
+	}
+	if limit != "" {
+		query += " " + limit
+	}
+	return query, columns, nil
+}
+
+extend *sql.DB, *sql.Tx {
+	func Get(target any, where string, args ...any) error {
+		descriptor := gppORMRuntimeClass(target)
+		query, columns, err := gppORMQuery(descriptor, where, "LIMIT 1")
+		if err != nil {
+			return err
+		}
+		scanValues := []any{}
+		for _, column := range columns {
+			scanValues = append(scanValues, gppORMFieldAddr(column.Field, target))
+		}
+		return this.QueryRow(query, args...).Scan(scanValues...)
+	}
+
+	func Select(target any, where string, args ...any) error {
+		targetValue := reflect.ValueOf(target)
+		if targetValue.Kind() != reflect.Ptr || targetValue.IsNil() || targetValue.Elem().Kind() != reflect.Slice {
+			return fmt.Errorf("Select target must be a non-nil pointer to a model slice")
+		}
+		elementType := targetValue.Elem().Type().Elem()
+		if elementType.Kind() != reflect.Struct {
+			return fmt.Errorf("Select target slice must contain Go++ model values")
+		}
+		prototype := reflect.New(elementType).Interface()
+		descriptor := gppORMRuntimeClass(prototype)
+		if descriptor == nil {
+			return fmt.Errorf("Select target slice must contain a Go++ class")
+		}
+		query, columns, err := gppORMQuery(descriptor, where, "")
+		if err != nil {
+			return err
+		}
+		rows, err := this.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			itemValue := reflect.New(elementType)
+			item := itemValue.Interface()
+			scanValues := []any{}
+			for _, column := range columns {
+				scanValues = append(scanValues, gppORMFieldAddr(column.Field, item))
+			}
+			if err := rows.Scan(scanValues...); err != nil {
+				return err
+			}
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+		}
+		return rows.Err()
+	}
+
+	func Insert(entity Model) error {
+		if err := gppORMCallHook(entity, "Validate", this); err != nil {
+			return err
+		}
+		if err := gppORMCallHook(entity, "BeforeCreate", this); err != nil {
+			return err
+		}
+		descriptor := gppORMRuntimeClass(entity)
+		query, columns, err := gppORMQuery(descriptor, "", "")
+		if err != nil {
+			return err
+		}
+		names := []string{}
+		values := []any{}
+		for _, column := range columns {
+			names = append(names, column.Name)
+			values = append(values, gppORMFieldGet(column.Field, entity))
+		}
+		placeholders := []string{}
+		for index := range names {
+			placeholders = append(placeholders, "$"+fmt.Sprint(index+1))
+		}
+		table, _ := gppORMTable(descriptor)
+		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(names, ", "), strings.Join(placeholders, ", "))
+		if _, err := this.Exec(query, values...); err != nil {
+			return err
+		}
+		return gppORMCallHook(entity, "AfterCreate", this)
+	}
+
+	func Update(entity Model) error {
+		if err := gppORMCallHook(entity, "Validate", this); err != nil {
+			return err
+		}
+		if err := gppORMCallHook(entity, "BeforeUpdate", this); err != nil {
+			return err
+		}
+		descriptor := gppORMRuntimeClass(entity)
+		table, err := gppORMTable(descriptor)
+		if err != nil {
+			return err
+		}
+		columns, err := gppORMColumns(descriptor)
+		if err != nil {
+			return err
+		}
+		primaryKey := ""
+		var primaryValue any
+		assignments := []string{}
+		values := []any{}
+		for _, column := range columns {
+			if gppORMHasPK(column.Field) {
+				if primaryKey != "" {
+					return fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
+				}
+				primaryKey = column.Name
+				primaryValue = gppORMFieldGet(column.Field, entity)
+				continue
+			}
+			assignments = append(assignments, column.Name+" = $"+fmt.Sprint(len(values)+1))
+			values = append(values, gppORMFieldGet(column.Field, entity))
+		}
+		if primaryKey == "" {
+			return fmt.Errorf("orm: %s has no primary key", table)
+		}
+		values = append(values, primaryValue)
+		query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = $%d", table, strings.Join(assignments, ", "), primaryKey, len(values))
+		if _, err := this.Exec(query, values...); err != nil {
+			return err
+		}
+		return gppORMCallHook(entity, "AfterUpdate", this)
+	}
+
+	func Delete(entity Model) error {
+		if err := gppORMCallHook(entity, "BeforeDelete", this); err != nil {
+			return err
+		}
+		descriptor := gppORMRuntimeClass(entity)
+		table, err := gppORMTable(descriptor)
+		if err != nil {
+			return err
+		}
+		columns, err := gppORMColumns(descriptor)
+		if err != nil {
+			return err
+		}
+		primaryKey := ""
+		var primaryValue any
+		for _, column := range columns {
+			if !gppORMHasPK(column.Field) {
+				continue
+			}
+			if primaryKey != "" {
+				return fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
+			}
+			primaryKey = column.Name
+			primaryValue = gppORMFieldGet(column.Field, entity)
+		}
+		if primaryKey == "" {
+			return fmt.Errorf("orm: %s has no primary key", table)
+		}
+		query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", table, primaryKey)
+		if _, err := this.Exec(query, primaryValue); err != nil {
+			return err
+		}
+		return gppORMCallHook(entity, "AfterDelete", this)
+	}
+}

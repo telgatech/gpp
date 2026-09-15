@@ -15,11 +15,14 @@ type SemanticModel struct {
 }
 
 type PackageSymbols struct {
-	Name        string
-	Classes     map[string]*ClassDecl
-	Extensions  []*ExtendDecl
-	Annotations map[string]*AnnotationDecl
-	Functions   map[string]bool
+	Name            string
+	Classes         map[string]*ClassDecl
+	Imports         map[string]string
+	ImportedClasses map[string]*ClassDecl
+	Types           map[string]bool
+	Extensions      []*ExtendDecl
+	Annotations     map[string]*AnnotationDecl
+	Functions       map[string]bool
 }
 
 func classLocation(class *ClassDecl) string {
@@ -27,6 +30,26 @@ func classLocation(class *ClassDecl) string {
 		return fmt.Sprintf("%s:%d", class.SourceFile, class.SourceLine)
 	}
 	return class.SourceFile
+}
+
+func rawTypeNames(source string) map[string]bool {
+	result := map[string]bool{}
+	parsed, err := parser.ParseFile(token.NewFileSet(), "raw.gpp", "package main\n"+source, 0)
+	if err != nil {
+		return result
+	}
+	for _, declaration := range parsed.Decls {
+		group, ok := declaration.(*ast.GenDecl)
+		if !ok || group.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range group.Specs {
+			if typeSpec, ok := spec.(*ast.TypeSpec); ok {
+				result[typeSpec.Name.Name] = true
+			}
+		}
+	}
+	return result
 }
 
 func ResolveProgram(program *Program) (*SemanticModel, error) {
@@ -38,11 +61,14 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 		pkg, ok := model.Packages[file.Package]
 		if !ok {
 			pkg = &PackageSymbols{
-				Name:        file.Package,
-				Classes:     map[string]*ClassDecl{},
-				Extensions:  []*ExtendDecl{},
-				Annotations: map[string]*AnnotationDecl{},
-				Functions:   map[string]bool{},
+				Name:            file.Package,
+				Classes:         map[string]*ClassDecl{},
+				Imports:         map[string]string{},
+				ImportedClasses: map[string]*ClassDecl{},
+				Types:           map[string]bool{},
+				Extensions:      []*ExtendDecl{},
+				Annotations:     map[string]*AnnotationDecl{},
+				Functions:       map[string]bool{},
 			}
 			model.Packages[file.Package] = pkg
 		}
@@ -58,6 +84,11 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				}
 				pkg.Annotations[annotation.Name] = annotation
 				continue
+			}
+			if raw, ok := decl.(*RawDecl); ok {
+				for name := range rawTypeNames(raw.Code) {
+					pkg.Types[name] = true
+				}
 			}
 			if extension, ok := decl.(*ExtendDecl); ok {
 				pkg.Extensions = append(pkg.Extensions, extension)
@@ -80,6 +111,21 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 
 			pkg.Classes[class.Name] = class
 		}
+		if imports, err := goImports(file); err == nil {
+			for _, spec := range imports {
+				importPath, err := strconv.Unquote(spec.Path.Value)
+				if err != nil {
+					continue
+				}
+				alias := path.Base(importPath)
+				if spec.Name != nil {
+					alias = spec.Name.Name
+				}
+				if alias != "_" && alias != "." {
+					pkg.Imports[alias] = importPath
+				}
+			}
+		}
 		for _, file := range program.Files {
 			if file.Package != pkg.Name {
 				continue
@@ -90,6 +136,21 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 						pkg.Functions[signature] = true
 					}
 				}
+			}
+		}
+	}
+	for _, pkg := range model.Packages {
+		for alias, importPath := range pkg.Imports {
+			logical, ok := officialLogicalPackage(importPath)
+			if !ok {
+				continue
+			}
+			imported := model.Packages[logical]
+			if imported == nil {
+				continue
+			}
+			for className, class := range imported.Classes {
+				pkg.ImportedClasses[alias+"."+className] = class
 			}
 		}
 	}
@@ -209,7 +270,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	fields := map[string]bool{}
 	for _, field := range class.Fields {
-		if field.Name == "GppDynamicClass" {
+		if field.Name == "GppDynamicClass" || field.Name == "GppDynamicObject" {
 			return fmt.Errorf(
 				"%s: class %s field %s is reserved for Go++ runtime metadata",
 				classLocation(class),
@@ -323,6 +384,9 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 		parents[parentName] = true
 
 		if _, ok := pkg.Classes[parentName]; !ok {
+			if _, imported := pkg.ImportedClasses[parentName]; imported {
+				continue
+			}
 			return fmt.Errorf(
 				"%s: class %s has unresolved parent %s in package %s",
 				classLocation(class),
@@ -420,8 +484,10 @@ func validateInheritanceCycles(pkg *PackageSymbols) error {
 		stack = append(stack, className)
 
 		for _, parentName := range pkg.Classes[className].Parents {
-			if err := visit(parentName); err != nil {
-				return err
+			if _, local := pkg.Classes[parentName]; local {
+				if err := visit(parentName); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -456,6 +522,7 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 	context.Package = file.Package
 	context.Annotations, _ = annotationScopeForFile(file, model, modulePath)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
+	context.ImportedTypes = map[string]map[string]bool{}
 
 	if modulePath == "" {
 		return context, nil
@@ -494,6 +561,9 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		if alias == "." {
 			qualifier = ""
 		}
+		if alias != "_" {
+			context.ImportedTypes[alias] = pkg.Types
+		}
 
 		for className, class := range pkg.Classes {
 			key := alias + "." + className
@@ -530,6 +600,21 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		}
 		importedExtensions := extensionMethodsForDeclarations(pkg.Extensions, alias)
 		if qualifier != "" {
+			importedTypes := map[string]map[string]bool{qualifier: pkg.Types}
+			for index := range importedExtensions {
+				importedExtensions[index].Method.Parameters = qualifyImportedTypeNames(
+					importedExtensions[index].Method.Parameters,
+					qualifier+"._",
+					pkg.Classes,
+					importedTypes,
+				)
+				importedExtensions[index].Method.Result = qualifyImportedTypeNames(
+					importedExtensions[index].Method.Result,
+					qualifier+"._",
+					pkg.Classes,
+					importedTypes,
+				)
+			}
 			for index := range importedExtensions {
 				baseTarget := strings.TrimPrefix(importedExtensions[index].Target, "*")
 				if _, ok := pkg.Classes[baseTarget]; !ok {
@@ -636,6 +721,11 @@ func goImports(file *File) ([]*ast.ImportSpec, error) {
 }
 
 func logicalPackageForImport(importPath, modulePath string, model *SemanticModel) (string, bool) {
+	if logical, ok := officialLogicalPackage(importPath); ok {
+		if _, exists := model.Packages[logical]; exists {
+			return logical, true
+		}
+	}
 	prefix := modulePath + "/"
 	if !strings.HasPrefix(importPath, prefix) {
 		return "", false
@@ -648,6 +738,13 @@ func logicalPackageForImport(importPath, modulePath string, model *SemanticModel
 	}
 
 	return logical, true
+}
+
+func officialLogicalPackage(importPath string) (string, bool) {
+	if !strings.HasPrefix(importPath, "gpp/") {
+		return "", false
+	}
+	return "gpp." + strings.ReplaceAll(strings.TrimPrefix(importPath, "gpp/"), "/", "."), true
 }
 
 func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error {
@@ -734,7 +831,14 @@ func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]map[st
 	}
 
 	for _, parentName := range class.Parents {
-		parentMembers, err := classMembers(pkg, pkg.Classes[parentName], cache, visiting)
+		parent := pkg.Classes[parentName]
+		if parent == nil {
+			parent = pkg.ImportedClasses[parentName]
+		}
+		if parent == nil {
+			return nil, fmt.Errorf("class %s has unresolved parent %s", class.Name, parentName)
+		}
+		parentMembers, err := classMembers(pkg, parent, cache, visiting)
 		if err != nil {
 			return nil, err
 		}

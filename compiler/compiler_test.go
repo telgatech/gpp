@@ -8,6 +8,144 @@ import (
 	"testing"
 )
 
+func TestCompileFilesRunsBundledHTTPServer(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+
+	source := `
+package main
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "net"
+    stdhttp "net/http"
+    "strings"
+    http "gpp/http"
+)
+
+var events []string
+
+class App : http.Server {
+    func BeforeListen() error {
+        events = append(events, "before-listen")
+        return nil
+    }
+
+    func AfterListen() error {
+        events = append(events, "after-listen")
+        return nil
+    }
+
+    func BeforeRequest(ctx *http.Context) error {
+        events = append(events, "before-request")
+        ctx.Set("marker", "shared")
+        return nil
+    }
+
+    func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
+        events = append(events, "route")
+        return ctx.Text(fmt.Sprintf("%s %s", ctx.Get("marker"), ctx.Param("name")))
+    }
+
+    func AfterRequest(ctx *http.Context) error {
+        events = append(events, "after-request")
+        return nil
+    }
+
+    func BeforeShutdown() error {
+        events = append(events, "before-shutdown")
+        return nil
+    }
+
+    func AfterShutdown() error {
+        events = append(events, "after-shutdown")
+        return nil
+    }
+}
+
+func main() {
+    app := App()
+    listener, err := net.Listen("tcp", "127.0.0.1:0")
+    if err != nil { fmt.Println("SKIP:", err); return }
+    done := make(chan error, 1)
+    go func() { done <- app.Serve(listener) }()
+
+    response, err := stdhttp.Get("http://" + listener.Addr().String() + "/hello/Go")
+    if err != nil { panic(err) }
+    body, err := io.ReadAll(response.Body)
+    if err != nil { panic(err) }
+    response.Body.Close()
+    fmt.Println(response.StatusCode, string(body))
+
+    if err := app.Shutdown(context.Background()); err != nil { panic(err) }
+    if err := <-done; err != nil && err != stdhttp.ErrServerClosed { panic(err) }
+    fmt.Println(strings.Join(events, ","))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated HTTP server did not run: %v\n%s", err, output)
+	}
+	if strings.HasPrefix(string(output), "SKIP:") {
+		t.Skipf("loopback sockets unavailable: %s", output)
+	}
+	if string(output) != "200 shared Go\nbefore-listen,after-listen,before-request,route,after-request,before-shutdown,after-shutdown\n" {
+		t.Fatalf("unexpected HTTP response:\n%s", output)
+	}
+}
+
+func TestCompileFilesBuildsBundledORMModelBoundary(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+
+	source := `
+package main
+
+import (
+    "database/sql"
+    orm "gpp/orm"
+)
+
+class Employee : orm.Model @{orm.Table("employees")} {
+    Id int64 @{orm.Column("id"), orm.PK}
+}
+
+func useORM(db *sql.DB) error {
+    employee := Employee()
+    return db.Insert(&employee)
+}
+
+func main() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "test", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generated ORM model boundary did not build: %v\n%s", err, output)
+	}
+}
+
 func TestCompileFilesResolvesClassesAcrossDottedPackageFiles(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

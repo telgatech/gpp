@@ -1,0 +1,47 @@
+package main
+
+import (
+	"fmt"
+	http "gpp/http"
+)
+
+class App : http.Server @{http.Port(8080), http.Prefix("/api")} {
+	func BeforeListen() error {
+		fmt.Println("server starting")
+		return nil
+	}
+
+	func BeforeRequest(ctx *http.Context) error {
+		ctx.Set("request-source", "Go++")
+		return nil
+	}
+
+	func Home(ctx *http.Context) error @{http.GET("/hello/{name}")} {
+		return ctx.Text(fmt.Sprintf("%s says hello to %s", ctx.Get("request-source"), ctx.Param("name")))
+	}
+
+	func Health(ctx *http.Context) error @{http.GET("/health")} {
+		return ctx.JSON(record(ok: true))
+	}
+
+	func AfterRequest(ctx *http.Context) error {
+		return nil
+	}
+
+	func BeforeShutdown() error {
+		fmt.Println("server shutting down")
+		return nil
+	}
+
+	func AfterShutdown() error {
+		fmt.Println("server stopped")
+		return nil
+	}
+}
+
+func main() {
+	app := App()
+	if err := app.Listen(); err != nil {
+		panic(err)
+	}
+}

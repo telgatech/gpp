@@ -11,10 +11,32 @@ import (
 type CompileOptions struct {
 	ModulePath string
 	NoPrelude  bool
+	NoStdlib   bool
 }
 
 func CompileFiles(files []string, outputDir string) error {
 	return CompileFilesWithOptions(files, outputDir, CompileOptions{})
+}
+
+func availableImportsForFile(file *File, model *SemanticModel, modulePath string) map[string]string {
+	imports := map[string]string{}
+	pkg := model.Packages[file.Package]
+	if pkg == nil {
+		return imports
+	}
+	for alias, importPath := range pkg.Imports {
+		imports[alias] = importPath
+		if logical, ok := logicalPackageForImport(importPath, modulePath, model); ok {
+			if imported := model.Packages[logical]; imported != nil {
+				for importedAlias, importedPath := range imported.Imports {
+					if _, exists := imports[importedAlias]; !exists {
+						imports[importedAlias] = importedPath
+					}
+				}
+			}
+		}
+	}
+	return imports
 }
 
 func CompileFilesWithOptions(files []string, outputDir string, options CompileOptions) error {
@@ -37,6 +59,11 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 
 		program.Files = append(program.Files, file)
+	}
+	if !options.NoStdlib {
+		if err := appendOfficialStdlib(program); err != nil {
+			return err
+		}
 	}
 
 	model, err := ResolveProgram(program)
@@ -78,6 +105,11 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 	}
 	usesIntrospection := programUsesIntrospection(program)
+	if usesIntrospection && options.ModulePath != "" {
+		if err := ensureSharedIntrospectionRuntime(outputDir); err != nil {
+			return err
+		}
+	}
 
 	for _, file := range program.Files {
 		context, err := constructorContextForFile(
@@ -99,6 +131,11 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		context.Introspection.Enabled = usesIntrospection
 		context.Annotations = model.Packages[file.Package].Annotations
 		context.Package = file.Package
+		context.ModulePath = options.ModulePath
+		context.AvailableImports = availableImportsForFile(file, model, options.ModulePath)
+		if usesIntrospection && options.ModulePath != "" {
+			context.IntrospectionRuntimeImport = options.ModulePath + "/gpp/runtime"
+		}
 		if !options.NoPrelude {
 			context.EmitPrelude = !preludeEmitted[file.Package]
 			context.EmitPreludeAll = context.EmitPrelude && preludeNeeded[file.Package]
@@ -192,6 +229,15 @@ func ensureGoModule(outputDir, modulePath string) error {
 
 	content := fmt.Sprintf("module %s\n\ngo 1.26\n", modulePath)
 	return os.WriteFile(goModPath, []byte(content), 0644)
+}
+
+func ensureSharedIntrospectionRuntime(outputDir string) error {
+	directory := filepath.Join(outputDir, "gpp", "runtime")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		return err
+	}
+	source := "package runtime\n\n" + introspectionRuntimeDefinitions()
+	return os.WriteFile(filepath.Join(directory, "runtime.go"), []byte(source), 0644)
 }
 
 func isModulePath(modulePath string) bool {
