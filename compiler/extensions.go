@@ -716,6 +716,14 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 
 	methodContext := context
 	methodContext.CurrentExtensionReceiver = extension.ReceiverType
+	methodContext.CurrentParameterTypes = map[string]string{}
+	if parameterInfos, parseErr := parseParameterInfos(parameters); parseErr == nil {
+		for _, parameter := range parameterInfos {
+			if parameter.Name != "" {
+				methodContext.CurrentParameterTypes[parameter.Name] = parameter.Type
+			}
+		}
+	}
 	body := transformInterpolationWithName(extension.Method.Body, interpolationName)
 	body, err = transformLambdas(body, methodContext)
 	if err != nil {

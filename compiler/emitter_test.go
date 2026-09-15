@@ -278,6 +278,35 @@ func main() {
 	}
 }
 
+func TestEmitInheritedMethodsOnDerivedReceiver(t *testing.T) {
+	file, err := ParseFile("inherited_methods.gpp", `
+class Model {
+    func RuntimeName() string {
+        return this.class.name
+    }
+}
+
+class Employee: Model {}
+
+func main() {
+    employee := Employee()
+    _ = employee.RuntimeName()
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "func (this *Employee) RuntimeName() string") ||
+		!strings.Contains(generated, "return this.GppRuntimeClass().Name") {
+		t.Fatalf("inherited method was not emitted for the derived receiver:\n%s", code)
+	}
+}
+
 func TestEmitRequiresQualifiedAmbiguousInheritedField(t *testing.T) {
 	file, err := ParseFile("ambiguous.gpp", `
 class A {
@@ -1348,6 +1377,43 @@ func main() {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("extension method output missing %q:\n%s", expected, code)
 		}
+	}
+}
+
+func TestEmitLowersIntrospectionOnExtensionParameters(t *testing.T) {
+	file, err := ParseFile("extension_introspection.gpp", `
+import "database/sql"
+
+annotation Table(name string) on class
+
+class Model {}
+
+class Employee: Model @{Table("employees")} {
+    Name string
+}
+
+extend *sql.DB {
+    func ModelName(entity Model) string {
+        return entity.class.name
+    }
+}
+
+func main() {
+    var db *sql.DB
+    employee := Employee("Ada")
+    _ = db.ModelName(employee)
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "entity.GppRuntimeClass().Name") {
+		t.Fatalf("extension parameter introspection was not lowered:\n%s", code)
 	}
 }
 

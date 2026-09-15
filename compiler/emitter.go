@@ -94,6 +94,7 @@ type constructorContext struct {
 	CurrentMethod            string
 	CurrentResult            string
 	CurrentExtensionReceiver string
+	CurrentParameterTypes    map[string]string
 }
 
 func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
@@ -332,9 +333,18 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 
 	out.WriteString("}\n\n")
 
-	for methodIndex := range class.Methods {
-		method := &class.Methods[methodIndex]
-		methodName := methodOutputName(*method)
+	classes := map[string]*ClassDecl{}
+	if target, ok := context.Targets[class.Name]; ok {
+		classes = target.Classes
+	}
+	methods, err := interfaceMethods(class, classes, map[string]bool{})
+	if err != nil {
+		return err
+	}
+
+	for methodIndex := range methods {
+		method := methods[methodIndex]
+		methodName := methodOutputName(method)
 		body := transformInterpolationWithName(method.Body, interpolationName)
 		methodResult, body, err := transformRecordMethodResult(method.Result, body, contextForMethod(context, class, method.Name))
 		if err != nil {
@@ -413,16 +423,6 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		out.WriteString(body)
 
 		out.WriteString("\n}\n\n")
-	}
-
-	classes := map[string]*ClassDecl{}
-	if target, ok := context.Targets[class.Name]; ok {
-		classes = target.Classes
-	}
-
-	methods, err := interfaceMethods(class, classes, map[string]bool{})
-	if err != nil {
-		return err
 	}
 
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
@@ -854,6 +854,9 @@ func polymorphicValueTypes(root ast.Node, context constructorContext) map[string
 		}
 		return true
 	})
+	for name, typeName := range context.CurrentParameterTypes {
+		result[name] = typeName
+	}
 	return result
 }
 
