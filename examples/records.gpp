@@ -2,26 +2,27 @@ import "fmt"
 
 func getUser() record {
     return record(
-        name: fmt.Sprintf("%s", "Bob"),
-        age: 42,
-        profile: record(active: true),
+        Name: fmt.Sprintf("%s", "Bob"),
+        Age: 42,
+        internal: "loaded from the database",
+        Profile: record(Active: true),
     )
 }
 
 func userName(user record) string {
-    return user.name
+    return user.Name
 }
 
 func main() {
     let user = getUser()
 	users := []record{
-		record(name: "Alice", age: 30, profile: record(active: false)),
+		record(Name: "Alice", Age: 30, internal: "list item", Profile: record(Active: false)),
 	}
 	byName := map[string]record{
-		"bob": record(name: "Bob", age: 42, profile: record(active: true)),
+		"bob": record(Name: "Bob", Age: 42, internal: "map item", Profile: record(Active: true)),
 	}
 
-    fmt.Println(user.name, user.age, user.profile.active)
-    fmt.Println(users[0].name, byName["bob"].age)
+    fmt.Println(user.Name, user.Age, user.internal, user.Profile.Active)
+    fmt.Println(users[0].Name, byName["bob"].Age)
     fmt.Println(userName(user))
 }

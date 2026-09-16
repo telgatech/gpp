@@ -30,7 +30,7 @@ The examples cover:
   class-valued function result passed directly to a base-typed function.
 - `safe_access.gpp` — explicit `?.` safe access for nullable class values.
 - `records.gpp` — anonymous structural records, nested records, inferred
-  return types, and `let` bindings.
+  return types, `let` bindings, and capitalization-based field visibility.
 - `introspection.gpp` — runtime class names, inherited field metadata, and field access.
 - `extension_methods.gpp` — extensions on strings and Go++ classes.
 - `multi_extension.gpp` — one extension block shared by strings and slices,
@@ -70,8 +70,9 @@ The examples cover:
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
   before running it.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
-  annotated routes, path parameters, JSON responses, request context values,
-  lifecycle hooks, graceful shutdown, and a configurable port.
+  annotated routes, path parameters, status-aware JSON/text/template responses,
+  custom error templates, request context values, lifecycle hooks, graceful
+  shutdown, and a configurable port.
 
 The dotted-package example is compiled as a pair:
 

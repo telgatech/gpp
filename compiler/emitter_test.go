@@ -1272,6 +1272,33 @@ func main() {
 	}
 }
 
+func TestEmitTreatsRecordFieldCaseAsSignificant(t *testing.T) {
+	file, err := ParseFile("record_visibility.gpp", `
+func main() {
+    exported := record(Name: "Bob")
+    internal := record(name: "Bob")
+    _ = exported.Name
+    _ = internal.name
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	generated := string(code)
+	if strings.Count(generated, "type __gpp_record_") != 2 {
+		t.Fatalf("case-sensitive record fields should produce distinct shapes:\n%s", code)
+	}
+	if !strings.Contains(generated, "\tName string") || !strings.Contains(generated, "\tname string") {
+		t.Fatalf("record field capitalization was not preserved:\n%s", code)
+	}
+}
+
 func TestEmitRejectsInconsistentRecordReturns(t *testing.T) {
 	file, err := ParseFile("bad_records.gpp", `
 func Broken(ok bool) record {

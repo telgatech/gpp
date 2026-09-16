@@ -60,32 +60,57 @@ func gppCallShutdown(app any, ctx context.Context) error {
 	return gppErrorResult(handler.Call([]reflect.Value{reflect.ValueOf(ctx)}))
 }
 
-func gppHandleError(w stdhttp.ResponseWriter, err error) {
-	if err != nil {
-		stdhttp.Error(w, err.Error(), stdhttp.StatusInternalServerError)
+func gppWriteMinimalError(ctx *Context) {
+	if ctx == nil || ctx.Written {
+		return
+	}
+	ctx.Response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	ctx.Response.WriteHeader(stdhttp.StatusInternalServerError)
+	ctx.Status = stdhttp.StatusInternalServerError
+	ctx.Written = true
+	_, _ = ctx.Response.Write([]byte("500 Internal Server Error"))
+}
+
+func gppCallError(app any, ctx *Context, code int, cause error) {
+	handler := reflect.ValueOf(app).MethodByName("Error")
+	if !handler.IsValid() || handler.Type().NumIn() != 3 {
+		gppWriteMinimalError(ctx)
+		return
+	}
+	causeValue := reflect.Zero(handler.Type().In(2))
+	if cause != nil {
+		causeValue = reflect.ValueOf(cause)
+	}
+	result := handler.Call([]reflect.Value{
+		reflect.ValueOf(ctx),
+		reflect.ValueOf(code),
+		causeValue,
+	})
+	if err := gppErrorResult(result); err != nil && !ctx.Written {
+		gppWriteMinimalError(ctx)
 	}
 }
 
 func gppRouteHandler(app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	handler := reflect.ValueOf(app).MethodByName(methodName)
+	ctx := Context(Response: w, Request: r, Values: map[string]any{})
 	if !handler.IsValid() {
-		stdhttp.Error(w, "route handler not found", stdhttp.StatusInternalServerError)
+		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, fmt.Errorf("route handler not found"))
 		return
 	}
-	ctx := Context(Response: w, Request: r, Values: map[string]any{})
 	if err := gppCallHook(app, "BeforeRequest", &ctx); err != nil {
-		gppHandleError(w, err)
+		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, err)
 		return
 	}
 	result := handler.Call([]reflect.Value{reflect.ValueOf(&ctx)})
 	routeErr := gppErrorResult(result)
 	afterErr := gppCallHook(app, "AfterRequest", &ctx)
 	if routeErr != nil {
-		gppHandleError(w, routeErr)
+		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, routeErr)
 		return
 	}
 	if afterErr != nil {
-		gppHandleError(w, afterErr)
+		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, afterErr)
 	}
 }
 
@@ -144,6 +169,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 	if value.Kind() == reflect.Pointer {
 		value = value.Elem()
 	}
+	rootHandlers := map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
 	methods := value.FieldByName("Methods")
 	for index := 0; index < methods.Len(); index++ {
 		method := gppReflectIndex(methods, index)
@@ -153,13 +179,18 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 			if prefix != "" {
 				path = strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(path, "/")
 			}
-			mux.HandleFunc(path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			handler := func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				if r.Method != httpMethod {
 					w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 					return
 				}
 				gppRouteHandler(app, methodName, w, r)
-			})
+			}
+			if path == "/" {
+				rootHandlers[httpMethod] = handler
+				return
+			}
+			mux.HandleFunc(path, handler)
 		}
 		for _, route := range []struct {
 			annotation string
@@ -176,6 +207,16 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 			}
 		}
 	}
+	mux.HandleFunc("/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if r.URL.Path == "/" {
+			if handler := rootHandlers[r.Method]; handler != nil {
+				handler(w, r)
+				return
+			}
+		}
+		ctx := Context(Response: w, Request: r, Values: map[string]any{})
+		gppCallError(app, &ctx, stdhttp.StatusNotFound, nil)
+	})
 }
 
 type gppTemplateStamp struct {
@@ -231,6 +272,28 @@ func gppWatchTemplates(stop <-chan struct{}, done chan<- struct{}) {
 	}
 }
 
+const gppDefaultErrorTemplate = `<!doctype html>
+<html>
+<head>
+    <title>{{.Code}} {{.Message}}</title>
+</head>
+<body>
+    {{if eq .Code 404}}
+        <h1>Page not found</h1>
+    {{else if eq .Code 403}}
+        <h1>Forbidden</h1>
+    {{else}}
+        <h1>{{.Code}} {{.Message}}</h1>
+    {{end}}
+</body>
+</html>`
+
+type gppHTTPErrorData struct {
+	Code    int
+	Message string
+	Path    string
+}
+
 class Server {
 	HTTPServer *stdhttp.Server
 	ShutdownSetup *sync.Once
@@ -282,6 +345,23 @@ class Server {
 	}
 
 	func AfterRequest(ctx *Context) error {
+		return nil
+	}
+
+	func ErrorTemplate() string {
+		return gppDefaultErrorTemplate
+	}
+
+	func Error(ctx *Context, code int, cause error) error {
+		data := gppHTTPErrorData{
+			Code: code,
+			Message: stdhttp.StatusText(code),
+			Path: ctx.Request.URL.Path,
+		}
+		if err := ctx.renderTemplate(code, this.ErrorTemplate(), data); err != nil {
+			gppWriteMinimalError(ctx)
+			return err
+		}
 		return nil
 	}
 

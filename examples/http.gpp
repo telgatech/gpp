@@ -5,7 +5,20 @@ import (
 	http "gpp/http"
 )
 
+template Page(value string) {
+	<h1>{{.}}</h1>
+}
+
+template ErrorPage(data any) {
+	<h1>{{.Code}} {{.Message}}</h1>
+	<p>{{.Path}}</p>
+}
+
 class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api")} {
+	func ErrorTemplate() string {
+		return "ErrorPage"
+	}
+
 	func BeforeListen() error {
 		fmt.Println("server starting on", this.HTTPServer.Addr)
 		return nil
@@ -22,6 +35,14 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api")} {
 
 	func Health(ctx *http.Context) error @{http.GET("/health")} {
 		return ctx.JSON(record(ok: true))
+	}
+
+	func Created(ctx *http.Context) error @{http.POST("/created")} {
+		return ctx.JSON(201, record(ok: true))
+	}
+
+	func Preview(ctx *http.Context) error @{http.GET("/preview")} {
+		return ctx.Template("Page", "Go++ HTTP")
 	}
 
 	func AfterRequest(ctx *http.Context) error {

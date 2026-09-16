@@ -2232,7 +2232,12 @@ func transformOverloads(src string, overloads overloadContext) (string, error) {
 				methodSet := overloads.Methods
 				methodTypeSet := overloads.MethodTypes
 				if receiver, ok := function.X.(*ast.Ident); ok && receiver.Name != "this" {
-					if typeName := receiverTypes[receiver.Name]; typeName != "" {
+					typeName := receiverTypes[receiver.Name]
+					if typeName == "" {
+						typeName = valueTypes[receiver.Name]
+					}
+					typeName = strings.TrimPrefix(typeName, "*")
+					if typeName != "" {
 						methodSet = overloads.ClassMethods[typeName]
 						methodTypeSet = overloads.ClassMethodTypes[typeName]
 					}

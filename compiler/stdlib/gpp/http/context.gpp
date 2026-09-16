@@ -1,14 +1,18 @@
 package gpp.http
 
 import (
+	"bytes"
 	"encoding/json"
 	stdhttp "net/http"
+	tpl "gpp/tpl"
 )
 
 class Context {
 	Response stdhttp.ResponseWriter
 	Request *stdhttp.Request
 	Values map[string]any
+	Status int
+	Written bool
 
 	func Set(name string, value any) {
 		if this.Values == nil {
@@ -29,18 +33,58 @@ class Context {
 		return this.Request.URL.Query().Get(name)
 	}
 
-	func Text(value string) error {
-		this.Response.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, err := this.Response.Write([]byte(value))
+	func commit(status int, contentType string, body []byte) error {
+		if !this.Written {
+			this.Response.Header().Set("Content-Type", contentType)
+			this.Response.WriteHeader(status)
+			this.Status = status
+			this.Written = true
+		}
+		_, err := this.Response.Write(body)
 		return err
 	}
 
+	func Text(value string) error {
+		return this.commit(200, "text/plain; charset=utf-8", []byte(value))
+	}
+
+	func Text(status int, value string) error {
+		return this.commit(status, "text/plain; charset=utf-8", []byte(value))
+	}
+
 	func JSON(value any) error {
-		this.Response.Header().Set("Content-Type", "application/json")
-		return json.NewEncoder(this.Response).Encode(value)
+		return this.JSON(200, value)
+	}
+
+	func JSON(status int, value any) error {
+		var body bytes.Buffer
+		if err := json.NewEncoder(&body).Encode(value); err != nil {
+			return err
+		}
+		return this.commit(status, "application/json", body.Bytes())
+	}
+
+	func Template(key string, args ...any) error {
+		return this.renderTemplate(200, key, args...)
+	}
+
+	func Template(status int, key string, args ...any) error {
+		return this.renderTemplate(status, key, args...)
+	}
+
+	func renderTemplate(status int, key string, args ...any) error {
+		var body bytes.Buffer
+		if err := tpl.Execute(&body, key, args...); err != nil {
+			return err
+		}
+		return this.commit(status, "text/html; charset=utf-8", body.Bytes())
 	}
 
 	func Redirect(url string, status int) {
 		stdhttp.Redirect(this.Response, this.Request, url, status)
+		if !this.Written {
+			this.Status = status
+			this.Written = true
+		}
 	}
 }

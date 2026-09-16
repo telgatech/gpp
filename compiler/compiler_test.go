@@ -269,6 +269,131 @@ func main() {
 	}
 }
 
+func TestCompileFilesSupportsHTTPResponseHelpersAndErrorTemplates(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "context"
+    "fmt"
+    "io"
+    stdhttp "net/http"
+    "strings"
+    "time"
+    http "gpp/http"
+)
+
+template Page(value string) {
+    <p>{{.}}</p>
+}
+
+template ErrorPage(data any) {
+    <h1>custom {{.Code}} {{.Message}}</h1>
+}
+
+class App : http.Server @{http.IP("127.0.0.1")} {
+    func ErrorTemplate() string {
+        return "ErrorPage"
+    }
+
+    func Created(ctx *http.Context) error @{http.GET("/created")} {
+        return ctx.Text(201, "created")
+    }
+
+    func Accepted(ctx *http.Context) error @{http.GET("/accepted")} {
+        return ctx.JSON(202, record(ok: true))
+    }
+
+    func View(ctx *http.Context) error @{http.GET("/view")} {
+        return ctx.Template("Page", "hello")
+    }
+
+    func Broken(ctx *http.Context) error @{http.GET("/broken")} {
+        return fmt.Errorf("boom")
+    }
+}
+
+func request(base string, path string) {
+    response, err := stdhttp.Get(base + path)
+    if err != nil { panic(err) }
+    body, err := io.ReadAll(response.Body)
+    if err != nil { panic(err) }
+    response.Body.Close()
+    text := string(body)
+    fmt.Println(path, response.StatusCode,
+        strings.HasPrefix(response.Header.Get("Content-Type"), "text/plain"),
+        strings.HasPrefix(response.Header.Get("Content-Type"), "application/json"),
+        strings.HasPrefix(response.Header.Get("Content-Type"), "text/html"),
+        strings.Contains(text, "Page not found"),
+        strings.Contains(text, "custom 404 Not Found"),
+        strings.Contains(text, "500 Internal Server Error"),
+        text,
+    )
+}
+
+func main() {
+    app := App()
+    done := make(chan error, 1)
+    go func() { done <- app.Listen() }()
+    for app.HTTPServer == nil {
+        select {
+        case err := <-done:
+            if err != nil { fmt.Println("SKIP:", err); return }
+        default:
+        }
+        time.Sleep(time.Millisecond)
+    }
+    base := "http://" + app.HTTPServer.Addr
+    request(base, "/created")
+    request(base, "/accepted")
+    request(base, "/view")
+    request(base, "/missing")
+    request(base, "/broken")
+    if err := app.Shutdown(context.Background()); err != nil { panic(err) }
+    if err := <-done; err != nil && err != stdhttp.ErrServerClosed { panic(err) }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions(
+		[]string{sourcePath},
+		outputDir,
+		CompileOptions{ModulePath: "generated"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated HTTP response helper program did not run: %v\n%s", err, output)
+	}
+	if strings.HasPrefix(string(output), "SKIP:") {
+		t.Skipf("loopback sockets unavailable: %s", output)
+	}
+	result := string(output)
+	for _, expected := range []string{
+		"/created 201 true false false",
+		"/accepted 202 false true false",
+		"/view 200 false false true",
+		"/missing 404 false false true false true false",
+		"/broken 500 false false true false true false",
+		"<p>hello</p>",
+		`{"ok":true}`,
+	} {
+		if !strings.Contains(result, expected) {
+			t.Fatalf("HTTP response helper output missing %q:\n%s", expected, output)
+		}
+	}
+}
+
 func TestCompileFilesEmbedsFilesAndDirectories(t *testing.T) {
 	inputDir := t.TempDir()
 	resourceDir := filepath.Join(inputDir, "static")
@@ -1519,6 +1644,59 @@ func main() {
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated cross-package record code did not build: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesPreservesRecordFieldVisibility(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+func GetUser() record {
+    return record(
+        Name: "Bob",
+        internal: "debug",
+    )
+}
+
+func main() {
+    user := GetUser()
+    encoded, err := json.Marshal(user)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(user.Name, user.internal, string(encoded))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions(
+		[]string{sourcePath},
+		outputDir,
+		CompileOptions{ModulePath: "generated"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated record visibility program did not run: %v\n%s", err, output)
+	}
+	if string(output) != `Bob debug {"Name":"Bob"}
+` {
+		t.Fatalf("unexpected record visibility output:\n%s", output)
 	}
 }
 
