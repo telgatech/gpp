@@ -107,6 +107,9 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		if err := ensureGoModule(outputDir, options.ModulePath); err != nil {
 			return err
 		}
+		if err := ensureGeneratedMarker(outputDir); err != nil {
+			return err
+		}
 	}
 	recordContexts := map[string]*recordContext{}
 	introspectionContexts := map[string]*introspectionContext{}
@@ -285,6 +288,10 @@ func ensureGoModule(outputDir, modulePath string) error {
 
 	content := fmt.Sprintf("module %s\n\ngo 1.26\n", modulePath)
 	return os.WriteFile(goModPath, []byte(content), 0644)
+}
+
+func ensureGeneratedMarker(outputDir string) error {
+	return os.WriteFile(filepath.Join(outputDir, ".gpp-generated"), []byte("Go++ compiler output\n"), 0644)
 }
 
 func ensureSharedIntrospectionRuntime(outputDir string) error {

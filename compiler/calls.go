@@ -862,6 +862,23 @@ func transformCallableCallsInRange(src string, context constructorContext, _ int
 				}
 			}
 		}
+		if (i == 0 || (src[i-1] != '.' && !isIdentPart(src[i-1]))) &&
+			context.CurrentClass != "" && len(context.FunctionSignatures[name]) == 0 &&
+			(len(context.MethodSignatures[name]) > 0 || len(context.ClassMethodSignatures[context.CurrentClass][name]) > 0) {
+			open := skipSpace(src, i+n)
+			if open < len(src) && src[open] == '(' {
+				close, err := findMatchingParen(src, open)
+				if err != nil {
+					return "", err
+				}
+				// An unqualified call to an instance method is shorthand for
+				// this.Method(...). Keep the original arguments here so Go's
+				// normal variadic handling remains available to inherited methods.
+				out.WriteString("this." + name + src[i+n:close+1])
+				i = close + 1
+				continue
+			}
+		}
 		if i > 0 && (src[i-1] == '.' || isIdentPart(src[i-1])) {
 			out.WriteString(src[i : i+n])
 			i += n

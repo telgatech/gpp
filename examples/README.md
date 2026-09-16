@@ -3,7 +3,7 @@
 Each standalone `.gpp` file can be compiled with:
 
 ```bash
-go run ./cmd/gpp examples/<name>.gpp
+gpp examples/<name>.gpp
 (cd .gpp && go run .)
 ```
 
@@ -11,8 +11,8 @@ For a complete build or run, use the CLI subcommands. They clear stale
 generated source and resolve Go dependencies automatically:
 
 ```bash
-go run ./cmd/gpp build examples/hello.gpp
-go run ./cmd/gpp run examples/hello.gpp
+gpp build examples/hello.gpp
+gpp run examples/hello.gpp
 ```
 
 The examples cover:
@@ -56,6 +56,8 @@ The examples cover:
   catch-all handlers, `finally`, custom Go++ errors, and explicit error capture.
 - `expr_catch.gpp` — expression-level error fallback with lazy fallback
   evaluation and chained `??` operators.
+- `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,
+  tag, and priority discovery through `gpp test`.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
@@ -67,7 +69,7 @@ The examples cover:
 The dotted-package example is compiled as a pair:
 
 ```bash
-go run ./cmd/gpp examples/packages/people.gpp examples/packages/main.gpp
+gpp examples/packages/people.gpp examples/packages/main.gpp
 (cd .gpp && go run .)
 ```
 

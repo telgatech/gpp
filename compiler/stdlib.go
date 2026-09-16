@@ -16,6 +16,13 @@ import (
 //go:embed stdlib/gpp/*/*.gpp
 var officialStdlib embed.FS
 
+// EmbeddedStdlibAvailable reports whether the compiler was built with its
+// compiler-owned Go++ standard library resources.
+func EmbeddedStdlibAvailable() bool {
+	entries, err := fs.Glob(officialStdlib, "stdlib/gpp/*/*.gpp")
+	return err == nil && len(entries) > 0
+}
+
 func appendOfficialStdlib(program *Program) error {
 	loaded := map[string]bool{}
 	for index := 0; index < len(program.Files); index++ {
@@ -44,7 +51,7 @@ func appendOfficialStdlib(program *Program) error {
 }
 
 func loadOfficialPackage(importPath string) ([]*File, error) {
-	if importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" {
+	if importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" && importPath != "gpp/test" {
 		return nil, fmt.Errorf("official package %q is not bundled with this compiler", importPath)
 	}
 

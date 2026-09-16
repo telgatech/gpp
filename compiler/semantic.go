@@ -696,6 +696,11 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 	}
 
 	for name, class := range localClasses {
+		context.ClassMethodSignatures[name] = methodSignaturesForClass(
+			class,
+			classesForClass(context, class),
+			map[string]bool{},
+		)
 		context.StaticMethodSignatures[name] = staticMethodSignaturesForClass(
 			class,
 			classesForClass(context, class),

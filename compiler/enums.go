@@ -292,6 +292,15 @@ func configureImportedEnums(context *constructorContext, file *File, model *Sema
 				key = name
 			}
 			context.Enums[key] = enum
+			for _, member := range enum.Members {
+				memberKey := alias + "." + member.Name
+				if alias == "." {
+					memberKey = member.Name
+				}
+				if _, exists := context.Enums[memberKey]; !exists {
+					context.Enums[memberKey] = enum
+				}
+			}
 		}
 	}
 }

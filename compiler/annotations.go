@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"path"
 	"sort"
@@ -157,6 +158,14 @@ func validateAnnotationArguments(use AnnotationUse, declaration *AnnotationDecl)
 		}
 		actual := astExpressionTypeKey(parsed)
 		expected := strings.Join(strings.Fields(parameters[index].Type), " ")
+		if actual == "" {
+			if _, isSelector := parsed.(*ast.SelectorExpr); isSelector && isNamedAnnotationType(expected) {
+				// Imported enum members are selectors (for example
+				// test.High), but their declared enum type is resolved in the
+				// imported package rather than by the small expression typer.
+				continue
+			}
+		}
 		if actual == "" || actual == "nil" && !isNilableGoType(expected) {
 			return fmt.Errorf("argument %d to annotation %s: expected %s", index+1, declaration.Name, expected)
 		}
@@ -165,6 +174,18 @@ func validateAnnotationArguments(use AnnotationUse, declaration *AnnotationDecl)
 		}
 	}
 	return nil
+}
+
+func isNamedAnnotationType(typeName string) bool {
+	if strings.ContainsAny(typeName, "[]{}()*") {
+		return false
+	}
+	switch typeName {
+	case "any", "bool", "string", "byte", "rune", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64", "complex64", "complex128", "error":
+		return false
+	default:
+		return typeName != ""
+	}
 }
 
 func annotationNumericCompatible(actual, expected string) bool {
@@ -198,6 +219,19 @@ func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) str
 				)
 				if resolveErr == nil && changed {
 					args = resolved
+				}
+				for index := range args {
+					trimmed := strings.TrimSpace(args[index])
+					if enum, ok := context.Enums[trimmed]; ok {
+						if dot := strings.LastIndex(trimmed, "."); dot >= 0 {
+							if member, exists := enumMember(enum, trimmed[dot+1:]); exists {
+								args[index] = enumGeneratedMember(trimmed, enum, member.Name)
+							}
+						}
+					}
+					if transformed, err := transformEnums(args[index], context); err == nil {
+						args[index] = transformed
+					}
 				}
 				arguments = "[]any{" + strings.Join(args, ", ") + "}"
 			}

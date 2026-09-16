@@ -20,6 +20,10 @@ func exceptionRuntimeDefinitions() string {
 	err error
 }
 
+func (thrown __gppThrownError) GppThrownError() error {
+	return thrown.err
+}
+
 type __gppExceptionReturn struct {
 	values []any
 }

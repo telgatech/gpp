@@ -35,12 +35,56 @@ A tiny source-to-source compiler that emits ordinary Go.
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.
 
+## Install and build
+
+The repository root is the installable Go++ CLI:
+
+```bash
+go install github.com/telgatech/gpp@latest
+```
+
+It provides one `gpp` executable with project commands:
+
+```text
+gpp init|build|run|clean|fmt|test|env|doctor|version
+```
+
+Create and run a starter project:
+
+```bash
+gpp init hello
+cd hello
+gpp run .
+```
+
+Build a native executable. Intermediate Go source remains in the hidden
+compiler workspace rather than beside the Go++ source:
+
+```bash
+gpp build examples/hello.gpp -o ./hello
+```
+
+Use `gpp doctor` to check the Go toolchain and embedded standard library, and
+`gpp clean` to remove generated build artifacts.
+
+Pass `-emit-go` to `gpp build` when you want the generated Go workspace path
+reported for inspection.
+
+Go++ tests use the bundled `gpp/test` suite library and ordinary Go test
+execution underneath:
+
+```bash
+gpp test examples/testing.gpp
+gpp test --tag crud examples/testing.gpp
+gpp test --priority high examples/testing.gpp
+```
+
 ## Build and run
 
 The compiler can still be used as a transpiler:
 
 ```bash
-go run ./cmd/gpp examples/hello.gpp
+gpp examples/hello.gpp
 cd .gpp
 go run .
 ```
@@ -49,26 +93,26 @@ For a complete project build, use the `build` subcommand. It clears stale
 generated source, runs `go mod tidy` to resolve imports, and runs `go build`:
 
 ```bash
-go run ./cmd/gpp build examples/hello.gpp
+gpp build examples/hello.gpp
 ```
 
 Use `run` for the same generation and dependency setup followed by execution:
 
 ```bash
-go run ./cmd/gpp run examples/hello.gpp
+gpp run examples/hello.gpp
 ```
 
 Use a separate output directory when switching between standalone examples:
 
 ```bash
-go run ./cmd/gpp run -output /tmp/gpp-orm examples/orm.gpp
+gpp run -output /tmp/gpp-orm examples/orm.gpp
 ```
 
 Multiple Go++ files can be passed to the same build. For example, the
 cross-package example is built and run as one generated project:
 
 ```bash
-go run ./cmd/gpp run \
+gpp run \
   examples/packages/people.gpp \
   examples/packages/main.gpp
 ```
@@ -76,13 +120,13 @@ go run ./cmd/gpp run \
 The ORM example also resolves its SQLite dependency automatically:
 
 ```bash
-go run ./cmd/gpp run -output /tmp/gpp-orm examples/orm.gpp
+gpp run -output /tmp/gpp-orm examples/orm.gpp
 ```
 
 Build an executable at a chosen path with `-o`:
 
 ```bash
-go run ./cmd/gpp build -o ./hello examples/hello.gpp
+gpp build -o ./hello examples/hello.gpp
 ```
 
 Generated Go is written to `.gpp/`. The CLI creates `.gpp/go.mod` with the
@@ -90,13 +134,13 @@ default module path `generated`; choose another path with `-module` when local
 Go package imports need a real module path:
 
 ```bash
-go run ./cmd/gpp -module example.com/myapp examples/*.gpp
+gpp -module example.com/myapp examples/*.gpp
 ```
 
 Choose a different generated output directory with `-output`:
 
 ```bash
-go run ./cmd/gpp -output build/gpp examples/hello.gpp
+gpp -output build/gpp examples/hello.gpp
 ```
 
 The standard Go++ prelude is available automatically. Disable it for minimal
@@ -106,13 +150,13 @@ The enum example demonstrates implicit and explicit values, grouped enum
 declarations, validated conversion, and metadata:
 
 ```bash
-go run ./cmd/gpp run examples/enums.gpp
+gpp run examples/enums.gpp
 ```
 
 Expression-level error fallback is demonstrated by:
 
 ```bash
-go run ./cmd/gpp run examples/expr_catch.gpp
+gpp run examples/expr_catch.gpp
 ```
 
 Class introspection exposes generated `name`, `fields`, `methods`,

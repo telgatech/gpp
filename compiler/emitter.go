@@ -870,7 +870,11 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 		}
 		parameterType := qualifyImportedTypeNames(parameter.Type, parentName, classesForClass(context, class), context.ImportedTypes)
 		parameterParts = append(parameterParts, name+" "+transformPolymorphicType(parameterType, context))
-		arguments = append(arguments, name)
+		argument := name
+		if strings.HasPrefix(parameter.Type, "...") {
+			argument += "..."
+		}
+		arguments = append(arguments, argument)
 	}
 
 	methodName := methodOutputName(method)

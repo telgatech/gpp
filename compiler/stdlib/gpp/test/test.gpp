@@ -1,0 +1,296 @@
+package gpp.test
+
+import (
+	"fmt"
+	"math"
+	"reflect"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+annotation (
+	Priority(level Priority) on class, method
+	Tag(name string) on class, method
+)
+
+enum Priority int {
+	High
+	Medium
+	Low
+}
+
+func gppTestSame(first any, second any) bool {
+	left := reflect.ValueOf(first)
+	right := reflect.ValueOf(second)
+	if !left.IsValid() || !right.IsValid() {
+		return !left.IsValid() && !right.IsValid()
+	}
+	if left.Type() != right.Type() {
+		return false
+	}
+	switch left.Kind() {
+	case reflect.Pointer, reflect.Chan, reflect.UnsafePointer:
+		return left.Pointer() == right.Pointer()
+	default:
+		return false
+	}
+}
+
+func gppTestNumber(value any) float64 {
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return 0
+	}
+	switch reflected.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(reflected.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return float64(reflected.Uint())
+	case reflect.Float32, reflect.Float64:
+		return reflected.Float()
+	default:
+		return math.NaN()
+	}
+}
+
+func gppTestContains(collection any, value any) bool {
+	if collection == nil {
+		return false
+	}
+	reflected := reflect.ValueOf(collection)
+	switch reflected.Kind() {
+	case reflect.Array, reflect.Slice:
+		for index := 0; index < reflected.Len(); index++ {
+			if reflect.DeepEqual(reflected.Index(index).Interface(), value) {
+				return true
+			}
+		}
+	case reflect.Map:
+		for _, key := range reflected.MapKeys() {
+			if reflect.DeepEqual(key.Interface(), value) || reflect.DeepEqual(reflected.MapIndex(key).Interface(), value) {
+				return true
+			}
+		}
+	case reflect.String:
+		return strings.Contains(reflected.String(), fmt.Sprint(value))
+	}
+	return false
+}
+
+func gppTestEmpty(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String, reflect.Chan:
+		return reflected.Len() == 0
+	default:
+		return false
+	}
+}
+
+func gppTestNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+func InstanceOf[T any](value any) bool {
+	_, ok := value.(T)
+	return ok
+}
+
+func KindOf[T any](value any) bool {
+	_, ok := value.(T)
+	return ok
+}
+
+func Throws[T any](fn func()) bool {
+	threw := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				threw = true
+			}
+		}()
+		fn()
+	}()
+	return threw
+}
+
+class Suite {
+	T *testing.T
+
+	func Attach(t *testing.T) {
+		this.T = t
+	}
+
+	func Setup() {}
+	func Teardown() {}
+
+	func Equal(expected any, actual any, message ...string) {
+		this.T.Helper()
+		if !reflect.DeepEqual(expected, actual) {
+			this.T.Errorf("expected %s, got %s: %s", fmt.Sprint(expected), fmt.Sprint(actual), strings.Join(message, " "))
+		}
+	}
+
+	func NotEqual(expected any, actual any, message ...string) {
+		this.T.Helper()
+		if reflect.DeepEqual(expected, actual) {
+			this.T.Errorf("did not expect %s: %s", fmt.Sprint(actual), strings.Join(message, " "))
+		}
+	}
+
+	func True(value bool, message ...string) {
+		this.T.Helper()
+		if !value {
+			this.T.Errorf("expected true: %s", strings.Join(message, " "))
+		}
+	}
+
+	func False(value bool, message ...string) {
+		this.T.Helper()
+		if value {
+			this.T.Errorf("expected false: %s", strings.Join(message, " "))
+		}
+	}
+
+	func Nil(value any, message ...string) {
+		this.T.Helper()
+		if !gppTestNil(value) {
+			this.T.Errorf("expected nil: %s", strings.Join(message, " "))
+		}
+	}
+
+	func NotNil(value any, message ...string) {
+		this.T.Helper()
+		if gppTestNil(value) {
+			this.T.Errorf("expected a value: %s", strings.Join(message, " "))
+		}
+	}
+
+	func Same(expected any, actual any, message ...string) {
+		this.T.Helper()
+		if !gppTestSame(expected, actual) {
+			this.T.Errorf("expected identical values: %s", strings.Join(message, " "))
+		}
+	}
+
+	func NotSame(expected any, actual any, message ...string) {
+		this.T.Helper()
+		if gppTestSame(expected, actual) {
+			this.T.Errorf("expected distinct values: %s", strings.Join(message, " "))
+		}
+	}
+
+	func Includes(collection any, value any, message ...string) {
+		this.T.Helper()
+		if !gppTestContains(collection, value) {
+			this.T.Errorf("expected collection to include %s: %s", fmt.Sprint(value), strings.Join(message, " "))
+		}
+	}
+
+	func NotIncludes(collection any, value any, message ...string) {
+		this.T.Helper()
+		if gppTestContains(collection, value) {
+			this.T.Errorf("expected collection not to include %s: %s", fmt.Sprint(value), strings.Join(message, " "))
+		}
+	}
+
+	func Empty(value any, message ...string) {
+		this.T.Helper()
+		if !gppTestEmpty(value) {
+			this.T.Errorf("expected empty value: %s", strings.Join(message, " "))
+		}
+	}
+
+	func NotEmpty(value any, message ...string) {
+		this.T.Helper()
+		if gppTestEmpty(value) {
+			this.T.Errorf("expected non-empty value: %s", strings.Join(message, " "))
+		}
+	}
+
+	func Match(pattern string, value string, message ...string) {
+		this.T.Helper()
+		matched, err := regexp.MatchString(pattern, value)
+		if err != nil || !matched {
+			this.T.Errorf("expected %q to match %q: %s", value, pattern, strings.Join(message, " "))
+		}
+	}
+
+	func NotMatch(pattern string, value string, message ...string) {
+		this.T.Helper()
+		matched, err := regexp.MatchString(pattern, value)
+		if err == nil && matched {
+			this.T.Errorf("expected %q not to match %q: %s", value, pattern, strings.Join(message, " "))
+		}
+	}
+
+	func Throws(fn func()) bool {
+		threw := false
+		func() {
+			defer func() {
+				if recover() != nil {
+					threw = true
+				}
+			}()
+			fn()
+		}()
+		return threw
+	}
+
+	func InDelta(expected any, actual any, delta float64, message ...string) {
+		this.T.Helper()
+		left := gppTestNumber(expected)
+		right := gppTestNumber(actual)
+		if math.IsNaN(left) || math.IsNaN(right) || math.Abs(left-right) > delta {
+			this.T.Errorf("expected %s and %s within %s: %s", fmt.Sprint(expected), fmt.Sprint(actual), fmt.Sprint(delta), strings.Join(message, " "))
+		}
+	}
+
+	func Fail(message string) {
+		this.T.Helper()
+		this.T.Fatal(message)
+	}
+
+	func Skip(message string) {
+		this.T.Helper()
+		this.T.Skip(message)
+	}
+
+	func Log(args ...any) {
+		this.T.Log(args...)
+	}
+
+	func Logf(format string, args ...any) {
+		this.T.Logf(format, args...)
+	}
+
+	func TempDir() string {
+		return this.T.TempDir()
+	}
+
+	func Parallel() {
+		this.T.Parallel()
+	}
+
+	func Helper() {
+		this.T.Helper()
+	}
+
+	func Cleanup(fn func()) {
+		this.T.Cleanup(fn)
+	}
+
+}

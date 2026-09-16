@@ -1,0 +1,26 @@
+import "gpp/test"
+
+class UserTest : test.Suite @{
+	test.Tag("users"),
+	test.Priority(test.High)
+} {
+	Name string
+
+	func Setup() {
+		this.Name = "Bob"
+	}
+
+	func Create() @{
+		test.Tag("crud")
+	} {
+		Equal("Bob", this.Name)
+		True(this.Name != "")
+	}
+
+	func EmptyName() @{
+		test.Priority(test.Low)
+	} {
+		this.Name = ""
+		Empty(this.Name)
+	}
+}
