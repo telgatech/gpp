@@ -18,10 +18,12 @@ type PackageSymbols struct {
 	Name            string
 	Classes         map[string]*ClassDecl
 	Enums           map[string]*EnumDecl
+	Embeds          map[string]EmbedEntry
 	Imports         map[string]string
 	ImportedClasses map[string]*ClassDecl
 	ImportedEnums   map[string]*EnumDecl
 	Types           map[string]bool
+	Values          map[string]bool
 	Extensions      []*ExtendDecl
 	Annotations     map[string]*AnnotationDecl
 	Functions       map[string]bool
@@ -66,10 +68,12 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				Name:            file.Package,
 				Classes:         map[string]*ClassDecl{},
 				Enums:           map[string]*EnumDecl{},
+				Embeds:          map[string]EmbedEntry{},
 				Imports:         map[string]string{},
 				ImportedClasses: map[string]*ClassDecl{},
 				ImportedEnums:   map[string]*EnumDecl{},
 				Types:           map[string]bool{},
+				Values:          map[string]bool{},
 				Extensions:      []*ExtendDecl{},
 				Annotations:     map[string]*AnnotationDecl{},
 				Functions:       map[string]bool{},
@@ -93,6 +97,21 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				for name := range rawTypeNames(raw.Code) {
 					pkg.Types[name] = true
 				}
+				for name := range rawPackageNames(raw.Code) {
+					pkg.Values[name] = true
+				}
+			}
+			if embed, ok := decl.(*EmbedDecl); ok {
+				for _, entry := range embed.Entries {
+					if previous, exists := pkg.Embeds[entry.Name]; exists {
+						return nil, fmt.Errorf(
+							"%s: duplicate embed symbol %s in package %s; first declared in %s",
+							embedLocation(embed), entry.Name, file.Package, embedEntryLocation(previous),
+						)
+					}
+					pkg.Embeds[entry.Name] = entry
+				}
+				continue
 			}
 			if extension, ok := decl.(*ExtendDecl); ok {
 				pkg.Extensions = append(pkg.Extensions, extension)
@@ -185,6 +204,14 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 	}
 
 	for _, pkg := range model.Packages {
+		for name, entry := range pkg.Embeds {
+			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] {
+				return nil, fmt.Errorf("%s: duplicate embed symbol %s in package %s", embedEntryLocation(entry), name, pkg.Name)
+			}
+			if _, imported := pkg.Imports[name]; imported {
+				return nil, fmt.Errorf("%s: embed symbol %s conflicts with import in package %s", embedEntryLocation(entry), name, pkg.Name)
+			}
+		}
 		for _, class := range pkg.Classes {
 			if err := validateClass(pkg, class); err != nil {
 				return nil, err
@@ -220,6 +247,23 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 	return model, nil
 }
 
+func embedLocation(embed *EmbedDecl) string {
+	if embed.SourceLine > 0 {
+		return fmt.Sprintf("%s:%d", embed.SourceFile, embed.SourceLine)
+	}
+	return embed.SourceFile
+}
+
+func embedEntryLocation(entry EmbedEntry) string {
+	if entry.SourceLine > 0 {
+		return fmt.Sprintf("%s:%d", entry.SourceFile, entry.SourceLine)
+	}
+	if entry.SourceFile != "" {
+		return entry.SourceFile
+	}
+	return "embed"
+}
+
 func annotationLocation(annotation *AnnotationDecl) string {
 	if annotation.SourceLine > 0 {
 		return fmt.Sprintf("%s:%d", annotation.SourceFile, annotation.SourceLine)
@@ -236,6 +280,34 @@ func rawFunctionNames(src string) []string {
 	for _, declaration := range parsed.Decls {
 		if function, ok := declaration.(*ast.FuncDecl); ok && function.Recv == nil {
 			result = append(result, function.Name.Name)
+		}
+	}
+	return result
+}
+
+func rawPackageNames(src string) map[string]bool {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "raw.go", "package main\n\n"+stripAnnotationSyntaxPreserve(src), 0)
+	if err != nil {
+		return nil
+	}
+	result := map[string]bool{}
+	for _, declaration := range parsed.Decls {
+		switch declaration := declaration.(type) {
+		case *ast.FuncDecl:
+			if declaration.Recv == nil {
+				result[declaration.Name.Name] = true
+			}
+		case *ast.GenDecl:
+			for _, spec := range declaration.Specs {
+				switch spec := spec.(type) {
+				case *ast.TypeSpec:
+					result[spec.Name.Name] = true
+				case *ast.ValueSpec:
+					for _, name := range spec.Names {
+						result[name.Name] = true
+					}
+				}
+			}
 		}
 	}
 	return result

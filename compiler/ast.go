@@ -6,6 +6,7 @@ type Program struct {
 
 type File struct {
 	Name        string
+	SourcePath  string
 	Package     string
 	Annotations []AnnotationUse
 	Decls       []Decl
@@ -21,6 +22,22 @@ type RawDecl struct {
 }
 
 func (*RawDecl) decl() {}
+
+type EmbedDecl struct {
+	Entries    []EmbedEntry
+	SourceFile string
+	SourceLine int
+}
+
+type EmbedEntry struct {
+	Name       string
+	Path       string
+	Directory  bool
+	SourceFile string
+	SourceLine int
+}
+
+func (*EmbedDecl) decl() {}
 
 type ClassDecl struct {
 	Name        string

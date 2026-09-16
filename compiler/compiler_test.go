@@ -117,6 +117,56 @@ func main() {
 	}
 }
 
+func TestCompileFilesEmbedsFilesAndDirectories(t *testing.T) {
+	inputDir := t.TempDir()
+	resourceDir := filepath.Join(inputDir, "static")
+	if err := os.MkdirAll(resourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resourceDir, "index.txt"), []byte("embedded directory\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inputDir, "schema.sql"), []byte("embedded file\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+import (
+    "fmt"
+    "io/fs"
+)
+
+embed (
+    Assets "static/"
+    Schema "schema.sql"
+)
+
+func main() {
+    contents, err := fs.ReadFile(Assets, "index.txt")
+    if err != nil { panic(err) }
+    fmt.Print(string(contents))
+    fmt.Print(string(Schema))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outputDir := t.TempDir()
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated", ProjectRoot: inputDir}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("embedded resources did not run: %v\n%s", err, output)
+	}
+	if string(output) != "embedded directory\nembedded file\n" {
+		t.Fatalf("unexpected embedded resource output: %s", output)
+	}
+}
+
 func TestCompileFilesGeneratesDefaultStringAndDump(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

@@ -58,6 +58,8 @@ The examples cover:
   evaluation and chained `??` operators.
 - `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,
   tag, and priority discovery through `gpp test`.
+- `embed.gpp` — source-level file and directory embedding with rooted `fs.FS`
+  and `[]byte` values using standard Go filesystem APIs.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module

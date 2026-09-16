@@ -26,6 +26,31 @@ func TestParseRejectsDuplicatePackageDeclaration(t *testing.T) {
 	}
 }
 
+func TestParseEmbedDeclarations(t *testing.T) {
+	file, err := ParseFile("embed.gpp", `
+embed (
+    assets "static/"
+    schema "schema.sql"
+)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one embed declaration, got %d", len(file.Decls))
+	}
+	embed, ok := file.Decls[0].(*EmbedDecl)
+	if !ok || len(embed.Entries) != 2 {
+		t.Fatalf("unexpected embed declaration: %#v", file.Decls[0])
+	}
+	if embed.Entries[0].Name != "assets" || embed.Entries[0].Path != "static/" || !embed.Entries[0].Directory {
+		t.Fatalf("unexpected directory embed entry: %#v", embed.Entries[0])
+	}
+	if embed.Entries[1].Name != "schema" || embed.Entries[1].Path != "schema.sql" || embed.Entries[1].Directory {
+		t.Fatalf("unexpected file embed entry: %#v", embed.Entries[1])
+	}
+}
+
 func TestParseEnumsSupportsSingleAndGroupedDeclarations(t *testing.T) {
 	file, err := ParseFile("enums.gpp", `
 enum Status int {

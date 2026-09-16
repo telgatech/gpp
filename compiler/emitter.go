@@ -117,6 +117,7 @@ type constructorContext struct {
 	Package                    string
 	ModulePath                 string
 	AvailableImports           map[string]string
+	Embeds                     []compiledEmbed
 	IntrospectionRuntimeImport string
 	Exceptions                 *exceptionContext
 	ImportedTypes              map[string]map[string]bool
@@ -211,6 +212,8 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	embedImports, embedDefinitions := emitEmbedDeclarations(context.Embeds, body)
+	body = insertAfterImports(body, embedImports)
 	body = rewriteOfficialImports(body, context.ModulePath)
 	body = ensureGeneratedImports(body, context)
 	enumErrorAlias, enumNeedsErrorImport := enumErrorImport(file)
@@ -259,7 +262,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		)
 	}
 
-	declarationsPrefix := localRuntimeImports
+	declarationsPrefix := localRuntimeImports + embedDefinitions
 	if context.Exceptions != nil && !context.Exceptions.RuntimeEmitted {
 		declarationsPrefix += exceptionRuntimeDefinitions()
 		context.Exceptions.RuntimeEmitted = true
@@ -301,6 +304,76 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 
 	return result, nil
+}
+
+func emitEmbedDeclarations(embeds []compiledEmbed, body string) (string, string) {
+	if len(embeds) == 0 {
+		return "", ""
+	}
+	embedAlias := generatedImportAlias(body, "gppEmbed")
+	needsFS := false
+	for _, embed := range embeds {
+		if embed.Directory {
+			needsFS = true
+			break
+		}
+	}
+	fsAlias := ""
+	if needsFS {
+		fsAlias = generatedImportAlias(body, "gppFS")
+	}
+
+	var imports strings.Builder
+	imports.WriteString("import ")
+	if embedAlias == "embed" {
+		fmt.Fprintf(&imports, "%q", "embed")
+	} else {
+		fmt.Fprintf(&imports, "%s %q", embedAlias, "embed")
+	}
+	if needsFS {
+		imports.WriteString("\nimport ")
+		fmt.Fprintf(&imports, "%s %q", fsAlias, "io/fs")
+	}
+	imports.WriteString("\n\n")
+
+	var definitions strings.Builder
+	fmt.Fprintf(&definitions, "var _ = %s.FS{}\n\n", embedAlias)
+	for _, embed := range embeds {
+		if !embed.Directory {
+			fmt.Fprintf(&definitions, "//go:embed %s\nvar %s []byte\n\n", embed.Path, embed.Name)
+			continue
+		}
+		internal := "__gppEmbed_" + embed.Name
+		fmt.Fprintf(&definitions, "//go:embed %s\nvar %s %s.FS\n\n", embed.Path, internal, embedAlias)
+		fmt.Fprintf(&definitions, "var %s %s.FS = func() %s.FS {\n", embed.Name, fsAlias, fsAlias)
+		fmt.Fprintf(&definitions, "\tresult, err := %s.Sub(%s, %q)\n", fsAlias, internal, embed.Path)
+		definitions.WriteString("\tif err != nil { panic(err) }\n\treturn result\n}()\n\n")
+	}
+	return imports.String(), definitions.String()
+}
+
+func generatedImportAlias(body, preferred string) string {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "generated.go", "package main\n\n"+body, 0)
+	if err != nil {
+		return preferred
+	}
+	used := map[string]bool{}
+	for _, declaration := range parsed.Imports {
+		alias := path.Base(strings.Trim(declaration.Path.Value, `"`))
+		if declaration.Name != nil {
+			alias = declaration.Name.Name
+		}
+		used[alias] = true
+	}
+	if !used[preferred] {
+		return preferred
+	}
+	for index := 2; ; index++ {
+		candidate := fmt.Sprintf("%s%d", preferred, index)
+		if !used[candidate] {
+			return candidate
+		}
+	}
 }
 
 func insertAfterImports(body, insertion string) string {

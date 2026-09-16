@@ -31,6 +31,8 @@ A tiny source-to-source compiler that emits ordinary Go.
 - closed, named-scalar enums with validated `From`, ordered `values`, and
   member metadata such as `Status.Active.name` and `Status.Active.value`
 - expression-level error fallback with lazy, short-circuiting `A ?? B`
+- source-level `embed` declarations for rooted `fs.FS` directories and
+  embedded `[]byte` files
 
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.

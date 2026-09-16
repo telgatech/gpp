@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -126,6 +127,20 @@ func ParseFile(name, src string) (*File, error) {
 			file.Decls = append(file.Decls, declarationsToDecls(declarations)...)
 			pos = end
 
+		case keywordAt(src, pos, "embed"):
+			embed, end, err := parseEmbed(src, pos)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+			}
+			embed.SourceFile = name
+			embed.SourceLine = sourceLine(src, pos)
+			for index := range embed.Entries {
+				embed.Entries[index].SourceFile = name
+				embed.Entries[index].SourceLine = sourceLine(src, pos)
+			}
+			file.Decls = append(file.Decls, embed)
+			pos = end
+
 		default:
 			start := pos
 
@@ -162,6 +177,108 @@ func ParseFile(name, src string) (*File, error) {
 	}
 
 	return file, nil
+}
+
+func parseEmbed(src string, start int) (*EmbedDecl, int, error) {
+	pos, err := skipEmbedSpace(src, start+len("embed"))
+	if err != nil {
+		return nil, 0, err
+	}
+	result := &EmbedDecl{}
+
+	if pos < len(src) && src[pos] == '(' {
+		close, err := findMatchingParen(src, pos)
+		if err != nil {
+			return nil, 0, err
+		}
+		if err := parseEmbedEntries(src[pos+1:close], result); err != nil {
+			return nil, 0, err
+		}
+		return result, close + 1, nil
+	}
+
+	end := lineEnd(src, start)
+	if err := parseEmbedEntries(src[pos:end], result); err != nil {
+		return nil, 0, err
+	}
+	return result, end, nil
+}
+
+func parseEmbedEntries(src string, result *EmbedDecl) error {
+	pos := 0
+	for {
+		var err error
+		pos, err = skipEmbedSpace(src, pos)
+		if err != nil {
+			return err
+		}
+		if pos >= len(src) {
+			break
+		}
+
+		name, length := readIdent(src[pos:])
+		if length == 0 {
+			return fmt.Errorf("embed entry requires a symbol name")
+		}
+		pos += length
+		pos = skipSpace(src, pos)
+		if pos >= len(src) || src[pos] != '"' {
+			return fmt.Errorf("embed entry %s requires a quoted path", name)
+		}
+		end, err := skipQuoted(src, pos, '"')
+		if err != nil {
+			return err
+		}
+		path, err := strconv.Unquote(src[pos : end+1])
+		if err != nil {
+			return fmt.Errorf("invalid embed path for %s: %w", name, err)
+		}
+		if path == "" {
+			return fmt.Errorf("embed path for %s cannot be empty", name)
+		}
+		result.Entries = append(result.Entries, EmbedEntry{
+			Name:      name,
+			Path:      path,
+			Directory: strings.HasSuffix(path, "/"),
+		})
+		pos = end + 1
+	}
+	if len(result.Entries) == 0 {
+		return fmt.Errorf("embed requires at least one entry")
+	}
+	return nil
+}
+
+func skipEmbedSpace(src string, pos int) (int, error) {
+	for pos < len(src) {
+		switch src[pos] {
+		case ' ', '\t', '\r', '\n':
+			pos++
+		case '/':
+			if pos+1 >= len(src) {
+				return pos, nil
+			}
+			if src[pos+1] == '/' {
+				pos += 2
+				for pos < len(src) && src[pos] != '\n' {
+					pos++
+				}
+				continue
+			}
+			if src[pos+1] == '*' {
+				end := strings.Index(src[pos+2:], "*/")
+				if end < 0 {
+					return 0, fmt.Errorf("unterminated embed comment")
+				}
+				pos += end + 4
+				continue
+			}
+			return pos, nil
+		default:
+			return pos, nil
+		}
+	}
+	return pos, nil
 }
 
 func isLogicalPackageName(name string) bool {
@@ -1069,7 +1186,7 @@ func findNextExtension(src string, start int) int {
 			p := skipHorizontal(src, i)
 
 			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || keywordAt(src, p, "extend") ||
-				keywordAt(src, p, "annotation") || keywordAt(src, p, "package") {
+				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "package") {
 				return p
 			}
 		}

@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -10,6 +11,7 @@ import (
 
 type CompileOptions struct {
 	ModulePath  string
+	ProjectRoot string
 	NoPrelude   bool
 	NoStdlib    bool
 	CleanOutput bool
@@ -61,6 +63,10 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			string(data),
 		)
 
+		if err != nil {
+			return err
+		}
+		file.SourcePath, err = filepath.Abs(filename)
 		if err != nil {
 			return err
 		}
@@ -180,6 +186,19 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return fmt.Errorf("%s: %w", file.Name, err)
 		}
 
+		dir := outputDir
+
+		if file.Package != "main" {
+			for _, segment := range strings.Split(file.Package, ".") {
+				dir = filepath.Join(dir, segment)
+			}
+		}
+		embeds, err := prepareEmbeds(file, dir, options.ProjectRoot)
+		if err != nil {
+			return fmt.Errorf("%s: %w", file.Name, err)
+		}
+		context.Embeds = embeds
+
 		code, err := emitFile(
 			file,
 			context,
@@ -191,14 +210,6 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 				file.Name,
 				err,
 			)
-		}
-
-		dir := outputDir
-
-		if file.Package != "main" {
-			for _, segment := range strings.Split(file.Package, ".") {
-				dir = filepath.Join(dir, segment)
-			}
 		}
 
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -220,6 +231,198 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	}
 
 	return nil
+}
+
+type compiledEmbed struct {
+	Name      string
+	Path      string
+	Directory bool
+}
+
+func prepareEmbeds(file *File, packageDir, configuredRoot string) ([]compiledEmbed, error) {
+	var declarations []compiledEmbed
+	for _, declaration := range file.Decls {
+		embed, ok := declaration.(*EmbedDecl)
+		if !ok {
+			continue
+		}
+		root := configuredRoot
+		if root == "" {
+			root = embedProjectRoot(file.SourcePath)
+		}
+		if root == "" {
+			return nil, fmt.Errorf("embed project root could not be determined")
+		}
+		root, err := filepath.Abs(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range embed.Entries {
+			cleanPath, err := normalizeEmbedPath(entry.Path)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", entry.Path, err)
+			}
+			source := filepath.Join(root, filepath.FromSlash(cleanPath))
+			relative, err := filepath.Rel(root, source)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("embed path escapes project root: %s", entry.Path)
+			}
+			info, err := os.Lstat(source)
+			if err != nil {
+				if os.IsNotExist(err) {
+					if entry.Directory {
+						return nil, fmt.Errorf("embed directory not found: %s", entry.Path)
+					}
+					return nil, fmt.Errorf("embed file not found: %s", entry.Path)
+				}
+				return nil, err
+			}
+			if entry.Directory {
+				if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+					return nil, fmt.Errorf("embed path expected a directory: %s", entry.Path)
+				}
+				if err := validateEmbedDirectory(source, entry.Path); err != nil {
+					return nil, err
+				}
+			} else if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				if info.IsDir() {
+					return nil, fmt.Errorf("embed path expected a file: %s", entry.Path)
+				}
+				return nil, fmt.Errorf("embed file is not a regular file: %s", entry.Path)
+			}
+
+			destination := filepath.Join(packageDir, filepath.FromSlash(cleanPath))
+			if entry.Directory {
+				if err := copyEmbedDirectory(source, destination); err != nil {
+					return nil, err
+				}
+			} else if err := copyEmbedFile(source, destination, info.Mode().Perm()); err != nil {
+				return nil, err
+			}
+			declarations = append(declarations, compiledEmbed{
+				Name:      entry.Name,
+				Path:      cleanPath,
+				Directory: entry.Directory,
+			})
+		}
+	}
+	return declarations, nil
+}
+
+func normalizeEmbedPath(value string) (string, error) {
+	if value == "" || strings.ContainsAny(value, "*?[]\\") {
+		return "", fmt.Errorf("embed path must be a non-empty literal path without wildcards: %s", value)
+	}
+	if strings.HasPrefix(value, "/") || filepath.IsAbs(filepath.FromSlash(value)) {
+		return "", fmt.Errorf("embed path must stay within the project root: %s", value)
+	}
+	clean := path.Clean(strings.TrimSuffix(value, "/"))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("embed path must stay within the project root: %s", value)
+	}
+	return clean, nil
+}
+
+func embedProjectRoot(source string) string {
+	if source == "" {
+		return ""
+	}
+	absolute, err := filepath.Abs(source)
+	if err != nil {
+		return filepath.Dir(source)
+	}
+	directory := filepath.Dir(absolute)
+	for {
+		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+			return directory
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return filepath.Dir(absolute)
+		}
+		directory = parent
+	}
+}
+
+func validateEmbedDirectory(source, declaredPath string) error {
+	files := 0
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("embed path contains unsupported symlink: %s", declaredPath)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("embed path contains non-regular file: %s", declaredPath)
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		visible := true
+		for _, part := range strings.Split(filepath.ToSlash(relative), "/") {
+			if strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
+				visible = false
+				break
+			}
+		}
+		if visible {
+			files++
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if files == 0 {
+		return fmt.Errorf("embed directory contains no embeddable files: %s", declaredPath)
+	}
+	return nil
+}
+
+func copyEmbedDirectory(source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if relative != "." {
+			target = filepath.Join(destination, relative)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("embed path contains unsupported symlink: %s", path)
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("embed path contains non-regular file: %s", path)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return copyEmbedFile(path, target, info.Mode().Perm())
+	})
+}
+
+func copyEmbedFile(source, destination string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(destination, data, mode)
 }
 
 // cleanGeneratedOutput removes files from the compiler-owned output workspace

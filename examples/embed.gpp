@@ -1,0 +1,16 @@
+import (
+    "fmt"
+    "io/fs"
+)
+
+embed (
+    StaticFiles "examples/embed_assets/"
+    Schema "examples/embed_schema.sql"
+)
+
+func main() {
+    index, err := fs.ReadFile(StaticFiles, "index.html")
+    if err != nil { panic(err) }
+    fmt.Println(string(index))
+    fmt.Println(string(Schema))
+}
