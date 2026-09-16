@@ -172,6 +172,318 @@ func main() {
 	}
 }
 
+func TestCompileFilesSupportsExceptionsAndImplicitErrorPromotion(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "fmt"
+    "os"
+)
+
+class ValidationError {
+    Field string
+    Message string
+
+    func Error() string {
+        return this.Field + ": " + this.Message
+    }
+}
+
+func ReadName(path string) string {
+    data := os.ReadFile(path)
+    return string(data)
+}
+
+func Save() error {
+    return fmt.Errorf("save failed")
+}
+
+func main() {
+    try {
+        ReadName("/definitely/missing/gpp-file")
+    } catch *os.PathError e {
+        fmt.Println("path", e.Op)
+    } finally {
+        fmt.Println("cleanup")
+    }
+
+    try {
+        Save()
+    } catch e {
+        fmt.Println(e)
+    }
+
+    try {
+        throw ValidationError(Field: "email", Message: "invalid")
+    } catch ValidationError e {
+        fmt.Println(e.Field)
+    }
+
+    _, err := os.ReadFile("/definitely/missing/gpp-file")
+    fmt.Println(err != nil)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated exception program did not run: %v\n%s", err, output)
+	}
+	expected := "path open\ncleanup\nsave failed\nemail\ntrue\n"
+	if string(output) != expected {
+		t.Fatalf("unexpected exception output:\n%s", output)
+	}
+}
+
+func TestEmitRejectsNonErrorThrow(t *testing.T) {
+	file, err := ParseFile("throw.gpp", `
+func main() {
+    throw "not an error"
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(file); err == nil || !strings.Contains(err.Error(), "cannot throw string") {
+		t.Fatalf("expected non-error throw diagnostic, got %v", err)
+	}
+}
+
+func TestEmitPromotesNativeMethodErrors(t *testing.T) {
+	file, err := ParseFile("method-error.gpp", `
+import "os"
+
+func Size(file *os.File) int64 {
+    info := file.Stat()
+    return info.Size()
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), "__gppUnwrap(file.Stat())") {
+		t.Fatalf("native method error was not promoted:\n%s", output)
+	}
+}
+
+func TestEmitRejectsImplicitErrorPromotionInGoroutine(t *testing.T) {
+	file, err := ParseFile("goroutine-error.gpp", `
+import "os"
+
+func main() {
+    go os.ReadFile("config.json")
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(file); err == nil || !strings.Contains(err.Error(), "goroutine") {
+		t.Fatalf("expected goroutine error diagnostic, got %v", err)
+	}
+}
+
+func TestCompileFilesPromotesMoreThanThreeNonErrorResults(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "fmt"
+
+func Four() (int, int, int, int, error) {
+    return 1, 2, 3, 4, nil
+}
+
+func main() {
+    a, b, c, d := Four()
+    fmt.Println(a + b + c + d)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated multi-result program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "10\n" {
+		t.Fatalf("unexpected multi-result output: %s", output)
+	}
+}
+
+func TestCompileFilesConvertsThrownErrorsAtGoABIBoundary(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "fmt"
+    "os"
+)
+
+func ReadConfig(path string) (string, error) {
+    data := os.ReadFile(path)
+    return string(data), nil
+}
+
+func main() {
+    _, err := ReadConfig("missing-config.json")
+    fmt.Println(err != nil)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated ABI-boundary program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "true\n" {
+		t.Fatalf("unexpected ABI-boundary output: %s", output)
+	}
+}
+
+func TestCompileFilesPreservesReturnThroughFinally(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "fmt"
+
+func choose(early bool) int {
+    try {
+        if early {
+            return 7
+        }
+    } finally {
+        fmt.Println("cleanup")
+    }
+    return 9
+}
+
+func chooseCatch() int {
+    try {
+        throw fmt.Errorf("stop")
+    } catch error {
+        return 11
+    } finally {
+        fmt.Println("catch cleanup")
+    }
+    return 12
+}
+
+func namedReturn() (value int) {
+    value = 13
+    try {
+        return
+    } finally {
+        fmt.Println("named cleanup")
+    }
+}
+
+func earlyExit(shouldExit bool) {
+    try {
+        if shouldExit {
+            return
+        }
+    } finally {
+        fmt.Println("void cleanup")
+    }
+    fmt.Println("after void try")
+}
+
+func main() {
+    fmt.Println(choose(true))
+	fmt.Println(choose(false))
+	fmt.Println(chooseCatch())
+	fmt.Println(namedReturn())
+	earlyExit(true)
+	earlyExit(false)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated return/finally program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "cleanup\n7\ncleanup\n9\ncatch cleanup\n11\nnamed cleanup\n13\nvoid cleanup\nvoid cleanup\nafter void try\n" {
+		t.Fatalf("unexpected return/finally output: %s", output)
+	}
+}
+
+func TestEmitRejectsUnreachableCatchAndFinallyControlTransfer(t *testing.T) {
+	catchFile, err := ParseFile("catch-order.gpp", `
+func main() {
+    try {
+        panic("ordinary panic")
+    } catch error e {
+    } catch error e {
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(catchFile); err == nil || !strings.Contains(err.Error(), "unreachable catch") {
+		t.Fatalf("expected unreachable catch diagnostic, got %v", err)
+	}
+
+	finallyFile, err := ParseFile("finally-transfer.gpp", `
+func main() {
+    try {
+    } finally {
+        return
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(finallyFile); err == nil || !strings.Contains(err.Error(), "control transfer from finally") {
+		t.Fatalf("expected finally control-transfer diagnostic, got %v", err)
+	}
+}
+
 func TestCompileFilesGeneratesSerializationMethodsAndTags(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

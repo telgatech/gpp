@@ -1,0 +1,41 @@
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+class ValidationError {
+	Field string
+	Message string
+
+	func Error() string {
+		return this.Field + ": " + this.Message
+	}
+}
+
+func ReadConfig(path string) []byte {
+	return os.ReadFile(path)
+}
+
+func main() {
+	try {
+		data := ReadConfig("missing-config.json")
+		fmt.Println(len(data))
+	} catch *os.PathError e {
+		fmt.Println("path error:", e.Path)
+	} catch e {
+		fmt.Println("load error:", e)
+	} finally {
+		fmt.Println("load finished")
+	}
+
+	try {
+		throw ValidationError(Field: "email", Message: "invalid")
+	} catch ValidationError e {
+		fmt.Println(e.Error())
+	}
+
+	_, err := os.ReadFile("optional-config.json")
+	fmt.Println("explicit error:", err != nil)
+}

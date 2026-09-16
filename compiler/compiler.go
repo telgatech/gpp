@@ -110,6 +110,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	}
 	recordContexts := map[string]*recordContext{}
 	introspectionContexts := map[string]*introspectionContext{}
+	exceptionContexts := map[string]*exceptionContext{}
 	preludeEmitted := map[string]bool{}
 	preludeNeeded := map[string]bool{}
 	if !options.NoPrelude {
@@ -148,6 +149,10 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 		context.Introspection = introspectionContexts[file.Package]
 		context.Introspection.Enabled = usesIntrospection
+		if exceptionContexts[file.Package] == nil {
+			exceptionContexts[file.Package] = &exceptionContext{}
+		}
+		context.Exceptions = exceptionContexts[file.Package]
 		context.Annotations = model.Packages[file.Package].Annotations
 		context.Package = file.Package
 		context.ModulePath = options.ModulePath

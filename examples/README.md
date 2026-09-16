@@ -52,6 +52,8 @@ The examples cover:
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.
+- `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed and
+  catch-all handlers, `finally`, custom Go++ errors, and explicit error capture.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module

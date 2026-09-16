@@ -795,6 +795,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		}
 	}
 	body := transformInterpolationWithName(extension.Method.Body, interpolationName)
+	body, err = transformExceptions(body, methodContext)
+	if err != nil {
+		return err
+	}
 	body, err = transformLambdas(body, methodContext)
 	if err != nil {
 		return err
@@ -831,6 +835,11 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if err != nil {
 		return err
 	}
+	body, err = transformImplicitErrorPromotion(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, _ = wrapExceptionBoundaryBody(body, result, methodContext)
 	out.WriteString(body)
 	out.WriteString("\n}\n\n")
 	return nil

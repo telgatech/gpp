@@ -43,6 +43,22 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	context.Annotations = model.Packages[file.Package].Annotations
 	context.Package = file.Package
 	context.Records = newRecordContext()
+	context.AvailableImports = map[string]string{}
+	if imports, importErr := goImports(file); importErr == nil {
+		for _, spec := range imports {
+			importPath, unquoteErr := strconv.Unquote(spec.Path.Value)
+			if unquoteErr != nil {
+				continue
+			}
+			alias := path.Base(importPath)
+			if spec.Name != nil {
+				alias = spec.Name.Name
+			}
+			if alias != "_" && alias != "." {
+				context.AvailableImports[alias] = importPath
+			}
+		}
+	}
 	context.Introspection.Enabled = fileUsesIntrospection(file)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
 	if !options.NoPrelude {
@@ -99,6 +115,7 @@ type constructorContext struct {
 	ModulePath                 string
 	AvailableImports           map[string]string
 	IntrospectionRuntimeImport string
+	Exceptions                 *exceptionContext
 	ImportedTypes              map[string]map[string]bool
 	NativeMethods              map[string]map[string]bool
 	CurrentClass               string
@@ -133,6 +150,7 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 		ClassMethodSignatures:  map[string]map[string][]callableSignature{},
 		StaticMethodSignatures: map[string]map[string][]callableSignature{},
 		Introspection:          newIntrospectionContext(classes),
+		Exceptions:             &exceptionContext{},
 		Annotations:            map[string]*AnnotationDecl{},
 	}
 
@@ -226,6 +244,10 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 
 	declarationsPrefix := localRuntimeImports
+	if context.Exceptions != nil && !context.Exceptions.RuntimeEmitted {
+		declarationsPrefix += exceptionRuntimeDefinitions()
+		context.Exceptions.RuntimeEmitted = true
+	}
 	if needsFmtImport {
 		declarationsPrefix += "import \"fmt\"\n\n"
 	}
@@ -461,7 +483,11 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 		switch d := decl.(type) {
 		case *RawDecl:
 			code := transformInterpolationWithName(stripAnnotationSyntaxPreserve(d.Code), interpolationName)
-			code, err := transformLambdas(code, context)
+			code, err := transformExceptions(code, context)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformLambdas(code, context)
 			if err != nil {
 				return "", err
 			}
@@ -498,6 +524,14 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 				return "", err
 			}
 			code, err = transformOverloads(code, context.Overloads)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformImplicitErrorPromotion(code, context)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformExceptionABIBoundaries(code, context)
 			if err != nil {
 				return "", err
 			}
@@ -579,6 +613,10 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		}
 		methodName := methodOutputName(method)
 		body := transformInterpolationWithName(method.Body, interpolationName)
+		body, err := transformExceptions(body, context)
+		if err != nil {
+			return err
+		}
 		methodResult, body, err := transformRecordMethodResult(method.Result, body, contextForMethod(context, class, method.Name))
 		if err != nil {
 			return err
@@ -590,8 +628,8 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		}
 		fmt.Fprintf(
 			out,
-			"func (this *%s) %s(%s)",
-			class.Name,
+			"func (this %s) %s(%s)",
+			methodReceiverType(class, method),
 			methodName,
 			parameters,
 		)
@@ -608,6 +646,8 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		methodContext.CurrentMethod = method.Name
 		methodContext.CurrentResult = strings.TrimSpace(method.Result)
 		methodContext.MethodSignatures = context.ClassMethodSignatures[class.Name]
+		methodContext.CurrentParameterTypes = parameterTypeMap(method.Parameters)
+		methodContext.CurrentParameterTypes["this"] = "*" + class.Name
 		body, err = transformLambdas(body, methodContext)
 		if err != nil {
 			return err
@@ -652,6 +692,11 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		if err != nil {
 			return err
 		}
+		body, err = transformImplicitErrorPromotion(body, methodContext)
+		if err != nil {
+			return err
+		}
+		body, _ = wrapExceptionBoundaryBody(body, methodResult, methodContext)
 
 		out.WriteString(body)
 
@@ -695,6 +740,13 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 func isDefaultObjectMethod(method Method) bool {
 	return !method.IsStatic && method.Parameters == "" && method.Result == "string" &&
 		(method.Name == "String" || method.Name == "Dump")
+}
+
+func methodReceiverType(class *ClassDecl, method Method) string {
+	if method.Name == "Error" && !method.IsStatic && method.Parameters == "" && strings.TrimSpace(method.Result) == "string" {
+		return class.Name
+	}
+	return "*" + class.Name
 }
 
 func emitDefaultObjectMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext) {
@@ -934,6 +986,10 @@ func isExportedGoPlusName(name string) bool {
 
 func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
 	body := transformInterpolationWithName(method.Body, interpolationName)
+	body, err := transformExceptions(body, context)
+	if err != nil {
+		return err
+	}
 	methodResult, body, err := transformRecordMethodResult(
 		method.Result,
 		body,
@@ -962,6 +1018,7 @@ func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, con
 	methodContext.CurrentMethod = method.Name
 	methodContext.CurrentResult = strings.TrimSpace(methodResult)
 	methodContext.MethodSignatures = nil
+	methodContext.CurrentParameterTypes = parameterTypeMap(method.Parameters)
 	body, err = transformLambdas(body, methodContext)
 	if err != nil {
 		return err
@@ -994,6 +1051,11 @@ func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, con
 	if err != nil {
 		return err
 	}
+	body, err = transformImplicitErrorPromotion(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, _ = wrapExceptionBoundaryBody(body, methodResult, methodContext)
 	out.WriteString(body)
 	out.WriteString("\n}\n\n")
 	return nil
@@ -1369,6 +1431,12 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 		if result := callResultType(value, context, valueTypes); result != "" {
 			return result
 		}
+		if native, ok := nativePackageFunction(value, context); ok && len(native.types) > 0 {
+			return native.types[0]
+		}
+		if native, ok := nativeMethodFunction(value, context, valueTypes); ok && len(native.types) > 0 {
+			return native.types[0]
+		}
 	case *ast.SelectorExpr:
 		baseType := strings.TrimPrefix(strings.TrimSpace(expressionStaticType(value.X, context, valueTypes)), "*")
 		if target, ok := context.Targets[baseType]; ok {
@@ -1447,6 +1515,12 @@ func callResultType(call *ast.CallExpr, context constructorContext, valueTypes m
 			}
 			return transformPolymorphicResultType(candidate.Result, context)
 		}
+	}
+	if native, ok := nativePackageFunction(call, context); ok && len(native.types) > 0 {
+		return native.types[0]
+	}
+	if native, ok := nativeMethodFunction(call, context, valueTypes); ok && len(native.types) > 0 {
+		return native.types[0]
 	}
 	return ""
 }
