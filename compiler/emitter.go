@@ -409,16 +409,20 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		dataExpression := templateDataExpression(parameters)
 		managedDevelopment := context.Development && strings.HasSuffix(file.Name, ".gpp.tpl") && file.SourcePath != ""
 		fmt.Fprintf(&definitions, "func __gpp_tpl_static_funcs_%s() %s.FuncMap {\n", template.Name, htmlAlias)
-		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{\"param\": %s.Param}\n", htmlAlias, tplAlias)
+		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{}\n", htmlAlias)
+		fmt.Fprintf(&definitions, "\tfor name, function := range %s.Funcs.Snapshot() { functions[name] = function }\n", tplAlias)
+		fmt.Fprintf(&definitions, "\tfunctions[\"param\"] = %s.Param\n", tplAlias)
 		for _, name := range allNames {
 			fmt.Fprintf(&definitions, "\tfunctions[%q] = __gpp_tpl_call_%s\n", name, name)
 		}
 		definitions.WriteString("\treturn functions\n}\n\n")
 		fmt.Fprintf(&definitions, "func __gpp_tpl_funcs_%s(params map[string]string) %s.FuncMap {\n", template.Name, htmlAlias)
-		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{\"param\": func(name string) string { return params[name] }}\n", htmlAlias)
+		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{}\n", htmlAlias)
+		fmt.Fprintf(&definitions, "\tfor name, function := range %s.Funcs.Snapshot() { functions[name] = function }\n", tplAlias)
+		fmt.Fprintf(&definitions, "\tfunctions[\"param\"] = func(name string) string { return params[name] }\n")
 		for _, name := range allNames {
 			fmt.Fprintf(&definitions, "\tcurrent_%s := %q\n", name, name)
-			fmt.Fprintf(&definitions, "\tfunctions[current_%s] = func(args ...any) (string, error) { var buffer %s.Buffer; if err := __gpp_tpl_render_%s(&buffer, params, args...); err != nil { return \"\", err }; return buffer.String(), nil }\n", name, bytesAlias, name)
+			fmt.Fprintf(&definitions, "\tfunctions[current_%s] = func(args ...any) (%s.HTML, error) { var buffer %s.Buffer; if err := __gpp_tpl_render_%s(&buffer, params, args...); err != nil { return \"\", err }; return %s.HTML(buffer.String()), nil }\n", name, htmlAlias, bytesAlias, name, htmlAlias)
 		}
 		definitions.WriteString("\treturn functions\n}\n\n")
 		fmt.Fprintf(&definitions, "var __gpp_tpl_%s_template *%s.Template\n\n", template.Name, htmlAlias)
@@ -451,7 +455,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		}
 		definitions.WriteString(")\n")
 		definitions.WriteString("}\n\n")
-		fmt.Fprintf(&definitions, "func __gpp_tpl_call_%s(args ...any) (string, error) {\n", template.Name)
+		fmt.Fprintf(&definitions, "func __gpp_tpl_call_%s(args ...any) (%s.HTML, error) {\n", template.Name, htmlAlias)
 		if err := emitTemplateArguments(&definitions, template, parameters, context, fmtAlias, false); err != nil {
 			return "", "", err
 		}
@@ -466,7 +470,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 			definitions.WriteString(parameter.Name)
 		}
 		definitions.WriteString("); err != nil { return \"\", err }\n")
-		definitions.WriteString("\treturn buffer.String(), nil\n}\n\n")
+		fmt.Fprintf(&definitions, "\treturn %s.HTML(buffer.String()), nil\n}\n\n", htmlAlias)
 		if managedDevelopment {
 			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.RegisterManaged(%q, %q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, template.Name, templatePath(template), file.SourcePath, template.Name)
 		} else {
@@ -3021,7 +3025,7 @@ func transformInterpolationWithName(src, fmtName string) string {
 
 		literal := src[i+1 : end]
 
-		if !strings.Contains(literal, "{{") {
+		if !strings.Contains(literal, "{{") || isTemplateSourceLiteral(src, i) {
 			out.WriteString(src[i : end+1])
 			i = end + 1
 			continue
@@ -3064,4 +3068,63 @@ func transformInterpolationWithName(src, fmtName string) string {
 	}
 
 	return out.String()
+}
+
+func isTemplateSourceLiteral(src string, literalStart int) bool {
+	comma := literalStart - 1
+	for comma >= 0 && (src[comma] == ' ' || src[comma] == '\t' || src[comma] == '\r' || src[comma] == '\n') {
+		comma--
+	}
+	if comma < 0 || src[comma] != ',' {
+		return false
+	}
+	depth := 0
+	for index := comma - 1; index >= 0; index-- {
+		switch src[index] {
+		case ')':
+			depth++
+		case '(':
+			if depth > 0 {
+				depth--
+				continue
+			}
+			prefix := strings.TrimSpace(src[:index])
+			dot := strings.LastIndex(prefix, ".")
+			if dot < 0 {
+				return false
+			}
+			name := strings.TrimSpace(prefix[dot+1:])
+			if name != "Execute" && name != "Render" {
+				return false
+			}
+			return topLevelCommaCount(src, index+1, literalStart) == 1
+		}
+	}
+	return false
+}
+
+func topLevelCommaCount(src string, start, end int) int {
+	depth := 0
+	count := 0
+	for index := start; index < end; index++ {
+		switch src[index] {
+		case '"':
+			quotedEnd, err := skipQuoted(src, index, '"')
+			if err != nil {
+				return count
+			}
+			index = quotedEnd
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				count++
+			}
+		}
+	}
+	return count
 }

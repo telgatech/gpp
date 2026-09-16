@@ -105,6 +105,61 @@ func main() {
 	}
 }
 
+func TestCompileFilesSupportsAdHocTemplatesAndFunctions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+import (
+    "bytes"
+    "fmt"
+    "gpp/tpl"
+    "strings"
+)
+
+template Card(value string) {
+    <i>{{.}}</i>
+}
+
+func upper(value string) string {
+    return strings.ToUpper(value)
+}
+
+func main() {
+    var output bytes.Buffer
+    if err := tpl.Execute(&output, "<h1>{{.}}</h1>", "unsafe &"); err != nil { panic(err) }
+    fmt.Println(output.String())
+    if err := tpl.Funcs.Add("upper", upper); err != nil { panic(err) }
+    output.Reset()
+    if err := tpl.Execute(&output, "<b>{{upper .}}</b>", "go"); err != nil { panic(err) }
+    fmt.Println(output.String())
+    output.Reset()
+    if err := tpl.Execute(&output, "<section>{{Card .}}</section>", "body"); err != nil { panic(err) }
+    fmt.Println(output.String())
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated ad-hoc template program did not run: %v\n%s", err, output)
+	}
+	result := string(output)
+	if !strings.Contains(result, "<h1>unsafe &amp;</h1>") ||
+		!strings.Contains(result, "<b>GO</b>") ||
+		!strings.Contains(result, "<section>") ||
+		!strings.Contains(result, "<i>body</i>") {
+		t.Fatalf("unexpected ad-hoc template output:\n%s", output)
+	}
+}
+
 func TestCompileFilesRunsBundledHTTPServer(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

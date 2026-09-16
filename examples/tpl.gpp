@@ -2,6 +2,7 @@ import (
     "bytes"
     "fmt"
     "gpp/tpl"
+	"strings"
 )
 
 class Post {
@@ -28,5 +29,10 @@ func main() {
 
     output.Reset()
     tpl.Execute(&output, "/posts/42", post)
+    fmt.Print(output.String())
+
+    if err := tpl.Funcs.Add("upper", strings.ToUpper); err != nil { panic(err) }
+    output.Reset()
+    tpl.Execute(&output, "<strong>{{upper .}}</strong>", "ad-hoc template")
     fmt.Print(output.String())
 }

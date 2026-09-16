@@ -61,7 +61,8 @@ The examples cover:
 - `embed.gpp` — source-level file and directory embedding with rooted `fs.FS`
   and `[]byte` values using standard Go filesystem APIs.
 - `tpl.gpp` — typed template declarations, standard `html/template` actions,
-  static `tpl.Name` execution, dynamic `tpl.Execute`, and path metadata.
+  static `tpl.Name` execution, dynamic `tpl.Execute`, path metadata, ad-hoc
+  source execution, and registered template functions.
 - `tpl_external.gpp.tpl` — an external template source compiled alongside the
   Go++ application template example.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class

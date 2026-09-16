@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +41,93 @@ type templateDefinition struct {
 	Parameters string
 	Path       string
 	Body       string
+}
+
+type functionRegistry struct {
+	sync.RWMutex
+	values    map[string]any
+	generation uint64
+}
+
+var Funcs = functionRegistry{values: map[string]any{}}
+
+func (registry *functionRegistry) Add(values ...any) error {
+	var name string
+	var function any
+	switch len(values) {
+	case 1:
+		function = values[0]
+		name = inferredFunctionName(function)
+	case 2:
+		var ok bool
+		name, ok = values[0].(string)
+		if !ok || name == "" {
+			return errors.New("template function name must be a non-empty string")
+		}
+		function = values[1]
+	default:
+		return errors.New("template functions accept a function or name and function")
+	}
+	functionValue := reflect.ValueOf(function)
+	if !functionValue.IsValid() || functionValue.Kind() != reflect.Func {
+		return errors.New("template function registration requires a function")
+	}
+	if name == "" {
+		return errors.New("template function name could not be inferred")
+	}
+	registry.Lock()
+	defer registry.Unlock()
+	registry.values[name] = function
+	registry.generation++
+	return nil
+}
+
+func (registry *functionRegistry) Has(name string) bool {
+	registry.RLock()
+	defer registry.RUnlock()
+	_, ok := registry.values[name]
+	return ok
+}
+
+func (registry *functionRegistry) Remove(name string) error {
+	registry.Lock()
+	defer registry.Unlock()
+	if _, ok := registry.values[name]; !ok {
+		return fmt.Errorf("template function not found: %s", name)
+	}
+	delete(registry.values, name)
+	registry.generation++
+	return nil
+}
+
+func (registry *functionRegistry) snapshot() map[string]any {
+	registry.RLock()
+	defer registry.RUnlock()
+	result := map[string]any{}
+	for name, function := range registry.values {
+		result[name] = function
+	}
+	return result
+}
+
+func (registry *functionRegistry) Snapshot() map[string]any {
+	return registry.snapshot()
+}
+
+func inferredFunctionName(function any) string {
+	value := reflect.ValueOf(function)
+	if !value.IsValid() || value.Kind() != reflect.Func {
+		return ""
+	}
+	info := runtime.FuncForPC(value.Pointer())
+	if info == nil {
+		return ""
+	}
+	name := info.Name()
+	if index := strings.LastIndex(name, "."); index >= 0 {
+		name = name[index+1:]
+	}
+	return strings.TrimSuffix(name, "-fm")
 }
 
 var templateRegistry = struct {
@@ -74,19 +163,19 @@ func Register(name string, pattern string, render templateRenderer) error {
 
 func Execute(writer io.Writer, key string, args ...any) error {
 	templateRegistry.RLock()
-	defer templateRegistry.RUnlock()
 	if strings.Contains(key, "/") {
 		registration, params, err := lookupTemplatePath(key)
-		if err != nil {
-			return err
+		if err == nil {
+			templateRegistry.RUnlock()
+			return registration.Render(writer, params, args...)
 		}
-		return registration.Render(writer, params, args...)
 	}
-	registration, exists := templateRegistry.byName[key]
-	if !exists {
-		return fmt.Errorf("template not found: %s", key)
+	if registration, exists := templateRegistry.byName[key]; exists {
+		templateRegistry.RUnlock()
+		return registration.Render(writer, nil, args...)
 	}
-	return registration.Render(writer, nil, args...)
+	templateRegistry.RUnlock()
+	return executeInline(writer, key, args...)
 }
 
 // Render is retained as a source-compatible alias for older Go++ programs.
@@ -166,6 +255,51 @@ func Reload() error {
 
 func Param(name string) string {
 	return ""
+}
+
+func executeInline(writer io.Writer, source string, args ...any) error {
+	if len(args) > 1 {
+		return errors.New("inline templates accept zero or one data argument")
+	}
+	functions := templateFunctions(nil)
+	addRegisteredTemplateFunctions(functions, nil)
+	parsed, err := htmltemplate.New("inline template").Funcs(functions).Parse(source)
+	if err != nil {
+		return fmt.Errorf("inline template: %w", err)
+	}
+	var data any
+	if len(args) == 1 {
+		data = args[0]
+	}
+	return parsed.Execute(writer, data)
+}
+
+func templateFunctions(params map[string]string) htmltemplate.FuncMap {
+	functions := htmltemplate.FuncMap{}
+	for name, function := range Funcs.snapshot() {
+		functions[name] = function
+	}
+	functions["param"] = func(name string) string { return params[name] }
+	return functions
+}
+
+func addRegisteredTemplateFunctions(functions htmltemplate.FuncMap, params map[string]string) {
+	templateRegistry.RLock()
+	registrations := make([]templateRegistration, 0, len(templateRegistry.byName))
+	for _, registration := range templateRegistry.byName {
+		registrations = append(registrations, registration)
+	}
+	templateRegistry.RUnlock()
+	for _, registration := range registrations {
+		current := registration
+		functions[current.Name] = func(values ...any) (htmltemplate.HTML, error) {
+			var buffer bytes.Buffer
+			if err := current.Render(&buffer, params, values...); err != nil {
+				return "", err
+			}
+			return htmltemplate.HTML(buffer.String()), nil
+		}
+	}
 }
 
 func LoadFile(source any, names ...string) error {
@@ -374,25 +508,8 @@ func addDefinition(registry map[string]templateRegistration, definition template
 }
 
 func renderDefinition(writer io.Writer, definition templateDefinition, params map[string]string, args ...any) error {
-	functions := htmltemplate.FuncMap{
-		"param": func(name string) string { return params[name] },
-	}
-	templateRegistry.RLock()
-	registrations := make([]templateRegistration, 0, len(templateRegistry.byName))
-	for _, registration := range templateRegistry.byName {
-		registrations = append(registrations, registration)
-	}
-	templateRegistry.RUnlock()
-	for _, registration := range registrations {
-		current := registration
-		functions[current.Name] = func(values ...any) (string, error) {
-			var buffer bytes.Buffer
-			if err := current.Render(&buffer, params, values...); err != nil {
-				return "", err
-			}
-			return buffer.String(), nil
-		}
-	}
+	functions := templateFunctions(params)
+	addRegisteredTemplateFunctions(functions, params)
 	parsed, err := htmltemplate.New(definition.Name).Funcs(functions).Parse(definition.Body)
 	if err != nil {
 		return err
