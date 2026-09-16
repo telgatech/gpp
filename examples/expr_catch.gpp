@@ -1,0 +1,31 @@
+package main
+
+import "fmt"
+
+var fallbackCalls int
+
+func ParsePort(value string) (int, error) {
+    if value == "" {
+        return 0, fmt.Errorf("empty port")
+    }
+    return 8080, nil
+}
+
+func Fallback() int {
+    fallbackCalls++
+    return 42
+}
+
+func Broken() int {
+    throw fmt.Errorf("broken")
+    return 0
+}
+
+func main() {
+    port := ParsePort("") ?? 8080
+    configured := ParsePort("configured") ?? 8080
+    offset := ParsePort("configured") + 1 ?? 9000
+    chained := ParsePort("") ?? ParsePort("") ?? 3000
+    recovered := Broken() ?? Fallback()
+    fmt.Println(port, configured, offset, chained, recovered, fallbackCalls)
+}

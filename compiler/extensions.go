@@ -819,6 +819,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if err != nil {
 		return err
 	}
+	body, err = transformErrorCoalescing(body, methodContext)
+	if err != nil {
+		return err
+	}
 	body, err = transformRecords(body, context)
 	if err != nil {
 		return err
@@ -832,6 +836,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		return err
 	}
 	body, err = transformExtensions(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformErrorCoalescing(body, methodContext)
 	if err != nil {
 		return err
 	}

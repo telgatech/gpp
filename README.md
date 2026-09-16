@@ -30,6 +30,7 @@ A tiny source-to-source compiler that emits ordinary Go.
 - multi-target extension blocks, such as `extend string, []byte { ... }`
 - closed, named-scalar enums with validated `From`, ordered `values`, and
   member metadata such as `Status.Active.name` and `Status.Active.value`
+- expression-level error fallback with lazy, short-circuiting `A ?? B`
 
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.
@@ -106,6 +107,12 @@ declarations, validated conversion, and metadata:
 
 ```bash
 go run ./cmd/gpp run examples/enums.gpp
+```
+
+Expression-level error fallback is demonstrated by:
+
+```bash
+go run ./cmd/gpp run examples/expr_catch.gpp
 ```
 
 Class introspection exposes generated `name`, `fields`, `methods`,

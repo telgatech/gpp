@@ -294,6 +294,91 @@ func main() {
 	}
 }
 
+func TestCompileFilesSupportsExpressionCatch(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "fmt"
+
+var fallbackCalls int
+
+func ParsePort(value string) (int, error) {
+    if value == "" {
+        return 0, fmt.Errorf("empty port")
+    }
+    return 8080, nil
+}
+
+func Fallback() int {
+    fallbackCalls++
+    return 42
+}
+
+func Broken() int {
+    throw fmt.Errorf("broken")
+    return 0
+}
+
+func main() {
+    port := ParsePort("") ?? 8080
+    configured := ParsePort("configured") ?? 8080
+    offset := ParsePort("configured") + 1 ?? 9000
+    chained := ParsePort("") ?? ParsePort("") ?? 3000
+    recovered := Broken() ?? Fallback()
+    fmt.Println(port, configured, offset, chained, recovered, fallbackCalls)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated expression-catch program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "8080 8080 8081 3000 42 1\n" {
+		t.Fatalf("unexpected expression-catch output: %s", output)
+	}
+}
+
+func TestCompileFilesExpressionCatchPreservesOrdinaryPanics(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+func Buggy() int {
+    panic("ordinary panic")
+}
+
+func main() {
+    _ = Buggy() ?? 42
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "ordinary panic") || strings.Contains(string(output), "\n42\n") {
+		t.Fatalf("ordinary panic was not preserved by ??; error=%v output=%s", err, output)
+	}
+}
+
 func TestCompileFilesSupportsExceptionsAndImplicitErrorPromotion(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

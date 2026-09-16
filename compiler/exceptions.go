@@ -34,6 +34,19 @@ func __gppRun(block func()) {
 	block()
 }
 
+func __gppCoalesce[T any](left func() T, fallback func() T) (result T) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(__gppThrownError); ok {
+				result = fallback()
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	return left()
+}
+
 func __gppUnwrap[T any](value T, err error) T {
 	__gppThrow(err)
 	return value
@@ -624,7 +637,9 @@ func transformImplicitErrorPromotion(src string, context constructorContext) (st
 		discard := false
 		if _, isStatement := parent.(*ast.ExprStmt); isStatement {
 			discard = true
-		} else if len(result.types) > 1 && !callHasExpectedReducedResults(parent, len(result.types)-1) {
+		} else if len(result.types) > 1 &&
+			!callHasExpectedReducedResults(parent, len(result.types)-1) &&
+			!callRequiresSingleValue(parent) {
 			return true
 		}
 		nonErrorCount := len(result.types) - 1
@@ -1054,6 +1069,17 @@ func callHasExpectedReducedResults(parent ast.Node, reducedCount int) bool {
 		return len(statement.Values) == 1 && len(statement.Names) == reducedCount
 	case *ast.ReturnStmt:
 		return len(statement.Results) == reducedCount
+	default:
+		return false
+	}
+}
+
+func callRequiresSingleValue(parent ast.Node) bool {
+	switch parent.(type) {
+	case *ast.BinaryExpr, *ast.UnaryExpr, *ast.ParenExpr,
+		*ast.SelectorExpr, *ast.IndexExpr, *ast.SliceExpr,
+		*ast.TypeAssertExpr, *ast.KeyValueExpr:
+		return true
 	default:
 		return false
 	}

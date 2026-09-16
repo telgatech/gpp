@@ -537,6 +537,10 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			if err != nil {
 				return "", err
 			}
+			code, err = transformErrorCoalescing(code, context)
+			if err != nil {
+				return "", err
+			}
 			code, err = transformPolymorphicDeclarations(code, context)
 			if err != nil {
 				return "", err
@@ -694,6 +698,10 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		if err != nil {
 			return err
 		}
+		body, err = transformErrorCoalescing(body, context)
+		if err != nil {
+			return err
+		}
 		body, err = transformPolymorphicDeclarations(body, methodContext)
 		if err != nil {
 			return err
@@ -703,6 +711,10 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 			return err
 		}
 		body, err = transformExtensions(body, methodContext)
+		if err != nil {
+			return err
+		}
+		body, err = transformErrorCoalescing(body, methodContext)
 		if err != nil {
 			return err
 		}
@@ -1069,6 +1081,10 @@ func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, con
 	if err != nil {
 		return err
 	}
+	body, err = transformErrorCoalescing(body, context)
+	if err != nil {
+		return err
+	}
 	body, err = transformPolymorphicDeclarations(body, methodContext)
 	if err != nil {
 		return err
@@ -1078,6 +1094,10 @@ func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, con
 		return err
 	}
 	body, err = transformExtensions(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformErrorCoalescing(body, methodContext)
 	if err != nil {
 		return err
 	}
@@ -1502,6 +1522,15 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 				return "*" + name
 			}
 			return name
+		}
+	case *ast.ParenExpr:
+		return expressionStaticType(value.X, context, valueTypes)
+	case *ast.BinaryExpr:
+		switch value.Op {
+		case token.LAND, token.LOR, token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+			return "bool"
+		default:
+			return expressionStaticType(value.X, context, valueTypes)
 		}
 	case *ast.CallExpr:
 		if result := callResultType(value, context, valueTypes); result != "" {

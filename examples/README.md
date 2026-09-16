@@ -54,6 +54,8 @@ The examples cover:
   parameter types, ordinary function arguments, and closure capture.
 - `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed and
   catch-all handlers, `finally`, custom Go++ errors, and explicit error capture.
+- `expr_catch.gpp` — expression-level error fallback with lazy fallback
+  evaluation and chained `??` operators.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
