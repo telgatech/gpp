@@ -49,6 +49,15 @@ func TestResolveProgramRejectsDuplicateClasses(t *testing.T) {
 	}
 }
 
+func TestResolveProgramRejectsEnumClassNameCollision(t *testing.T) {
+	program := parseProgram(t, "enum Person int { Human }\n", "class Person {}\n")
+
+	_, err := ResolveProgram(program)
+	if err == nil || !strings.Contains(err.Error(), "duplicate type Person") {
+		t.Fatalf("expected enum/class collision error, got %v", err)
+	}
+}
+
 func TestResolveProgramRejectsInvalidInheritance(t *testing.T) {
 	program := parseProgram(t, "class Employee: Missing {}\n")
 

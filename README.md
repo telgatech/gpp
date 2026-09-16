@@ -28,6 +28,8 @@ A tiny source-to-source compiler that emits ordinary Go.
   lower to ordinary Go function literals
 - compile-time extension methods that lower to ordinary package-level functions
 - multi-target extension blocks, such as `extend string, []byte { ... }`
+- closed, named-scalar enums with validated `From`, ordered `values`, and
+  member metadata such as `Status.Active.name` and `Status.Active.value`
 
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.
@@ -98,6 +100,13 @@ go run ./cmd/gpp -output build/gpp examples/hello.gpp
 
 The standard Go++ prelude is available automatically. Disable it for minimal
 or diagnostic builds with `-no-prelude`.
+
+The enum example demonstrates implicit and explicit values, grouped enum
+declarations, validated conversion, and metadata:
+
+```bash
+go run ./cmd/gpp run examples/enums.gpp
+```
 
 Class introspection exposes generated `name`, `fields`, `methods`,
 `annotations`, `owner`, `type`, `get`, `set`, and `addr` metadata while

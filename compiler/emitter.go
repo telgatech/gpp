@@ -40,6 +40,7 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	}
 
 	context := localConstructorContext(model.Packages[file.Package].Classes)
+	context.Enums = model.Packages[file.Package].Enums
 	context.Annotations = model.Packages[file.Package].Annotations
 	context.Package = file.Package
 	context.Records = newRecordContext()
@@ -75,6 +76,7 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 		return nil, err
 	}
 	context.FunctionSignatures = functionSignatures
+	configureEnumSignatures(&context)
 
 	return emitFile(file, context)
 }
@@ -98,6 +100,7 @@ type overloadContext struct {
 
 type constructorContext struct {
 	Targets                    map[string]constructorTarget
+	Enums                      map[string]*EnumDecl
 	Overloads                  overloadContext
 	FunctionSignatures         map[string][]callableSignature
 	MethodSignatures           map[string][]callableSignature
@@ -137,6 +140,7 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 
 	context := constructorContext{
 		Targets: targets,
+		Enums:   map[string]*EnumDecl{},
 		Overloads: overloadContext{
 			Functions:        map[string]map[int]string{},
 			FunctionTypes:    map[string]map[string]string{},
@@ -209,6 +213,18 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 	body = rewriteOfficialImports(body, context.ModulePath)
 	body = ensureGeneratedImports(body, context)
+	enumErrorAlias, enumNeedsErrorImport := enumErrorImport(file)
+	enumJSONAlias, enumNeedsJSONImport := enumJSONImport(file)
+	enumDriverAlias, enumNeedsDriverImport := enumDriverImport(file)
+	if hasEnumDeclarations(file) && enumNeedsErrorImport {
+		body = insertAfterImports(body, fmt.Sprintf("import %s %q\n\n", enumErrorAlias, "errors"))
+	}
+	if hasEnumDeclarations(file) && enumNeedsJSONImport {
+		body = insertAfterImports(body, fmt.Sprintf("import %s %q\n\n", enumJSONAlias, "encoding/json"))
+	}
+	if hasEnumDeclarations(file) && enumNeedsDriverImport {
+		body = insertAfterImports(body, fmt.Sprintf("import %s %q\n\n", enumDriverAlias, "database/sql/driver"))
+	}
 	if context.Introspection != nil &&
 		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
 		(context.IntrospectionRuntimeImport != "" &&
@@ -478,12 +494,22 @@ func containsPackageSelector(body, alias string) bool {
 
 func emitDecls(file *File, context constructorContext, interpolationName string) (string, error) {
 	var out strings.Builder
+	enumErrorAlias, _ := enumErrorImport(file)
+	enumJSONAlias, _ := enumJSONImport(file)
+	enumDriverAlias, _ := enumDriverImport(file)
 
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
+		case *EnumDecl:
+			emitEnum(&out, d, enumErrorAlias, enumJSONAlias, enumDriverAlias)
+
 		case *RawDecl:
 			code := transformInterpolationWithName(stripAnnotationSyntaxPreserve(d.Code), interpolationName)
-			code, err := transformExceptions(code, context)
+			code, err := transformEnums(code, context)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformExceptions(code, context)
 			if err != nil {
 				return "", err
 			}
@@ -613,7 +639,11 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		}
 		methodName := methodOutputName(method)
 		body := transformInterpolationWithName(method.Body, interpolationName)
-		body, err := transformExceptions(body, context)
+		body, err := transformEnums(body, context)
+		if err != nil {
+			return err
+		}
+		body, err = transformExceptions(body, context)
 		if err != nil {
 			return err
 		}
@@ -986,7 +1016,11 @@ func isExportedGoPlusName(name string) bool {
 
 func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
 	body := transformInterpolationWithName(method.Body, interpolationName)
-	body, err := transformExceptions(body, context)
+	body, err := transformEnums(body, context)
+	if err != nil {
+		return err
+	}
+	body, err = transformExceptions(body, context)
 	if err != nil {
 		return err
 	}
@@ -1385,22 +1419,64 @@ func polymorphicValueTypes(root ast.Node, context constructorContext) map[string
 			}
 		case *ast.ValueSpec:
 			typeName := safeASTTypeName(declaration.Type)
+			if typeName == "" && len(declaration.Values) == 1 && len(declaration.Names) > 1 {
+				if call, ok := declaration.Values[0].(*ast.CallExpr); ok {
+					results := enumResultTypes(callResultType(call, context, result))
+					if len(results) == len(declaration.Names) {
+						for index, name := range declaration.Names {
+							result[name.Name] = results[index]
+						}
+						break
+					}
+				}
+			}
 			for index, name := range declaration.Names {
 				inferred := typeName
 				if inferred == "" && index < len(declaration.Values) {
 					inferred = expressionStaticType(declaration.Values[index], context, result)
+					if len(declaration.Names) == 1 {
+						parts := enumResultTypes(inferred)
+						if len(parts) > 0 {
+							inferred = parts[0]
+						}
+					}
 				}
 				if inferred != "" {
 					result[name.Name] = inferred
 				}
 			}
+		case *ast.RangeStmt:
+			if value, ok := declaration.Value.(*ast.Ident); ok {
+				if key, enum, exists := enumValuesReference(declaration.X, context); exists {
+					result[value.Name] = enumReferencePrefix(key) + enumMetaTypeName(enum)
+				}
+			}
 		case *ast.AssignStmt:
+			if len(declaration.Rhs) == 1 && len(declaration.Lhs) > 1 {
+				if call, ok := declaration.Rhs[0].(*ast.CallExpr); ok {
+					results := enumResultTypes(callResultType(call, context, result))
+					if len(results) == len(declaration.Lhs) {
+						for index, left := range declaration.Lhs {
+							if name, ok := left.(*ast.Ident); ok {
+								result[name.Name] = results[index]
+							}
+						}
+						break
+					}
+				}
+			}
 			for index, left := range declaration.Lhs {
 				name, ok := left.(*ast.Ident)
 				if !ok || index >= len(declaration.Rhs) {
 					continue
 				}
 				if inferred := expressionStaticType(declaration.Rhs[index], context, result); inferred != "" {
+					if len(declaration.Lhs) == 1 {
+						parts := enumResultTypes(inferred)
+						if len(parts) > 0 {
+							inferred = parts[0]
+						}
+					}
 					result[name.Name] = inferred
 				}
 			}
@@ -1438,6 +1514,11 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 			return native.types[0]
 		}
 	case *ast.SelectorExpr:
+		if key, enum, ok := enumReference(value.X, context); ok {
+			if _, exists := enumMember(enum, value.Sel.Name); exists {
+				return enumReferenceType(key, enum)
+			}
+		}
 		baseType := strings.TrimPrefix(strings.TrimSpace(expressionStaticType(value.X, context, valueTypes)), "*")
 		if target, ok := context.Targets[baseType]; ok {
 			for _, field := range target.Class.Fields {
@@ -1479,6 +1560,11 @@ func callResultType(call *ast.CallExpr, context constructorContext, valueTypes m
 	case *ast.Ident:
 		candidates = context.FunctionSignatures[function.Name]
 	case *ast.SelectorExpr:
+		if function.Sel.Name == "From" {
+			if key, enum, exists := enumReference(function.X, context); exists {
+				return "(" + enumReferenceType(key, enum) + ", error)"
+			}
+		}
 		if receiver, ok := function.X.(*ast.Ident); ok {
 			if _, isClass := context.Targets[receiver.Name]; isClass {
 				candidates = context.StaticMethodSignatures[receiver.Name][function.Sel.Name]

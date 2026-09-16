@@ -17,8 +17,10 @@ type SemanticModel struct {
 type PackageSymbols struct {
 	Name            string
 	Classes         map[string]*ClassDecl
+	Enums           map[string]*EnumDecl
 	Imports         map[string]string
 	ImportedClasses map[string]*ClassDecl
+	ImportedEnums   map[string]*EnumDecl
 	Types           map[string]bool
 	Extensions      []*ExtendDecl
 	Annotations     map[string]*AnnotationDecl
@@ -63,8 +65,10 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			pkg = &PackageSymbols{
 				Name:            file.Package,
 				Classes:         map[string]*ClassDecl{},
+				Enums:           map[string]*EnumDecl{},
 				Imports:         map[string]string{},
 				ImportedClasses: map[string]*ClassDecl{},
+				ImportedEnums:   map[string]*EnumDecl{},
 				Types:           map[string]bool{},
 				Extensions:      []*ExtendDecl{},
 				Annotations:     map[string]*AnnotationDecl{},
@@ -94,9 +98,31 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				pkg.Extensions = append(pkg.Extensions, extension)
 				continue
 			}
+			if enum, ok := decl.(*EnumDecl); ok {
+				if _, exists := pkg.Enums[enum.Name]; exists || pkg.Classes[enum.Name] != nil {
+					return nil, fmt.Errorf(
+						"%s: duplicate type %s in package %s",
+						classLocation(&ClassDecl{SourceFile: enum.SourceFile, SourceLine: enum.SourceLine}),
+						enum.Name,
+						file.Package,
+					)
+				}
+				pkg.Enums[enum.Name] = enum
+				pkg.Types[enum.Name] = true
+				continue
+			}
 			class, ok := decl.(*ClassDecl)
 			if !ok {
 				continue
+			}
+
+			if _, exists := pkg.Enums[class.Name]; exists {
+				return nil, fmt.Errorf(
+					"%s: duplicate type %s in package %s",
+					classLocation(class),
+					class.Name,
+					file.Package,
+				)
 			}
 
 			if previous, exists := pkg.Classes[class.Name]; exists {
@@ -151,6 +177,9 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			}
 			for className, class := range imported.Classes {
 				pkg.ImportedClasses[alias+"."+className] = class
+			}
+			for enumName, enum := range imported.Enums {
+				pkg.ImportedEnums[alias+"."+enumName] = enum
 			}
 		}
 	}

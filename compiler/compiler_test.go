@@ -124,7 +124,9 @@ func TestCompileFilesGeneratesDefaultStringAndDump(t *testing.T) {
 	source := `
 package main
 
-import "fmt"
+import (
+    "fmt"
+)
 
 class Person {
     Name string
@@ -169,6 +171,126 @@ func main() {
 	expected := "Employee{Name: \"Ada\", Age: 42, Id: 7}\nEmployee {\n    Name: \"Ada\"\n    Age: 42\n    Id: 7\n}\ncustom:Secret\nCustom {\n    Name: \"Secret\"\n}\n"
 	if string(output) != expected {
 		t.Fatalf("unexpected default object formatting:\n%s", output)
+	}
+}
+
+func TestCompileFilesSupportsEnums(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+enum Status int {
+    Pending
+    Active = 7
+    Disabled
+}
+
+enum Role string {
+    User
+    Admin = "administrator"
+}
+
+enum (
+    Level uint8 {
+        Low
+        High
+    }
+)
+
+func main() {
+    status := Status.Active
+    fmt.Println(status == Status.Active, status.name, status.value)
+    autoStatus := Status.From(7)
+    fmt.Println(autoStatus.name)
+    for _, item := range Status.values {
+        fmt.Println(item.name, item.value)
+    }
+
+    role, err := Role.From("administrator")
+    if err != nil { panic(err) }
+    fmt.Println(role.name, role.value)
+    _, err = Role.From("unknown")
+    fmt.Println(err != nil, Level.High.value)
+
+    encoded, err := json.Marshal(Role.Admin)
+    if err != nil { panic(err) }
+    var decoded Role
+    if err := json.Unmarshal(encoded, &decoded); err != nil { panic(err) }
+    _, invalidJSONErr := json.Marshal(Role("unknown"))
+    fmt.Println(string(encoded), decoded.name, invalidJSONErr != nil)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated enum program did not run: %v\n%s", err, output)
+	}
+	expected := "true Active 7\nActive\nPending 0\nActive 7\nDisabled 8\nAdmin administrator\ntrue 1\n\"administrator\" Admin true\n"
+	if string(output) != expected {
+		t.Fatalf("unexpected enum output:\n%s", output)
+	}
+}
+
+func TestCompileFilesSupportsImportedEnums(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sharedPath := filepath.Join(inputDir, "shared.gpp")
+	mainPath := filepath.Join(inputDir, "main.gpp")
+	if err := os.WriteFile(sharedPath, []byte(`
+package shared
+
+enum Status string {
+    Pending = "pending"
+    Active = "active"
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainPath, []byte(`
+package main
+
+import (
+    "fmt"
+    "generated/shared"
+)
+
+func main() {
+    status := shared.Status.Active
+    fmt.Println(status.name, status.value, shared.Status.Pending.name)
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{sharedPath, mainPath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated imported enum program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "Active active Pending\n" {
+		t.Fatalf("unexpected imported enum output: %s", output)
 	}
 }
 

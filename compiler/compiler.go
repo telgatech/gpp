@@ -170,6 +170,9 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 		configureNativeExtensionMethods(&context, file)
 		context.FunctionSignatures = functionSignatures[file.Package]
+		context.Enums = model.Packages[file.Package].Enums
+		configureImportedEnums(&context, file, model, options.ModulePath)
+		configureEnumSignatures(&context)
 		if err := configureFunctionOverloads(&context.Overloads, context.FunctionSignatures); err != nil {
 			return fmt.Errorf("%s: %w", file.Name, err)
 		}

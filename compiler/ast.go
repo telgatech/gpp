@@ -34,6 +34,21 @@ type ClassDecl struct {
 
 func (*ClassDecl) decl() {}
 
+type EnumDecl struct {
+	Name        string
+	BackingType string
+	Members     []EnumMember
+	SourceFile  string
+	SourceLine  int
+}
+
+func (*EnumDecl) decl() {}
+
+type EnumMember struct {
+	Name  string
+	Value string
+}
+
 type ExtendDecl struct {
 	Targets           []string
 	TargetConstraints map[string]string

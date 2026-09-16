@@ -86,6 +86,20 @@ func ParseFile(name, src string) (*File, error) {
 			file.Decls = append(file.Decls, class)
 			pos = end
 
+		case keywordAt(src, pos, "enum"):
+			enums, end, err := parseEnums(src, pos)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+			}
+			for _, enum := range enums {
+				enum.SourceFile = name
+				enum.SourceLine = sourceLine(src, pos)
+			}
+			for _, enum := range enums {
+				file.Decls = append(file.Decls, enum)
+			}
+			pos = end
+
 		case keywordAt(src, pos, "extend"):
 			extend, end, err := parseExtend(src, pos)
 			if err != nil {
@@ -1054,7 +1068,7 @@ func findNextExtension(src string, start int) int {
 		if lineStart && braceDepth == 0 {
 			p := skipHorizontal(src, i)
 
-			if keywordAt(src, p, "class") || keywordAt(src, p, "extend") ||
+			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || keywordAt(src, p, "extend") ||
 				keywordAt(src, p, "annotation") || keywordAt(src, p, "package") {
 				return p
 			}

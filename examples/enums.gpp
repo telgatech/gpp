@@ -1,0 +1,47 @@
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+enum Status int {
+    Pending
+    Active = 7
+    Disabled
+}
+
+enum Role string {
+    User
+    Admin = "administrator"
+}
+
+enum (
+    Level uint8 {
+        Low
+        High
+    }
+)
+
+func main() {
+    status := Status.Active
+    fmt.Println(status == Status.Active, status.name, status.value)
+    autoStatus := Status.From(7)
+    fmt.Println(autoStatus.name)
+    for _, item := range Status.values {
+        fmt.Println(item.name, item.value)
+    }
+
+    role, err := Role.From("administrator")
+    if err != nil { panic(err) }
+    fmt.Println(role.name, role.value)
+    _, err = Role.From("unknown")
+    fmt.Println(err != nil, Level.High.value)
+
+    encoded, err := json.Marshal(Role.Admin)
+    if err != nil { panic(err) }
+    var decoded Role
+    if err := json.Unmarshal(encoded, &decoded); err != nil { panic(err) }
+    _, invalidJSONErr := json.Marshal(Role("unknown"))
+    fmt.Println(string(encoded), decoded.name, invalidJSONErr != nil)
+}

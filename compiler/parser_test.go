@@ -26,6 +26,49 @@ func TestParseRejectsDuplicatePackageDeclaration(t *testing.T) {
 	}
 }
 
+func TestParseEnumsSupportsSingleAndGroupedDeclarations(t *testing.T) {
+	file, err := ParseFile("enums.gpp", `
+enum Status int {
+    Pending
+    Active = 4
+    Done
+}
+
+enum (
+    Role string {
+        User
+        Admin = "admin"
+    }
+)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 2 {
+		t.Fatalf("expected two enum declarations, got %d", len(file.Decls))
+	}
+	status := file.Decls[0].(*EnumDecl)
+	if status.BackingType != "int" || status.Members[2].Value != "5" {
+		t.Fatalf("unexpected implicit enum values: %#v", status)
+	}
+	role := file.Decls[1].(*EnumDecl)
+	if role.BackingType != "string" || role.Members[0].Value != `"User"` || role.Members[1].Value != `"admin"` {
+		t.Fatalf("unexpected string enum values: %#v", role)
+	}
+}
+
+func TestParseEnumsRejectsDuplicateValues(t *testing.T) {
+	_, err := ParseFile("duplicate-enum.gpp", `
+enum Status int {
+    Pending = 1
+    Active = 1
+}
+`)
+	if err == nil || !strings.Contains(err.Error(), "duplicate enum value") {
+		t.Fatalf("expected duplicate enum value error, got %v", err)
+	}
+}
+
 func TestParseValidatesDottedPackageNames(t *testing.T) {
 	file, err := ParseFile("nested.gpp", "package telga.db.models\n")
 	if err != nil {

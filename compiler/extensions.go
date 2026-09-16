@@ -795,6 +795,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		}
 	}
 	body := transformInterpolationWithName(extension.Method.Body, interpolationName)
+	body, err = transformEnums(body, methodContext)
+	if err != nil {
+		return err
+	}
 	body, err = transformExceptions(body, methodContext)
 	if err != nil {
 		return err
