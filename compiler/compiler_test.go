@@ -117,6 +117,61 @@ func main() {
 	}
 }
 
+func TestCompileFilesGeneratesDefaultStringAndDump(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import "fmt"
+
+class Person {
+    Name string
+    Age int
+}
+
+class Employee : Person {
+    Id int
+}
+
+class Custom {
+    Name string
+
+    func String() string {
+        return "custom:" + this.Name
+    }
+}
+
+func main() {
+    employee := Employee("Ada", 42, 7)
+    fmt.Println(employee)
+    fmt.Println(employee.Dump())
+
+	custom := Custom("Secret")
+	fmt.Println(custom.String())
+	fmt.Println(custom.Dump())
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated default object methods did not run: %v\n%s", err, output)
+	}
+	expected := "Employee{Name: \"Ada\", Age: 42, Id: 7}\nEmployee {\n    Name: \"Ada\"\n    Age: 42\n    Id: 7\n}\ncustom:Secret\nCustom {\n    Name: \"Secret\"\n}\n"
+	if string(output) != expected {
+		t.Fatalf("unexpected default object formatting:\n%s", output)
+	}
+}
+
 func TestCompileFilesGeneratesSerializationMethodsAndTags(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -250,7 +305,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("annotation inheritance example did not run: %v\n%s", err, output)
 	}
-	expected := "false true\nBase true\nId Base true\nRun Child false\nSearch Base true\nq true\n"
+	expected := "false true\nBase true\nId Base true\nRun Child false\nString Child false\nDump Child false\nSearch Base true\nq true\n"
 	if string(output) != expected {
 		t.Fatalf("unexpected annotation inheritance metadata:\n%s", output)
 	}

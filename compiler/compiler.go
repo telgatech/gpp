@@ -77,6 +77,11 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	if err != nil {
 		return err
 	}
+	addDefaultObjectMethods(model)
+	model, err = ResolveProgram(program)
+	if err != nil {
+		return err
+	}
 	if err := expandSerializableClasses(program, model, options.ModulePath); err != nil {
 		return err
 	}
@@ -279,7 +284,7 @@ func ensureSharedIntrospectionRuntime(outputDir string) error {
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
 	}
-	source := "package runtime\n\n" + introspectionRuntimeDefinitions()
+	source := "package runtime\n\nimport (\n\tgppFmt \"fmt\"\n\tgppReflect \"reflect\"\n\tgppStrconv \"strconv\"\n\tgppStrings \"strings\"\n)\n\n" + introspectionRuntimeDefinitions()
 	return os.WriteFile(filepath.Join(directory, "runtime.go"), []byte(source), 0644)
 }
 

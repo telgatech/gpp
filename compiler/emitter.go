@@ -26,6 +26,11 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	addDefaultObjectMethods(model)
+	model, err = ResolveProgram(&Program{Files: []*File{file}})
+	if err != nil {
+		return nil, err
+	}
 	scope, err := annotationScopeForFile(file, model, "")
 	if err != nil {
 		return nil, err
@@ -188,7 +193,8 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	body = ensureGeneratedImports(body, context)
 	if context.Introspection != nil &&
 		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
-		!context.Introspection.RuntimeEmitted {
+		(context.IntrospectionRuntimeImport != "" &&
+			(!context.Introspection.RuntimeEmitted || strings.Contains(body, "gppRuntime."))) {
 		body = ensureIntrospectionRuntimeImport(body, context.IntrospectionRuntimeImport)
 	}
 	if context.EmitPrelude {
@@ -200,7 +206,26 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		body = insertAfterImports(body, preludeBody)
 	}
 
-	declarationsPrefix := ""
+	localRuntimeDefinitions := ""
+	localRuntimeImports := ""
+	if context.Introspection != nil && context.IntrospectionRuntimeImport == "" &&
+		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
+		!context.Introspection.RuntimeEmitted {
+		runtimeImportBody := body
+		if needsFmtImport {
+			runtimeImportBody = "import \"fmt\"\n\n" + runtimeImportBody
+		}
+		fmtAlias, reflectAlias, strconvAlias, stringsAlias, imports := defaultObjectRuntimeImports(runtimeImportBody)
+		localRuntimeImports = imports
+		localRuntimeDefinitions = introspectionRuntimeDefinitionsWithAliases(
+			fmtAlias,
+			reflectAlias,
+			strconvAlias,
+			stringsAlias,
+		)
+	}
+
+	declarationsPrefix := localRuntimeImports
 	if needsFmtImport {
 		declarationsPrefix += "import \"fmt\"\n\n"
 	}
@@ -216,7 +241,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if context.Introspection != nil && (len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
 		!context.Introspection.RuntimeEmitted {
 		if context.IntrospectionRuntimeImport == "" {
-			declarationsPrefix += introspectionRuntimeDefinitions()
+			declarationsPrefix += localRuntimeDefinitions
 		} else {
 			declarationsPrefix += introspectionRuntimeAliases()
 		}
@@ -263,6 +288,70 @@ func insertAfterImports(body, insertion string) string {
 		return insertion + body
 	}
 	return body[:offset] + "\n\n" + insertion + body[offset:]
+}
+
+func defaultObjectRuntimeImports(body string) (string, string, string, string, string) {
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", prefix+body, 0)
+	if err != nil {
+		return "gppFmt", "gppReflect", "gppStrconv", "gppStrings", "import (\n\tgppFmt \"fmt\"\n\tgppReflect \"reflect\"\n\tgppStrconv \"strconv\"\n\tgppStrings \"strings\"\n)\n\n"
+	}
+
+	existingNames := map[string]bool{}
+	aliases := map[string]string{}
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			continue
+		}
+		alias := path.Base(importPath)
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		existingNames[alias] = true
+		if alias != "_" && alias != "." {
+			aliases[importPath] = alias
+		}
+	}
+
+	choose := func(importPath, preferred string) string {
+		if alias := aliases[importPath]; alias != "" {
+			return alias
+		}
+		alias := preferred
+		for index := 2; existingNames[alias]; index++ {
+			alias = fmt.Sprintf("%s%d", preferred, index)
+		}
+		existingNames[alias] = true
+		return alias
+	}
+
+	fmtAlias := choose("fmt", "gppFmt")
+	reflectAlias := choose("reflect", "gppReflect")
+	strconvAlias := choose("strconv", "gppStrconv")
+	stringsAlias := choose("strings", "gppStrings")
+
+	imports := []struct {
+		path  string
+		alias string
+	}{
+		{"fmt", fmtAlias},
+		{"reflect", reflectAlias},
+		{"strconv", strconvAlias},
+		{"strings", stringsAlias},
+	}
+	var output strings.Builder
+	for _, item := range imports {
+		if aliases[item.path] != "" {
+			continue
+		}
+		fmt.Fprintf(&output, "\t%s %q\n", item.alias, item.path)
+	}
+	if output.Len() == 0 {
+		return fmtAlias, reflectAlias, strconvAlias, stringsAlias, ""
+	}
+	return fmtAlias, reflectAlias, strconvAlias, stringsAlias, "import (\n" + output.String() + ")\n\n"
 }
 
 func rewriteOfficialImports(body, modulePath string) string {
@@ -320,7 +409,7 @@ func ensureGeneratedImports(body string, context constructorContext) string {
 
 	aliases := make([]string, 0)
 	for alias := range context.AvailableImports {
-		if existing[alias] || !strings.Contains(body, alias+".") {
+		if existing[alias] || !containsPackageSelector(body, alias) {
 			continue
 		}
 		aliases = append(aliases, alias)
@@ -341,6 +430,28 @@ func ensureGeneratedImports(body string, context constructorContext) string {
 	}
 	imports.WriteString(")\n\n")
 	return imports.String() + body
+}
+
+func containsPackageSelector(body, alias string) bool {
+	const prefix = "package main\n\n"
+	parsed, err := parser.ParseFile(token.NewFileSet(), "generated.go", prefix+body, 0)
+	if err != nil {
+		return false
+	}
+	found := false
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		identifier, ok := selector.X.(*ast.Ident)
+		if ok && identifier.Name == alias {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 func emitDecls(file *File, context constructorContext, interpolationName string) (string, error) {
@@ -456,6 +567,10 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 
 	for methodIndex := range methods {
 		method := methods[methodIndex]
+		if method.Generated && isDefaultObjectMethod(method) {
+			emitDefaultObjectMethod(out, class, method, context)
+			continue
+		}
 		if parentName, ok := importedParentForMethod(class, method, classes); ok {
 			if err := emitImportedInheritedMethod(out, class, parentName, method, context); err != nil {
 				return err
@@ -575,6 +690,22 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 	}
 
 	return nil
+}
+
+func isDefaultObjectMethod(method Method) bool {
+	return !method.IsStatic && method.Parameters == "" && method.Result == "string" &&
+		(method.Name == "String" || method.Name == "Dump")
+}
+
+func emitDefaultObjectMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext) {
+	pretty := method.Name == "Dump"
+	formatter := "__gppFormatObject"
+	if context.IntrospectionRuntimeImport != "" {
+		formatter = "gppRuntime.FormatObject"
+	}
+	fmt.Fprintf(out, "func (this %s) %s() string {\n", class.Name, method.Name)
+	fmt.Fprintf(out, "\treturn %s(Gpp%sClass, this, %t)\n", formatter, class.Name, pretty)
+	out.WriteString("}\n\n")
 }
 
 // importedParentForMethod identifies inherited methods whose implementation

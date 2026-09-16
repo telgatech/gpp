@@ -65,7 +65,11 @@ func programUsesIntrospection(program *Program) bool {
 }
 
 func introspectionRuntimeDefinitions() string {
-	return `type GppType struct {
+	return introspectionRuntimeDefinitionsWithAliases("gppFmt", "gppReflect", "gppStrconv", "gppStrings")
+}
+
+func introspectionRuntimeDefinitionsWithAliases(fmtAlias, reflectAlias, strconvAlias, stringsAlias string) string {
+	definitions := `type GppType struct {
 	Name string
 }
 type GppAnnotationType struct {
@@ -156,7 +160,101 @@ type GppClass struct {
 	Annotations GppAnnotations
 }
 
-`
+type gppFormatVisit struct {
+	typeOf gppReflect.Type
+	ptr    uintptr
+}
+
+func FormatObject(class *GppClass, object any, pretty bool) string {
+	return gppFormatObject(class, object, pretty, map[gppFormatVisit]bool{}, 0)
+}
+
+func gppFormatObject(class *GppClass, object any, pretty bool, active map[gppFormatVisit]bool, depth int) string {
+	if class == nil || object == nil {
+		return "nil"
+	}
+	value := gppReflect.ValueOf(object)
+	for value.IsValid() && value.Kind() == gppReflect.Interface {
+		if value.IsNil() { return "nil" }
+		value = value.Elem()
+	}
+	if !value.IsValid() { return "nil" }
+	if value.Kind() == gppReflect.Pointer {
+		if value.IsNil() { return "nil" }
+		key := gppFormatVisit{typeOf: value.Type(), ptr: value.Pointer()}
+		if active[key] { return "<cycle " + class.Name + ">" }
+		active[key] = true
+		defer delete(active, key)
+	}
+
+	counts := map[string]int{}
+	for _, field := range class.Fields { counts[field.Name]++ }
+	parts := make([]string, 0, len(class.Fields))
+	for _, field := range class.Fields {
+		name := field.Name
+		if counts[name] > 1 && field.Owner != nil {
+			name = field.Owner.Name + "." + name
+		}
+		parts = append(parts, name+": "+gppFormatValue(field.Get(object), pretty, active, depth+1))
+	}
+	if !pretty {
+		return class.Name + "{" + gppStrings.Join(parts, ", ") + "}"
+	}
+	if len(parts) == 0 { return class.Name + " {}" }
+	indent := gppStrings.Repeat("    ", depth)
+	childIndent := gppStrings.Repeat("    ", depth+1)
+	for index := range parts { parts[index] = childIndent + parts[index] }
+	return class.Name + " {\n" + gppStrings.Join(parts, "\n") + "\n" + indent + "}"
+}
+
+func gppFormatValue(object any, pretty bool, active map[gppFormatVisit]bool, depth int) string {
+	if object == nil { return "nil" }
+	if provider, ok := object.(interface{ GppRuntimeClass() *GppClass }); ok {
+		if class := provider.GppRuntimeClass(); class != nil {
+			return gppFormatObject(class, object, pretty, active, depth)
+		}
+	}
+	value := gppReflect.ValueOf(object)
+	for value.IsValid() && value.Kind() == gppReflect.Interface {
+		if value.IsNil() { return "nil" }
+		value = value.Elem()
+	}
+	if !value.IsValid() { return "nil" }
+	switch value.Kind() {
+	case gppReflect.Pointer:
+		if value.IsNil() { return "nil" }
+		return gppFormatValue(value.Elem().Interface(), pretty, active, depth)
+	case gppReflect.String:
+		return gppStrconv.Quote(value.String())
+	case gppReflect.Bool:
+		return gppFmt.Sprint(value.Bool())
+	case gppReflect.Int, gppReflect.Int8, gppReflect.Int16, gppReflect.Int32, gppReflect.Int64:
+		return gppFmt.Sprint(value.Int())
+	case gppReflect.Uint, gppReflect.Uint8, gppReflect.Uint16, gppReflect.Uint32, gppReflect.Uint64, gppReflect.Uintptr:
+		return gppFmt.Sprint(value.Uint())
+	case gppReflect.Float32, gppReflect.Float64:
+		return gppFmt.Sprint(value.Float())
+	case gppReflect.Slice, gppReflect.Array:
+		items := make([]string, value.Len())
+		for index := 0; index < value.Len(); index++ {
+			items[index] = gppFormatValue(value.Index(index).Interface(), pretty, active, depth+1)
+		}
+		return "[" + gppStrings.Join(items, ", ") + "]"
+	default:
+		return gppFmt.Sprint(object)
+	}
+}
+
+func __gppFormatObject(class *GppClass, object any, pretty bool) string {
+	return FormatObject(class, object, pretty)
+}
+
+	`
+	definitions = strings.ReplaceAll(definitions, "gppFmt", fmtAlias)
+	definitions = strings.ReplaceAll(definitions, "gppReflect", reflectAlias)
+	definitions = strings.ReplaceAll(definitions, "gppStrconv", strconvAlias)
+	definitions = strings.ReplaceAll(definitions, "gppStrings", stringsAlias)
+	return definitions
 }
 
 func introspectionRuntimeAliases() string {
@@ -168,6 +266,10 @@ type GppField = gppRuntime.GppField
 type GppMethod = gppRuntime.GppMethod
 type GppParameter = gppRuntime.GppParameter
 type GppClass = gppRuntime.GppClass
+
+func __gppFormatObject(class *GppClass, object any, pretty bool) string {
+	return gppRuntime.FormatObject(class, object, pretty)
+}
 
 `
 }
