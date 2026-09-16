@@ -1,12 +1,109 @@
 package compiler
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCompileFilesSupportsTemplateReload(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	templatePath := filepath.Join(inputDir, "message.gpp.tpl")
+	if err := os.WriteFile(templatePath, []byte(`template Message(value string) {Hello}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := fmt.Sprintf(`
+import (
+    "bytes"
+    "fmt"
+    "gpp/tpl"
+    "os"
+)
+
+func main() {
+    if err := tpl.LoadFile(%q); err != nil { panic(err) }
+    var output bytes.Buffer
+    if err := tpl.Execute(&output, "Message", "first"); err != nil { panic(err) }
+    fmt.Println(output.String())
+    if err := os.WriteFile(%q, []byte(%q), 0644); err != nil { panic(err) }
+    if err := tpl.Reload(); err != nil { panic(err) }
+    output.Reset()
+    if err := tpl.Execute(&output, "Message", "second"); err != nil { panic(err) }
+    fmt.Println(output.String())
+    if err := os.WriteFile(%q, []byte(%q), 0644); err != nil { panic(err) }
+    if err := tpl.Reload(); err == nil { panic("expected invalid template reload to fail") }
+    output.Reset()
+    if err := tpl.Execute(&output, "Message", "third"); err != nil { panic(err) }
+    if output.String() != "Goodbye" { panic("template reload was not atomic") }
+}
+	`, templatePath, templatePath, `template Message(value string) {Goodbye}`, templatePath, `template Message(value string) {Broken`)
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated template reload program did not run: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Hello") || !strings.Contains(string(output), "Goodbye") {
+		t.Fatalf("unexpected template reload output:\n%s", output)
+	}
+}
+
+func TestCompileFilesManagedTemplateReloadUpdatesTypedExecution(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	templatePath := filepath.Join(inputDir, "message.gpp.tpl")
+	if err := os.WriteFile(templatePath, []byte(`template Message(value string) {Hello}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := fmt.Sprintf(`
+import (
+    "bytes"
+    "fmt"
+    "gpp/tpl"
+    "os"
+)
+
+func main() {
+    var output bytes.Buffer
+    if err := tpl.Message(&output, "first"); err != nil { panic(err) }
+    fmt.Println(output.String())
+    if err := os.WriteFile(%q, []byte(%q), 0644); err != nil { panic(err) }
+    if err := tpl.Reload(); err != nil { panic(err) }
+    output.Reset()
+    if err := tpl.Message(&output, "second"); err != nil { panic(err) }
+    fmt.Println(output.String())
+}
+`, templatePath, `template Message(value string) {Goodbye}`)
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath, templatePath}, outputDir, CompileOptions{ModulePath: "generated", Development: true}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("managed template reload program did not run: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Hello") || !strings.Contains(string(output), "Goodbye") {
+		t.Fatalf("unexpected managed template reload output:\n%s", output)
+	}
+}
 
 func TestCompileFilesRunsBundledHTTPServer(t *testing.T) {
 	inputDir := t.TempDir()

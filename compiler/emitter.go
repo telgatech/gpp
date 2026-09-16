@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	htmltemplate "html/template"
 	"path"
 	"regexp"
 	"sort"
@@ -43,6 +44,8 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	context.Enums = model.Packages[file.Package].Enums
 	context.Annotations = model.Packages[file.Package].Annotations
 	context.Package = file.Package
+	context.Development = options.Development
+	context.Templates = model.Packages[file.Package].Templates
 	context.Records = newRecordContext()
 	context.AvailableImports = map[string]string{}
 	if imports, importErr := goImports(file); importErr == nil {
@@ -116,8 +119,10 @@ type constructorContext struct {
 	Annotations                map[string]*AnnotationDecl
 	Package                    string
 	ModulePath                 string
+	Development                bool
 	AvailableImports           map[string]string
 	Embeds                     []compiledEmbed
+	Templates                  map[string]*TemplateDecl
 	IntrospectionRuntimeImport string
 	Exceptions                 *exceptionContext
 	ImportedTypes              map[string]map[string]bool
@@ -214,6 +219,11 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 	embedImports, embedDefinitions := emitEmbedDeclarations(context.Embeds, body)
 	body = insertAfterImports(body, embedImports)
+	templateImports, templateDefinitions, err := emitTemplateDeclarations(file, context, body)
+	if err != nil {
+		return nil, err
+	}
+	body = insertAfterImports(body, templateImports)
 	body = rewriteOfficialImports(body, context.ModulePath)
 	body = ensureGeneratedImports(body, context)
 	enumErrorAlias, enumNeedsErrorImport := enumErrorImport(file)
@@ -262,7 +272,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		)
 	}
 
-	declarationsPrefix := localRuntimeImports + embedDefinitions
+	declarationsPrefix := localRuntimeImports + embedDefinitions + templateDefinitions
 	if context.Exceptions != nil && !context.Exceptions.RuntimeEmitted {
 		declarationsPrefix += exceptionRuntimeDefinitions()
 		context.Exceptions.RuntimeEmitted = true
@@ -350,6 +360,239 @@ func emitEmbedDeclarations(embeds []compiledEmbed, body string) (string, string)
 		definitions.WriteString("\tif err != nil { panic(err) }\n\treturn result\n}()\n\n")
 	}
 	return imports.String(), definitions.String()
+}
+
+func emitTemplateDeclarations(file *File, context constructorContext, body string) (string, string, error) {
+	var templates []*TemplateDecl
+	for _, declaration := range file.Decls {
+		template, ok := declaration.(*TemplateDecl)
+		if ok {
+			templates = append(templates, template)
+		}
+	}
+	if len(templates) == 0 {
+		return "", "", nil
+	}
+	allNames := make([]string, 0, len(context.Templates))
+	for name := range context.Templates {
+		allNames = append(allNames, name)
+	}
+	sort.Strings(allNames)
+	for _, template := range templates {
+		if err := validateTemplateBody(template, allNames); err != nil {
+			return "", "", fmt.Errorf("%s: %w", templateLocation(template), err)
+		}
+	}
+
+	htmlAlias := generatedImportAlias(body, "gppHTML")
+	ioAlias := generatedImportAlias(body, "gppIO")
+	bytesAlias := generatedImportAlias(body, "gppBytes")
+	fmtAlias := generatedImportAlias(body, "gppFmt")
+	tplAlias := generatedImportAlias(body, "gppTpl")
+	runtimeImport := "gpp/tpl"
+	if context.ModulePath != "" {
+		runtimeImport = context.ModulePath + "/gpp/tpl"
+	}
+	imports := fmt.Sprintf(
+		"import %s %q\nimport %s %q\nimport %s %q\nimport %s %q\nimport %s %q\n\n",
+		htmlAlias, "html/template", ioAlias, "io", bytesAlias, "bytes", fmtAlias, "fmt", tplAlias, runtimeImport,
+	)
+
+	var definitions strings.Builder
+
+	for _, template := range templates {
+		parameters, err := parseParameterInfos(template.Parameters)
+		if err != nil {
+			return "", "", err
+		}
+		parameterText := templateParameterText(parameters, context)
+		dataExpression := templateDataExpression(parameters)
+		managedDevelopment := context.Development && strings.HasSuffix(file.Name, ".gpp.tpl") && file.SourcePath != ""
+		fmt.Fprintf(&definitions, "func __gpp_tpl_static_funcs_%s() %s.FuncMap {\n", template.Name, htmlAlias)
+		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{\"param\": %s.Param}\n", htmlAlias, tplAlias)
+		for _, name := range allNames {
+			fmt.Fprintf(&definitions, "\tfunctions[%q] = __gpp_tpl_call_%s\n", name, name)
+		}
+		definitions.WriteString("\treturn functions\n}\n\n")
+		fmt.Fprintf(&definitions, "func __gpp_tpl_funcs_%s(params map[string]string) %s.FuncMap {\n", template.Name, htmlAlias)
+		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{\"param\": func(name string) string { return params[name] }}\n", htmlAlias)
+		for _, name := range allNames {
+			fmt.Fprintf(&definitions, "\tcurrent_%s := %q\n", name, name)
+			fmt.Fprintf(&definitions, "\tfunctions[current_%s] = func(args ...any) (string, error) { var buffer %s.Buffer; if err := __gpp_tpl_render_%s(&buffer, params, args...); err != nil { return \"\", err }; return buffer.String(), nil }\n", name, bytesAlias, name)
+		}
+		definitions.WriteString("\treturn functions\n}\n\n")
+		fmt.Fprintf(&definitions, "var __gpp_tpl_%s_template *%s.Template\n\n", template.Name, htmlAlias)
+		if managedDevelopment {
+			fmt.Fprintf(&definitions, "const __gpp_tpl_development_%s = true\n\n", template.Name)
+		}
+		fmt.Fprintf(&definitions, "func __gpp_tpl_%s(w %s.Writer%s) error {\n", template.Name, ioAlias, parameterText)
+		if managedDevelopment {
+			fmt.Fprintf(&definitions, "\tif __gpp_tpl_development_%s { return %s.Execute(w, %q", template.Name, tplAlias, template.Name)
+			for _, parameter := range parameters {
+				fmt.Fprintf(&definitions, ", %s", parameter.Name)
+			}
+			definitions.WriteString(") }\n")
+		}
+		fmt.Fprintf(&definitions, "\treturn __gpp_tpl_%s_template.Execute(%s, %s)\n}\n\n", template.Name, "w", dataExpression)
+		fmt.Fprintf(&definitions, "func __gpp_tpl_execute_%s(w %s.Writer, params map[string]string%s) error {\n", template.Name, ioAlias, parameterText)
+		fmt.Fprintf(&definitions, "\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_funcs_%s(params)).Parse(%s)\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body))
+		definitions.WriteString("\tif err != nil { return err }\n")
+		fmt.Fprintf(&definitions, "\treturn parsed.Execute(w, %s)\n}\n\n", dataExpression)
+		fmt.Fprintf(&definitions, "func __gpp_tpl_render_%s(w %s.Writer, params map[string]string, args ...any) error {\n", template.Name, ioAlias)
+		if err := emitTemplateArguments(&definitions, template, parameters, context, fmtAlias, true); err != nil {
+			return "", "", err
+		}
+		definitions.WriteString("\treturn __gpp_tpl_execute_")
+		definitions.WriteString(template.Name)
+		definitions.WriteString("(w, params")
+		for _, parameter := range parameters {
+			definitions.WriteString(", ")
+			definitions.WriteString(parameter.Name)
+		}
+		definitions.WriteString(")\n")
+		definitions.WriteString("}\n\n")
+		fmt.Fprintf(&definitions, "func __gpp_tpl_call_%s(args ...any) (string, error) {\n", template.Name)
+		if err := emitTemplateArguments(&definitions, template, parameters, context, fmtAlias, false); err != nil {
+			return "", "", err
+		}
+		definitions.WriteString("\tvar buffer ")
+		definitions.WriteString(bytesAlias)
+		definitions.WriteString(".Buffer\n")
+		definitions.WriteString("\tif err := __gpp_tpl_")
+		definitions.WriteString(template.Name)
+		definitions.WriteString("(&buffer")
+		for _, parameter := range parameters {
+			definitions.WriteString(", ")
+			definitions.WriteString(parameter.Name)
+		}
+		definitions.WriteString("); err != nil { return \"\", err }\n")
+		definitions.WriteString("\treturn buffer.String(), nil\n}\n\n")
+		if managedDevelopment {
+			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.RegisterManaged(%q, %q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, template.Name, templatePath(template), file.SourcePath, template.Name)
+		} else {
+			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.Register(%q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, template.Name, templatePath(template), template.Name)
+		}
+	}
+	return imports, definitions.String(), nil
+}
+
+func validateTemplateBody(template *TemplateDecl, names []string) error {
+	functions := htmltemplate.FuncMap{"param": func(string) string { return "" }}
+	for _, name := range names {
+		functions[name] = func(...any) (string, error) { return "", nil }
+	}
+	if _, err := htmltemplate.New(template.Name).Funcs(functions).Parse(template.Body); err != nil {
+		return fmt.Errorf("invalid template body: %w", err)
+	}
+	return nil
+}
+
+func templateParameterText(parameters []parameterInfo, context constructorContext) string {
+	if len(parameters) == 0 {
+		return ""
+	}
+	parts := []string{}
+	for _, parameter := range parameters {
+		parts = append(parts, parameter.Name+" "+transformPolymorphicType(parameter.Type, context))
+	}
+	return ", " + strings.Join(parts, ", ")
+}
+
+func templateDataExpression(parameters []parameterInfo) string {
+	if len(parameters) == 0 {
+		return "nil"
+	}
+	if len(parameters) == 1 {
+		return parameters[0].Name
+	}
+	var data strings.Builder
+	data.WriteString("map[string]any{")
+	for _, parameter := range parameters {
+		fmt.Fprintf(&data, "%q: %s, ", parameter.Name, parameter.Name)
+	}
+	data.WriteString("}")
+	return data.String()
+}
+
+func emitTemplateArguments(out *strings.Builder, template *TemplateDecl, parameters []parameterInfo, context constructorContext, fmtAlias string, render bool) error {
+	if render {
+		fmt.Fprintf(out, "\tif len(args) != %d { return %s.Errorf(%q) }\n", len(parameters), fmtAlias, "template "+template.Name+" received the wrong number of arguments")
+	} else {
+		fmt.Fprintf(out, "\tif len(args) != %d { return \"\", %s.Errorf(%q) }\n", len(parameters), fmtAlias, "template "+template.Name+" received the wrong number of arguments")
+	}
+	for index, parameter := range parameters {
+		parameterType := transformPolymorphicType(parameter.Type, context)
+		if render {
+			fmt.Fprintf(out, "\t%s, ok := args[%d].(%s)\n\tif !ok { return %s.Errorf(%q, args[%d]) }\n", parameter.Name, index, parameterType, fmtAlias, "template "+template.Name+" argument "+parameter.Name+" has incompatible type %T", index)
+		} else {
+			fmt.Fprintf(out, "\t%s, ok := args[%d].(%s)\n\tif !ok { return \"\", %s.Errorf(%q, args[%d]) }\n", parameter.Name, index, parameterType, fmtAlias, "template "+template.Name+" argument "+parameter.Name+" has incompatible type %T", index)
+		}
+	}
+	return nil
+}
+
+func templatePath(template *TemplateDecl) string {
+	for _, annotation := range template.Annotations {
+		if annotation.Name != "Path" && !strings.HasSuffix(annotation.Name, ".Path") {
+			continue
+		}
+		value, err := strconv.Unquote(strings.TrimSpace(annotation.Arguments))
+		if err == nil {
+			return value
+		}
+	}
+	return ""
+}
+
+func transformStaticTemplateCalls(src string, context constructorContext) (string, error) {
+	if len(context.Templates) == 0 {
+		return src, nil
+	}
+	aliases := map[string]bool{}
+	for alias, importPath := range context.AvailableImports {
+		if importPath == "gpp/tpl" || (context.ModulePath != "" && importPath == context.ModulePath+"/gpp/tpl") {
+			aliases[alias] = true
+		}
+	}
+	if len(aliases) == 0 {
+		return src, nil
+	}
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "template_calls.go", prefix+src, 0)
+	if err != nil {
+		return src, nil
+	}
+	type edit struct {
+		start, end int
+		text       string
+	}
+	var edits []edit
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		receiver, ok := selector.X.(*ast.Ident)
+		if !ok || !aliases[receiver.Name] || context.Templates[selector.Sel.Name] == nil {
+			return true
+		}
+		start := fileSet.Position(selector.Pos()).Offset - len(prefix)
+		end := fileSet.Position(selector.End()).Offset - len(prefix)
+		if start >= 0 && end <= len(src) {
+			edits = append(edits, edit{start: start, end: end, text: "__gpp_tpl_" + selector.Sel.Name})
+		}
+		return true
+	})
+	sort.Slice(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
+	for _, edit := range edits {
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, nil
 }
 
 func generatedImportAlias(body, preferred string) string {
@@ -627,6 +870,10 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 				return "", err
 			}
 			code, err = transformOverloads(code, context.Overloads)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformStaticTemplateCalls(code, context)
 			if err != nil {
 				return "", err
 			}

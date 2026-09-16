@@ -51,6 +51,32 @@ embed (
 	}
 }
 
+func TestParseTemplateDeclaration(t *testing.T) {
+	file, err := ParseFile("page.gpp", `
+template Page(post Post) @{tpl.Path("/posts/:id")} {
+    <article data-id="{{param "id"}}">
+        <h1>{{.Title}}</h1>
+    </article>
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one template declaration, got %d", len(file.Decls))
+	}
+	template, ok := file.Decls[0].(*TemplateDecl)
+	if !ok {
+		t.Fatalf("expected TemplateDecl, got %#v", file.Decls[0])
+	}
+	if template.Name != "Page" || template.Parameters != "post Post" || len(template.Annotations) != 1 {
+		t.Fatalf("unexpected template metadata: %#v", template)
+	}
+	if !strings.Contains(template.Body, `{{param "id"}}`) {
+		t.Fatalf("template body was not preserved: %q", template.Body)
+	}
+}
+
 func TestParseEnumsSupportsSingleAndGroupedDeclarations(t *testing.T) {
 	file, err := ParseFile("enums.gpp", `
 enum Status int {

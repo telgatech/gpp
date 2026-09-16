@@ -25,6 +25,22 @@ func EmbeddedStdlibAvailable() bool {
 
 func appendOfficialStdlib(program *Program) error {
 	loaded := map[string]bool{}
+	for _, file := range program.Files {
+		for _, declaration := range file.Decls {
+			if _, ok := declaration.(*TemplateDecl); ok {
+				loaded["gpp/tpl"] = true
+				files, err := loadOfficialPackage("gpp/tpl")
+				if err != nil {
+					return err
+				}
+				program.Files = append(program.Files, files...)
+				break
+			}
+		}
+		if loaded["gpp/tpl"] {
+			break
+		}
+	}
 	for index := 0; index < len(program.Files); index++ {
 		imports, err := goImports(program.Files[index])
 		if err != nil {
@@ -51,7 +67,7 @@ func appendOfficialStdlib(program *Program) error {
 }
 
 func loadOfficialPackage(importPath string) ([]*File, error) {
-	if importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" && importPath != "gpp/test" {
+	if importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" && importPath != "gpp/test" && importPath != "gpp/tpl" {
 		return nil, fmt.Errorf("official package %q is not bundled with this compiler", importPath)
 	}
 

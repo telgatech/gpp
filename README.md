@@ -33,6 +33,8 @@ A tiny source-to-source compiler that emits ordinary Go.
 - expression-level error fallback with lazy, short-circuiting `A ?? B`
 - source-level `embed` declarations for rooted `fs.FS` directories and
   embedded `[]byte` files
+- typed template declarations using standard `html/template` syntax, with
+  static and dynamic execution through `gpp/tpl`
 
 Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
 access is opt-in with `?.`; exceptions remain deferred.
@@ -103,6 +105,11 @@ Use `run` for the same generation and dependency setup followed by execution:
 ```bash
 gpp run examples/hello.gpp
 ```
+
+During `gpp run`, external `.gpp.tpl` sources are watched when used with
+`gpp/http.Server`; valid edits reload automatically and invalid edits leave
+the previous templates active. Production `gpp build` uses the compiled
+template sources without starting a watcher.
 
 Use a separate output directory when switching between standalone examples:
 

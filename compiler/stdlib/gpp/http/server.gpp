@@ -3,6 +3,7 @@ package gpp.http
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	tpl "gpp/tpl"
 )
 
 type gppReadyListener struct {
@@ -176,11 +178,67 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 	}
 }
 
+type gppTemplateStamp struct {
+	Exists  bool
+	ModTime int64
+	Size    int64
+}
+
+func gppTemplateStamps(paths []string) map[string]gppTemplateStamp {
+	stamps := map[string]gppTemplateStamp{}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			stamps[path] = gppTemplateStamp{}
+			continue
+		}
+		stamps[path] = gppTemplateStamp{Exists: true, ModTime: info.ModTime().UnixNano(), Size: info.Size()}
+	}
+	return stamps
+}
+
+func gppTemplateStampsChanged(previous, current map[string]gppTemplateStamp) bool {
+	if len(previous) != len(current) {
+		return true
+	}
+	for path, stamp := range current {
+		if previous[path] != stamp {
+			return true
+		}
+	}
+	return false
+}
+
+func gppWatchTemplates(stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	previous := gppTemplateStamps(tpl.ManagedSourcePaths())
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			current := gppTemplateStamps(tpl.ManagedSourcePaths())
+			if !gppTemplateStampsChanged(previous, current) {
+				continue
+			}
+			if err := tpl.Reload(); err != nil {
+				log.Printf("gpp template reload failed: %v", err)
+			}
+			previous = current
+		}
+	}
+}
+
 class Server {
 	HTTPServer *stdhttp.Server
 	ShutdownSetup *sync.Once
 	ShutdownLifecycle *sync.Once
 	ShutdownResult error
+	TemplateWatchStop chan struct{}
+	TemplateWatchDone chan struct{}
+	TemplateWatchOnce *sync.Once
 
 	func SetupShutdownHandler() {
 		app := any(this)
@@ -291,7 +349,25 @@ class Server {
 			<-done
 			return err
 		}
-		return <-done
+		if len(tpl.ManagedSourcePaths()) > 0 {
+			this.TemplateWatchStop = make(chan struct{})
+			this.TemplateWatchDone = make(chan struct{})
+			this.TemplateWatchOnce = &sync.Once{}
+			go gppWatchTemplates(this.TemplateWatchStop, this.TemplateWatchDone)
+		}
+		serveErr := <-done
+		this.StopTemplateWatcher()
+		return serveErr
+	}
+
+	func StopTemplateWatcher() {
+		if this.TemplateWatchOnce == nil {
+			return
+		}
+		this.TemplateWatchOnce.Do(func() {
+			close(this.TemplateWatchStop)
+			<-this.TemplateWatchDone
+		})
 	}
 
 	func Shutdown(ctx context.Context) error {
@@ -303,6 +379,7 @@ class Server {
 			this.ShutdownLifecycle = &sync.Once{}
 		}
 		this.ShutdownLifecycle.Do(func() {
+			this.StopTemplateWatcher()
 			beforeErr := gppCallHook(app, "BeforeShutdown", nil)
 			shutdownErr := error(nil)
 			if this.HTTPServer != nil {

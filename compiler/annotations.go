@@ -54,6 +54,10 @@ func validateFileAnnotations(file *File, pkg *PackageSymbols, scope map[string]*
 					return err
 				}
 			}
+		case *TemplateDecl:
+			if err := validate(value.Annotations, AnnotationTargetTemplate); err != nil {
+				return err
+			}
 		case *RawDecl:
 			for _, placement := range value.AnnotationPlacements {
 				if err := validate([]AnnotationUse{placement.Use}, placement.Target); err != nil {

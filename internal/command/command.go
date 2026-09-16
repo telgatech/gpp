@@ -24,13 +24,14 @@ var Version = "0.1.0"
 const minimumGoMinor = 26
 
 type compileFlags struct {
-	module     string
-	output     string
-	noPrelude  bool
-	noStdlib   bool
-	emitGo     bool
-	binaryPath string
-	test       testSelection
+	module      string
+	output      string
+	development bool
+	noPrelude   bool
+	noStdlib    bool
+	emitGo      bool
+	binaryPath  string
+	test        testSelection
 }
 
 type testSelection struct {
@@ -91,7 +92,7 @@ func Run(args []string) int {
 
 	// Preserve the original transpiler invocation while the subcommand CLI is
 	// adopted: `gpp file.gpp` and `gpp -module example.com/app file.gpp`.
-	if commandName == "compile" || strings.HasSuffix(commandName, ".gpp") || strings.HasPrefix(commandName, "-") {
+	if commandName == "compile" || isGoPlusSource(commandName) || strings.HasPrefix(commandName, "-") {
 		return runCompile(args)
 	}
 
@@ -120,22 +121,22 @@ func printHelp() {
 func commandHelp(name string) int {
 	switch name {
 	case "compile":
-		fmt.Println("Usage: gpp [options] <file.gpp|directory>")
+		fmt.Println("Usage: gpp [options] <file.gpp|file.gpp.tpl|directory>")
 		printCompileFlags()
 	case "init":
 		fmt.Println("Usage: gpp init [directory]")
 	case "build":
-		fmt.Println("Usage: gpp build [options] <file.gpp|directory>")
+		fmt.Println("Usage: gpp build [options] <file.gpp|file.gpp.tpl|directory>")
 		fmt.Println("  -o path          output executable path")
 		fmt.Println("  -emit-go         retain and report generated Go source")
 		printCompileFlags()
 	case "run":
-		fmt.Println("Usage: gpp run [options] <file.gpp|directory> [-- program arguments]")
+		fmt.Println("Usage: gpp run [options] <file.gpp|file.gpp.tpl|directory> [-- program arguments]")
 		printCompileFlags()
 	case "clean":
 		fmt.Println("Usage: gpp clean [-output directory]")
 	case "fmt":
-		fmt.Println("Usage: gpp fmt [file.gpp|directory ...]")
+		fmt.Println("Usage: gpp fmt [file.gpp|file.gpp.tpl|directory ...]")
 	case "test":
 		fmt.Println("Usage: gpp test [options] [directory|./...]")
 		printCompileFlags()
@@ -325,6 +326,7 @@ func runRun(args []string) int {
 		}
 		return code
 	}
+	options.development = true
 	if len(positional) == 0 {
 		positional = []string{"."}
 	}
@@ -456,6 +458,7 @@ func runTest(args []string) int {
 func compileSources(sources []string, options compileFlags, clean bool, includeTests bool, selections ...testSelectionResult) error {
 	if err := compiler.CompileFilesWithOptions(sources, options.output, compiler.CompileOptions{
 		ModulePath:  options.module,
+		Development: options.development,
 		NoPrelude:   options.noPrelude,
 		NoStdlib:    options.noStdlib,
 		CleanOutput: clean,
@@ -1063,8 +1066,8 @@ func discoverSources(args []string) ([]string, error) {
 			return nil, fmt.Errorf("source path %q: %w", arg, err)
 		}
 		if !info.IsDir() {
-			if filepath.Ext(arg) != ".gpp" {
-				return nil, fmt.Errorf("source file %q is not a .gpp file", arg)
+			if !isGoPlusSource(arg) {
+				return nil, fmt.Errorf("source file %q is not a .gpp or .gpp.tpl file", arg)
 			}
 			absolute, err := filepath.Abs(arg)
 			if err != nil {
@@ -1086,7 +1089,7 @@ func discoverSources(args []string) ([]string, error) {
 				}
 				return nil
 			}
-			if filepath.Ext(path) != ".gpp" {
+			if !isGoPlusSource(path) {
 				return nil
 			}
 			absolute, err := filepath.Abs(path)
@@ -1105,17 +1108,21 @@ func discoverSources(args []string) ([]string, error) {
 	}
 	sort.Strings(sources)
 	if len(sources) == 0 {
-		return nil, fmt.Errorf("no .gpp source files found")
+		return nil, fmt.Errorf("no .gpp or .gpp.tpl source files found")
 	}
 	return sources, nil
 }
 
 func isSourcePath(path string) bool {
-	if filepath.Ext(path) == ".gpp" {
+	if isGoPlusSource(path) {
 		return true
 	}
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func isGoPlusSource(path string) bool {
+	return strings.HasSuffix(path, ".gpp") || strings.HasSuffix(path, ".gpp.tpl")
 }
 
 func runGoCommand(directory string, args ...string) error {
@@ -1184,7 +1191,12 @@ func requireSupportedGo() error {
 
 func defaultBinaryName(sources []string) string {
 	if len(sources) == 1 {
-		name := strings.TrimSuffix(filepath.Base(sources[0]), filepath.Ext(sources[0]))
+		name := filepath.Base(sources[0])
+		if strings.HasSuffix(name, ".gpp.tpl") {
+			name = strings.TrimSuffix(name, ".gpp.tpl")
+		} else {
+			name = strings.TrimSuffix(name, filepath.Ext(name))
+		}
 		if name != "" && name != "." {
 			return name
 		}

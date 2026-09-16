@@ -39,6 +39,17 @@ type EmbedEntry struct {
 
 func (*EmbedDecl) decl() {}
 
+type TemplateDecl struct {
+	Name        string
+	Parameters  string
+	Annotations []AnnotationUse
+	Body        string
+	SourceFile  string
+	SourceLine  int
+}
+
+func (*TemplateDecl) decl() {}
+
 type ClassDecl struct {
 	Name        string
 	SourceFile  string
@@ -105,6 +116,7 @@ const (
 	AnnotationTargetParameter AnnotationTarget = "parameter"
 	AnnotationTargetType      AnnotationTarget = "type"
 	AnnotationTargetPackage   AnnotationTarget = "package"
+	AnnotationTargetTemplate  AnnotationTarget = "template"
 )
 
 type AnnotationDecl struct {

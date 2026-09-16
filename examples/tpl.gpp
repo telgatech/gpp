@@ -1,0 +1,32 @@
+import (
+    "bytes"
+    "fmt"
+    "gpp/tpl"
+)
+
+class Post {
+    ID int
+    Title string
+}
+
+template PostCard(post Post) @{tpl.Path("/posts/:id")} {
+    <article data-id="{{param "id"}}">
+        <h1>{{.Title}}</h1>
+    </article>
+}
+
+template Page(post Post) {
+    <main>{{PostCard .}}</main>
+}
+
+func main() {
+    post := Post(ID: 42, Title: "Embedded templates")
+
+    var output bytes.Buffer
+    tpl.PostCard(&output, post)
+    fmt.Print(output.String())
+
+    output.Reset()
+    tpl.Execute(&output, "/posts/42", post)
+    fmt.Print(output.String())
+}

@@ -12,6 +12,7 @@ import (
 type CompileOptions struct {
 	ModulePath  string
 	ProjectRoot string
+	Development bool
 	NoPrelude   bool
 	NoStdlib    bool
 	CleanOutput bool
@@ -165,7 +166,9 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		context.Annotations = model.Packages[file.Package].Annotations
 		context.Package = file.Package
 		context.ModulePath = options.ModulePath
+		context.Development = options.Development
 		context.AvailableImports = availableImportsForFile(file, model, options.ModulePath)
+		context.Templates = model.Packages[file.Package].Templates
 		if usesIntrospection && options.ModulePath != "" {
 			context.IntrospectionRuntimeImport = options.ModulePath + "/gpp/runtime"
 		}
@@ -216,10 +219,13 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return err
 		}
 
-		name := strings.TrimSuffix(
-			file.Name,
-			filepath.Ext(file.Name),
-		) + ".go"
+		name := file.Name
+		if strings.HasSuffix(name, ".gpp.tpl") {
+			name = strings.TrimSuffix(name, ".gpp.tpl")
+		} else {
+			name = strings.TrimSuffix(name, filepath.Ext(name))
+		}
+		name += ".go"
 
 		if err := os.WriteFile(
 			filepath.Join(dir, name),

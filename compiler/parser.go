@@ -141,6 +141,17 @@ func ParseFile(name, src string) (*File, error) {
 			file.Decls = append(file.Decls, embed)
 			pos = end
 
+		case keywordAt(src, pos, "template"):
+			template, end, err := parseTemplate(src, pos)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+			}
+			template.SourceFile = name
+			template.SourceLine = sourceLine(src, pos)
+			setAnnotationUseLocations(template.Annotations, name, template.SourceLine)
+			file.Decls = append(file.Decls, template)
+			pos = end
+
 		default:
 			start := pos
 
@@ -279,6 +290,82 @@ func skipEmbedSpace(src string, pos int) (int, error) {
 		}
 	}
 	return pos, nil
+}
+
+func parseTemplate(src string, start int) (*TemplateDecl, int, error) {
+	pos := skipSpace(src, start+len("template"))
+	name, length := readIdent(src[pos:])
+	if length == 0 {
+		return nil, 0, fmt.Errorf("template requires a name")
+	}
+	pos += length
+	pos = skipSpace(src, pos)
+	if pos >= len(src) || src[pos] != '(' {
+		return nil, 0, fmt.Errorf("template %s requires parameter parentheses", name)
+	}
+	closeParams, err := findMatchingParen(src, pos)
+	if err != nil {
+		return nil, 0, err
+	}
+	parameters := strings.TrimSpace(src[pos+1 : closeParams])
+	if _, err := parseParameterInfos(parameters); err != nil {
+		return nil, 0, fmt.Errorf("template %s has invalid parameters: %w", name, err)
+	}
+	pos = skipSpace(src, closeParams+1)
+	annotations, next, err := parseOptionalAnnotationUses(src, pos)
+	if err != nil {
+		return nil, 0, err
+	}
+	pos = skipSpace(src, next)
+	if pos >= len(src) || src[pos] != '{' {
+		return nil, 0, fmt.Errorf("template %s requires {", name)
+	}
+	closeBody, err := findTemplateBodyClose(src, pos)
+	if err != nil {
+		return nil, 0, err
+	}
+	return &TemplateDecl{
+		Name:        name,
+		Parameters:  parameters,
+		Annotations: annotations,
+		Body:        src[pos+1 : closeBody],
+	}, closeBody + 1, nil
+}
+
+func findTemplateBodyClose(src string, open int) (int, error) {
+	depth := 1
+	for index := open + 1; index < len(src); index++ {
+		if index+1 < len(src) && src[index] == '{' && src[index+1] == '{' {
+			end := strings.Index(src[index+2:], "}}")
+			if end < 0 {
+				return -1, fmt.Errorf("unterminated template action")
+			}
+			index += end + 3
+			continue
+		}
+		switch src[index] {
+		case '"', '\'':
+			end, err := skipQuoted(src, index, src[index])
+			if err != nil {
+				return -1, err
+			}
+			index = end
+		case '`':
+			end := strings.IndexByte(src[index+1:], '`')
+			if end < 0 {
+				return -1, fmt.Errorf("unterminated template raw string")
+			}
+			index += end + 1
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return index, nil
+			}
+		}
+	}
+	return -1, fmt.Errorf("missing template body }")
 }
 
 func isLogicalPackageName(name string) bool {
@@ -600,7 +687,7 @@ func validAnnotationTarget(target AnnotationTarget) bool {
 	switch target {
 	case AnnotationTargetClass, AnnotationTargetField, AnnotationTargetMethod,
 		AnnotationTargetFunction, AnnotationTargetParameter, AnnotationTargetType,
-		AnnotationTargetPackage:
+		AnnotationTargetPackage, AnnotationTargetTemplate:
 		return true
 	default:
 		return false
@@ -1186,7 +1273,7 @@ func findNextExtension(src string, start int) int {
 			p := skipHorizontal(src, i)
 
 			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || keywordAt(src, p, "extend") ||
-				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "package") {
+				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "template") || keywordAt(src, p, "package") {
 				return p
 			}
 		}

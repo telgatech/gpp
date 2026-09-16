@@ -1,0 +1,592 @@
+package gpp.tpl
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	htmltemplate "html/template"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+)
+
+annotation (
+	Path(pattern string) on template
+)
+
+type templateRenderer func(io.Writer, map[string]string, ...any) error
+
+type templateSource struct {
+	Kind    string
+	Path    string
+	FS      fs.FS
+	Name    string
+	Managed bool
+}
+
+type templateRegistration struct {
+	Name     string
+	Path     string
+	Render   templateRenderer
+}
+
+type templateDefinition struct {
+	Name       string
+	Parameters string
+	Path       string
+	Body       string
+}
+
+var templateRegistry = struct {
+	sync.RWMutex
+	byName      map[string]templateRegistration
+	runtimeNames map[string]bool
+	managedNames map[string]bool
+	sources     []templateSource
+}{
+	byName:       map[string]templateRegistration{},
+	runtimeNames: map[string]bool{},
+	managedNames: map[string]bool{},
+}
+
+func Register(name string, pattern string, render templateRenderer) error {
+	if name == "" || render == nil {
+		return errors.New("template registration requires a name and renderer")
+	}
+	templateRegistry.Lock()
+	defer templateRegistry.Unlock()
+	if _, exists := templateRegistry.byName[name]; exists {
+		return fmt.Errorf("template already registered: %s", name)
+	}
+	pattern = normalizeTemplatePath(pattern)
+	for _, existing := range templateRegistry.byName {
+		if pattern != "" && existing.Path != "" && sameTemplatePath(pattern, existing.Path) {
+			return fmt.Errorf("template path already registered: %s", pattern)
+		}
+	}
+	templateRegistry.byName[name] = templateRegistration{Name: name, Path: pattern, Render: render}
+	return nil
+}
+
+func Execute(writer io.Writer, key string, args ...any) error {
+	templateRegistry.RLock()
+	defer templateRegistry.RUnlock()
+	if strings.Contains(key, "/") {
+		registration, params, err := lookupTemplatePath(key)
+		if err != nil {
+			return err
+		}
+		return registration.Render(writer, params, args...)
+	}
+	registration, exists := templateRegistry.byName[key]
+	if !exists {
+		return fmt.Errorf("template not found: %s", key)
+	}
+	return registration.Render(writer, nil, args...)
+}
+
+// Render is retained as a source-compatible alias for older Go++ programs.
+func Render(writer io.Writer, key string, args ...any) error {
+	return Execute(writer, key, args...)
+}
+
+func RegisterManaged(name string, pattern string, source string, render templateRenderer) error {
+	if err := Register(name, pattern, render); err != nil {
+		return err
+	}
+	templateRegistry.Lock()
+	templateRegistry.managedNames[name] = true
+	for _, existing := range templateRegistry.sources {
+		if existing.Managed && existing.Kind == "file" && existing.Path == source {
+			templateRegistry.Unlock()
+			return nil
+		}
+	}
+	templateRegistry.sources = append(templateRegistry.sources, templateSource{Kind: "file", Path: source, Managed: true})
+	templateRegistry.Unlock()
+	return nil
+}
+
+func ManagedSourcePaths() []string {
+	templateRegistry.RLock()
+	defer templateRegistry.RUnlock()
+	seen := map[string]bool{}
+	paths := []string{}
+	for _, source := range templateRegistry.sources {
+		if !source.Managed || source.Kind != "file" || seen[source.Path] {
+			continue
+		}
+		seen[source.Path] = true
+		paths = append(paths, source.Path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func Reload() error {
+	templateRegistry.RLock()
+	sources := append([]templateSource(nil), templateRegistry.sources...)
+	templateRegistry.RUnlock()
+
+	loaded := []templateDefinition{}
+	for _, source := range sources {
+		definitions, err := loadSourceDefinitions(source)
+		if err != nil {
+			return err
+		}
+		loaded = append(loaded, definitions...)
+	}
+
+	templateRegistry.Lock()
+	defer templateRegistry.Unlock()
+	next := map[string]templateRegistration{}
+	for name, registration := range templateRegistry.byName {
+		if !templateRegistry.runtimeNames[name] && !templateRegistry.managedNames[name] {
+			next[name] = registration
+		}
+	}
+	if err := validateDefinitions(loaded, next); err != nil {
+		return err
+	}
+	nextRuntimeNames := map[string]bool{}
+	for _, definition := range loaded {
+		if err := addDefinition(next, definition); err != nil {
+			return err
+		}
+		nextRuntimeNames[definition.Name] = true
+	}
+	templateRegistry.byName = next
+	templateRegistry.runtimeNames = nextRuntimeNames
+	return nil
+}
+
+func Param(name string) string {
+	return ""
+}
+
+func LoadFile(source any, names ...string) error {
+	data, displayName, err := readTemplateFile(source, names...)
+	if err != nil {
+		return err
+	}
+	definitions, err := parseTemplateDefinitions(string(data))
+	if err != nil {
+		return fmt.Errorf("%s: %w", displayName, err)
+	}
+	if err := registerDefinitions(definitions); err != nil {
+		return err
+	}
+	descriptor := templateSource{Kind: "file", Path: displayName}
+	if filesystem, ok := source.(fs.FS); ok {
+		descriptor = templateSource{Kind: "filesystem-file", FS: filesystem, Name: names[0]}
+	}
+	templateRegistry.Lock()
+	templateRegistry.sources = append(templateRegistry.sources, descriptor)
+	templateRegistry.Unlock()
+	return nil
+}
+
+func LoadDir(source any) error {
+	var descriptor templateSource
+	switch value := source.(type) {
+	case string:
+		descriptor = templateSource{Kind: "directory", Path: value}
+	case fs.FS:
+		descriptor = templateSource{Kind: "filesystem", FS: value}
+	default:
+		return fmt.Errorf("unsupported template directory source %T", source)
+	}
+	definitions, err := loadSourceDefinitions(descriptor)
+	if err != nil {
+		return err
+	}
+	if err := registerDefinitions(definitions); err != nil {
+		return err
+	}
+	templateRegistry.Lock()
+	templateRegistry.sources = append(templateRegistry.sources, descriptor)
+	templateRegistry.Unlock()
+	return nil
+}
+
+func loadSourceDefinitions(source templateSource) ([]templateDefinition, error) {
+	if source.Kind == "file" || source.Kind == "filesystem-file" {
+		var data []byte
+		var err error
+		if source.Kind == "file" {
+			data, err = os.ReadFile(source.Path)
+		} else {
+			data, err = fs.ReadFile(source.FS, source.Name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		definitions, err := parseTemplateDefinitions(string(data))
+		if err != nil {
+			label := source.Path
+			if source.Kind == "filesystem-file" {
+				label = source.Name
+			}
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		return definitions, nil
+	}
+	files := map[string][]byte{}
+	switch source.Kind {
+	case "directory":
+		err := filepath.WalkDir(source.Path, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".gpp.tpl") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			files[filepath.ToSlash(path)] = data
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	case "filesystem":
+		err := fs.WalkDir(source.FS, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".gpp.tpl") {
+				return nil
+			}
+			data, err := fs.ReadFile(source.FS, path)
+			if err != nil {
+				return err
+			}
+			files[path] = data
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported template source %s", source.Kind)
+	}
+	paths := make([]string, 0, len(files))
+	for path := range files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	var definitions []templateDefinition
+	for _, path := range paths {
+		parsed, err := parseTemplateDefinitions(string(files[path]))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		definitions = append(definitions, parsed...)
+	}
+	return definitions, nil
+}
+
+func readTemplateFile(source any, names ...string) ([]byte, string, error) {
+	switch value := source.(type) {
+	case string:
+		if len(names) != 0 {
+			return nil, "", errors.New("a filesystem path LoadFile call accepts one path")
+		}
+		data, err := os.ReadFile(value)
+		return data, value, err
+	case fs.FS:
+		if len(names) != 1 {
+			return nil, "", errors.New("an fs.FS LoadFile call accepts a filesystem and name")
+		}
+		data, err := fs.ReadFile(value, names[0])
+		return data, names[0], err
+	default:
+		return nil, "", fmt.Errorf("unsupported template file source %T", source)
+	}
+}
+
+func registerDefinitions(definitions []templateDefinition) error {
+	templateRegistry.Lock()
+	defer templateRegistry.Unlock()
+	if err := validateDefinitions(definitions, templateRegistry.byName); err != nil {
+		return err
+	}
+	next := map[string]templateRegistration{}
+	for name, registration := range templateRegistry.byName {
+		next[name] = registration
+	}
+	for _, definition := range definitions {
+		if err := addDefinition(next, definition); err != nil {
+			return err
+		}
+	}
+	templateRegistry.byName = next
+	for _, definition := range definitions {
+		templateRegistry.runtimeNames[definition.Name] = true
+	}
+	return nil
+}
+
+func validateDefinitions(definitions []templateDefinition, existing map[string]templateRegistration) error {
+	functions := htmltemplate.FuncMap{"param": func(string) string { return "" }}
+	for name := range existing {
+		functions[name] = func(...any) (string, error) { return "", nil }
+	}
+	for _, definition := range definitions {
+		functions[definition.Name] = func(...any) (string, error) { return "", nil }
+	}
+	for _, definition := range definitions {
+		if _, err := htmltemplate.New(definition.Name).Funcs(functions).Parse(definition.Body); err != nil {
+			return fmt.Errorf("template %s: invalid template body: %w", definition.Name, err)
+		}
+	}
+	return nil
+}
+
+func addDefinition(registry map[string]templateRegistration, definition templateDefinition) error {
+	if definition.Name == "" {
+		return errors.New("template declaration requires a name")
+	}
+	if _, exists := registry[definition.Name]; exists {
+		return fmt.Errorf("template already registered: %s", definition.Name)
+	}
+	definition.Path = normalizeTemplatePath(definition.Path)
+	for _, existing := range registry {
+		if definition.Path != "" && existing.Path != "" && sameTemplatePath(definition.Path, existing.Path) {
+			return fmt.Errorf("template path already registered: %s", definition.Path)
+		}
+	}
+	copy := definition
+	registry[definition.Name] = templateRegistration{
+		Name: definition.Name,
+		Path: definition.Path,
+			Render: func(writer io.Writer, params map[string]string, args ...any) error {
+				return renderDefinition(writer, copy, params, args...)
+			},
+	}
+	return nil
+}
+
+func renderDefinition(writer io.Writer, definition templateDefinition, params map[string]string, args ...any) error {
+	functions := htmltemplate.FuncMap{
+		"param": func(name string) string { return params[name] },
+	}
+	templateRegistry.RLock()
+	registrations := make([]templateRegistration, 0, len(templateRegistry.byName))
+	for _, registration := range templateRegistry.byName {
+		registrations = append(registrations, registration)
+	}
+	templateRegistry.RUnlock()
+	for _, registration := range registrations {
+		current := registration
+		functions[current.Name] = func(values ...any) (string, error) {
+			var buffer bytes.Buffer
+			if err := current.Render(&buffer, params, values...); err != nil {
+				return "", err
+			}
+			return buffer.String(), nil
+		}
+	}
+	parsed, err := htmltemplate.New(definition.Name).Funcs(functions).Parse(definition.Body)
+	if err != nil {
+		return err
+	}
+	return parsed.Execute(writer, templateData(definition.Parameters, args...))
+}
+
+func templateData(parameters string, args ...any) any {
+	parts := []string{}
+	for _, part := range strings.Split(parameters, ",") {
+		fields := strings.Fields(strings.TrimSpace(part))
+		if len(fields) > 0 {
+			parts = append(parts, fields[0])
+		}
+	}
+	if len(parts) <= 1 {
+		if len(args) == 0 {
+			return nil
+		}
+		return args[0]
+	}
+	data := map[string]any{}
+	for index, name := range parts {
+		if index < len(args) {
+			data[name] = args[index]
+		}
+	}
+	return data
+}
+
+func lookupTemplatePath(value string) (templateRegistration, map[string]string, error) {
+	value = normalizeTemplatePath(value)
+	var selected templateRegistration
+	var selectedParams map[string]string
+	selectedStatic := -1
+	for _, registration := range templateRegistry.byName {
+		if registration.Path == "" {
+			continue
+		}
+		params, static, ok := matchTemplatePath(registration.Path, value)
+		if !ok {
+			continue
+		}
+		if static > selectedStatic {
+			selected = registration
+			selectedParams = params
+			selectedStatic = static
+		}
+	}
+	if selectedStatic < 0 {
+		return templateRegistration{}, nil, fmt.Errorf("no template matches path: %s", value)
+	}
+	return selected, selectedParams, nil
+}
+
+func normalizeTemplatePath(value string) string {
+	if value == "" {
+		return ""
+	}
+	value = "/" + strings.Trim(value, "/")
+	return strings.TrimSuffix(value, "/")
+}
+
+func sameTemplatePath(left, right string) bool {
+	leftParts := strings.Split(strings.Trim(left, "/"), "/")
+	rightParts := strings.Split(strings.Trim(right, "/"), "/")
+	if len(leftParts) != len(rightParts) {
+		return false
+	}
+	for index := range leftParts {
+		if strings.HasPrefix(leftParts[index], ":") || strings.HasPrefix(rightParts[index], ":") {
+			continue
+		}
+		if leftParts[index] != rightParts[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func matchTemplatePath(pattern, value string) (map[string]string, int, bool) {
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	valueParts := strings.Split(strings.Trim(value, "/"), "/")
+	if len(patternParts) != len(valueParts) {
+		return nil, 0, false
+	}
+	params := map[string]string{}
+	static := 0
+	for index, part := range patternParts {
+		if strings.HasPrefix(part, ":") {
+			params[strings.TrimPrefix(part, ":")] = valueParts[index]
+			continue
+		}
+		if part != valueParts[index] {
+			return nil, 0, false
+		}
+		static++
+	}
+	return params, static, true
+}
+
+func parseTemplateDefinitions(source string) ([]templateDefinition, error) {
+	var result []templateDefinition
+	for position := 0; position < len(source); {
+		index := strings.Index(source[position:], "template")
+		if index < 0 {
+			break
+		}
+		index += position
+		if index > 0 && (source[index-1] == '_' || source[index-1] >= 'a' && source[index-1] <= 'z' || source[index-1] >= 'A' && source[index-1] <= 'Z') {
+			position = index + len("template")
+			continue
+		}
+		cursor := index + len("template")
+		for cursor < len(source) && strings.ContainsRune(" \t\r\n", rune(source[cursor])) {
+			cursor++
+		}
+		nameStart := cursor
+		for cursor < len(source) && (source[cursor] == '_' || source[cursor] >= 'a' && source[cursor] <= 'z' || source[cursor] >= 'A' && source[cursor] <= 'Z' || source[cursor] >= '0' && source[cursor] <= '9') {
+			cursor++
+		}
+		if cursor == nameStart {
+			return nil, errors.New("template declaration requires a name")
+		}
+		name := source[nameStart:cursor]
+		for cursor < len(source) && strings.ContainsRune(" \t\r\n", rune(source[cursor])) {
+			cursor++
+		}
+		if cursor >= len(source) || source[cursor] != '(' {
+			return nil, fmt.Errorf("template %s requires parameters", name)
+		}
+		paramsEnd := balancedTemplateDelimiter(source, cursor, '(', ')')
+		if paramsEnd < 0 {
+			return nil, fmt.Errorf("template %s has unterminated parameters", name)
+		}
+		parameters := source[cursor+1 : paramsEnd]
+		cursor = paramsEnd + 1
+		pathValue := ""
+		open := strings.Index(source[cursor:], "{")
+		if open < 0 {
+			return nil, fmt.Errorf("template %s is missing a body", name)
+		}
+		open += cursor
+		annotationText := source[cursor:open]
+		if pathIndex := strings.Index(annotationText, "Path("); pathIndex >= 0 {
+			quoted := annotationText[pathIndex+len("Path("):]
+			if end := strings.IndexByte(quoted, ')'); end >= 0 {
+				pathValue = strings.Trim(quoted[:end], " \t\r\n\"")
+			}
+		}
+		close := templateBodyClose(source, open)
+		if close < 0 {
+			return nil, fmt.Errorf("template %s has unterminated body", name)
+		}
+		result = append(result, templateDefinition{Name: name, Parameters: parameters, Path: pathValue, Body: source[open+1 : close]})
+		position = close + 1
+	}
+	return result, nil
+}
+
+func balancedTemplateDelimiter(source string, open int, opening, closing byte) int {
+	depth := 0
+	for index := open; index < len(source); index++ {
+		if source[index] == opening {
+			depth++
+		} else if source[index] == closing {
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func templateBodyClose(source string, open int) int {
+	depth := 1
+	for index := open + 1; index < len(source); index++ {
+		if index+1 < len(source) && source[index] == '{' && source[index+1] == '{' {
+			end := strings.Index(source[index+2:], "}}")
+			if end < 0 {
+				return -1
+			}
+			index += end + 3
+			continue
+		}
+		if source[index] == '{' {
+			depth++
+		} else if source[index] == '}' {
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}

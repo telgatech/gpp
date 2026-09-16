@@ -19,6 +19,7 @@ type PackageSymbols struct {
 	Classes         map[string]*ClassDecl
 	Enums           map[string]*EnumDecl
 	Embeds          map[string]EmbedEntry
+	Templates       map[string]*TemplateDecl
 	Imports         map[string]string
 	ImportedClasses map[string]*ClassDecl
 	ImportedEnums   map[string]*EnumDecl
@@ -69,6 +70,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				Classes:         map[string]*ClassDecl{},
 				Enums:           map[string]*EnumDecl{},
 				Embeds:          map[string]EmbedEntry{},
+				Templates:       map[string]*TemplateDecl{},
 				Imports:         map[string]string{},
 				ImportedClasses: map[string]*ClassDecl{},
 				ImportedEnums:   map[string]*EnumDecl{},
@@ -111,6 +113,16 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 					}
 					pkg.Embeds[entry.Name] = entry
 				}
+				continue
+			}
+			if template, ok := decl.(*TemplateDecl); ok {
+				if previous, exists := pkg.Templates[template.Name]; exists {
+					return nil, fmt.Errorf(
+						"%s: duplicate template %s in package %s; first declared in %s:%d",
+						templateLocation(template), template.Name, file.Package, previous.SourceFile, previous.SourceLine,
+					)
+				}
+				pkg.Templates[template.Name] = template
 				continue
 			}
 			if extension, ok := decl.(*ExtendDecl); ok {
@@ -204,8 +216,18 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 	}
 
 	for _, pkg := range model.Packages {
+		for name, template := range pkg.Templates {
+			_, embedExists := pkg.Embeds[name]
+			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] || embedExists {
+				return nil, fmt.Errorf("%s: duplicate template %s in package %s", templateLocation(template), name, pkg.Name)
+			}
+			if _, imported := pkg.Imports[name]; imported {
+				return nil, fmt.Errorf("%s: template %s conflicts with import in package %s", templateLocation(template), name, pkg.Name)
+			}
+		}
 		for name, entry := range pkg.Embeds {
-			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] {
+			_, templateExists := pkg.Templates[name]
+			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] || templateExists {
 				return nil, fmt.Errorf("%s: duplicate embed symbol %s in package %s", embedEntryLocation(entry), name, pkg.Name)
 			}
 			if _, imported := pkg.Imports[name]; imported {
@@ -262,6 +284,13 @@ func embedEntryLocation(entry EmbedEntry) string {
 		return entry.SourceFile
 	}
 	return "embed"
+}
+
+func templateLocation(template *TemplateDecl) string {
+	if template.SourceLine > 0 {
+		return fmt.Sprintf("%s:%d", template.SourceFile, template.SourceLine)
+	}
+	return template.SourceFile
 }
 
 func annotationLocation(annotation *AnnotationDecl) string {

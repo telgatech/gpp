@@ -60,6 +60,10 @@ The examples cover:
   tag, and priority discovery through `gpp test`.
 - `embed.gpp` — source-level file and directory embedding with rooted `fs.FS`
   and `[]byte` values using standard Go filesystem APIs.
+- `tpl.gpp` — typed template declarations, standard `html/template` actions,
+  static `tpl.Name` execution, dynamic `tpl.Execute`, and path metadata.
+- `tpl_external.gpp.tpl` — an external template source compiled alongside the
+  Go++ application template example.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
