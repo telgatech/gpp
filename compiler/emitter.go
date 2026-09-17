@@ -906,6 +906,10 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			if err != nil {
 				return "", err
 			}
+			code, err = transformEnums(code, context)
+			if err != nil {
+				return "", err
+			}
 			code, err = transformIntrospection(code, context)
 			if err != nil {
 				return "", err
@@ -1068,6 +1072,10 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 			return err
 		}
 		body, err = transformPolymorphicDeclarations(body, methodContext)
+		if err != nil {
+			return err
+		}
+		body, err = transformEnums(body, methodContext)
 		if err != nil {
 			return err
 		}
@@ -1455,6 +1463,10 @@ func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, con
 		return err
 	}
 	body, err = transformPolymorphicDeclarations(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformEnums(body, methodContext)
 	if err != nil {
 		return err
 	}

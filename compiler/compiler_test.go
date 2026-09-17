@@ -1072,6 +1072,46 @@ func main() {
 	}
 }
 
+func TestCompileFilesPreservesMultiResultNativeReturns(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+func Encode(value any) ([]byte, error) {
+    return json.Marshal(value)
+}
+
+func main() {
+    data, err := Encode(map[string]string{"name": "Ada"})
+    if err != nil { panic(err) }
+    fmt.Println(string(data))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated native multi-result return program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "{\"name\":\"Ada\"}\n" {
+		t.Fatalf("unexpected native multi-result output: %s", output)
+	}
+}
+
 func TestCompileFilesPreservesReturnThroughFinally(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

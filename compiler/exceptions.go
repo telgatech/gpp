@@ -637,6 +637,9 @@ func transformImplicitErrorPromotion(src string, context constructorContext) (st
 		if explicitlyCapturedError(call, parent, len(result.types)) {
 			return true
 		}
+		if returnStatementMatchesFunctionResults(parent, parents, len(result.types)) {
+			return true
+		}
 		replacement := ""
 		discard := false
 		if _, isStatement := parent.(*ast.ExprStmt); isStatement {
@@ -1063,6 +1066,20 @@ func explicitlyCapturedError(call *ast.CallExpr, parent ast.Node, resultCount in
 	default:
 		return false
 	}
+}
+
+func returnStatementMatchesFunctionResults(parent ast.Node, parents map[ast.Node]ast.Node, resultCount int) bool {
+	returnStatement, ok := parent.(*ast.ReturnStmt)
+	if !ok || returnStatement == nil {
+		return false
+	}
+	for node := ast.Node(returnStatement); node != nil; node = parents[node] {
+		if function, ok := node.(*ast.FuncDecl); ok {
+			fields, hasResults := exceptionResultFields(function.Type.Results)
+			return hasResults && len(fields) == resultCount
+		}
+	}
+	return false
 }
 
 func callHasExpectedReducedResults(parent ast.Node, reducedCount int) bool {
