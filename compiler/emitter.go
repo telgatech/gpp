@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"go/types"
 	htmltemplate "html/template"
 	"path"
 	"regexp"
@@ -1852,6 +1853,9 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 			}
 			return name
 		}
+		if value.Op == token.ADD || value.Op == token.SUB || value.Op == token.XOR || value.Op == token.NOT {
+			return expressionStaticType(value.X, context, valueTypes)
+		}
 	case *ast.ParenExpr:
 		return expressionStaticType(value.X, context, valueTypes)
 	case *ast.BinaryExpr:
@@ -1867,6 +1871,12 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 		}
 		if result := callResultType(value, context, valueTypes); result != "" {
 			return result
+		}
+		if resultTypes, ok := nativePackageResultTypes(value, context); ok && len(resultTypes) > 0 {
+			return resultTypes[0]
+		}
+		if resultTypes, ok := nativeMethodResultTypes(value, context, valueTypes); ok && len(resultTypes) > 0 {
+			return resultTypes[0]
 		}
 		if native, ok := nativePackageFunction(value, context); ok && len(native.types) > 0 {
 			return native.types[0]
@@ -1893,12 +1903,35 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 				}
 			}
 		}
+		if nativeType := nativeSelectorFieldType(value, context, valueTypes); nativeType != "" {
+			return nativeType
+		}
 	case *ast.Ident:
 		if valueTypes != nil && valueTypes[value.Name] != "" {
 			return valueTypes[value.Name]
 		}
 	}
 	return astExpressionTypeKeyWithEnv(expr, valueTypes)
+}
+
+func nativeSelectorFieldType(selector *ast.SelectorExpr, context constructorContext, valueTypes map[string]string) string {
+	baseType := expressionStaticType(selector.X, context, valueTypes)
+	named, _, ok := nativeNamedType(baseType, context)
+	if !ok {
+		return ""
+	}
+	structure, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		return ""
+	}
+	for index := 0; index < structure.NumFields(); index++ {
+		field := structure.Field(index)
+		if field.Name() != selector.Sel.Name || !field.Exported() {
+			continue
+		}
+		return types.TypeString(field.Type(), nativeTypeQualifier(context))
+	}
+	return ""
 }
 
 func expressionClassName(expr ast.Expr, context constructorContext, valueTypes map[string]string) string {

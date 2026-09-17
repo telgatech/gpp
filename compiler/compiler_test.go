@@ -240,6 +240,50 @@ func main() {
 	}
 }
 
+func TestCompileFilesResolvesNativeSelectorChains(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+import (
+    "fmt"
+    "io"
+    "os"
+    "strings"
+    stdhttp "net/http"
+)
+
+func main() {
+    request, err := stdhttp.NewRequest("GET", "http://example.com/path", nil)
+    if err != nil { panic(err) }
+    title := request.FormValue("title").TrimSpace()
+    if !title.Empty() { panic("expected empty title") }
+    env := os.Getenv("GPP_TYPE_RESOLVER_MISSING").TrimSpace().ToUpper()
+    response := &stdhttp.Response{Request: request, Body: io.NopCloser(strings.NewReader("body"))}
+    path := response.Request.URL.Path
+    body, err := response.Body.ReadAll()
+    if err != nil { panic(err) }
+    fmt.Println(title, env, path, string(body))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated native selector program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "  /path body\n" {
+		t.Fatalf("unexpected native selector output: %s", output)
+	}
+}
+
 func TestCompileFilesRunsBundledHTTPServer(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -753,6 +797,47 @@ func main() {
 	}
 	if string(output) != "8080 8080 8081 3000 42 1\n" {
 		t.Fatalf("unexpected expression-catch output: %s", output)
+	}
+}
+
+func TestCompileFilesSupportsExpressionCatchInClassMethods(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "fmt"
+    "strconv"
+)
+
+class App {
+    func Price() float64 {
+        return strconv.ParseFloat("invalid", 64) ?? -1
+    }
+}
+
+func main() {
+    app := App()
+    fmt.Println(app.Price())
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated class expression-catch program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "-1\n" {
+		t.Fatalf("unexpected class expression-catch output: %s", output)
 	}
 }
 

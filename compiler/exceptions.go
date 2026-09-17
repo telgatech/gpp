@@ -1202,15 +1202,26 @@ func isErrorLikeType(typeName string, context constructorContext) bool {
 }
 
 func nativePackageFunction(call *ast.CallExpr, context constructorContext) (promotedCall, bool) {
-	selector, ok := call.Fun.(*ast.SelectorExpr)
+	signature, ok := nativePackageFunctionSignature(call, context)
 	if !ok {
 		return promotedCall{}, false
 	}
-	receiver, ok := selector.X.(*ast.Ident)
-	if !ok || context.AvailableImports == nil {
-		return promotedCall{}, false
+	return promotedCallFromNativeSignature(signature)
+}
+
+func nativePackageFunctionSignature(call *ast.CallExpr, context constructorContext) (*types.Signature, bool) {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, false
 	}
-	importPath := context.AvailableImports[receiver.Name]
+	receiver, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	importPath := ""
+	if context.AvailableImports != nil {
+		importPath = context.AvailableImports[receiver.Name]
+	}
 	if importPath == "" {
 		// A standalone Emit call may not have a package import table yet. The
 		// standard importer still gives us a useful fallback for conventional
@@ -1219,67 +1230,117 @@ func nativePackageFunction(call *ast.CallExpr, context constructorContext) (prom
 	}
 	pkg, err := importer.Default().Import(importPath)
 	if err != nil {
-		return promotedCall{}, false
+		return nil, false
 	}
 	object := pkg.Scope().Lookup(selector.Sel.Name)
 	function, ok := object.(*types.Func)
 	if !ok {
-		return promotedCall{}, false
+		return nil, false
 	}
 	signature, ok := function.Type().(*types.Signature)
 	if !ok || signature.Results() == nil || signature.Results().Len() == 0 {
+		return nil, false
+	}
+	return signature, true
+}
+
+func nativeMethodFunction(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
+	signature, ok := nativeMethodSignature(call, context, valueTypes)
+	if !ok {
 		return promotedCall{}, false
 	}
 	return promotedCallFromNativeSignature(signature)
 }
 
-func nativeMethodFunction(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
+func nativeMethodSignature(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) (*types.Signature, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
-		return promotedCall{}, false
+		return nil, false
 	}
-	receiver, ok := selector.X.(*ast.Ident)
+	typeName := expressionStaticType(selector.X, context, valueTypes)
+	named, pkg, ok := nativeNamedType(typeName, context)
 	if !ok {
-		return promotedCall{}, false
-	}
-	typeName := ""
-	if valueTypes != nil {
-		typeName = valueTypes[receiver.Name]
-	}
-	if receiver.Name == "this" && typeName == "" {
-		typeName = context.CurrentParameterTypes["this"]
-	}
-	typeName = strings.TrimPrefix(strings.TrimSpace(typeName), "*")
-	parts := strings.Split(typeName, ".")
-	if len(parts) != 2 || context.AvailableImports == nil {
-		return promotedCall{}, false
-	}
-	importPath := context.AvailableImports[parts[0]]
-	if importPath == "" {
-		return promotedCall{}, false
-	}
-	pkg, err := importer.Default().Import(importPath)
-	if err != nil {
-		return promotedCall{}, false
-	}
-	object := pkg.Scope().Lookup(parts[1])
-	typeNameObject, ok := object.(*types.TypeName)
-	if !ok {
-		return promotedCall{}, false
-	}
-	named, ok := typeNameObject.Type().(*types.Named)
-	if !ok {
-		return promotedCall{}, false
+		return nil, false
 	}
 	method := types.NewMethodSet(types.NewPointer(named)).Lookup(pkg, selector.Sel.Name)
 	if method == nil {
-		return promotedCall{}, false
+		return nil, false
 	}
 	signature, ok := method.Type().(*types.Signature)
 	if !ok || signature.Results() == nil || signature.Results().Len() == 0 {
-		return promotedCall{}, false
+		return nil, false
 	}
-	return promotedCallFromNativeSignature(signature)
+	return signature, true
+}
+
+func nativePackageResultTypes(call *ast.CallExpr, context constructorContext) ([]string, bool) {
+	signature, ok := nativePackageFunctionSignature(call, context)
+	if !ok {
+		return nil, false
+	}
+	return nativeSignatureResultTypes(signature, context), true
+}
+
+func nativeMethodResultTypes(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) ([]string, bool) {
+	signature, ok := nativeMethodSignature(call, context, valueTypes)
+	if !ok {
+		return nil, false
+	}
+	return nativeSignatureResultTypes(signature, context), true
+}
+
+func nativeSignatureResultTypes(signature *types.Signature, context constructorContext) []string {
+	if signature == nil || signature.Results() == nil || signature.Results().Len() == 0 {
+		return nil
+	}
+	result := make([]string, signature.Results().Len())
+	for index := range result {
+		result[index] = types.TypeString(signature.Results().At(index).Type(), nativeTypeQualifier(context))
+	}
+	return result
+}
+
+func nativeNamedType(typeName string, context constructorContext) (*types.Named, *types.Package, bool) {
+	typeName = strings.TrimPrefix(strings.TrimSpace(typeName), "*")
+	separator := strings.LastIndex(typeName, ".")
+	if separator <= 0 || separator+1 >= len(typeName) {
+		return nil, nil, false
+	}
+	packageName := typeName[:separator]
+	objectName := typeName[separator+1:]
+	importPath := packageName
+	if context.AvailableImports != nil {
+		if resolved := context.AvailableImports[packageName]; resolved != "" {
+			importPath = resolved
+		}
+	}
+	pkg, err := importer.Default().Import(importPath)
+	if err != nil {
+		return nil, nil, false
+	}
+	object, ok := pkg.Scope().Lookup(objectName).(*types.TypeName)
+	if !ok {
+		return nil, nil, false
+	}
+	named, ok := object.Type().(*types.Named)
+	if !ok {
+		return nil, nil, false
+	}
+	return named, pkg, true
+}
+
+func nativeTypeQualifier(context constructorContext) func(*types.Package) string {
+	return func(pkg *types.Package) string {
+		if pkg == nil {
+			return ""
+		}
+		for alias, importPath := range context.AvailableImports {
+			if importPath == pkg.Path() {
+				return alias
+			}
+		}
+		return pkg.Path()
+	}
 }
 
 func promotedCallFromNativeSignature(signature *types.Signature) (promotedCall, bool) {

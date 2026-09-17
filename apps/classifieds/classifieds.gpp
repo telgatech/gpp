@@ -6,7 +6,6 @@ import (
 	stdhttp "net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 	_ "modernc.org/sqlite"
 	orm "gpp/orm"
@@ -42,18 +41,18 @@ class User : orm.Model @{orm.Table("users")} {
 	CreatedAt string @{orm.Column("created_at")}
 
 	func Validate(exec orm.SQLExecutor) error {
-		if strings.TrimSpace(this.Name) == "" {
+		if this.Name.Blank() {
 			return fmt.Errorf("name is required")
 		}
-		if !strings.Contains(this.Email, "@") {
+		if !this.Email.Contains("@") {
 			return fmt.Errorf("a valid email is required")
 		}
 		return nil
 	}
 
 	func BeforeCreate(exec orm.SQLExecutor) error {
-		this.Name = strings.TrimSpace(this.Name)
-		this.Email = strings.ToLower(strings.TrimSpace(this.Email))
+		this.Name = this.Name.TrimSpace()
+		this.Email = this.Email.TrimSpace().ToLower()
 		this.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 		return nil
 	}
@@ -65,7 +64,7 @@ class Category : orm.Model @{orm.Table("categories")} {
 	Slug string @{orm.Column("slug")}
 
 	func Validate(exec orm.SQLExecutor) error {
-		if strings.TrimSpace(this.Name) == "" || strings.TrimSpace(this.Slug) == "" {
+		if this.Name.Blank() || this.Slug.Blank() {
 			return fmt.Errorf("category name and slug are required")
 		}
 		return nil
@@ -85,7 +84,7 @@ class Listing : orm.Model @{orm.Table("listings")} {
 	UpdatedAt string @{orm.Column("updated_at")}
 
 	func Validate(exec orm.SQLExecutor) error {
-		if strings.TrimSpace(this.Title) == "" {
+		if this.Title.Blank() {
 			return fmt.Errorf("title is required")
 		}
 		if len(this.Title) > 120 {
@@ -102,8 +101,8 @@ class Listing : orm.Model @{orm.Table("listings")} {
 
 	func BeforeCreate(exec orm.SQLExecutor) error {
 		now := time.Now().UTC().Format(time.RFC3339)
-		this.Title = strings.TrimSpace(this.Title)
-		this.Location = strings.TrimSpace(this.Location)
+		this.Title = this.Title.TrimSpace()
+		this.Location = this.Location.TrimSpace()
 		this.Status = "active"
 		this.CreatedAt = now
 		this.UpdatedAt = now
@@ -111,8 +110,8 @@ class Listing : orm.Model @{orm.Table("listings")} {
 	}
 
 	func BeforeUpdate(exec orm.SQLExecutor) error {
-		this.Title = strings.TrimSpace(this.Title)
-		this.Location = strings.TrimSpace(this.Location)
+		this.Title = this.Title.TrimSpace()
+		this.Location = this.Location.TrimSpace()
 		this.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		return nil
 	}
@@ -142,7 +141,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 	}
 
 	func Home(ctx *http.Context) error @{http.GET("/")} {
-		query := strings.TrimSpace(ctx.Query("q"))
+		query := ctx.Query("q").TrimSpace()
 		where := "status = $1 ORDER BY created_at DESC"
 		args := []any{"active"}
 		if query != "" {
@@ -179,16 +178,11 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 	}
 
 	func CreateListing(ctx *http.Context) error @{http.POST("/listings")} {
-		title := strings.TrimSpace(ctx.Request.FormValue("title"))
-		description := strings.TrimSpace(ctx.Request.FormValue("description"))
-		price := -1.0
-		try {
-			price = strconv.ParseFloat(ctx.Request.FormValue("price"), 64)
-		} catch *strconv.NumError {}
-		categoryId := int64(0)
-		try {
-			categoryId = strconv.ParseInt(ctx.Request.FormValue("category_id"), 10, 64)
-		} catch *strconv.NumError {}
+		title := ctx.Request.FormValue("title").TrimSpace()
+		description := ctx.Request.FormValue("description").TrimSpace()
+		location := ctx.Request.FormValue("location").TrimSpace()
+		price := strconv.ParseFloat(ctx.Request.FormValue("price"), 64) ?? -1
+		categoryId := strconv.ParseInt(ctx.Request.FormValue("category_id"), 10, 64) ?? 0
 		listing := Listing(
 			Id: this.nextId(),
 			SellerId: 1,
@@ -196,7 +190,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 			Title: title,
 			Description: description,
 			Price: price,
-			Location: strings.TrimSpace(ctx.Request.FormValue("location")),
+			Location: location,
 		)
 		created := false
 		var err error
@@ -240,10 +234,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 			listing.Title = ctx.Request.FormValue("title")
 			listing.Description = ctx.Request.FormValue("description")
 			listing.Location = ctx.Request.FormValue("location")
-			categoryId := int64(0)
-			try {
-				categoryId = strconv.ParseInt(ctx.Request.FormValue("category_id"), 10, 64)
-			} catch *strconv.NumError {}
+			categoryId := strconv.ParseInt(ctx.Request.FormValue("category_id"), 10, 64) ?? 0
 			listing.CategoryId = categoryId
 			price := -1.0
 			try {
@@ -354,8 +345,8 @@ CREATE INDEX IF NOT EXISTS listings_category_idx ON listings(category_id);
 `
 
 func env(name string, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
+	value := os.Getenv(name).TrimSpace()
+	if value.Empty() {
 		return fallback
 	}
 	return value

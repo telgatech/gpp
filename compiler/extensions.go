@@ -373,7 +373,7 @@ type applicableExtension struct {
 func applicableExtensions(name, actualType string, args []ast.Expr, ellipsis bool, typeArguments []ast.Expr, valueTypes map[string]string, context constructorContext) []applicableExtension {
 	result := []applicableExtension{}
 	for _, extension := range context.Extensions {
-		if extension.Method.Name != name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType) {
+		if extension.Method.Name != name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 			continue
 		}
 		if len(typeArguments) > 0 && extensionTypeParameterCount(extension.Method.TypeParams) != len(typeArguments) {
@@ -551,11 +551,14 @@ func extensionTypeParameterNames(typeParams string) map[string]bool {
 	return result
 }
 
-func extensionTargetMatches(target, receiverType, actual string) bool {
+func extensionTargetMatches(target, receiverType, actual string, context constructorContext) bool {
 	target = normalizeExtensionTarget(target)
 	actual = normalizeExtensionTarget(actual)
 	if actual == "" {
 		return false
+	}
+	if nativeTypesAssignable(actual, target, context) {
+		return true
 	}
 	if extensionGenericTargetMatches(target, actual) {
 		return true
@@ -567,6 +570,28 @@ func extensionTargetMatches(target, receiverType, actual string) bool {
 		return actual == target
 	}
 	return actual == target || actual == "*"+target || actual == receiverType
+}
+
+func nativeTypesAssignable(actual, expected string, context constructorContext) bool {
+	actualType, actualOK := nativeGoType(actual, context)
+	expectedType, expectedOK := nativeGoType(expected, context)
+	if !actualOK || !expectedOK {
+		return false
+	}
+	return types.AssignableTo(actualType, expectedType)
+}
+
+func nativeGoType(typeName string, context constructorContext) (types.Type, bool) {
+	typeName = strings.TrimSpace(typeName)
+	pointer := strings.HasPrefix(typeName, "*")
+	named, _, ok := nativeNamedType(typeName, context)
+	if !ok {
+		return nil, false
+	}
+	if pointer {
+		return types.NewPointer(named), true
+	}
+	return named, true
 }
 
 func extensionTargetTypeParameterNames(target string) map[string]bool {

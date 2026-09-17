@@ -377,7 +377,7 @@ func lambdaExpectedTypesForCall(call *ast.CallExpr, index int, context construct
 			}
 		}
 		for _, extension := range context.Extensions {
-			if extension.Method.Name != function.Sel.Name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType) {
+			if extension.Method.Name != function.Sel.Name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 				continue
 			}
 			parameters, err := parseParameterInfos(extension.Method.Parameters)
