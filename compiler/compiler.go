@@ -109,6 +109,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	if err != nil {
 		return err
 	}
+	outputNames := generatedOutputNames(program.Files)
 
 	if options.ModulePath != "" {
 		if err := ensureGoModule(outputDir, options.ModulePath); err != nil {
@@ -219,13 +220,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return err
 		}
 
-		name := file.Name
-		if strings.HasSuffix(name, ".gpp.tpl") {
-			name = strings.TrimSuffix(name, ".gpp.tpl")
-		} else {
-			name = strings.TrimSuffix(name, filepath.Ext(name))
-		}
-		name += ".go"
+		name := outputNames[file]
 
 		if err := os.WriteFile(
 			filepath.Join(dir, name),
@@ -237,6 +232,58 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	}
 
 	return nil
+}
+
+// generatedOutputNames keeps source and external-template files from
+// overwriting each other when they share a basename, for example
+// classifieds.gpp and classifieds.gpp.tpl.
+func generatedOutputNames(files []*File) map[*File]string {
+	result := map[*File]string{}
+	used := map[string]map[string]bool{}
+
+	assign := func(file *File) {
+		if used[file.Package] == nil {
+			used[file.Package] = map[string]bool{}
+		}
+		base := file.Name
+		template := strings.HasSuffix(base, ".gpp.tpl")
+		if template {
+			base = strings.TrimSuffix(base, ".gpp.tpl")
+		} else {
+			base = strings.TrimSuffix(base, filepath.Ext(base))
+		}
+
+		name := base + ".go"
+		if used[file.Package][name] && template {
+			name = base + "_tpl.go"
+		}
+		if used[file.Package][name] {
+			for suffix := 2; ; suffix++ {
+				candidate := fmt.Sprintf("%s_%d.go", base, suffix)
+				if !used[file.Package][candidate] {
+					name = candidate
+					break
+				}
+			}
+		}
+		used[file.Package][name] = true
+		result[file] = name
+	}
+
+	// Prefer the conventional basename for Go++ source files. This makes a
+	// same-basename external template consistently become <base>_tpl.go even
+	// if file discovery happens to return the template first.
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name, ".gpp.tpl") {
+			assign(file)
+		}
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file.Name, ".gpp.tpl") {
+			assign(file)
+		}
+	}
+	return result
 }
 
 type compiledEmbed struct {

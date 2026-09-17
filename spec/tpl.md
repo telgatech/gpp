@@ -193,7 +193,7 @@ The Go++ parser is responsible for the outer declaration:
 
 ```gpp
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     ...raw template body...
 }
@@ -705,7 +705,7 @@ may match:
 
 ```gpp
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     ...
 }
@@ -762,7 +762,7 @@ Example:
 
 ```gpp
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     ...
 }
@@ -800,17 +800,21 @@ Examples:
 ```text
 /blog
 /blog/archive
-/blog/:id
-/users/:user
-/users/:user/posts/:post
+/blog/{id}
+/users/{user}
+/users/{user}/posts/{post}
 ```
 
-A named segment begins with `:`.
+A named segment uses `{name}`.
+
+The legacy `:name` spelling is accepted as a compatibility alias, but new
+templates should use `{name}` so template paths and `gpp/http` routes share
+the same notation.
 
 For example:
 
 ```text
-/blog/:id
+/blog/{id}
 ```
 
 matches:
@@ -845,7 +849,7 @@ For example:
 takes precedence over:
 
 ```gpp
-@{tpl.Path("/blog/:id")}
+@{tpl.Path("/blog/{id}")}
 ```
 
 for:
@@ -873,13 +877,13 @@ Ambiguous patterns must be rejected.
 For example:
 
 ```gpp
-@{tpl.Path("/blog/:id")}
+@{tpl.Path("/blog/{id}")}
 ```
 
 and:
 
 ```gpp
-@{tpl.Path("/blog/:slug")}
+@{tpl.Path("/blog/{slug}")}
 ```
 
 represent the same match pattern and must produce a compiler or runtime-load error.
@@ -895,7 +899,7 @@ When a template is selected through path matching, captured path parameters are 
 For:
 
 ```text
-/blog/:id
+/blog/{id}
 ```
 
 and:
@@ -922,7 +926,7 @@ Example:
 
 ```gpp
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     <div data-post-id="{{param "id"}}">
         <h1>{{.Title}}</h1>
@@ -1496,7 +1500,7 @@ Template metadata remains concerned with template lookup and rendering.
 For example:
 
 ```gpp
-@{tpl.Path("/blog/:id")}
+@{tpl.Path("/blog/{id}")}
 ```
 
 is template metadata.
@@ -1769,7 +1773,7 @@ class Post {
 }
 
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     <article data-id="{{param "id"}}">
         <h1>{{.Title}}</h1>

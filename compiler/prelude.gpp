@@ -2,6 +2,8 @@ package prelude
 
 import (
 	"cmp"
+	"errors"
+	"io"
 	"sort"
 	"strings"
 )
@@ -41,6 +43,58 @@ extend []T {
 			if fn(value) {
 				result = append(result, value)
 			}
+		}
+		return result
+	}
+
+	func First() T {
+		if len(this) == 0 {
+			var zero T
+			return zero
+		}
+		return this[0]
+	}
+
+	func Last() T {
+		if len(this) == 0 {
+			var zero T
+			return zero
+		}
+		return this[len(this)-1]
+	}
+
+	func IsEmpty() bool {
+		return len(this) == 0
+	}
+
+	func NotEmpty() bool {
+		return len(this) != 0
+	}
+
+	func Take(n int) []T {
+		if n <= 0 {
+			return []T{}
+		}
+		if n >= len(this) {
+			return append([]T{}, this...)
+		}
+		return append([]T{}, this[:n]...)
+	}
+
+	func Drop(n int) []T {
+		if n <= 0 {
+			return append([]T{}, this...)
+		}
+		if n >= len(this) {
+			return []T{}
+		}
+		return append([]T{}, this[n:]...)
+	}
+
+	func Map[R any](fn func(T) R) []R {
+		result := make([]R, 0, len(this))
+		for _, value := range this {
+			result = append(result, fn(value))
 		}
 		return result
 	}
@@ -121,12 +175,94 @@ extend []T where T cmp.Ordered {
 }
 
 extend string {
+	func Trim(cutset string) string {
+		return strings.Trim(this, cutset)
+	}
+
+	func TrimLeft(cutset string) string {
+		return strings.TrimLeft(this, cutset)
+	}
+
+	func TrimRight(cutset string) string {
+		return strings.TrimRight(this, cutset)
+	}
+
+	func TrimSpace() string {
+		return strings.TrimSpace(this)
+	}
+
+	func ToLower() string {
+		return strings.ToLower(this)
+	}
+
+	func ToUpper() string {
+		return strings.ToUpper(this)
+	}
+
+	func Contains(substr string) bool {
+		return strings.Contains(this, substr)
+	}
+
+	func HasPrefix(prefix string) bool {
+		return strings.HasPrefix(this, prefix)
+	}
+
+	func HasSuffix(suffix string) bool {
+		return strings.HasSuffix(this, suffix)
+	}
+
+	func Replace(old string, new string, n int) string {
+		return strings.Replace(this, old, new, n)
+	}
+
+	func ReplaceAll(old string, new string) string {
+		return strings.ReplaceAll(this, old, new)
+	}
+
+	func Split(sep string) []string {
+		return strings.Split(this, sep)
+	}
+
+	func Fields() []string {
+		return strings.Fields(this)
+	}
+
+	func Index(substr string) int {
+		return strings.Index(this, substr)
+	}
+
+	func LastIndex(substr string) int {
+		return strings.LastIndex(this, substr)
+	}
+
+	func Count(substr string) int {
+		return strings.Count(this, substr)
+	}
+
+	func Repeat(count int) string {
+		return strings.Repeat(this, count)
+	}
+
+	func EqualFold(other string) bool {
+		return strings.EqualFold(this, other)
+	}
+
 	func Empty() bool {
 		return len(this) == 0
 	}
 
 	func Blank() bool {
 		return len(strings.TrimSpace(this)) == 0
+	}
+
+	func Lines() []string {
+		value := strings.ReplaceAll(this, "\r\n", "\n")
+		value = strings.ReplaceAll(value, "\r", "\n")
+		return strings.Split(value, "\n")
+	}
+
+	func Words() []string {
+		return strings.Fields(this)
 	}
 }
 
@@ -158,5 +294,51 @@ extend map[K]V {
 			return fallback
 		}
 		return value
+	}
+
+	func IsEmpty() bool {
+		return len(this) == 0
+	}
+
+	func NotEmpty() bool {
+		return len(this) != 0
+	}
+
+	func Clone() map[K]V {
+		result := make(map[K]V, len(this))
+		for key, value := range this {
+			result[key] = value
+		}
+		return result
+	}
+}
+
+extend error {
+	func Is(target error) bool {
+		return errors.Is(this, target)
+	}
+
+	func Unwrap() error {
+		return errors.Unwrap(this)
+	}
+
+	func As[T any]() T {
+		var target T
+		errors.As(this, &target)
+		return target
+	}
+}
+
+extend io.Reader {
+	func ReadAll() ([]byte, error) {
+		value, err := io.ReadAll(this)
+		return value, err
+	}
+}
+
+extend io.Writer {
+	func WriteString(value string) (int, error) {
+		count, err := io.WriteString(this, value)
+		return count, err
 	}
 }

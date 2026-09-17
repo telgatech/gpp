@@ -570,7 +570,29 @@ func normalizeTemplatePath(value string) string {
 		return ""
 	}
 	value = "/" + strings.Trim(value, "/")
-	return strings.TrimSuffix(value, "/")
+	value = strings.TrimSuffix(value, "/")
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	for index, part := range parts {
+		if name, ok := templatePathParameter(part); ok {
+			parts[index] = "{" + name + "}"
+		}
+	}
+	if len(parts) == 1 && parts[0] == "" {
+		return ""
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
+func templatePathParameter(part string) (string, bool) {
+	if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") && len(part) > 2 {
+		return part[1 : len(part)-1], true
+	}
+	// Keep the original :name spelling source-compatible while {name} is the
+	// canonical form shared with gpp/http routes.
+	if strings.HasPrefix(part, ":") && len(part) > 1 {
+		return strings.TrimPrefix(part, ":"), true
+	}
+	return "", false
 }
 
 func sameTemplatePath(left, right string) bool {
@@ -580,8 +602,19 @@ func sameTemplatePath(left, right string) bool {
 		return false
 	}
 	for index := range leftParts {
-		if strings.HasPrefix(leftParts[index], ":") || strings.HasPrefix(rightParts[index], ":") {
+		leftParameter := false
+		if _, ok := templatePathParameter(leftParts[index]); ok {
+			leftParameter = true
+		}
+		rightParameter := false
+		if _, ok := templatePathParameter(rightParts[index]); ok {
+			rightParameter = true
+		}
+		if leftParameter && rightParameter {
 			continue
+		}
+		if leftParameter || rightParameter {
+			return false
 		}
 		if leftParts[index] != rightParts[index] {
 			return false
@@ -599,8 +632,8 @@ func matchTemplatePath(pattern, value string) (map[string]string, int, bool) {
 	params := map[string]string{}
 	static := 0
 	for index, part := range patternParts {
-		if strings.HasPrefix(part, ":") {
-			params[strings.TrimPrefix(part, ":")] = valueParts[index]
+		if name, ok := templatePathParameter(part); ok {
+			params[name] = valueParts[index]
 			continue
 		}
 		if part != valueParts[index] {

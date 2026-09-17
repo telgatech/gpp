@@ -1096,7 +1096,10 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 		candidates = append(candidates, context.FunctionSignatures[function.Name]...)
 		for _, extension := range context.Extensions {
 			if extension.GoName == function.Name {
-				candidates = append(candidates, callableSignature{Parameters: mustParameters(extension.Method.Parameters), Result: strings.TrimSpace(extension.Method.Result)})
+				candidates = append(candidates, callableSignature{
+					Parameters: extensionCallParameters(extension),
+					Result:     strings.TrimSpace(extension.Method.Result),
+				})
 			}
 		}
 	case *ast.SelectorExpr:
@@ -1110,11 +1113,23 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 				}
 				candidates = append(candidates, context.ClassMethodSignatures[className][function.Sel.Name]...)
 			}
-			if native, ok := nativePackageFunction(call, context); ok {
-				return native, true
+			hasQualifiedExtension := false
+			for _, extension := range context.Extensions {
+				if extension.Qualifier == receiver.Name && extension.GoName == function.Sel.Name {
+					hasQualifiedExtension = true
+					candidates = append(candidates, callableSignature{
+						Parameters: extensionCallParameters(extension),
+						Result:     strings.TrimSpace(extension.Method.Result),
+					})
+				}
 			}
-			if native, ok := nativeMethodFunction(call, context, valueTypes); ok {
-				return native, true
+			if !hasQualifiedExtension {
+				if native, ok := nativePackageFunction(call, context); ok {
+					return native, true
+				}
+				if native, ok := nativeMethodFunction(call, context, valueTypes); ok {
+					return native, true
+				}
 			}
 		}
 	}
@@ -1137,6 +1152,11 @@ func mustParameters(source string) []parameterInfo {
 		return nil
 	}
 	return parameters
+}
+
+func extensionCallParameters(extension extensionMethod) []parameterInfo {
+	parameters := []parameterInfo{{Name: "this", Type: extension.ReceiverType}}
+	return append(parameters, mustParameters(extension.Method.Parameters)...)
 }
 
 func resultTypesFromText(result string) []string {

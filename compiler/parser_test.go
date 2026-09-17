@@ -53,7 +53,7 @@ embed (
 
 func TestParseTemplateDeclaration(t *testing.T) {
 	file, err := ParseFile("page.gpp", `
-template Page(post Post) @{tpl.Path("/posts/:id")} {
+template Page(post Post) @{tpl.Path("/posts/{id}")} {
     <article data-id="{{param "id"}}">
         <h1>{{.Title}}</h1>
     </article>

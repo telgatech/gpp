@@ -10,7 +10,7 @@ class Post {
     Title string
 }
 
-template PostCard(post Post) @{tpl.Path("/posts/:id")} {
+template PostCard(post Post) @{tpl.Path("/posts/{id}")} {
     <article data-id="{{param "id"}}">
         <h1>{{.Title}}</h1>
     </article>

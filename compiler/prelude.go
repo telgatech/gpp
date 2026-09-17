@@ -3,9 +3,11 @@ package compiler
 import (
 	_ "embed"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,6 +161,90 @@ func preludeImportsForBody(body string, imports []string) []string {
 		}
 	}
 	return result
+}
+
+// rewritePreludeImportAliases keeps generated prelude helpers valid when the
+// user or another generated feature already imports one of their dependencies
+// under an alias. Go rejects importing the same path twice, so the helper body
+// must use the existing alias instead of introducing a second import.
+func rewritePreludeImportAliases(preludeBody, body string, imports []string) string {
+	if preludeBody == "" || body == "" || len(imports) == 0 {
+		return preludeBody
+	}
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", prefix+body, parser.ImportsOnly)
+	if err != nil {
+		return preludeBody
+	}
+	allowed := map[string]bool{}
+	for _, importPath := range imports {
+		allowed[importPath] = true
+	}
+	aliases := map[string]string{}
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || !allowed[importPath] {
+			continue
+		}
+		defaultName := path.Base(importPath)
+		alias := defaultName
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		if alias != defaultName && alias != "_" && alias != "." {
+			aliases[defaultName] = alias
+		}
+	}
+	if len(aliases) == 0 {
+		return preludeBody
+	}
+
+	preludeParsed, fileSet, prefixLength, err := parsePreludeBody(preludeBody)
+	if err != nil {
+		return preludeBody
+	}
+	type edit struct {
+		start int
+		end   int
+		text  string
+	}
+	edits := []edit{}
+	ast.Inspect(preludeParsed, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		identifier, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		alias := aliases[identifier.Name]
+		if alias == "" {
+			return true
+		}
+		start := fileSet.Position(identifier.Pos()).Offset - prefixLength
+		end := fileSet.Position(identifier.End()).Offset - prefixLength
+		if start >= 0 && end <= len(preludeBody) {
+			edits = append(edits, edit{start: start, end: end, text: alias})
+		}
+		return true
+	})
+	sort.Slice(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
+	for _, edit := range edits {
+		preludeBody = preludeBody[:edit.start] + edit.text + preludeBody[edit.end:]
+	}
+	return preludeBody
+}
+
+func parsePreludeBody(body string) (ast.Node, *token.FileSet, int, error) {
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", prefix+body, 0)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return parsed, fileSet, len(prefix), nil
 }
 
 func prependPreludeImports(body string, imports []string) string {

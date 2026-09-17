@@ -49,6 +49,12 @@ func extensionReceiverType(target string, classes map[string]*ClassDecl) string 
 	if strings.HasPrefix(name, "*") {
 		return name
 	}
+	// Interfaces must remain interfaces when emitted as extension receivers;
+	// taking a pointer to one would make ordinary interface values ineligible.
+	// These are the standard-library interface targets provided by the prelude.
+	if name == "error" || name == "io.Reader" || name == "io.Writer" {
+		return name
+	}
 	if classes != nil {
 		if _, ok := classes[name]; ok {
 			return "*" + name
@@ -111,6 +117,10 @@ func sanitizeExtensionName(name string) string {
 }
 
 func transformExtensions(src string, context constructorContext) (string, error) {
+	return transformExtensionsWithTypes(src, context, nil)
+}
+
+func transformExtensionsWithTypes(src string, context constructorContext, inheritedTypes map[string]string) (string, error) {
 	if len(context.Extensions) == 0 {
 		return src, nil
 	}
@@ -123,7 +133,13 @@ func transformExtensions(src string, context constructorContext) (string, error)
 	if err != nil {
 		return src, nil
 	}
-	valueTypes := polymorphicValueTypes(parsed, context)
+	valueTypes := map[string]string{}
+	for name, typeName := range inheritedTypes {
+		valueTypes[name] = typeName
+	}
+	for name, typeName := range polymorphicValueTypes(parsed, context) {
+		valueTypes[name] = typeName
+	}
 	if context.CurrentClass != "" {
 		valueTypes["this"] = "*" + context.CurrentClass
 	} else if context.CurrentExtensionReceiver != "" {
@@ -155,7 +171,7 @@ func transformExtensions(src string, context constructorContext) (string, error)
 			return true
 		}
 		actualType := expressionStaticType(receiver, context, valueTypes)
-		candidates := applicableExtensions(methodName, actualType, call.Args, typeArguments, valueTypes, context)
+		candidates := applicableExtensions(methodName, actualType, call.Args, call.Ellipsis.IsValid(), typeArguments, valueTypes, context)
 		if len(candidates) == 0 {
 			return true
 		}
@@ -172,11 +188,23 @@ func transformExtensions(src string, context constructorContext) (string, error)
 		if err != nil {
 			return true
 		}
+		receiverText, err = transformExtensionsWithTypes(receiverText, context, valueTypes)
+		if err != nil {
+			resolutionErr = err
+			return false
+		}
 		if extensionNeedsAddress(candidate.ReceiverType, actualType) {
 			receiverText = "&" + receiverText
 		}
 		arguments := []string{receiverText}
 		arguments = append(arguments, candidates[0].Arguments...)
+		for index := 1; index < len(arguments); index++ {
+			arguments[index], err = transformExtensionsWithTypes(arguments[index], context, valueTypes)
+			if err != nil {
+				resolutionErr = err
+				return false
+			}
+		}
 		functionName := candidate.GoName
 		if candidate.Qualifier != "" {
 			functionName = candidate.Qualifier + "." + functionName
@@ -192,6 +220,8 @@ func transformExtensions(src string, context constructorContext) (string, error)
 			functionName += "[" + strings.Join(formatted, ", ") + "]"
 		}
 		addEdit(call, functionName+"("+strings.Join(arguments, ", ")+")")
+		// The receiver and arguments were recursively transformed above. Avoid
+		// adding overlapping edits for their nested calls.
 		return false
 	})
 
@@ -340,7 +370,7 @@ type applicableExtension struct {
 	Arguments []string
 }
 
-func applicableExtensions(name, actualType string, args []ast.Expr, typeArguments []ast.Expr, valueTypes map[string]string, context constructorContext) []applicableExtension {
+func applicableExtensions(name, actualType string, args []ast.Expr, ellipsis bool, typeArguments []ast.Expr, valueTypes map[string]string, context constructorContext) []applicableExtension {
 	result := []applicableExtension{}
 	for _, extension := range context.Extensions {
 		if extension.Method.Name != name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType) {
@@ -349,7 +379,7 @@ func applicableExtensions(name, actualType string, args []ast.Expr, typeArgument
 		if len(typeArguments) > 0 && extensionTypeParameterCount(extension.Method.TypeParams) != len(typeArguments) {
 			continue
 		}
-		resolved, ok := resolveExtensionArguments(extension, actualType, args, valueTypes, context)
+		resolved, ok := resolveExtensionArguments(extension, actualType, args, ellipsis, valueTypes, context)
 		if !ok {
 			continue
 		}
@@ -367,7 +397,7 @@ func applicableExtensions(name, actualType string, args []ast.Expr, typeArgument
 	return result
 }
 
-func resolveExtensionArguments(extension extensionMethod, actualType string, args []ast.Expr, valueTypes map[string]string, context constructorContext) ([]string, bool) {
+func resolveExtensionArguments(extension extensionMethod, actualType string, args []ast.Expr, ellipsis bool, valueTypes map[string]string, context constructorContext) ([]string, bool) {
 	parameters, err := parseParameterInfos(extension.Method.Parameters)
 	if err != nil {
 		return nil, false
@@ -381,6 +411,9 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		argumentText[index], err = formatNode(argument)
 		if err != nil {
 			return nil, false
+		}
+		if ellipsis && index == len(args)-1 {
+			argumentText[index] += "..."
 		}
 	}
 	signature := callableSignature{Name: extension.Method.Name, Parameters: parameters}
@@ -407,7 +440,11 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		}
 	}
 	for index, argument := range resolved {
-		parsed, err := parser.ParseExpr(argument)
+		argumentForType := strings.TrimSpace(argument)
+		if strings.HasSuffix(argumentForType, "...") {
+			argumentForType = strings.TrimSpace(strings.TrimSuffix(argumentForType, "..."))
+		}
+		parsed, err := parser.ParseExpr(argumentForType)
 		if err != nil {
 			return nil, false
 		}
@@ -427,7 +464,9 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		if strings.HasPrefix(strings.TrimSpace(expected), "...") {
 			expected = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expected), "..."))
 		}
-		if actual != "" && !generic[expected] && !extensionArgumentMatches(actual, expected, argument, context) {
+		if actual != "" && !generic[expected] &&
+			!extensionArgumentMatches(actual, expected, argument, context) &&
+			!genericExtensionArgumentMatches(actual, expected, generic) {
 			return nil, false
 		}
 	}
@@ -442,6 +481,55 @@ func extensionArgumentMatches(actual, expected, argument string, context constru
 		return strings.TrimSpace(actual) == "[]"+strings.TrimSpace(expected)
 	}
 	return actual == expected || isAssignableStaticType(actual, expected, context)
+}
+
+func genericExtensionArgumentMatches(actual, expected string, generic map[string]bool) bool {
+	actualFunction, actualErr := parseLambdaFunctionType(actual)
+	expectedFunction, expectedErr := parseLambdaFunctionType(expected)
+	if actualErr == nil && expectedErr == nil {
+		if len(actualFunction.Parameters) != len(expectedFunction.Parameters) {
+			return false
+		}
+		for index := range actualFunction.Parameters {
+			if !genericTypeMatches(actualFunction.Parameters[index], expectedFunction.Parameters[index], generic) {
+				return false
+			}
+		}
+		return genericTypeMatches(actualFunction.Result, expectedFunction.Result, generic)
+	}
+	return genericTypeMatches(actual, expected, generic)
+}
+
+func genericTypeMatches(actual, expected string, generic map[string]bool) bool {
+	actual = strings.TrimSpace(actual)
+	expected = strings.TrimSpace(expected)
+	if actual == expected || expected == "" {
+		return actual == expected
+	}
+	if generic[expected] {
+		return true
+	}
+	if strings.HasPrefix(actual, "[]") && strings.HasPrefix(expected, "[]") {
+		return genericTypeMatches(actual[2:], expected[2:], generic)
+	}
+	return false
+}
+
+func extensionCallResultType(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) string {
+	receiver, methodName, typeArguments, ok := extensionCallParts(call)
+	if !ok {
+		return ""
+	}
+	actualType := expressionStaticType(receiver, context, valueTypes)
+	candidates := applicableExtensions(methodName, actualType, call.Args, call.Ellipsis.IsValid(), typeArguments, valueTypes, context)
+	if len(candidates) != 1 || realMethodApplies(actualType, methodName, call.Args, context) {
+		return ""
+	}
+	result := strings.TrimSpace(candidates[0].Method.Method.Result)
+	if result == "" {
+		return ""
+	}
+	return substituteLambdaType(result, extensionTargetBindings(candidates[0].Method.Target, actualType))
 }
 
 func extensionTypeParameterNames(typeParams string) map[string]bool {

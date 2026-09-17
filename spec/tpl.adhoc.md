@@ -139,7 +139,7 @@ Given:
 
 ```gpp id="wychq5"
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     <h1>{{.Title}}</h1>
 }
@@ -342,7 +342,7 @@ For example:
 beats:
 
 ```gpp id="19p0z7"
-@{tpl.Path("/blog/:id")}
+@{tpl.Path("/blog/{id}")}
 ```
 
 for:

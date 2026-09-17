@@ -1559,6 +1559,8 @@ extend string {
 func main() {
     value := "go"
     _ = value.Join(":", 1, "two")
+    values := []any{1, "two"}
+    _ = value.Join(":", values...)
 }
 `)
 	if err != nil {
@@ -1572,6 +1574,9 @@ func main() {
 	if !strings.Contains(generated, "func GppExt_string_Join_") ||
 		!strings.Contains(generated, `value, ":", 1, "two")`) {
 		t.Fatalf("variadic extension call was not lowered:\n%s", code)
+	}
+	if !strings.Contains(generated, `value, ":", values...)`) {
+		t.Fatalf("variadic slice extension call was not lowered:\n%s", code)
 	}
 }
 

@@ -249,6 +249,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		preludeBody = rewritePreludeImportAliases(preludeBody, body, context.PreludeImports)
 		body = prependPreludeImports(body, preludeImportsForBody(preludeBody, context.PreludeImports))
 		body = insertAfterImports(body, preludeBody)
 	}
@@ -1861,6 +1862,9 @@ func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes 
 			return expressionStaticType(value.X, context, valueTypes)
 		}
 	case *ast.CallExpr:
+		if result := extensionCallResultType(value, context, valueTypes); result != "" {
+			return result
+		}
 		if result := callResultType(value, context, valueTypes); result != "" {
 			return result
 		}

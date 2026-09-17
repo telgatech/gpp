@@ -105,20 +105,57 @@ func main() {
 	}
 }
 
+func TestCompileFilesSeparatesSameBasenameSourceAndTemplate(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "page.gpp")
+	templatePath := filepath.Join(inputDir, "page.gpp.tpl")
+	if err := os.WriteFile(sourcePath, []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(templatePath, []byte("package main\n\ntemplate Page(value string) {<p>{{.}}</p>}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions(
+		[]string{templatePath, sourcePath},
+		outputDir,
+		CompileOptions{ModulePath: "generated"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "page.go")); err != nil {
+		t.Fatalf("source output missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "page_tpl.go")); err != nil {
+		t.Fatalf("template output missing: %v", err)
+	}
+}
+
 func TestCompileFilesSupportsAdHocTemplatesAndFunctions(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
 	source := `
 import (
-    "bytes"
-    "fmt"
-    "gpp/tpl"
-    "strings"
+	"bytes"
+	"errors"
+	"fmt"
+	"gpp/tpl"
+	"io"
+	"strings"
 )
 
 template Card(value string) {
     <i>{{.}}</i>
+}
+
+template PathCard(value string) @{tpl.Path("/posts/{id}")} {
+    <p data-id="{{param "id"}}">{{.}}</p>
+}
+
+template LegacyPathCard(value string) @{tpl.Path("/legacy/:id")} {
+    <p data-id="{{param "id"}}">{{.}}</p>
 }
 
 func upper(value string) string {
@@ -136,6 +173,47 @@ func main() {
     output.Reset()
     if err := tpl.Execute(&output, "<section>{{Card .}}</section>", "body"); err != nil { panic(err) }
     fmt.Println(output.String())
+    output.Reset()
+    if err := tpl.Execute(&output, "/posts/42", "body"); err != nil { panic(err) }
+    fmt.Println(output.String())
+	output.Reset()
+	if err := tpl.Execute(&output, "/legacy/7", "old"); err != nil { panic(err) }
+	fmt.Println(output.String())
+
+	if "  hello  ".TrimSpace().ToUpper() != "HELLO" ||
+		!"hello".Contains("ell") ||
+		"hello".ReplaceAll("l", "L") != "heLLo" ||
+		strings.Join("a,b".Split(","), "") != "ab" ||
+		!"go".EqualFold("GO") ||
+		"a\r\nb".Lines()[1] != "b" {
+		panic("string prelude extension failed")
+	}
+	values := []int{1, 2, 3}
+	doubled := values.Map(func(value int) int { return value * 2 })
+	if len(doubled) != 3 || doubled.First() != 2 || doubled.Last() != 6 || !values.NotEmpty() || values.Take(2).Last() != 2 || values.Drop(2).First() != 3 {
+		panic("slice prelude extension failed")
+	}
+	settings := map[string]string{"mode": "test"}
+	copy := settings.Clone()
+	if !settings.Has("mode") || settings.GetOr("missing", "default") != "default" || copy.GetOr("mode", "") != "test" || settings.IsEmpty() {
+		panic("map prelude extension failed")
+	}
+	sentinel := errors.New("sentinel")
+	wrapped := fmt.Errorf("wrapped: %w", sentinel)
+	if !wrapped.Is(sentinel) || wrapped.Unwrap() == nil {
+		panic("error prelude extension failed")
+	}
+	var reader io.Reader = strings.NewReader("reader")
+	data, err := reader.ReadAll()
+	if err != nil || string(data) != "reader" {
+		panic("reader prelude extension failed")
+	}
+	var outputWriter bytes.Buffer
+	var writer io.Writer = &outputWriter
+	_, err = writer.WriteString("writer")
+	if err != nil || outputWriter.String() != "writer" {
+		panic("writer prelude extension failed")
+	}
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
@@ -155,7 +233,9 @@ func main() {
 	if !strings.Contains(result, "<h1>unsafe &amp;</h1>") ||
 		!strings.Contains(result, "<b>GO</b>") ||
 		!strings.Contains(result, "<section>") ||
-		!strings.Contains(result, "<i>body</i>") {
+		!strings.Contains(result, "<i>body</i>") ||
+		!strings.Contains(result, `<p data-id="42">body</p>`) ||
+		!strings.Contains(result, `<p data-id="7">old</p>`) {
 		t.Fatalf("unexpected ad-hoc template output:\n%s", output)
 	}
 }

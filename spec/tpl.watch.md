@@ -83,7 +83,7 @@ Example:
 
 ```gpp id="d17tp6"
 template BlogPost(post Post) @{
-    tpl.Path("/blog/:id")
+    tpl.Path("/blog/{id}")
 } {
     <h1>{{.Title}}</h1>
 }

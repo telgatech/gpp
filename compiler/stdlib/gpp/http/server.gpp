@@ -170,6 +170,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 		value = value.Elem()
 	}
 	rootHandlers := map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
+	routeHandlers := map[string]map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
 	methods := value.FieldByName("Methods")
 	for index := 0; index < methods.Len(); index++ {
 		method := gppReflectIndex(methods, index)
@@ -190,7 +191,10 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 				rootHandlers[httpMethod] = handler
 				return
 			}
-			mux.HandleFunc(path, handler)
+			if routeHandlers[path] == nil {
+				routeHandlers[path] = map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
+			}
+			routeHandlers[path][httpMethod] = handler
 		}
 		for _, route := range []struct {
 			annotation string
@@ -206,6 +210,17 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 				register(fmt.Sprint(arguments[0]), route.method)
 			}
 		}
+	}
+	for path, handlers := range routeHandlers {
+		registeredPath := path
+		registeredHandlers := handlers
+		mux.HandleFunc(registeredPath, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			if handler := registeredHandlers[r.Method]; handler != nil {
+				handler(w, r)
+				return
+			}
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		})
 	}
 	mux.HandleFunc("/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if r.URL.Path == "/" {
