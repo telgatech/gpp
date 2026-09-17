@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -1132,12 +1133,72 @@ func runGoCommand(directory string, args ...string) error {
 	}
 	command := exec.Command(goPath, args...)
 	command.Dir = directory
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("go %s failed: %w", args[0], err)
+		if stdout.Len() > 0 {
+			_, _ = os.Stdout.Write(stdout.Bytes())
+		}
+		if output := cleanBackendOutput(stderr.String(), directory); output != "" {
+			return backendDiagnosticError{output: output}
+		}
+		return fmt.Errorf("Go backend failed: %w", err)
+	}
+	if stdout.Len() > 0 {
+		_, _ = os.Stdout.Write(stdout.Bytes())
+	}
+	if stderr.Len() > 0 {
+		_, _ = os.Stderr.Write(stderr.Bytes())
 	}
 	return nil
+}
+
+type backendDiagnosticError struct {
+	output string
+}
+
+func (err backendDiagnosticError) Error() string {
+	return err.output
+}
+
+func cleanBackendOutput(output, directory string) string {
+	lines := strings.Split(output, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "# generated") {
+			continue
+		}
+		line = normalizeBackendLocation(line, directory)
+		filtered = append(filtered, line)
+	}
+	output = strings.TrimRight(strings.Join(filtered, "\n"), "\n")
+	return output
+}
+
+func normalizeBackendLocation(line, directory string) string {
+	colon := strings.IndexByte(line, ':')
+	if colon <= 0 || colon+1 >= len(line) || line[colon+1] < '0' || line[colon+1] > '9' {
+		return line
+	}
+	location := line[:colon]
+	working, err := os.Getwd()
+	if err != nil {
+		return line
+	}
+	base, err := filepath.Abs(directory)
+	if err != nil {
+		return line
+	}
+	absolute := location
+	if !filepath.IsAbs(absolute) {
+		absolute = filepath.Join(base, filepath.FromSlash(absolute))
+	}
+	relative, err := filepath.Rel(working, absolute)
+	if err != nil {
+		return line
+	}
+	return filepath.ToSlash(relative) + line[colon:]
 }
 
 func findGo() (string, error) {
@@ -1475,6 +1536,11 @@ func runVersion(args []string) int {
 }
 
 func reportError(err error) int {
+	var backend backendDiagnosticError
+	if errors.As(err, &backend) {
+		fmt.Fprintln(os.Stderr, backend.Error())
+		return 1
+	}
 	fmt.Fprintln(os.Stderr, err)
 	return 1
 }

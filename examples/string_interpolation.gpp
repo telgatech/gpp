@@ -1,0 +1,22 @@
+import "fmt"
+
+func main() {
+	name := "Ada"
+	quantity := 3.0
+	price := 12.5
+
+	fmt.Println("Hello {{name}}")
+	fmt.Println("Total: {{quantity * price:%.2f}}")
+
+	message := `
+Order for {{name}}
+Quantity: {{quantity}}
+Url: /users/{{name}}
+Path: C:\users\{{name}}
+`
+	fmt.Print(message)
+
+	// Escape delimiters when constructing source for html/template.
+	templateSource := `<h1>{{{{.Name}}}}</h1>`
+	fmt.Println(templateSource)
+}

@@ -19,6 +19,8 @@ type Decl interface {
 type RawDecl struct {
 	Code                 string
 	AnnotationPlacements []AnnotationPlacement
+	SourceFile           string
+	SourceLine           int
 }
 
 func (*RawDecl) decl() {}

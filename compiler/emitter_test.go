@@ -1,6 +1,9 @@
 package compiler
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -335,6 +338,62 @@ func Greeting() string {
 	}
 	if strings.Contains(generated, "import \"fmt\"") {
 		t.Fatalf("dotted package interpolation synthesized a duplicate fmt import:\n%s", code)
+	}
+}
+
+func TestCompileFilesSupportsFormattedRawAndEscapedInterpolation(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := "" +
+		"import \"fmt\"\n\n" +
+		"func main() {\n" +
+		"    name := \"Bob\"\n" +
+		"    price := 12.5\n" +
+		"    id := 7\n" +
+		"    fmt.Println(\"Hello {{name}} {{price:%.2f}} {{id:%03d}}\")\n" +
+		"    raw := `raw {{name}} path C:\\\\users\\{{name}}`\n" +
+		"    fmt.Println(raw)\n" +
+		"    fmt.Println(\"Use {{{{name}}}}\")\n" +
+		"}\n"
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated interpolation program did not run: %v\n%s", err, output)
+	}
+	expected := "Hello Bob 12.50 007\nraw Bob path C:\\\\users\\Bob\nUse {{name}}\n"
+	if string(output) != expected {
+		t.Fatalf("unexpected interpolation output:\n%s", output)
+	}
+}
+
+func TestEmitRejectsInvalidInterpolation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "empty", source: `func main() { _ = "{{}}" }`, want: "empty interpolation expression"},
+		{name: "format", source: `func main() { _ = "{{1:.2f}}" }`, want: "expected Go fmt format"},
+		{name: "unterminated", source: "func main() { _ = `{{value` }", want: "unterminated interpolation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			file, err := ParseFile(test.name+".gpp", test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Emit(file); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected interpolation diagnostic containing %q, got %v", test.want, err)
+			}
+		})
 	}
 }
 

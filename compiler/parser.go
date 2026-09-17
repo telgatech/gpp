@@ -180,6 +180,8 @@ func ParseFile(name, src string) (*File, error) {
 				file.Decls = append(file.Decls, &RawDecl{
 					Code:                 code,
 					AnnotationPlacements: placements,
+					SourceFile:           name,
+					SourceLine:           sourceLine(src, start),
 				})
 			}
 

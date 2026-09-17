@@ -49,6 +49,6 @@ func main() {
     fmt.Print(output.String())
 
     output.Reset()
-    tpl.Execute(&output, "<strong>{{upper .}}</strong>", "ad-hoc template")
+	 tpl.Execute(&output, "<strong>{{{{upper .}}}}</strong>", "ad-hoc template")
     fmt.Print(output.String())
 }

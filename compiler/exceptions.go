@@ -1111,6 +1111,15 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 	switch function := call.Fun.(type) {
 	case *ast.Ident:
 		candidates = append(candidates, context.FunctionSignatures[function.Name]...)
+		for _, signatures := range context.StaticMethodSignatures {
+			for _, methods := range signatures {
+				for _, candidate := range methods {
+					if candidate.GoName == function.Name {
+						candidates = append(candidates, candidate)
+					}
+				}
+			}
+		}
 		for _, extension := range context.Extensions {
 			if extension.GoName == function.Name {
 				candidates = append(candidates, callableSignature{

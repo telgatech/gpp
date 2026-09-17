@@ -20,6 +20,8 @@ type extensionMethod struct {
 	ReceiverType      string
 	Qualifier         string
 	GoName            string
+	SourceFile        string
+	SourceLine        int
 	Method            Method
 	Prelude           bool
 }
@@ -857,7 +859,8 @@ func extensionFunctionTypeParameters(extension extensionMethod) string {
 	return "[" + targetParts + ", " + methodParts + "]"
 }
 
-func emitExtension(out *strings.Builder, declaration *ExtendDecl, context constructorContext, interpolationName string) error {
+func emitExtension(out *strings.Builder, file *File, declaration *ExtendDecl, context constructorContext, interpolationName string) error {
+	sourcePath := sourceDirectivePath(file)
 	for _, target := range declaration.Targets {
 		target = normalizeExtensionTarget(target)
 		for _, method := range declaration.Methods {
@@ -866,6 +869,8 @@ func emitExtension(out *strings.Builder, declaration *ExtendDecl, context constr
 				TargetConstraints: cloneStringMap(declaration.TargetConstraints),
 				ReceiverType:      extensionReceiverType(target, context.Introspection.Classes),
 				GoName:            extensionGoName(target, method),
+				SourceFile:        sourcePath,
+				SourceLine:        declaration.SourceLine,
 				Method:            method,
 			}
 			if err := emitExtensionMethod(out, extension, context, interpolationName); err != nil {
@@ -886,6 +891,7 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		return err
 	}
 	name := extension.GoName
+	emitSourceDirective(out, extension.SourceFile, extension.SourceLine)
 	fmt.Fprintf(out, "func %s%s(this %s", name, extensionFunctionTypeParameters(extension), extension.ReceiverType)
 	if parameters != "" {
 		fmt.Fprintf(out, ", %s", parameters)
@@ -907,7 +913,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 			}
 		}
 	}
-	body := transformInterpolationWithName(extension.Method.Body, interpolationName)
+	body, err := transformInterpolationWithNameChecked(extension.Method.Body, interpolationName)
+	if err != nil {
+		return err
+	}
 	body, err = transformEnums(body, methodContext)
 	if err != nil {
 		return err

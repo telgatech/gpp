@@ -60,6 +60,45 @@ func main() {
 	}
 }
 
+func TestCompileFilesMapsBackendDiagnosticsToGoPlusSource(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `import "fmt"
+
+func main() {
+	name := "Ada"
+	fmt.Println("Value: {{name * 2}}")
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "build", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected generated Go to fail type checking")
+	}
+	relative, err := filepath.Rel(outputDir, sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := filepath.ToSlash(relative) + ":5:"
+	absoluteLocation := filepath.ToSlash(sourcePath) + ":5:"
+	if !strings.Contains(string(output), location) && !strings.Contains(string(output), absoluteLocation) {
+		t.Fatalf("backend diagnostic did not use the Go++ source location %q:\n%s", location, output)
+	}
+	if strings.Contains(string(output), "main.go:") {
+		t.Fatalf("backend diagnostic leaked the generated file:\n%s", output)
+	}
+}
+
 func TestCompileFilesManagedTemplateReloadUpdatesTypedExecution(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -164,14 +203,14 @@ func upper(value string) string {
 
 func main() {
     var output bytes.Buffer
-    if err := tpl.Execute(&output, "<h1>{{.}}</h1>", "unsafe &"); err != nil { panic(err) }
+	if err := tpl.Execute(&output, "<h1>{{{{.}}}}</h1>", "unsafe &"); err != nil { panic(err) }
     fmt.Println(output.String())
     if err := tpl.Funcs.Add("upper", upper); err != nil { panic(err) }
     output.Reset()
-    if err := tpl.Execute(&output, "<b>{{upper .}}</b>", "go"); err != nil { panic(err) }
+	if err := tpl.Execute(&output, "<b>{{{{upper .}}}}</b>", "go"); err != nil { panic(err) }
     fmt.Println(output.String())
     output.Reset()
-    if err := tpl.Execute(&output, "<section>{{Card .}}</section>", "body"); err != nil { panic(err) }
+	if err := tpl.Execute(&output, "<section>{{{{Card .}}}}</section>", "body"); err != nil { panic(err) }
     fmt.Println(output.String())
     output.Reset()
     if err := tpl.Execute(&output, "/posts/42", "body"); err != nil { panic(err) }

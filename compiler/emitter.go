@@ -9,14 +9,10 @@ import (
 	"go/types"
 	htmltemplate "html/template"
 	"path"
-	"regexp"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-)
-
-var interpolationRE = regexp.MustCompile(
-	`\{\{\s*(.*?)\s*\}\}`,
 )
 
 func Emit(file *File) ([]byte, error) {
@@ -853,6 +849,71 @@ func containsPackageSelector(body, alias string) bool {
 	return found
 }
 
+// emitSourceDirective attaches a generated declaration to its Go++ source
+// location. Go's compiler understands these directives and will report
+// backend errors against the original source file instead of the generated
+// workspace.
+func emitSourceDirective(out *strings.Builder, sourcePath string, line int) {
+	if sourcePath == "" || line <= 0 {
+		return
+	}
+	sourcePath = filepath.ToSlash(sourcePath)
+	fmt.Fprintf(out, "//line %s:%d\n", sourcePath, line)
+}
+
+func sourceDirectivePath(file *File) string {
+	if file == nil {
+		return ""
+	}
+	sourcePath := file.SourcePath
+	if sourcePath == "" {
+		sourcePath = file.Name
+	}
+	if absolute, err := filepath.Abs(sourcePath); err == nil {
+		sourcePath = absolute
+	}
+	return filepath.ToSlash(sourcePath)
+}
+
+// addRawSourceDirective places the directive immediately before the first
+// user declaration rather than before imports. This is important because the
+// emitter inserts generated runtime declarations after imports; placing the
+// directive before an import would make those synthetic declarations inherit
+// the user's source location.
+func addRawSourceDirective(code string, file *File, declaration *RawDecl) string {
+	if declaration == nil || declaration.SourceLine <= 0 {
+		return code
+	}
+	sourcePath := sourceDirectivePath(file)
+	if sourcePath == "" {
+		sourcePath = declaration.SourceFile
+	}
+	if sourcePath == "" {
+		return code
+	}
+
+	const prefix = "package main\n\n"
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", prefix+code, 0)
+	if err == nil {
+		for _, node := range parsed.Decls {
+			if gen, ok := node.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
+				continue
+			}
+			offset := fileSet.Position(node.Pos()).Offset - len(prefix)
+			if offset < 0 || offset > len(code) {
+				break
+			}
+			line := declaration.SourceLine + strings.Count(code[:offset], "\n")
+			return code[:offset] + fmt.Sprintf("//line %s:%d\n", filepath.ToSlash(sourcePath), line) + code[offset:]
+		}
+	}
+
+	// Go++ syntax may not be parseable until all lowerings have run. The
+	// declaration start is still a useful fallback in that case.
+	return fmt.Sprintf("//line %s:%d\n%s", filepath.ToSlash(sourcePath), declaration.SourceLine, code)
+}
+
 func emitDecls(file *File, context constructorContext, interpolationName string) (string, error) {
 	var out strings.Builder
 	enumErrorAlias, _ := enumErrorImport(file)
@@ -862,11 +923,15 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *EnumDecl:
+			emitSourceDirective(&out, sourceDirectivePath(file), d.SourceLine)
 			emitEnum(&out, d, enumErrorAlias, enumJSONAlias, enumDriverAlias)
 
 		case *RawDecl:
-			code := transformInterpolationWithName(stripAnnotationSyntaxPreserve(d.Code), interpolationName)
-			code, err := transformEnums(code, context)
+			code, err := transformInterpolationWithNameChecked(stripAnnotationSyntaxPreserve(d.Code), interpolationName)
+			if err != nil {
+				return "", err
+			}
+			code, err = transformEnums(code, context)
 			if err != nil {
 				return "", err
 			}
@@ -935,6 +1000,7 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 				return "", err
 			}
 
+			code = addRawSourceDirective(code, file, d)
 			out.WriteString(code)
 
 			if !strings.HasSuffix(code, "\n") {
@@ -942,12 +1008,12 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			}
 
 		case *ClassDecl:
-			if err := emitClass(&out, d, context, interpolationName); err != nil {
+			if err := emitClass(&out, file, d, context, interpolationName); err != nil {
 				return "", err
 			}
 
 		case *ExtendDecl:
-			if err := emitExtension(&out, d, context, interpolationName); err != nil {
+			if err := emitExtension(&out, file, d, context, interpolationName); err != nil {
 				return "", err
 			}
 		}
@@ -956,7 +1022,9 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 	return out.String(), nil
 }
 
-func emitClass(out *strings.Builder, class *ClassDecl, context constructorContext, interpolationName string) error {
+func emitClass(out *strings.Builder, file *File, class *ClassDecl, context constructorContext, interpolationName string) error {
+	sourcePath := sourceDirectivePath(file)
+	emitSourceDirective(out, sourcePath, class.SourceLine)
 	fmt.Fprintf(out, "type %s struct {\n", class.Name)
 
 	for _, parent := range class.Parents {
@@ -993,7 +1061,7 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 		if !method.IsStatic {
 			continue
 		}
-		if err := emitStaticMethod(out, class, method, context, interpolationName); err != nil {
+		if err := emitStaticMethod(out, sourcePath, class, method, context, interpolationName); err != nil {
 			return err
 		}
 	}
@@ -1010,9 +1078,13 @@ func emitClass(out *strings.Builder, class *ClassDecl, context constructorContex
 			}
 			continue
 		}
+		emitSourceDirective(out, sourcePath, class.SourceLine)
 		methodName := methodOutputName(method)
-		body := transformInterpolationWithName(method.Body, interpolationName)
-		body, err := transformEnums(body, context)
+		body, err := transformInterpolationWithNameChecked(method.Body, interpolationName)
+		if err != nil {
+			return err
+		}
+		body, err = transformEnums(body, context)
 		if err != nil {
 			return err
 		}
@@ -1403,9 +1475,12 @@ func isExportedGoPlusName(name string) bool {
 	return name != "" && name[0] >= 'A' && name[0] <= 'Z'
 }
 
-func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
-	body := transformInterpolationWithName(method.Body, interpolationName)
-	body, err := transformEnums(body, context)
+func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
+	body, err := transformInterpolationWithNameChecked(method.Body, interpolationName)
+	if err != nil {
+		return err
+	}
+	body, err = transformEnums(body, context)
 	if err != nil {
 		return err
 	}
@@ -1426,6 +1501,7 @@ func emitStaticMethod(out *strings.Builder, class *ClassDecl, method Method, con
 		return err
 	}
 
+	emitSourceDirective(out, sourcePath, class.SourceLine)
 	fmt.Fprintf(out, "func %s%s(%s)", staticMethodGoName(class, method), method.TypeParams, parameters)
 	result := strings.TrimSpace(methodResult)
 	if !method.Generated {
@@ -2458,24 +2534,84 @@ func fileHasInterpolation(file *File) bool {
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *RawDecl:
-			if strings.Contains(d.Code, "{{") {
+			if sourceHasInterpolation(d.Code) {
 				return true
 			}
 		case *ClassDecl:
 			for _, method := range d.Methods {
-				if strings.Contains(method.Body, "{{") {
+				if sourceHasInterpolation(method.Body) {
 					return true
 				}
 			}
 		case *ExtendDecl:
 			for _, method := range d.Methods {
-				if strings.Contains(method.Body, "{{") {
+				if sourceHasInterpolation(method.Body) {
 					return true
 				}
 			}
 		}
 	}
 
+	return false
+}
+
+func sourceHasInterpolation(src string) bool {
+	for i := 0; i < len(src); {
+		if src[i] == '/' && i+1 < len(src) && src[i+1] == '/' {
+			end := strings.IndexByte(src[i+2:], '\n')
+			if end < 0 {
+				return false
+			}
+			i += end + 2
+			continue
+		}
+		if src[i] == '/' && i+1 < len(src) && src[i+1] == '*' {
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return false
+			}
+			i += end + 4
+			continue
+		}
+		if src[i] == '"' || src[i] == '\'' {
+			end, err := skipQuoted(src, i, src[i])
+			if err != nil {
+				return false
+			}
+			if interpolationLiteralHasExpression(src[i+1 : end]) {
+				return true
+			}
+			i = end + 1
+			continue
+		}
+		if src[i] == '`' {
+			end := strings.IndexByte(src[i+1:], '`')
+			if end < 0 {
+				return false
+			}
+			if interpolationLiteralHasExpression(src[i+1 : i+1+end]) {
+				return true
+			}
+			i += end + 2
+			continue
+		}
+		i++
+	}
+	return false
+}
+
+func interpolationLiteralHasExpression(content string) bool {
+	for i := 0; i+1 < len(content); {
+		if content[i] != '{' || content[i+1] != '{' {
+			i++
+			continue
+		}
+		if i+3 < len(content) && content[i:i+4] == "{{{{" {
+			i += 4
+			continue
+		}
+		return true
+	}
 	return false
 }
 
@@ -3096,6 +3232,11 @@ func transformInterpolation(src string) string {
 }
 
 func transformInterpolationWithName(src, fmtName string) string {
+	transformed, _ := transformInterpolationWithNameChecked(src, fmtName)
+	return transformed
+}
+
+func transformInterpolationWithNameChecked(src, fmtName string) (string, error) {
 	var out strings.Builder
 	fmtCall := fmtName + ".Sprintf"
 	if fmtName == "Sprintf" {
@@ -3103,121 +3244,268 @@ func transformInterpolationWithName(src, fmtName string) string {
 	}
 
 	for i := 0; i < len(src); {
-		if src[i] != '"' {
+		if src[i] == '/' && i+1 < len(src) && src[i+1] == '/' {
+			end := strings.IndexByte(src[i+2:], '\n')
+			if end < 0 {
+				out.WriteString(src[i:])
+				break
+			}
+			end += i + 2
+			out.WriteString(src[i:end])
+			i = end
+			continue
+		}
+		if src[i] == '/' && i+1 < len(src) && src[i+1] == '*' {
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return src, fmt.Errorf("unterminated block comment")
+			}
+			end += i + 2
+			out.WriteString(src[i : end+2])
+			i = end + 2
+			continue
+		}
+
+		quote := src[i]
+		if quote != '"' && quote != '`' && quote != '\'' {
 			out.WriteByte(src[i])
 			i++
 			continue
 		}
+		var end int
+		var err error
+		if quote == '`' {
+			rawEnd := strings.IndexByte(src[i+1:], '`')
+			if rawEnd < 0 {
+				return src, fmt.Errorf("unterminated raw string")
+			}
+			end = i + rawEnd + 1
+		} else {
+			end, err = skipQuoted(src, i, quote)
+			if err != nil {
+				return src, err
+			}
+		}
+		if quote == '\'' {
+			out.WriteString(src[i : end+1])
+			i = end + 1
+			continue
+		}
 
-		end, err := skipQuoted(src, i, '"')
-
+		lowered, changed, err := lowerInterpolationLiteral(src[i+1:end], quote == '`', fmtCall)
 		if err != nil {
-			out.WriteString(src[i:])
-			break
+			return src, err
 		}
-
-		literal := src[i+1 : end]
-
-		if !strings.Contains(literal, "{{") || isTemplateSourceLiteral(src, i) {
+		if changed {
+			out.WriteString(lowered)
+		} else {
 			out.WriteString(src[i : end+1])
-			i = end + 1
-			continue
 		}
-
-		matches := interpolationRE.FindAllStringSubmatch(
-			literal,
-			-1,
-		)
-
-		if len(matches) == 0 {
-			out.WriteString(src[i : end+1])
-			i = end + 1
-			continue
-		}
-
-		formatString := interpolationRE.ReplaceAllString(
-			literal,
-			"%v",
-		)
-
-		fmt.Fprintf(
-			&out,
-			"%s(%q",
-			fmtCall,
-			formatString,
-		)
-
-		for _, match := range matches {
-			fmt.Fprintf(
-				&out,
-				", %s",
-				strings.TrimSpace(match[1]),
-			)
-		}
-
-		out.WriteByte(')')
-
 		i = end + 1
 	}
-
-	return out.String()
+	return out.String(), nil
 }
 
-func isTemplateSourceLiteral(src string, literalStart int) bool {
-	comma := literalStart - 1
-	for comma >= 0 && (src[comma] == ' ' || src[comma] == '\t' || src[comma] == '\r' || src[comma] == '\n') {
-		comma--
-	}
-	if comma < 0 || src[comma] != ',' {
-		return false
-	}
-	depth := 0
-	for index := comma - 1; index >= 0; index-- {
-		switch src[index] {
-		case ')':
-			depth++
-		case '(':
-			if depth > 0 {
-				depth--
-				continue
-			}
-			prefix := strings.TrimSpace(src[:index])
-			dot := strings.LastIndex(prefix, ".")
-			if dot < 0 {
-				return false
-			}
-			name := strings.TrimSpace(prefix[dot+1:])
-			if name != "Execute" && name != "Render" {
-				return false
-			}
-			return topLevelCommaCount(src, index+1, literalStart) == 1
-		}
-	}
-	return false
-}
+func lowerInterpolationLiteral(content string, raw bool, fmtCall string) (string, bool, error) {
+	var format strings.Builder
+	var expressions []string
+	var literal strings.Builder
+	changed := false
 
-func topLevelCommaCount(src string, start, end int) int {
-	depth := 0
-	count := 0
-	for index := start; index < end; index++ {
-		switch src[index] {
-		case '"':
-			quotedEnd, err := skipQuoted(src, index, '"')
+	flushLiteral := func() error {
+		text := literal.String()
+		literal.Reset()
+		if !raw {
+			decoded, err := strconv.Unquote(`"` + text + `"`)
 			if err != nil {
-				return count
+				return fmt.Errorf("invalid interpolated string literal: %w", err)
 			}
-			index = quotedEnd
+			text = decoded
+		}
+		format.WriteString(strings.ReplaceAll(text, "%", "%%"))
+		return nil
+	}
+
+	for i := 0; i < len(content); {
+		if strings.HasPrefix(content[i:], "{{{{") {
+			literal.WriteString("{{")
+			changed = true
+			i += 4
+			continue
+		}
+		if strings.HasPrefix(content[i:], "{{") {
+			end, err := findInterpolationEnd(content, i+2)
+			if err != nil {
+				return "", false, err
+			}
+			if err := flushLiteral(); err != nil {
+				return "", false, err
+			}
+			body := content[i+2 : end]
+			separator := interpolationFormatSeparator(body)
+			expression := body
+			formatSpec := "%v"
+			if separator >= 0 {
+				expression = body[:separator]
+				formatSpec = strings.TrimSpace(body[separator+1:])
+				if err := validateInterpolationFormat(formatSpec); err != nil {
+					return "", false, err
+				}
+			}
+			expression = strings.TrimSpace(expression)
+			if expression == "" {
+				return "", false, fmt.Errorf("empty interpolation expression")
+			}
+			format.WriteString(formatSpec)
+			expressions = append(expressions, expression)
+			changed = true
+			i = end + 2
+			continue
+		}
+		if strings.HasPrefix(content[i:], "}}}}") {
+			literal.WriteString("}}")
+			changed = true
+			i += 4
+			continue
+		}
+		literal.WriteByte(content[i])
+		i++
+	}
+	if err := flushLiteral(); err != nil {
+		return "", false, err
+	}
+	if len(expressions) == 0 {
+		if !changed {
+			return "", false, nil
+		}
+		if raw {
+			return "`" + format.String() + "`", true, nil
+		}
+		return strconv.Quote(format.String()), true, nil
+	}
+
+	var result strings.Builder
+	fmt.Fprintf(&result, "%s(%q", fmtCall, format.String())
+	for _, expression := range expressions {
+		fmt.Fprintf(&result, ", %s", expression)
+	}
+	result.WriteByte(')')
+	return result.String(), true, nil
+}
+
+func findInterpolationEnd(src string, start int) (int, error) {
+	parenDepth, braceDepth, bracketDepth := 0, 0, 0
+	for i := start; i < len(src); i++ {
+		if src[i] == '"' || src[i] == '\'' {
+			end, err := skipQuoted(src, i, src[i])
+			if err != nil {
+				return 0, err
+			}
+			i = end
+			continue
+		}
+		if src[i] == '`' {
+			end := strings.IndexByte(src[i+1:], '`')
+			if end < 0 {
+				return 0, fmt.Errorf("unterminated raw string in interpolation")
+			}
+			i += end + 1
+			continue
+		}
+		if src[i] == '/' && i+1 < len(src) && src[i+1] == '/' {
+			end := strings.IndexByte(src[i+2:], '\n')
+			if end < 0 {
+				return 0, fmt.Errorf("unterminated interpolation")
+			}
+			i += end + 2
+			continue
+		}
+		if src[i] == '/' && i+1 < len(src) && src[i+1] == '*' {
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return 0, fmt.Errorf("unterminated block comment in interpolation")
+			}
+			i += end + 3
+			continue
+		}
+		if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 && src[i] == '}' && i+1 < len(src) && src[i+1] == '}' {
+			return i, nil
+		}
+		switch src[i] {
 		case '(':
-			depth++
+			parenDepth++
 		case ')':
-			if depth > 0 {
-				depth--
+			parenDepth--
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+		case '[':
+			bracketDepth++
+		case ']':
+			bracketDepth--
+		}
+	}
+	return 0, fmt.Errorf("unterminated interpolation")
+}
+
+func interpolationFormatSeparator(body string) int {
+	parenDepth, braceDepth, bracketDepth := 0, 0, 0
+	separator := -1
+	lastTopLevelColon := -1
+	for i := 0; i < len(body); i++ {
+		if body[i] == '"' || body[i] == '\'' {
+			end, err := skipQuoted(body, i, body[i])
+			if err != nil {
+				return -1
 			}
-		case ',':
-			if depth == 0 {
-				count++
+			i = end
+			continue
+		}
+		if body[i] == '`' {
+			end := strings.IndexByte(body[i+1:], '`')
+			if end < 0 {
+				return -1
+			}
+			i += end + 1
+			continue
+		}
+		switch body[i] {
+		case '(':
+			parenDepth++
+		case ')':
+			parenDepth--
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+		case '[':
+			bracketDepth++
+		case ']':
+			bracketDepth--
+		case ':':
+			if parenDepth == 0 && braceDepth == 0 && bracketDepth == 0 {
+				lastTopLevelColon = i
+				if strings.HasPrefix(strings.TrimSpace(body[i+1:]), "%") {
+					separator = i
+				}
 			}
 		}
 	}
-	return count
+	if separator < 0 {
+		return lastTopLevelColon
+	}
+	return separator
+}
+
+func validateInterpolationFormat(formatSpec string) error {
+	if !strings.HasPrefix(formatSpec, "%") {
+		return fmt.Errorf("invalid interpolation format: expected Go fmt format beginning with %%")
+	}
+	for _, character := range formatSpec[1:] {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid interpolation format: missing fmt verb")
 }

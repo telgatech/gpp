@@ -290,16 +290,16 @@ func gppWatchTemplates(stop <-chan struct{}, done chan<- struct{}) {
 const gppDefaultErrorTemplate = `<!doctype html>
 <html>
 <head>
-    <title>{{.Code}} {{.Message}}</title>
+    <title>{{{{.Code}}}} {{{{.Message}}}}</title>
 </head>
 <body>
-    {{if eq .Code 404}}
+    {{{{if eq .Code 404}}}}
         <h1>Page not found</h1>
-    {{else if eq .Code 403}}
+    {{{{else if eq .Code 403}}}}
         <h1>Forbidden</h1>
-    {{else}}
-        <h1>{{.Code}} {{.Message}}</h1>
-    {{end}}
+    {{{{else}}}}
+        <h1>{{{{.Code}}}} {{{{.Message}}}}</h1>
+    {{{{end}}}}
 </body>
 </html>`
 

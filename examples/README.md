@@ -69,6 +69,8 @@ The examples cover:
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
   before running it.
+- `string_interpolation.gpp` — basic and formatted interpolation, raw
+  multiline strings, and escaped delimiters for generated template source.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
   annotated routes, path parameters, status-aware JSON/text/template responses,
   custom error templates, request context values, lifecycle hooks, graceful

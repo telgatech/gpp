@@ -32,22 +32,11 @@ func main() {
 		Address: Address(City: "Paris"),
 	)
 
-	jsonData, err := user.ToJSON()
-	if err != nil {
-		panic(err)
-	}
-	decoded, err := User.FromJSON(jsonData)
-	if err != nil {
-		panic(err)
-	}
+	jsonData := user.ToJSON()
+	decoded := User.FromJSON(jsonData)
 
-	gobData, err := user.ToGOB()
-	if err != nil {
-		panic(err)
-	}
-	gobDecoded, err := User.FromGOB(gobData)
-	if err != nil {
-		panic(err)
-	}
+	gobData := user.ToGOB()
+	gobDecoded := User.FromGOB(gobData)
+
 	fmt.Println(string(jsonData), decoded.Name, string(decoded.Membership), decoded.Address.City, len(gobData), gobDecoded.Name, string(gobDecoded.Membership), gobDecoded.Address.City)
 }
