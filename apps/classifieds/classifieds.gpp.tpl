@@ -1,6 +1,4 @@
-package main
-
-template Home(data HomePage) {
+template Layout() {
 <!doctype html>
 <html lang="en">
 <head>
@@ -28,7 +26,12 @@ template Home(data HomePage) {
 </head>
 <body>
 <header><nav><a href="/">Classifieds</a><a href="/listings/new">Post an item</a></nav></header>
-<main>
+<main>{{body}}</main>
+</body>
+</html>
+}
+
+template Home(data HomePage): Layout {
     <h1>Find something useful</h1>
     <form class="search" method="get" action="/">
         <input name="q" value="{{.Query}}" placeholder="Search listings">
@@ -48,15 +51,9 @@ template Home(data HomePage) {
     {{else}}
     <div class="empty"><p>No active listings matched your search.</p><a class="button" href="/listings/new">Post the first listing</a></div>
     {{end}}
-</main>
-</body>
-</html>
 }
 
-template ListingDetail(data ListingPage) {
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Listing.Title}} · Classifieds</title></head>
-<body><main>
+template ListingDetail(data ListingPage): Layout {
     <p><a href="/">← All listings</a></p>
     <article>
         <h1>{{.Listing.Title}}</h1>
@@ -66,13 +63,9 @@ template ListingDetail(data ListingPage) {
         <p><a href="/listings/{{.Listing.Id}}/edit">Edit listing</a></p>
         <form method="post" action="/listings/{{.Listing.Id}}/delete"><button type="submit">Delete listing</button></form>
     </article>
-</main></body></html>
 }
 
-template NewListing(data ListingFormPage) {
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Post listing · Classifieds</title></head>
-<body><main>
+template NewListing(data ListingFormPage): Layout {
     <p><a href="/">← All listings</a></p><h1>Post a listing</h1>
     {{if .Error}}<p style="color:#b42318">{{.Error}}</p>{{end}}
     <form method="post" action="/listings">
@@ -83,13 +76,9 @@ template NewListing(data ListingFormPage) {
         <p><label>Category<br><select name="category_id" required>{{range .Categories}}<option value="{{.Id}}">{{.Name}}</option>{{end}}</select></label></p>
         <button type="submit">Publish listing</button>
     </form>
-</main></body></html>
 }
 
-template EditListing(data ListingFormPage) {
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Edit listing · Classifieds</title></head>
-<body><main>
+template EditListing(data ListingFormPage): Layout {
     <p><a href="/listings/{{.Listing.Id}}">← Listing</a></p><h1>Edit listing</h1>
     {{if .Error}}<p style="color:#b42318">{{.Error}}</p>{{end}}
     <form method="post" action="/listings/{{.Listing.Id}}/edit">
@@ -100,11 +89,11 @@ template EditListing(data ListingFormPage) {
         <p><label>Category<br><select name="category_id" required>{{range .Categories}}<option value="{{.Id}}" {{if eq .Id $.Listing.CategoryId}}selected{{end}}>{{.Name}}</option>{{end}}</select></label></p>
         <button type="submit">Save changes</button>
     </form>
-</main></body></html>
 }
 
-template ErrorPage(data any) {
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Code}} {{.Message}}</title></head>
-<body><main><h1>{{.Code}} {{.Message}}</h1><p>The request could not be completed.</p><p><a href="/">Return to classifieds</a></p><p class="muted">{{.Path}}</p></main></body></html>
+template ErrorPage(data any): Layout {
+    <h1>{{.Code}} {{.Message}}</h1>
+    <p>The request could not be completed.</p>
+    <p><a href="/">Return to classifieds</a></p>
+    <p class="muted">{{.Path}}</p>
 }

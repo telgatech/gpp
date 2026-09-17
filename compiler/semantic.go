@@ -224,6 +224,18 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			if _, imported := pkg.Imports[name]; imported {
 				return nil, fmt.Errorf("%s: template %s conflicts with import in package %s", templateLocation(template), name, pkg.Name)
 			}
+			if template.Layout != "" {
+				layout, exists := pkg.Templates[template.Layout]
+				if !exists {
+					return nil, fmt.Errorf("%s: layout template %s does not exist in package %s", templateLocation(template), template.Layout, pkg.Name)
+				}
+				if layout.Name == template.Name {
+					return nil, fmt.Errorf("%s: template cannot use itself as a layout", templateLocation(template))
+				}
+				if strings.TrimSpace(layout.Parameters) != "" {
+					return nil, fmt.Errorf("%s: layout template %s must not declare parameters", templateLocation(template), template.Layout)
+				}
+			}
 		}
 		for name, entry := range pkg.Embeds {
 			_, templateExists := pkg.Templates[name]

@@ -1420,7 +1420,7 @@ Parentheses are not part of Go++ template invocation syntax.
 
 # 40. Layouts
 
-Go++ may support template composition through a layout relationship.
+Go++ supports template composition through a layout relationship.
 
 Canonical syntax:
 
@@ -1435,6 +1435,10 @@ The child body is supplied to the layout through an implicit nested template nam
 ```text
 body
 ```
+
+Layout templates currently declare no parameters. The child receives the
+original template arguments, renders its body into the implicit `body`
+function, and then renders the layout around that output.
 
 Example:
 

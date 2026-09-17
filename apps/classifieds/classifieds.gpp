@@ -388,19 +388,9 @@ func seedDatabase(db *sql.DB) error {
 }
 
 func main() {
-	try {
-		db := openDatabase(env("CLASSIFIEDS_DB", "classifieds.db"))
-		defer db.Close()
+	db := openDatabase(env("CLASSIFIEDS_DB", "classifieds.db"))
+	defer db.Close()
 
-		app := App(DB: db)
-		try {
-			app.Listen()
-		} catch e {
-			if e != stdhttp.ErrServerClosed {
-				throw
-			}
-		}
-	} catch e {
-		panic(e)
-	}
+	app := App(DB: db)
+	app.Listen()
 }

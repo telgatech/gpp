@@ -42,6 +42,7 @@ func (*EmbedDecl) decl() {}
 type TemplateDecl struct {
 	Name        string
 	Parameters  string
+	Layout      string
 	Annotations []AnnotationUse
 	Body        string
 	SourceFile  string

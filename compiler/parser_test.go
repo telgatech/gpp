@@ -53,7 +53,7 @@ embed (
 
 func TestParseTemplateDeclaration(t *testing.T) {
 	file, err := ParseFile("page.gpp", `
-template Page(post Post) @{tpl.Path("/posts/{id}")} {
+template Page(post Post): Layout @{tpl.Path("/posts/{id}")} {
     <article data-id="{{param "id"}}">
         <h1>{{.Title}}</h1>
     </article>
@@ -69,7 +69,7 @@ template Page(post Post) @{tpl.Path("/posts/{id}")} {
 	if !ok {
 		t.Fatalf("expected TemplateDecl, got %#v", file.Decls[0])
 	}
-	if template.Name != "Page" || template.Parameters != "post Post" || len(template.Annotations) != 1 {
+	if template.Name != "Page" || template.Parameters != "post Post" || template.Layout != "Layout" || len(template.Annotations) != 1 {
 		t.Fatalf("unexpected template metadata: %#v", template)
 	}
 	if !strings.Contains(template.Body, `{{param "id"}}`) {

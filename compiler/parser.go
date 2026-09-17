@@ -312,6 +312,16 @@ func parseTemplate(src string, start int) (*TemplateDecl, int, error) {
 		return nil, 0, fmt.Errorf("template %s has invalid parameters: %w", name, err)
 	}
 	pos = skipSpace(src, closeParams+1)
+	layout := ""
+	if pos < len(src) && src[pos] == ':' {
+		pos = skipSpace(src, pos+1)
+		layoutName, layoutLength := readIdent(src[pos:])
+		if layoutLength == 0 {
+			return nil, 0, fmt.Errorf("template %s has an invalid layout", name)
+		}
+		layout = layoutName
+		pos = skipSpace(src, pos+layoutLength)
+	}
 	annotations, next, err := parseOptionalAnnotationUses(src, pos)
 	if err != nil {
 		return nil, 0, err
@@ -327,6 +337,7 @@ func parseTemplate(src string, start int) (*TemplateDecl, int, error) {
 	return &TemplateDecl{
 		Name:        name,
 		Parameters:  parameters,
+		Layout:      layout,
 		Annotations: annotations,
 		Body:        src[pos+1 : closeBody],
 	}, closeBody + 1, nil

@@ -414,6 +414,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{}\n", htmlAlias)
 		fmt.Fprintf(&definitions, "\tfor name, function := range %s.Funcs.Snapshot() { functions[name] = function }\n", tplAlias)
 		fmt.Fprintf(&definitions, "\tfunctions[\"param\"] = %s.Param\n", tplAlias)
+		fmt.Fprintf(&definitions, "\tfunctions[\"body\"] = func(args ...any) (%s.HTML, error) { return \"\", nil }\n", htmlAlias)
 		for _, name := range allNames {
 			fmt.Fprintf(&definitions, "\tfunctions[%q] = __gpp_tpl_call_%s\n", name, name)
 		}
@@ -422,6 +423,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{}\n", htmlAlias)
 		fmt.Fprintf(&definitions, "\tfor name, function := range %s.Funcs.Snapshot() { functions[name] = function }\n", tplAlias)
 		fmt.Fprintf(&definitions, "\tfunctions[\"param\"] = func(name string) string { return params[name] }\n")
+		fmt.Fprintf(&definitions, "\tfunctions[\"body\"] = func(args ...any) (%s.HTML, error) { return \"\", nil }\n", htmlAlias)
 		for _, name := range allNames {
 			fmt.Fprintf(&definitions, "\tcurrent_%s := %q\n", name, name)
 			fmt.Fprintf(&definitions, "\tfunctions[current_%s] = func(args ...any) (%s.HTML, error) { var buffer %s.Buffer; if err := __gpp_tpl_render_%s(&buffer, params, args...); err != nil { return \"\", err }; return %s.HTML(buffer.String()), nil }\n", name, htmlAlias, bytesAlias, name, htmlAlias)
@@ -432,19 +434,35 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 			fmt.Fprintf(&definitions, "const __gpp_tpl_development_%s = true\n\n", template.Name)
 		}
 		fmt.Fprintf(&definitions, "func __gpp_tpl_%s(w %s.Writer%s) error {\n", template.Name, ioAlias, parameterText)
-		if managedDevelopment {
+		if managedDevelopment && template.Layout == "" {
 			fmt.Fprintf(&definitions, "\tif __gpp_tpl_development_%s { return %s.Execute(w, %q", template.Name, tplAlias, template.Name)
 			for _, parameter := range parameters {
 				fmt.Fprintf(&definitions, ", %s", parameter.Name)
 			}
 			definitions.WriteString(") }\n")
 		}
-		fmt.Fprintf(&definitions, "\treturn __gpp_tpl_%s_template.Execute(%s, %s)\n}\n\n", template.Name, "w", dataExpression)
+		if template.Layout != "" {
+			fmt.Fprintf(&definitions, "\treturn __gpp_tpl_render_%s(w, map[string]string{}", template.Name)
+			for _, parameter := range parameters {
+				fmt.Fprintf(&definitions, ", %s", parameter.Name)
+			}
+			definitions.WriteString(")\n}\n\n")
+		} else {
+			fmt.Fprintf(&definitions, "\treturn __gpp_tpl_%s_template.Execute(%s, %s)\n}\n\n", template.Name, "w", dataExpression)
+		}
 		fmt.Fprintf(&definitions, "func __gpp_tpl_execute_%s(w %s.Writer, params map[string]string%s) error {\n", template.Name, ioAlias, parameterText)
 		fmt.Fprintf(&definitions, "\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_funcs_%s(params)).Parse(%s)\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body))
 		definitions.WriteString("\tif err != nil { return err }\n")
 		fmt.Fprintf(&definitions, "\treturn parsed.Execute(w, %s)\n}\n\n", dataExpression)
-		fmt.Fprintf(&definitions, "func __gpp_tpl_render_%s(w %s.Writer, params map[string]string, args ...any) error {\n", template.Name, ioAlias)
+		if templateUsedAsLayout(template.Name, context.Templates) {
+			fmt.Fprintf(&definitions, "func __gpp_tpl_execute_%s_with_body(w %s.Writer, params map[string]string, body func(...any) (%s.HTML, error)) error {\n", template.Name, ioAlias, htmlAlias)
+			fmt.Fprintf(&definitions, "\tfunctions := __gpp_tpl_funcs_%s(params)\n", template.Name)
+			definitions.WriteString("\tfunctions[\"body\"] = body\n")
+			fmt.Fprintf(&definitions, "\tparsed, err := %s.New(%q).Funcs(functions).Parse(%s)\n", htmlAlias, template.Name, strconv.Quote(template.Body))
+			definitions.WriteString("\tif err != nil { return err }\n")
+			fmt.Fprintf(&definitions, "\treturn parsed.Execute(w, %s)\n}\n\n", dataExpression)
+		}
+		fmt.Fprintf(&definitions, "func __gpp_tpl_render_%s_body(w %s.Writer, params map[string]string, args ...any) error {\n", template.Name, ioAlias)
 		if err := emitTemplateArguments(&definitions, template, parameters, context, fmtAlias, true); err != nil {
 			return "", "", err
 		}
@@ -456,6 +474,15 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 			definitions.WriteString(parameter.Name)
 		}
 		definitions.WriteString(")\n")
+		definitions.WriteString("}\n\n")
+		fmt.Fprintf(&definitions, "func __gpp_tpl_render_%s(w %s.Writer, params map[string]string, args ...any) error {\n", template.Name, ioAlias)
+		if template.Layout == "" {
+			fmt.Fprintf(&definitions, "\treturn __gpp_tpl_render_%s_body(w, params, args...)\n", template.Name)
+		} else {
+			fmt.Fprintf(&definitions, "\tvar content %s.Buffer\n", bytesAlias)
+			fmt.Fprintf(&definitions, "\tif err := __gpp_tpl_render_%s_body(&content, params, args...); err != nil { return err }\n", template.Name)
+			fmt.Fprintf(&definitions, "\treturn __gpp_tpl_execute_%s_with_body(w, params, func(args ...any) (%s.HTML, error) { return %s.HTML(content.String()), nil })\n", template.Layout, htmlAlias, htmlAlias)
+		}
 		definitions.WriteString("}\n\n")
 		fmt.Fprintf(&definitions, "func __gpp_tpl_call_%s(args ...any) (%s.HTML, error) {\n", template.Name, htmlAlias)
 		if err := emitTemplateArguments(&definitions, template, parameters, context, fmtAlias, false); err != nil {
@@ -483,7 +510,10 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 }
 
 func validateTemplateBody(template *TemplateDecl, names []string) error {
-	functions := htmltemplate.FuncMap{"param": func(string) string { return "" }}
+	functions := htmltemplate.FuncMap{
+		"param": func(string) string { return "" },
+		"body":  func(...any) (string, error) { return "", nil },
+	}
 	for _, name := range names {
 		functions[name] = func(...any) (string, error) { return "", nil }
 	}
@@ -491,6 +521,15 @@ func validateTemplateBody(template *TemplateDecl, names []string) error {
 		return fmt.Errorf("invalid template body: %w", err)
 	}
 	return nil
+}
+
+func templateUsedAsLayout(name string, templates map[string]*TemplateDecl) bool {
+	for _, template := range templates {
+		if template.Layout == name {
+			return true
+		}
+	}
+	return false
 }
 
 func templateParameterText(parameters []parameterInfo, context constructorContext) string {
