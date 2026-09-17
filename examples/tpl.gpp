@@ -16,8 +16,20 @@ template PostCard(post Post) @{tpl.Path("/posts/{id}")} {
     </article>
 }
 
-template Page(post Post) {
-    <main>{{PostCard .}}</main>
+template Layout() {
+    <!doctype html>
+    <html>
+    <head><title>Go++ templates</title></head>
+    <body>
+        <header><a href="/">Go++ templates</a></header>
+        <main>{{body}}</main>
+    </body>
+    </html>
+}
+
+template Page(post Post): Layout {
+    <h1>{{.Title}}</h1>
+    {{PostCard .}}
 }
 
 func main() {
@@ -31,7 +43,11 @@ func main() {
     tpl.Execute(&output, "/posts/42", post)
     fmt.Print(output.String())
 
-    if err := tpl.Funcs.Add("upper", strings.ToUpper); err != nil { panic(err) }
+    tpl.Funcs.Add("upper", strings.ToUpper)
+    output.Reset()
+    tpl.Page(&output, post)
+    fmt.Print(output.String())
+
     output.Reset()
     tpl.Execute(&output, "<strong>{{upper .}}</strong>", "ad-hoc template")
     fmt.Print(output.String())
