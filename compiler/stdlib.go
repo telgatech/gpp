@@ -13,7 +13,7 @@ import (
 // officialStdlib contains the compiler-distributed Go++ standard packages.
 // They are embedded so official imports never require a network lookup.
 //
-//go:embed stdlib/gpp/*/*.gpp
+//go:embed stdlib/gpp/*/*.gpp stdlib/gpp/http/assets/swagger/*
 var officialStdlib embed.FS
 
 // EmbeddedStdlibAvailable reports whether the compiler was built with its
@@ -103,6 +103,8 @@ func loadOfficialPackage(importPath string) ([]*File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load official package %s: %w", importPath, err)
 		}
+		file.Official = true
+		file.OfficialPackage = importPath
 		files = append(files, file)
 	}
 	return files, nil

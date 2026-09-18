@@ -519,6 +519,7 @@ func request(base string, path string) {
 	if err != nil { panic(err) }
 	response.Body.Close()
 	text := string(body)
+	if response.StatusCode != stdhttp.StatusOK { panic(fmt.Sprintf("%s returned %d", path, response.StatusCode)) }
 	fmt.Println(path, response.StatusCode,
 		strings.Contains(response.Header.Get("Content-Type"), "application/json"),
 		strings.Contains(response.Header.Get("Content-Type"), "text/html"),
@@ -526,6 +527,17 @@ func request(base string, path string) {
 		strings.Contains(text, "/hello/{name}"),
 		strings.Contains(text, "Swagger UI"),
 	)
+}
+
+func requestAsset(base string, path string, contentType string, marker string) {
+	response, err := stdhttp.Get(base + path)
+	if err != nil { panic(err) }
+	body, err := io.ReadAll(response.Body)
+	if err != nil { panic(err) }
+	response.Body.Close()
+	if response.StatusCode != stdhttp.StatusOK { panic(fmt.Sprintf("%s returned %d", path, response.StatusCode)) }
+	if !strings.Contains(response.Header.Get("Content-Type"), contentType) { panic(fmt.Sprintf("%s content type %q", path, response.Header.Get("Content-Type"))) }
+	if marker != "" && !strings.Contains(string(body), marker) { panic(fmt.Sprintf("%s missing marker", path)) }
 }
 
 func main() {
@@ -543,6 +555,10 @@ func main() {
 	base := "http://" + app.HTTPServer.Addr
 	request(base, "/openapi.json")
 	request(base, "/swagger")
+	request(base, "/swagger/")
+	requestAsset(base, "/swagger/swagger-ui.css", "text/css", ".swagger-ui")
+	requestAsset(base, "/swagger/swagger-ui-bundle.js", "text/javascript", "SwaggerUIBundle")
+	requestAsset(base, "/swagger/swagger-ui-standalone-preset.js", "text/javascript", "StandaloneLayout")
 	if err := app.Shutdown(context.Background()); err != nil { panic(err) }
 	if err := <-done; err != nil && err != stdhttp.ErrServerClosed { panic(err) }
 }
@@ -570,6 +586,51 @@ func main() {
 	}
 	if !strings.Contains(result, "/swagger 200 false true false false true") {
 		t.Fatalf("unexpected Swagger response:\n%s", output)
+	}
+}
+
+func TestCompileFilesValidatesSwaggerConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		message string
+	}{
+		{
+			name: "swagger requires openapi",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.Swagger} {}
+`,
+			message: "http.Swagger requires http.OpenAPI",
+		},
+		{
+			name: "swagger subtree conflict",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OpenAPI, http.Swagger} {
+	func Asset(ctx *http.Context) error @{http.GET("/swagger/custom")} { return nil }
+}
+`,
+			message: "conflicts with http.Swagger mount",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inputDir := t.TempDir()
+			outputDir := t.TempDir()
+			sourcePath := filepath.Join(inputDir, "main.gpp")
+			if err := os.WriteFile(sourcePath, []byte(test.source), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"})
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("expected %q, got %v", test.message, err)
+			}
+		})
 	}
 }
 

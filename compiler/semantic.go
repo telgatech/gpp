@@ -277,6 +277,9 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			}
 		}
 	}
+	if err := validateHTTPDocumentation(program, model); err != nil {
+		return nil, err
+	}
 
 	return model, nil
 }

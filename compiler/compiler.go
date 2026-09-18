@@ -1,7 +1,9 @@
 package compiler
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -293,6 +295,9 @@ type compiledEmbed struct {
 }
 
 func prepareEmbeds(file *File, packageDir, configuredRoot string) ([]compiledEmbed, error) {
+	if file.Official {
+		return prepareOfficialEmbeds(file, packageDir)
+	}
 	var declarations []compiledEmbed
 	for _, declaration := range file.Decls {
 		embed, ok := declaration.(*EmbedDecl)
@@ -360,6 +365,89 @@ func prepareEmbeds(file *File, packageDir, configuredRoot string) ([]compiledEmb
 		}
 	}
 	return declarations, nil
+}
+
+func prepareOfficialEmbeds(file *File, packageDir string) ([]compiledEmbed, error) {
+	var declarations []compiledEmbed
+	for _, entry := range embedsInFile(file) {
+		cleanPath, err := normalizeEmbedPath(entry.Path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", entry.Path, err)
+		}
+		packagePath := file.OfficialPackage
+		if packagePath == "" {
+			packagePath = file.Package
+		}
+		source := path.Join("stdlib", packagePath, cleanPath)
+		info, err := fs.Stat(officialStdlib, source)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				if entry.Directory {
+					return nil, fmt.Errorf("embed directory not found: %s", entry.Path)
+				}
+				return nil, fmt.Errorf("embed file not found: %s", entry.Path)
+			}
+			return nil, err
+		}
+		if entry.Directory {
+			if !info.IsDir() {
+				return nil, fmt.Errorf("embed path expected a directory: %s", entry.Path)
+			}
+			if err := copyOfficialEmbedDirectory(source, filepath.Join(packageDir, filepath.FromSlash(cleanPath))); err != nil {
+				return nil, err
+			}
+		} else {
+			if info.IsDir() {
+				return nil, fmt.Errorf("embed path expected a file: %s", entry.Path)
+			}
+			if err := copyOfficialEmbedFile(source, filepath.Join(packageDir, filepath.FromSlash(cleanPath))); err != nil {
+				return nil, err
+			}
+		}
+		declarations = append(declarations, compiledEmbed{Name: entry.Name, Path: cleanPath, Directory: entry.Directory})
+	}
+	return declarations, nil
+}
+
+func embedsInFile(file *File) []EmbedEntry {
+	var entries []EmbedEntry
+	for _, declaration := range file.Decls {
+		if embed, ok := declaration.(*EmbedDecl); ok {
+			entries = append(entries, embed.Entries...)
+		}
+	}
+	return entries
+}
+
+func copyOfficialEmbedDirectory(source, destination string) error {
+	return fs.WalkDir(officialStdlib, source, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, current)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if relative != "." {
+			target = filepath.Join(destination, relative)
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		return copyOfficialEmbedFile(current, target)
+	})
+}
+
+func copyOfficialEmbedFile(source, destination string) error {
+	data, err := fs.ReadFile(officialStdlib, source)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(destination, data, 0644)
 }
 
 func normalizeEmbedPath(value string) (string, error) {

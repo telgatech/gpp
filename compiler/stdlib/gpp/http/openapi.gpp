@@ -3,10 +3,16 @@ package gpp.http
 import (
 	stdjson "encoding/json"
 	"fmt"
+	stdFS "io/fs"
 	stdhttp "net/http"
 	"reflect"
 	"sort"
 	"strings"
+)
+
+embed (
+	// Swagger UI 5.11.10, vendored for offline single-binary serving.
+	swaggerFiles "assets/swagger/"
 )
 
 type gppOpenAPIRoute struct {
@@ -91,6 +97,41 @@ func gppOpenAPIHasRoute(routes []gppOpenAPIRoute, method, path string) bool {
 	return false
 }
 
+func gppOpenAPIPathOwnedByMount(path, mount string) bool {
+	path = strings.TrimRight(path, "/")
+	mount = strings.TrimRight(mount, "/")
+	if path == "" {
+		path = "/"
+	}
+	if mount == "" {
+		mount = "/"
+	}
+	return path == mount || (mount != "/" && strings.HasPrefix(path, mount+"/"))
+}
+
+func gppOpenAPIHasRouteUnderMount(routes []gppOpenAPIRoute, mount string) bool {
+	for _, route := range routes {
+		if route.Path == strings.TrimRight(mount, "/") && route.Method == "GET" {
+			return true
+		}
+		if route.Path != strings.TrimRight(mount, "/") && gppOpenAPIPathOwnedByMount(route.Path, mount) {
+			return true
+		}
+	}
+	return false
+}
+
+func gppSwaggerMountPath(path string) string {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	if path == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "/" + path
+	}
+	return path
+}
+
 func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) error {
 	hasOpenAPI := len(gppAnnotationArgs(descriptor, "gpp.http.OpenAPI")) > 0
 	hasSwagger := len(gppAnnotationArgs(descriptor, "gpp.http.Swagger")) > 0
@@ -117,15 +158,18 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 
 	routes := gppOpenAPIRoutes(descriptor, prefix)
 	openAPIPath = gppOpenAPIJoinPath(prefix, openAPIPath)
-	swaggerPath = gppOpenAPIJoinPath(prefix, swaggerPath)
+	swaggerPath = gppSwaggerMountPath(gppOpenAPIJoinPath(prefix, swaggerPath))
 	if hasOpenAPI && gppOpenAPIHasRoute(routes, "GET", openAPIPath) {
 		return fmt.Errorf("GET %s conflicts with http.OpenAPI", openAPIPath)
 	}
-	if hasSwagger && gppOpenAPIHasRoute(routes, "GET", swaggerPath) {
+	if hasSwagger && gppOpenAPIHasRouteUnderMount(routes, swaggerPath) {
 		return fmt.Errorf("GET %s conflicts with http.Swagger", swaggerPath)
 	}
-	if hasOpenAPI && hasSwagger && openAPIPath == swaggerPath {
-		return fmt.Errorf("http.OpenAPI and http.Swagger use the same route %s", openAPIPath)
+	if hasSwagger && gppOpenAPIPathOwnedByMount(openAPIPath, swaggerPath) {
+		return fmt.Errorf("http.OpenAPI route %s conflicts with http.Swagger mount %s", openAPIPath, swaggerPath)
+	}
+	if hasOpenAPI && hasSwagger && gppOpenAPIPathOwnedByMount(swaggerPath, openAPIPath) {
+		return fmt.Errorf("http.Swagger route %s conflicts with http.OpenAPI", swaggerPath)
 	}
 
 	document, err := gppBuildOpenAPIDocument(app, descriptor, prefix)
@@ -146,7 +190,7 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 		})
 	}
 	if hasSwagger {
-		payload := gppSwaggerPage(openAPIPath)
+		payload := gppSwaggerPage(openAPIPath, swaggerPath)
 		gppRegisterGeneratedGET(mux, app, swaggerPath, func(ctx *Context) error {
 			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if !ctx.Written {
@@ -157,6 +201,37 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 			_, err := ctx.Response.Write(payload)
 			return err
 		})
+		if swaggerPath != "/" {
+			gppRegisterGeneratedGET(mux, app, swaggerPath+"/", func(ctx *Context) error {
+				ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+				if !ctx.Written {
+					ctx.Response.WriteHeader(stdhttp.StatusOK)
+					ctx.Status = stdhttp.StatusOK
+					ctx.Written = true
+				}
+				_, err := ctx.Response.Write(payload)
+				return err
+			})
+		}
+		for _, asset := range gppSwaggerAssetDefinitions {
+			asset := asset
+			assetPath := strings.TrimRight(swaggerPath, "/") + "/" + asset.Name
+			gppRegisterGeneratedGET(mux, app, assetPath, func(ctx *Context) error {
+				data, err := stdFS.ReadFile(swaggerFiles, asset.Name)
+				if err != nil {
+					return err
+				}
+				ctx.Response.Header().Set("Content-Type", asset.ContentType)
+				ctx.Response.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				if !ctx.Written {
+					ctx.Response.WriteHeader(stdhttp.StatusOK)
+					ctx.Status = stdhttp.StatusOK
+					ctx.Written = true
+				}
+				_, err = ctx.Response.Write(data)
+				return err
+			})
+		}
 	}
 	return nil
 }
@@ -509,25 +584,51 @@ func gppOpenAPISchemaForReflectType(typeOf reflect.Type, schemas map[string]any)
 	}
 }
 
-func gppSwaggerPage(openAPIPath string) []byte {
-	quotedPath := fmt.Sprintf("%q", openAPIPath)
-	return []byte(fmt.Sprintf(gppSwaggerHTML, quotedPath, openAPIPath, quotedPath))
+type gppSwaggerAsset struct {
+	Name        string
+	ContentType string
+}
+
+var gppSwaggerAssetDefinitions = []gppSwaggerAsset{
+	{Name: "swagger-ui.css", ContentType: "text/css; charset=utf-8"},
+	{Name: "swagger-ui-bundle.js", ContentType: "text/javascript; charset=utf-8"},
+	{Name: "swagger-ui-standalone-preset.js", ContentType: "text/javascript; charset=utf-8"},
+	{Name: "favicon-16x16.png", ContentType: "image/png"},
+	{Name: "favicon-32x32.png", ContentType: "image/png"},
+}
+
+func gppSwaggerPage(openAPIPath, swaggerPath string) []byte {
+	root := strings.TrimRight(swaggerPath, "/")
+	if root == "" {
+		root = "/"
+	}
+	assetURL := func(name string) string {
+		return strings.TrimRight(root, "/") + "/" + name
+	}
+	return []byte(fmt.Sprintf(
+		gppSwaggerHTML,
+		fmt.Sprintf("%q", assetURL("swagger-ui.css")),
+		fmt.Sprintf("%q", assetURL("favicon-32x32.png")),
+		fmt.Sprintf("%q", assetURL("swagger-ui-bundle.js")),
+		fmt.Sprintf("%q", assetURL("swagger-ui-standalone-preset.js")),
+		fmt.Sprintf("%q", openAPIPath),
+	))
 }
 
 const gppSwaggerHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Swagger UI</title><style>body{font:16px system-ui;margin:2rem;max-width:960px}code,pre{background:#f4f4f4;padding:.25rem}.operation{border:1px solid #ddd;border-radius:6px;margin:1rem 0;padding:1rem}.method{font-weight:700;color:#1769aa}</style></head>
-<body><h1>Swagger UI</h1><p>OpenAPI document: <a href=%s>%s</a></p><main id="api">Loading…</main>
+<title>Swagger UI</title><link rel="stylesheet" href=%s><link rel="icon" type="image/png" href=%s></head>
+<body><div id="swagger-ui"></div>
+<script src=%s></script><script src=%s></script>
 <script>
-const source=%s;
-fetch(source).then(response=>response.json()).then(api=>{
-  const root=document.getElementById("api");
-  root.innerHTML="";
-  for(const [path,item] of Object.entries(api.paths||{})) for(const [method,operation] of Object.entries(item)) {
-    if(!operation||typeof operation!=="object"||!["get","post","put","patch","delete"].includes(method)) continue;
-    const section=document.createElement("section"); section.className="operation";
-    section.innerHTML="<div class=method>"+method.toUpperCase()+" "+path+"</div><h2>"+(operation.summary||operation.operationId||"")+"</h2><p>"+(operation.description||"")+"</p>";
-    root.appendChild(section);
-  }
-}).catch(error=>document.getElementById("api").textContent="Unable to load OpenAPI document: "+error);
+window.onload=function() {
+  window.ui=SwaggerUIBundle({
+    url:%s,
+    dom_id:"#swagger-ui",
+    deepLinking:true,
+    presets:[SwaggerUIBundle.presets.apis,SwaggerUIStandalonePreset],
+    plugins:[SwaggerUIBundle.plugins.DownloadUrl],
+    layout:"StandaloneLayout"
+  });
+};
 </script></body></html>`

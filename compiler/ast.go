@@ -5,12 +5,14 @@ type Program struct {
 }
 
 type File struct {
-	Name        string
-	SourcePath  string
-	Package     string
-	Doc         string
-	Annotations []AnnotationUse
-	Decls       []Decl
+	Name            string
+	SourcePath      string
+	Package         string
+	Official        bool
+	OfficialPackage string
+	Doc             string
+	Annotations     []AnnotationUse
+	Decls           []Decl
 }
 
 type Decl interface {
