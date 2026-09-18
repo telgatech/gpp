@@ -85,6 +85,8 @@ func Run(args []string) int {
 		return runDoctor(commandArgs)
 	case "version":
 		return runVersion(commandArgs)
+	case "lsp":
+		return runLSP(commandArgs)
 	case "help", "-h", "--help":
 		if len(commandArgs) > 0 {
 			return commandHelp(commandArgs[0])
@@ -120,6 +122,7 @@ func printHelp() {
 	fmt.Println("    env        show environment information")
 	fmt.Println("    doctor     diagnose the toolchain")
 	fmt.Println("    version    show version information")
+	fmt.Println("    lsp        start the Language Server Protocol service")
 }
 
 func commandHelp(name string) int {
@@ -158,6 +161,8 @@ func commandHelp(name string) int {
 		fmt.Println("Usage: gpp doctor")
 	case "version":
 		fmt.Println("Usage: gpp version")
+	case "lsp":
+		fmt.Println("Usage: gpp lsp [--log[=path]]")
 	default:
 		fatalf("unknown command %q; run `gpp --help` for usage", name)
 		return 2
@@ -1362,7 +1367,7 @@ func runFmt(args []string) int {
 		if err != nil {
 			return reportError(err)
 		}
-		formatted := formatSource(string(data))
+		formatted := compiler.FormatSource(string(data))
 		if err := os.WriteFile(source, []byte(formatted), 0644); err != nil {
 			return reportError(err)
 		}

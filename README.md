@@ -92,6 +92,18 @@ gpp doc --json gpp/http.Server
 gpp doc --search template
 ```
 
+Start the editor language server over standard input/output:
+
+```bash
+gpp lsp
+```
+
+The server keeps open-document overlays in memory and provides diagnostics,
+completion, hover, navigation, references, rename, symbols, formatting, and
+signature help without running a Go backend build on every change. Use
+`gpp lsp --log=/tmp/gpp-lsp.log` when protocol-side diagnostics are needed;
+logs never go to stdout.
+
 ## Build and run
 
 The compiler can still be used as a transpiler:
