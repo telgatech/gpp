@@ -634,6 +634,73 @@ class App : http.Server @{http.OpenAPI, http.Swagger} {
 	}
 }
 
+func TestCompileFilesValidatesOAuthConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		message string
+	}{
+		{
+			name: "oauth requires a provider",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OAuth} {}
+`,
+			message: "http.OAuth requires a provider",
+		},
+		{
+			name: "oauth providers must be unique",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OAuth(http.OAuthProvider.Google), http.OAuth(http.OAuthProvider.Google)} {}
+`,
+			message: "duplicate OAuth provider google",
+		},
+		{
+			name: "oauth routes cannot conflict",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
+	func Login(ctx *http.Context) error @{http.GET("/auth/google")} { return nil }
+}
+`,
+			message: "conflicts with generated OAuth route",
+		},
+		{
+			name: "oauth hook signature",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
+	func OAuthLogin(ctx *http.Context, identity string) {}
+}
+`,
+			message: "OAuthLogin has invalid signature",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inputDir := t.TempDir()
+			outputDir := t.TempDir()
+			sourcePath := filepath.Join(inputDir, "main.gpp")
+			if err := os.WriteFile(sourcePath, []byte(test.source), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"})
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("expected %q, got %v", test.message, err)
+			}
+		})
+	}
+}
+
 func TestCompileFilesSupportsHTTPResponseHelpersAndErrorTemplates(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

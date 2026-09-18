@@ -1,0 +1,27 @@
+package main
+
+import (
+	"fmt"
+	http "gpp/http"
+)
+
+// This example demonstrates the framework-owned OAuth/OIDC login flow.
+// Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before running it.
+class App : http.Server @{http.IP("127.0.0.1"), http.OAuth(http.OAuthProvider.Google)} {
+	func OAuthLogin(ctx *http.Context, identity http.OAuthIdentity) {
+		fmt.Println("authenticated", identity.Provider, identity.ID, identity.Email)
+		ctx.Redirect("/", 302)
+	}
+
+	func OAuthError(ctx *http.Context, provider string, err error) {
+		fmt.Println("OAuth failed", provider, err)
+		ctx.Text(400, "login failed")
+	}
+}
+
+func main() {
+	app := App()
+	if err := app.Listen(); err != nil {
+		panic(err)
+	}
+}

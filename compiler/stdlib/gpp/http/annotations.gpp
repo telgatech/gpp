@@ -16,6 +16,7 @@ annotation (
 	Files(path string, dir string) on class
 	OpenAPI(path string = "/openapi.json") on class
 	Swagger(path string = "/swagger") on class
+	OAuth(options ...any) on class
 	Auth on class, method
 	NoAuth on method
 	Role(name string) on class, method

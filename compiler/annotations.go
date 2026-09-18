@@ -148,6 +148,30 @@ func validateAnnotationArguments(use AnnotationUse, declaration *AnnotationDecl)
 		}
 	}
 	signature := callableSignature{Name: declaration.Name, Parameters: parameters}
+	if len(parameters) == 1 && strings.HasPrefix(strings.TrimSpace(parameters[0].Type), "...") {
+		if !use.HasArguments || strings.TrimSpace(use.Arguments) == "" {
+			return nil
+		}
+		args, err := splitTopLevel(use.Arguments, ',')
+		if err != nil {
+			return err
+		}
+		variadicType := strings.TrimPrefix(strings.TrimSpace(parameters[0].Type), "...")
+		if variadicType == "any" {
+			return nil
+		}
+		for index, argument := range args {
+			parsed, err := parser.ParseExpr(strings.TrimSpace(argument))
+			if err != nil {
+				return fmt.Errorf("invalid argument %d to annotation %s: %w", index+1, declaration.Name, err)
+			}
+			actual := astExpressionTypeKey(parsed)
+			if actual != variadicType {
+				return fmt.Errorf("argument %d to annotation %s: expected %s, got %s", index+1, declaration.Name, variadicType, actual)
+			}
+		}
+		return nil
+	}
 	resolved, changed, resolveErr := resolveCallableCall(declaration.Name, args, []callableSignature{signature})
 	if resolveErr != nil || !changed {
 		return fmt.Errorf("annotation %s expects %d argument(s), got %d", declaration.Name, len(parameters), len(args))

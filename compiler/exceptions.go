@@ -3,7 +3,6 @@ package compiler
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -315,7 +314,7 @@ func isCatchTypeName(name string, context constructorContext) bool {
 	if importPath == "" {
 		return false
 	}
-	pkg, err := importer.Default().Import(importPath)
+	pkg, err := importNativePackage(importPath)
 	if err != nil {
 		return false
 	}
@@ -1254,7 +1253,7 @@ func nativePackageFunctionSignature(call *ast.CallExpr, context constructorConte
 		// package-qualified Go calls such as os.ReadFile.
 		importPath = receiver.Name
 	}
-	pkg, err := importer.Default().Import(importPath)
+	pkg, err := importNativePackage(importPath)
 	if err != nil {
 		return nil, false
 	}
@@ -1340,7 +1339,7 @@ func nativeNamedType(typeName string, context constructorContext) (*types.Named,
 			importPath = resolved
 		}
 	}
-	pkg, err := importer.Default().Import(importPath)
+	pkg, err := importNativePackage(importPath)
 	if err != nil {
 		return nil, nil, false
 	}

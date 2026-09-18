@@ -1,0 +1,502 @@
+package gpp.http
+
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	stdhttp "net/http"
+	"net/url"
+	"os"
+	"reflect"
+	"strings"
+	"sync"
+	"time"
+)
+
+enum OAuthProvider string {
+	Google = "google"
+	Facebook = "facebook"
+	GitHub = "github"
+	Microsoft = "microsoft"
+	Apple = "apple"
+}
+
+class OAuthIdentity {
+	Provider string
+	ID string
+	Email string
+	Name string
+	Picture string
+	EmailVerified bool
+	Claims map[string]any
+}
+
+class OAuthToken {
+	AccessToken string
+	RefreshToken string
+	TokenType string
+	Expiry time.Time
+	Scopes []string
+}
+
+type gppOAuthConfig struct {
+	Name string
+	Issuer string
+	ClientIDEnv string
+	ClientSecretEnv string
+	Scopes []string
+	ClientID string
+	ClientSecret string
+	BuiltIn bool
+	AuthorizationEndpoint string
+	TokenEndpoint string
+	UserInfoEndpoint string
+	JWKSURL string
+}
+
+type gppOAuthMetadata struct {
+	Issuer string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint string `json:"token_endpoint"`
+	UserInfoEndpoint string `json:"userinfo_endpoint"`
+	JWKSURL string `json:"jwks_uri"`
+}
+
+type gppOAuthState struct {
+	Provider string
+	Verifier string
+	Nonce string
+	RedirectURI string
+	Expires time.Time
+}
+
+type gppOAuthEngine struct {
+	Configs map[string]*gppOAuthConfig
+	States map[string]gppOAuthState
+	Metadata map[string]gppOAuthMetadata
+	Mu sync.Mutex
+	Client *stdhttp.Client
+}
+
+type gppOAuthDiscoveryResponse struct {
+	Issuer string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint string `json:"token_endpoint"`
+	UserInfoEndpoint string `json:"userinfo_endpoint"`
+	JWKSURL string `json:"jwks_uri"`
+}
+
+type gppOAuthTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType string `json:"token_type"`
+	ExpiresIn int `json:"expires_in"`
+	Scope string `json:"scope"`
+	IDToken string `json:"id_token"`
+}
+
+type gppOAuthExchangeResult struct {
+	Token *OAuthToken
+	IDToken string
+}
+
+type gppOAuthJWKSet struct {
+	Keys []gppOAuthJWK `json:"keys"`
+}
+
+type gppOAuthJWK struct {
+	Kid string `json:"kid"`
+	Kty string `json:"kty"`
+	Use string `json:"use"`
+	Alg string `json:"alg"`
+	N string `json:"n"`
+	E string `json:"e"`
+}
+
+func gppOAuthBuiltIn(provider OAuthProvider) gppOAuthConfig {
+	config := gppOAuthConfig{Name: string(provider), BuiltIn: true, Scopes: []string{"openid", "email", "profile"}}
+	switch provider {
+	case OAuthProvider.Google:
+		config.Issuer = "https://accounts.google.com"
+		config.ClientIDEnv = "GOOGLE_CLIENT_ID"
+		config.ClientSecretEnv = "GOOGLE_CLIENT_SECRET"
+		config.AuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
+		config.TokenEndpoint = "https://oauth2.googleapis.com/token"
+		config.UserInfoEndpoint = "https://openidconnect.googleapis.com/v1/userinfo"
+		config.JWKSURL = "https://www.googleapis.com/oauth2/v3/certs"
+	case OAuthProvider.Facebook:
+		config.Issuer = "https://www.facebook.com"
+		config.ClientIDEnv = "FACEBOOK_CLIENT_ID"
+		config.ClientSecretEnv = "FACEBOOK_CLIENT_SECRET"
+		config.AuthorizationEndpoint = "https://www.facebook.com/v19.0/dialog/oauth"
+		config.TokenEndpoint = "https://graph.facebook.com/v19.0/oauth/access_token"
+		config.UserInfoEndpoint = "https://graph.facebook.com/me?fields=id,name,email,picture"
+		config.Scopes = []string{"email", "public_profile"}
+	case OAuthProvider.GitHub:
+		config.Issuer = "https://github.com"
+		config.ClientIDEnv = "GITHUB_CLIENT_ID"
+		config.ClientSecretEnv = "GITHUB_CLIENT_SECRET"
+		config.AuthorizationEndpoint = "https://github.com/login/oauth/authorize"
+		config.TokenEndpoint = "https://github.com/login/oauth/access_token"
+		config.UserInfoEndpoint = "https://api.github.com/user"
+		config.Scopes = []string{"read:user", "user:email"}
+	case OAuthProvider.Microsoft:
+		config.Issuer = "https://login.microsoftonline.com/common/v2.0"
+		config.ClientIDEnv = "MICROSOFT_CLIENT_ID"
+		config.ClientSecretEnv = "MICROSOFT_CLIENT_SECRET"
+		config.AuthorizationEndpoint = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+		config.TokenEndpoint = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+		config.UserInfoEndpoint = "https://graph.microsoft.com/oidc/userinfo"
+		config.JWKSURL = "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+	case OAuthProvider.Apple:
+		config.Issuer = "https://appleid.apple.com"
+		config.ClientIDEnv = "APPLE_CLIENT_ID"
+		config.ClientSecretEnv = "APPLE_CLIENT_SECRET"
+		config.AuthorizationEndpoint = "https://appleid.apple.com/auth/authorize"
+		config.TokenEndpoint = "https://appleid.apple.com/auth/token"
+		config.JWKSURL = "https://appleid.apple.com/auth/keys"
+	default:
+		return gppOAuthConfig{}
+	}
+	return config
+}
+
+func gppOAuthConfigFromAnnotation(args []any) (gppOAuthConfig, error) {
+	if len(args) == 0 {
+		return gppOAuthConfig{}, errors.New("http.OAuth requires a provider or explicit provider configuration")
+	}
+	if provider, ok := args[0].(OAuthProvider); ok {
+		config := gppOAuthBuiltIn(provider)
+		if config.Name == "" {
+			return gppOAuthConfig{}, fmt.Errorf("unsupported OAuth provider %q", provider)
+		}
+		if len(args) > 1 {
+			config.Scopes = gppOAuthStrings(args[1:])
+		}
+		return config, nil
+	}
+	if len(args) < 4 {
+		return gppOAuthConfig{}, errors.New("explicit http.OAuth requires name, issuer URL, client ID environment name, and client secret environment name")
+	}
+	config := gppOAuthConfig{
+		Name: fmt.Sprint(args[0]),
+		Issuer: fmt.Sprint(args[1]),
+		ClientIDEnv: fmt.Sprint(args[2]),
+		ClientSecretEnv: fmt.Sprint(args[3]),
+	}
+	if len(args) > 4 {
+		config.Scopes = gppOAuthStrings(args[4:])
+	}
+	return config, nil
+}
+
+func gppOAuthStrings(values []any) []string {
+	result := []string{}
+	for _, value := range values {
+		result = append(result, fmt.Sprint(value))
+	}
+	return result
+}
+
+func gppOAuthConfigs(descriptor any) ([]*gppOAuthConfig, error) {
+	annotations := gppAnnotationValues(descriptor, "gpp.http.OAuth")
+	result := []*gppOAuthConfig{}
+	seen := map[string]bool{}
+	for _, args := range annotations {
+		config, err := gppOAuthConfigFromAnnotation(args)
+		if err != nil {
+			return nil, err
+		}
+		if !gppOAuthValidName(config.Name) {
+			return nil, fmt.Errorf("invalid OAuth provider name %q; use lowercase letters, numbers, and hyphens", config.Name)
+		}
+		if seen[config.Name] {
+			return nil, fmt.Errorf("duplicate OAuth provider %s", config.Name)
+		}
+		seen[config.Name] = true
+		if config.Issuer == "" || config.ClientIDEnv == "" || config.ClientSecretEnv == "" {
+			return nil, fmt.Errorf("OAuth provider %s has incomplete configuration", config.Name)
+		}
+		if clientID, ok := os.LookupEnv(config.ClientIDEnv); !ok || clientID == "" {
+			return nil, fmt.Errorf("OAuth provider %s is configured but %s is not set", config.Name, config.ClientIDEnv)
+		} else {
+			config.ClientID = clientID
+		}
+		if clientSecret, ok := os.LookupEnv(config.ClientSecretEnv); !ok || clientSecret == "" {
+			return nil, fmt.Errorf("OAuth provider %s is configured but %s is not set", config.Name, config.ClientSecretEnv)
+		} else {
+			config.ClientSecret = clientSecret
+		}
+		result = append(result, &config)
+	}
+	return result, nil
+}
+
+func gppAnnotationValues(owner any, name string) [][]any {
+	if owner == nil {
+		return nil
+	}
+	value := reflect.ValueOf(owner)
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() { return nil }
+		value = value.Elem()
+	}
+	if !value.IsValid() { return nil }
+	annotations := value.FieldByName("Annotations")
+	if !annotations.IsValid() { return nil }
+	result := [][]any{}
+	for index := 0; index < annotations.Len(); index++ {
+		annotation := annotations.Index(index)
+		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
+		shortName := fmt.Sprint(annotation.FieldByName("Name").Interface())
+		if fullName != name && shortName != name { continue }
+		args := annotation.FieldByName("Args")
+		values := make([]any, args.Len())
+		for argIndex := 0; argIndex < args.Len(); argIndex++ { values[argIndex] = args.Index(argIndex).Interface() }
+		result = append(result, values)
+	}
+	return result
+}
+
+func gppOAuthValidName(name string) bool {
+	if name == "" { return false }
+	for _, value := range name {
+		if value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '-' { continue }
+		return false
+	}
+	return true
+}
+
+func gppOAuthNewEngine(descriptor any) (*gppOAuthEngine, error) {
+	configs, err := gppOAuthConfigs(descriptor)
+	if err != nil { return nil, err }
+	if len(configs) == 0 { return nil, nil }
+	engine := &gppOAuthEngine{Configs: map[string]*gppOAuthConfig{}, States: map[string]gppOAuthState{}, Metadata: map[string]gppOAuthMetadata{}, Client: &stdhttp.Client{Timeout: 15 * time.Second}}
+	for _, config := range configs { engine.Configs[config.Name] = config }
+	return engine, nil
+}
+
+func gppOAuthRandom(size int) (string, error) {
+	value := make([]byte, size)
+	if _, err := rand.Read(value); err != nil { return "", err }
+	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func gppOAuthChallenge(verifier string) string {
+	digest := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func gppOAuthMetadataFor(engine *gppOAuthEngine, config *gppOAuthConfig) (gppOAuthMetadata, error) {
+	engine.Mu.Lock()
+	metadata, exists := engine.Metadata[config.Name]
+	engine.Mu.Unlock()
+	if exists { return metadata, nil }
+	metadata = gppOAuthMetadata{Issuer: config.Issuer, AuthorizationEndpoint: config.AuthorizationEndpoint, TokenEndpoint: config.TokenEndpoint, UserInfoEndpoint: config.UserInfoEndpoint, JWKSURL: config.JWKSURL}
+	if metadata.AuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
+		base := strings.TrimRight(config.Issuer, "/")
+		candidates := []string{base + "/.well-known/openid-configuration", base + "/.well-known/oauth-authorization-server"}
+		var lastErr error
+		for _, endpoint := range candidates {
+			response, err := engine.Client.Get(endpoint)
+			if err != nil { lastErr = err; continue }
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20)); response.Body.Close()
+			if readErr != nil { lastErr = readErr; continue }
+			if response.StatusCode < 200 || response.StatusCode >= 300 { lastErr = fmt.Errorf("discovery returned HTTP %d", response.StatusCode); continue }
+			var discovered gppOAuthDiscoveryResponse
+			if err := json.Unmarshal(body, &discovered); err != nil { lastErr = err; continue }
+			metadata = gppOAuthMetadata{Issuer: discovered.Issuer, AuthorizationEndpoint: discovered.AuthorizationEndpoint, TokenEndpoint: discovered.TokenEndpoint, UserInfoEndpoint: discovered.UserInfoEndpoint, JWKSURL: discovered.JWKSURL}
+			break
+		}
+		if metadata.AuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
+			if lastErr == nil { lastErr = errors.New("provider discovery returned no usable endpoints") }
+			return gppOAuthMetadata{}, fmt.Errorf("OAuth provider %s discovery failed: %w", config.Name, lastErr)
+		}
+	}
+	if metadata.Issuer == "" { metadata.Issuer = config.Issuer }
+	engine.Mu.Lock(); engine.Metadata[config.Name] = metadata; engine.Mu.Unlock()
+	return metadata, nil
+}
+
+func gppOAuthPublicBaseURL(app any, request *stdhttp.Request) string {
+	proto := request.Header.Get("X-Forwarded-Proto")
+	if proto == "" { proto = "http"; if request.TLS != nil { proto = "https" } }
+	host := request.Header.Get("X-Forwarded-Host")
+	if host == "" { host = request.Host }
+	if host == "" { host = "localhost" }
+	return proto + "://" + host
+}
+
+func gppOAuthLogin(engine *gppOAuthEngine, app any, provider string, ctx *Context) error {
+	config := engine.Configs[provider]
+	if config == nil { return fmt.Errorf("unknown OAuth provider %s", provider) }
+	metadata, err := gppOAuthMetadataFor(engine, config)
+	if err != nil { return err }
+	state, err := gppOAuthRandom(32); if err != nil { return err }
+	verifier, err := gppOAuthRandom(48); if err != nil { return err }
+	nonce, err := gppOAuthRandom(32); if err != nil { return err }
+	redirectURI := gppOAuthPublicBaseURL(app, ctx.Request) + "/auth/" + provider + "/callback"
+	engine.Mu.Lock(); engine.States[state] = gppOAuthState{Provider: provider, Verifier: verifier, Nonce: nonce, RedirectURI: redirectURI, Expires: time.Now().Add(10 * time.Minute)}; engine.Mu.Unlock()
+	query := url.Values{}
+	query.Set("client_id", config.ClientID); query.Set("redirect_uri", redirectURI); query.Set("response_type", "code"); query.Set("scope", strings.Join(config.Scopes, " ")); query.Set("state", state); query.Set("code_challenge", gppOAuthChallenge(verifier)); query.Set("code_challenge_method", "S256")
+	if gppOAuthUsesOIDC(config, metadata) { query.Set("nonce", nonce) }
+	secure := ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https"
+	stdhttp.SetCookie(ctx.Response, &stdhttp.Cookie{Name: "gpp_oauth_state_" + provider, Value: state, Path: "/auth/" + provider + "/callback", HttpOnly: true, Secure: secure, SameSite: stdhttp.SameSiteLaxMode, MaxAge: 600})
+	stdhttp.Redirect(ctx.Response, ctx.Request, metadata.AuthorizationEndpoint+"?"+query.Encode(), stdhttp.StatusFound)
+	ctx.Status = stdhttp.StatusFound; ctx.Written = true
+	return nil
+}
+
+func gppOAuthUsesOIDC(config *gppOAuthConfig, metadata gppOAuthMetadata) bool {
+	for _, scope := range config.Scopes { if scope == "openid" { return metadata.JWKSURL != "" } }
+	return false
+}
+
+func gppOAuthCallback(engine *gppOAuthEngine, app any, provider string, ctx *Context) error {
+	config := engine.Configs[provider]; if config == nil { return fmt.Errorf("unknown OAuth provider %s", provider) }
+	stateValue := ctx.Request.URL.Query().Get("state")
+	cookie, cookieErr := ctx.Request.Cookie("gpp_oauth_state_" + provider)
+	engine.Mu.Lock(); flow, exists := engine.States[stateValue]; if exists { delete(engine.States, stateValue) }; engine.Mu.Unlock()
+	if !exists || flow.Expires.Before(time.Now()) || stateValue == "" || cookieErr != nil || cookie.Value != stateValue { return errors.New("invalid or expired OAuth state") }
+	stdhttp.SetCookie(ctx.Response, &stdhttp.Cookie{Name: "gpp_oauth_state_" + provider, Value: "", Path: "/auth/" + provider + "/callback", HttpOnly: true, Secure: ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https", SameSite: stdhttp.SameSiteLaxMode, MaxAge: -1})
+	if providerError := ctx.Request.URL.Query().Get("error"); providerError != "" { return fmt.Errorf("provider returned %s", providerError) }
+	code := ctx.Request.URL.Query().Get("code"); if code == "" { return errors.New("OAuth callback did not include an authorization code") }
+	metadata, err := gppOAuthMetadataFor(engine, config); if err != nil { return err }
+	exchanged, err := gppOAuthExchange(engine.Client, metadata, config, code, flow.RedirectURI, flow.Verifier); if err != nil { return err }
+	identity, err := gppOAuthIdentity(engine.Client, metadata, config, exchanged.Token, exchanged.IDToken, flow.Nonce); if err != nil { return err }
+	return gppOAuthInvokeLogin(app, ctx, identity, exchanged.Token)
+}
+
+func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string, engine *gppOAuthEngine) error {
+	if engine == nil { return nil }
+	routes := gppOpenAPIRoutes(descriptor, prefix)
+	for name := range engine.Configs {
+		loginPath := gppOpenAPIJoinPath(prefix, "/auth/"+name)
+		callbackPath := loginPath + "/callback"
+		if gppOpenAPIHasRoute(routes, "GET", loginPath) || gppOpenAPIHasRoute(routes, "GET", callbackPath) { return fmt.Errorf("OAuth provider %s conflicts with an existing HTTP route", name) }
+		provider := name
+		gppRegisterGeneratedGET(mux, app, loginPath, func(ctx *Context) error { return gppOAuthLogin(engine, app, provider, ctx) })
+		gppRegisterGeneratedGET(mux, app, callbackPath, func(ctx *Context) error {
+			if err := gppOAuthCallback(engine, app, provider, ctx); err != nil {
+				log.Printf("gpp/http OAuth provider %s failed: %v", provider, err)
+				if hookErr := gppOAuthInvokeError(app, ctx, provider, err); hookErr != nil { err = hookErr }
+				if !ctx.Written { return ctx.Text(400, "OAuth authentication failed") }
+			}
+			if !ctx.Written { return ctx.Text("OAuth authentication succeeded") }
+			return nil
+		})
+	}
+	return nil
+}
+
+func gppOAuthExchange(client *stdhttp.Client, metadata gppOAuthMetadata, config *gppOAuthConfig, code, redirectURI, verifier string) (*gppOAuthExchangeResult, error) {
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirectURI}, "client_id": {config.ClientID}, "client_secret": {config.ClientSecret}, "code_verifier": {verifier}}
+	request, err := stdhttp.NewRequest(stdhttp.MethodPost, metadata.TokenEndpoint, strings.NewReader(form.Encode())); if err != nil { return nil, err }
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded"); request.Header.Set("Accept", "application/json")
+	response, err := client.Do(request); if err != nil { return nil, err }
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20)); response.Body.Close(); if readErr != nil { return nil, readErr }
+	if response.StatusCode < 200 || response.StatusCode >= 300 { return nil, fmt.Errorf("OAuth token exchange returned HTTP %d", response.StatusCode) }
+	var payload gppOAuthTokenResponse; if err := json.Unmarshal(body, &payload); err != nil { return nil, err }
+	if payload.AccessToken == "" { return nil, errors.New("OAuth token response did not include an access token") }
+	token := &OAuthToken{AccessToken: payload.AccessToken, RefreshToken: payload.RefreshToken, TokenType: payload.TokenType, Scopes: strings.Fields(payload.Scope)}; if payload.ExpiresIn > 0 { token.Expiry = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second) }
+	return &gppOAuthExchangeResult{Token: token, IDToken: payload.IDToken}, nil
+}
+
+func gppOAuthIdentity(client *stdhttp.Client, metadata gppOAuthMetadata, config *gppOAuthConfig, token *OAuthToken, idToken, nonce string) (*OAuthIdentity, error) {
+	claims := map[string]any{}
+	if gppOAuthUsesOIDC(config, metadata) && idToken == "" { return nil, errors.New("OIDC token response did not include an ID token") }
+	if tokenClaims, err := gppOAuthValidateIDToken(client, metadata, config, idToken, nonce); err != nil { return nil, err } else if tokenClaims != nil { claims = tokenClaims }
+	if metadata.UserInfoEndpoint != "" {
+		request, err := stdhttp.NewRequest(stdhttp.MethodGet, metadata.UserInfoEndpoint, nil); if err == nil {
+			request.Header.Set("Authorization", "Bearer "+token.AccessToken); request.Header.Set("Accept", "application/json")
+			if response, requestErr := client.Do(request); requestErr == nil {
+				body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20)); response.Body.Close()
+				if readErr == nil && response.StatusCode >= 200 && response.StatusCode < 300 { var profile map[string]any; if json.Unmarshal(body, &profile) == nil { for key, value := range profile { claims[key] = value } } }
+			}
+		}
+	}
+	id := gppOAuthStringClaim(claims, "sub"); if id == "" { id = gppOAuthStringClaim(claims, "id") }; if id == "" { return nil, errors.New("OAuth identity has no stable subject") }
+	return &OAuthIdentity{Provider: config.Name, ID: id, Email: gppOAuthStringClaim(claims, "email"), Name: gppOAuthFirstClaim(claims, "name", "preferred_username", "login"), Picture: gppOAuthFirstClaim(claims, "picture", "avatar_url"), EmailVerified: gppOAuthBoolClaim(claims, "email_verified"), Claims: claims}, nil
+}
+
+func gppOAuthValidateIDToken(client *stdhttp.Client, metadata gppOAuthMetadata, config *gppOAuthConfig, idToken, nonce string) (map[string]any, error) {
+	if idToken == "" { return nil, nil }
+	parts := strings.Split(idToken, ".")
+	if len(parts) != 3 { return nil, errors.New("invalid OIDC ID token") }
+	decode := func(value string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(value) }
+	headerBytes, err := decode(parts[0]); if err != nil { return nil, errors.New("invalid OIDC ID token header") }
+	claimsBytes, err := decode(parts[1]); if err != nil { return nil, errors.New("invalid OIDC ID token claims") }
+	var header struct { Alg string `json:"alg"`; Kid string `json:"kid"` }
+	if err := json.Unmarshal(headerBytes, &header); err != nil { return nil, err }
+	claims := map[string]any{}; if err := json.Unmarshal(claimsBytes, &claims); err != nil { return nil, err }
+	if header.Alg != "RS256" && header.Alg != "RS384" && header.Alg != "RS512" { return nil, fmt.Errorf("unsupported OIDC signing algorithm %s", header.Alg) }
+	if metadata.JWKSURL == "" { return nil, errors.New("OIDC provider has no JWKS endpoint") }
+	request, err := stdhttp.NewRequest(stdhttp.MethodGet, metadata.JWKSURL, nil); if err != nil { return nil, err }
+	response, err := client.Do(request); if err != nil { return nil, err }
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20)); response.Body.Close(); if readErr != nil { return nil, readErr }
+	if response.StatusCode < 200 || response.StatusCode >= 300 { return nil, fmt.Errorf("OIDC JWKS returned HTTP %d", response.StatusCode) }
+	var keys gppOAuthJWKSet; if err := json.Unmarshal(body, &keys); err != nil { return nil, err }
+	var selected *gppOAuthJWK
+	for index := range keys.Keys { key := &keys.Keys[index]; if key.Kty == "RSA" && (header.Kid == "" || key.Kid == header.Kid) { selected = key; break } }
+	if selected == nil { return nil, errors.New("OIDC signing key not found") }
+	modulus, err := base64.RawURLEncoding.DecodeString(selected.N); if err != nil { return nil, err }
+	exponent, err := base64.RawURLEncoding.DecodeString(selected.E); if err != nil { return nil, err }
+	publicKey := &rsa.PublicKey{N: new(big.Int).SetBytes(modulus), E: int(new(big.Int).SetBytes(exponent).Int64())}
+	input := []byte(parts[0] + "." + parts[1]); var digest []byte; hash := crypto.SHA256
+	switch header.Alg { case "RS384": value := sha512.Sum384(input); digest = value[:]; hash = crypto.SHA384; case "RS512": value := sha512.Sum512(input); digest = value[:]; hash = crypto.SHA512; default: value := sha256.Sum256(input); digest = value[:] }
+	signature, err := decode(parts[2]); if err != nil { return nil, errors.New("invalid OIDC ID token signature") }
+	if err := rsa.VerifyPKCS1v15(publicKey, hash, digest, signature); err != nil { return nil, errors.New("OIDC ID token signature verification failed") }
+	issuer := gppOAuthStringClaim(claims, "iss")
+	issuerMatches := issuer != "" && (issuer == metadata.Issuer || issuer == config.Issuer)
+	if config.Name == "microsoft" && strings.HasPrefix(issuer, "https://login.microsoftonline.com/") && strings.HasSuffix(issuer, "/v2.0") { issuerMatches = true }
+	if !issuerMatches { return nil, errors.New("OIDC issuer validation failed") }
+	audience, ok := claims["aud"]
+	validAudience := false
+	if ok { switch value := audience.(type) { case string: validAudience = value == config.ClientID; case []any: for _, item := range value { if fmt.Sprint(item) == config.ClientID { validAudience = true } } } }
+	if !validAudience { return nil, errors.New("OIDC audience validation failed") }
+	expiry, ok := claims["exp"].(float64)
+	if !ok || time.Unix(int64(expiry), 0).Before(time.Now()) { return nil, errors.New("OIDC ID token has expired") }
+	if nonce != "" && gppOAuthStringClaim(claims, "nonce") != nonce { return nil, errors.New("OIDC nonce validation failed") }
+	return claims, nil
+}
+
+func gppOAuthStringClaim(claims map[string]any, key string) string { value, ok := claims[key]; if !ok { return "" }; return fmt.Sprint(value) }
+func gppOAuthFirstClaim(claims map[string]any, keys ...string) string { for _, key := range keys { if value := gppOAuthStringClaim(claims, key); value != "" { return value } }; return "" }
+func gppOAuthBoolClaim(claims map[string]any, key string) bool { value, ok := claims[key]; if !ok { return false }; if result, ok := value.(bool); ok { return result }; return fmt.Sprint(value) == "true" }
+
+func gppOAuthInvokeLogin(app any, ctx *Context, identity *OAuthIdentity, token *OAuthToken) error {
+	value := reflect.ValueOf(app)
+	for _, candidate := range []struct { Name string; Values []any }{{Name: "OAuthLogin", Values: []any{ctx, identity}}, {Name: "OAuthLogin", Values: []any{ctx, identity, token}}, {Name: "OAuthLogin__gpp_3", Values: []any{ctx, identity, token}}, {Name: "OAuthLogin__gpp_2", Values: []any{ctx, identity}}} {
+		method := value.MethodByName(candidate.Name); if !method.IsValid() || method.Type().NumIn() != len(candidate.Values) { continue }
+		arguments := []reflect.Value{}; compatible := true
+		for index, item := range candidate.Values { argument, ok := gppOAuthReflectArgument(item, method.Type().In(index)); if !ok { compatible = false; break }; arguments = append(arguments, argument) }
+		if !compatible { continue }
+		result := method.Call(arguments); return gppErrorResult(result)
+	}
+	return nil
+}
+
+func gppOAuthReflectArgument(value any, expected reflect.Type) (reflect.Value, bool) {
+	actual := reflect.ValueOf(value)
+	if !actual.IsValid() { return reflect.Zero(expected), expected != nil }
+	if actual.Type().AssignableTo(expected) { return actual, true }
+	if actual.Kind() == reflect.Pointer && actual.Elem().IsValid() && actual.Elem().Type().AssignableTo(expected) { return actual.Elem(), true }
+	if expected.Kind() == reflect.Pointer && actual.Type().AssignableTo(expected) { return actual, true }
+	return reflect.Value{}, false
+}
+
+func gppOAuthInvokeError(app any, ctx *Context, provider string, cause error) error {
+	method := reflect.ValueOf(app).MethodByName("OAuthError")
+	if !method.IsValid() || method.Type().NumIn() != 3 { return nil }
+	result := method.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(provider), reflect.ValueOf(cause)})
+	return gppErrorResult(result)
+}

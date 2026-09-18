@@ -76,6 +76,8 @@ The examples cover:
   custom error templates, request context values, lifecycle hooks, graceful
   shutdown, configurable ports, and opt-in OpenAPI JSON plus self-contained
   Swagger UI endpoints under the configured prefix.
+- `oauth.gpp` — the bundled `gpp/http` OAuth/OIDC login flow with a built-in
+  provider, PKCE, callback state, normalized identity, and login/error hooks.
 
 The dotted-package example is compiled as a pair:
 

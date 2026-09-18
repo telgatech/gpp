@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -705,7 +704,7 @@ func configureNativeExtensionMethods(context *constructorContext, file *File) {
 		if importPath == "" {
 			continue
 		}
-		pkg, err := importer.Default().Import(importPath)
+		pkg, err := importNativePackage(importPath)
 		if err != nil {
 			continue
 		}
@@ -739,7 +738,7 @@ func configureNativeExtensionMethods(context *constructorContext, file *File) {
 		extensionNames[extension.Method.Name] = true
 	}
 	for alias, importPath := range paths {
-		pkg, err := importer.Default().Import(importPath)
+		pkg, err := importNativePackage(importPath)
 		if err != nil {
 			continue
 		}

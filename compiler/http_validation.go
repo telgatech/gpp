@@ -23,6 +23,7 @@ func validateHTTPDocumentation(program *Program, model *SemanticModel) error {
 				continue
 			}
 			var openAPI, swagger *AnnotationUse
+			oauthUses := []*AnnotationUse{}
 			for index := range class.Annotations {
 				use := &class.Annotations[index]
 				switch httpAnnotationKind(*use, pkg) {
@@ -30,6 +31,19 @@ func validateHTTPDocumentation(program *Program, model *SemanticModel) error {
 					openAPI = use
 				case "Swagger":
 					swagger = use
+				case "OAuth":
+					oauthUses = append(oauthUses, use)
+				}
+			}
+			if len(oauthUses) > 0 {
+				if !httpServerClass(pkg, class, map[*ClassDecl]bool{}) {
+					return fmt.Errorf("%s: http.OAuth requires a class derived from http.Server", annotationUseLocation(*oauthUses[0]))
+				}
+				if err := validateHTTPOAuthAnnotations(pkg, class, oauthUses, prefixForHTTPClass(pkg, class)); err != nil {
+					return err
+				}
+				if err := validateHTTPOAuthHooks(pkg, class); err != nil {
+					return err
 				}
 			}
 			if swagger == nil {
@@ -79,11 +93,156 @@ func httpAnnotationKind(use AnnotationUse, pkg *PackageSymbols) string {
 		return ""
 	}
 	switch last {
-	case "OpenAPI", "Swagger", "Prefix", "GET", "POST", "PUT", "PATCH", "DELETE":
+	case "OpenAPI", "Swagger", "OAuth", "Prefix", "GET", "POST", "PUT", "PATCH", "DELETE":
 		return last
 	default:
 		return ""
 	}
+}
+
+func validateHTTPOAuthAnnotations(pkg *PackageSymbols, class *ClassDecl, uses []*AnnotationUse, prefix string) error {
+	seen := map[string]bool{}
+	routes := httpClassRoutes(pkg, class, prefix)
+	for _, use := range uses {
+		name, err := httpOAuthStaticName(*use)
+		if err != nil {
+			return fmt.Errorf("%s: %w", annotationUseLocation(*use), err)
+		}
+		if seen[name] {
+			return fmt.Errorf("%s: duplicate OAuth provider %s", annotationUseLocation(*use), name)
+		}
+		seen[name] = true
+		loginPath := joinHTTPPath(prefix, "/auth/"+name)
+		callbackPath := loginPath + "/callback"
+		for _, route := range routes {
+			if route.Method == "GET" && (route.Path == loginPath || route.Path == callbackPath) {
+				return fmt.Errorf("%s: GET %s conflicts with generated OAuth route", annotationUseLocation(*use), route.Path)
+			}
+		}
+	}
+	return nil
+}
+
+func httpOAuthStaticName(use AnnotationUse) (string, error) {
+	if !use.HasArguments || strings.TrimSpace(use.Arguments) == "" {
+		return "", fmt.Errorf("http.OAuth requires a provider or explicit provider configuration")
+	}
+	args, err := splitTopLevel(use.Arguments, ',')
+	if err != nil || len(args) == 0 {
+		return "", fmt.Errorf("http.OAuth has invalid arguments")
+	}
+	first := strings.TrimSpace(args[0])
+	if !strings.HasPrefix(first, "\"") && !strings.HasPrefix(first, "`") && strings.Contains(first, "OAuthProvider.") {
+		member := first[strings.LastIndex(first, ".")+1:]
+		providers := map[string]string{"Google": "google", "Facebook": "facebook", "GitHub": "github", "Microsoft": "microsoft", "Apple": "apple"}
+		name, ok := providers[member]
+		if !ok {
+			return "", fmt.Errorf("unknown OAuth provider %s", member)
+		}
+		for index, argument := range args[1:] {
+			if _, err := strconv.Unquote(strings.TrimSpace(argument)); err != nil {
+				return "", fmt.Errorf("OAuth scope %d must be a string literal", index+1)
+			}
+		}
+		return name, nil
+	}
+	if len(args) < 4 {
+		return "", fmt.Errorf("explicit http.OAuth requires name, issuer URL, client ID environment name, and client secret environment name")
+	}
+	values := make([]string, 4)
+	for index := range values {
+		value, err := strconv.Unquote(strings.TrimSpace(args[index]))
+		if err != nil {
+			return "", fmt.Errorf("explicit http.OAuth argument %d must be a string literal", index+1)
+		}
+		values[index] = value
+	}
+	if !gppOAuthValidNameForCompiler(values[0]) {
+		return "", fmt.Errorf("invalid OAuth provider name %q; use lowercase letters, numbers, and hyphens", values[0])
+	}
+	for index, argument := range args[4:] {
+		if _, err := strconv.Unquote(strings.TrimSpace(argument)); err != nil {
+			return "", fmt.Errorf("OAuth scope %d must be a string literal", index+1)
+		}
+	}
+	return values[0], nil
+}
+
+func gppOAuthValidNameForCompiler(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, value := range name {
+		if value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
+	for _, method := range class.Methods {
+		if method.Name != "OAuthLogin" && method.Name != "OAuthError" {
+			continue
+		}
+		parameters, err := parseParameterInfos(method.Parameters)
+		if err != nil {
+			return fmt.Errorf("%s: %s has invalid parameters: %w", classLocation(class), method.Name, err)
+		}
+		if method.Result != "" && strings.TrimSpace(method.Result) != "error" {
+			return fmt.Errorf("%s: %s may return only error", classLocation(class), method.Name)
+		}
+		if method.Name == "OAuthError" {
+			if len(parameters) != 3 || !httpOAuthTypeMatches(pkg, parameters[0].Type, "Context", true, false) || normalizeHTTPHookType(parameters[1].Type) != "string" || normalizeHTTPHookType(parameters[2].Type) != "error" {
+				return fmt.Errorf("%s: OAuthError must have signature (ctx *http.Context, provider string, err error)", classLocation(class))
+			}
+			continue
+		}
+		if len(parameters) != 2 && len(parameters) != 3 {
+			return fmt.Errorf("%s: OAuthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])", classLocation(class))
+		}
+		if !httpOAuthTypeMatches(pkg, parameters[0].Type, "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].Type, "OAuthIdentity", false, true) {
+			return fmt.Errorf("%s: OAuthLogin has invalid signature", classLocation(class))
+		}
+		if len(parameters) == 3 && !httpOAuthTypeMatches(pkg, parameters[2].Type, "OAuthToken", false, true) {
+			return fmt.Errorf("%s: OAuthLogin token parameter must be http.OAuthToken", classLocation(class))
+		}
+	}
+	return nil
+}
+
+func normalizeHTTPHookType(value string) string {
+	return strings.Join(strings.Fields(value), "")
+}
+
+func httpOAuthTypeMatches(pkg *PackageSymbols, value, name string, pointer, allowPointer bool) bool {
+	typeName := normalizeHTTPHookType(value)
+	if pointer && !strings.HasPrefix(typeName, "*") {
+		return false
+	}
+	if !pointer && strings.HasPrefix(typeName, "*") {
+		if !allowPointer {
+			return false
+		}
+		typeName = strings.TrimPrefix(typeName, "*")
+	}
+	if pointer {
+		typeName = strings.TrimPrefix(typeName, "*")
+	}
+	if typeName == "gpp.http."+name {
+		return true
+	}
+	for alias, importPath := range pkg.Imports {
+		if importPath == "gpp/http" && typeName == alias+"."+name {
+			return true
+		}
+	}
+	return false
+}
+
+func prefixForHTTPClass(pkg *PackageSymbols, class *ClassDecl) string {
+	return httpClassAnnotationPath(pkg, class, "Prefix", "")
 }
 
 func httpServerClass(pkg *PackageSymbols, class *ClassDecl, visiting map[*ClassDecl]bool) bool {

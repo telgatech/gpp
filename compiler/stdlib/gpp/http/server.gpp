@@ -373,6 +373,12 @@ class Server {
 		return nil
 	}
 
+	func OAuthLogin(ctx *Context, identity *OAuthIdentity) {}
+
+	func OAuthLogin(ctx *Context, identity *OAuthIdentity, token *OAuthToken) {}
+
+	func OAuthError(ctx *Context, provider string, err error) {}
+
 	func ErrorTemplate() string {
 		return gppDefaultErrorTemplate
 	}
@@ -435,7 +441,16 @@ class Server {
 			directory := fmt.Sprint(args[1])
 			mux.Handle(path, stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory))))
 		}
+		oauthEngine, oauthErr := gppOAuthNewEngine(descriptor)
+		if oauthErr != nil {
+			_ = listener.Close()
+			return oauthErr
+		}
 		if err := gppRegisterRoutes(mux, app, descriptor, prefix); err != nil {
+			_ = listener.Close()
+			return err
+		}
+		if err := gppRegisterOAuthRoutes(mux, app, descriptor, prefix, oauthEngine); err != nil {
 			_ = listener.Close()
 			return err
 		}

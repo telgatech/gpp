@@ -1,5 +1,3 @@
 .gpp/
 apps/*
-!apps/classifieds/
-!apps/classifieds/**
 .DS_Store
