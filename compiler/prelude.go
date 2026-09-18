@@ -33,6 +33,12 @@ func loadPrelude() (*File, error) {
 	return preludeFile, preludeErr
 }
 
+// LoadPrelude exposes the implicit extension declarations to source-level
+// tooling such as `gpp doc`.
+func LoadPrelude() (*File, error) {
+	return loadPrelude()
+}
+
 func configurePrelude(context *constructorContext, emit bool) error {
 	file, err := loadPrelude()
 	if err != nil {

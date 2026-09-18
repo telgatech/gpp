@@ -213,32 +213,36 @@ func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) str
 			continue
 		}
 		arguments := "nil"
+		args := []string{}
 		if use.HasArguments && strings.TrimSpace(use.Arguments) != "" {
-			args, err := splitTopLevel(use.Arguments, ',')
+			var err error
+			args, err = splitTopLevel(use.Arguments, ',')
 			if err == nil {
-				resolved, changed, resolveErr := resolveCallableCall(
-					declaration.Name,
-					args,
-					[]callableSignature{{Name: declaration.Name, Parameters: mustParameterInfos(declaration.Params)}},
-				)
-				if resolveErr == nil && changed {
-					args = resolved
-				}
-				for index := range args {
-					trimmed := strings.TrimSpace(args[index])
-					if enum, ok := context.Enums[trimmed]; ok {
-						if dot := strings.LastIndex(trimmed, "."); dot >= 0 {
-							if member, exists := enumMember(enum, trimmed[dot+1:]); exists {
-								args[index] = enumGeneratedMember(trimmed, enum, member.Name)
-							}
-						}
-					}
-					if transformed, err := transformEnums(args[index], context); err == nil {
-						args[index] = transformed
-					}
-				}
-				arguments = "[]any{" + strings.Join(args, ", ") + "}"
 			}
+		}
+		resolved, changed, resolveErr := resolveCallableCall(
+			declaration.Name,
+			args,
+			[]callableSignature{{Name: declaration.Name, Parameters: mustParameterInfos(declaration.Params)}},
+		)
+		if resolveErr == nil && changed {
+			args = resolved
+		}
+		for index := range args {
+			trimmed := strings.TrimSpace(args[index])
+			if enum, ok := context.Enums[trimmed]; ok {
+				if dot := strings.LastIndex(trimmed, "."); dot >= 0 {
+					if member, exists := enumMember(enum, trimmed[dot+1:]); exists {
+						args[index] = enumGeneratedMember(trimmed, enum, member.Name)
+					}
+				}
+			}
+			if transformed, err := transformEnums(args[index], context); err == nil {
+				args[index] = transformed
+			}
+		}
+		if len(args) > 0 {
+			arguments = "[]any{" + strings.Join(args, ", ") + "}"
 		}
 		parts = append(parts, fmt.Sprintf(
 			"GppAnnotation{Name: %q, FullName: %q, Args: %s, Type: %s}",

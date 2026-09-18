@@ -77,6 +77,8 @@ func Run(args []string) int {
 		return runFmt(commandArgs)
 	case "test":
 		return runTest(commandArgs)
+	case "doc":
+		return runDoc(commandArgs)
 	case "env":
 		return runEnv(commandArgs)
 	case "doctor":
@@ -114,6 +116,7 @@ func printHelp() {
 	fmt.Println("    clean      remove generated build artifacts")
 	fmt.Println("    fmt        format Go++ source")
 	fmt.Println("    test       run Go++ tests")
+	fmt.Println("    doc        show Go++ source documentation")
 	fmt.Println("    env        show environment information")
 	fmt.Println("    doctor     diagnose the toolchain")
 	fmt.Println("    version    show version information")
@@ -141,6 +144,14 @@ func commandHelp(name string) int {
 	case "test":
 		fmt.Println("Usage: gpp test [options] [directory|./...]")
 		printCompileFlags()
+	case "doc":
+		fmt.Println("Usage: gpp doc [options] [symbol]")
+		fmt.Println("  --all            include private declarations")
+		fmt.Println("  --json           emit machine-readable documentation")
+		fmt.Println("  --location       show source locations")
+		fmt.Println("  --source         show source-level declaration signatures")
+		fmt.Println("  --search, -s     search symbol names")
+		fmt.Println("  --verbose, -v    include additional metadata")
 	case "env":
 		fmt.Println("Usage: gpp env")
 	case "doctor":

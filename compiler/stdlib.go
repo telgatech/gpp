@@ -23,6 +23,18 @@ func EmbeddedStdlibAvailable() bool {
 	return err == nil && len(entries) > 0
 }
 
+// OfficialStdlibPackages returns the compiler-shipped Go++ package paths that
+// can be inspected by source-level tooling such as `gpp doc`.
+func OfficialStdlibPackages() []string {
+	return []string{"gpp/encoding", "gpp/http", "gpp/orm", "gpp/test", "gpp/tpl"}
+}
+
+// LoadOfficialPackage exposes the embedded source model to documentation and
+// other read-only tooling without requiring generated Go output.
+func LoadOfficialPackage(importPath string) ([]*File, error) {
+	return loadOfficialPackage(importPath)
+}
+
 func appendOfficialStdlib(program *Program) error {
 	loaded := map[string]bool{}
 	for _, file := range program.Files {

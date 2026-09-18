@@ -74,7 +74,8 @@ The examples cover:
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
   annotated routes, path parameters, status-aware JSON/text/template responses,
   custom error templates, request context values, lifecycle hooks, graceful
-  shutdown, and a configurable port.
+  shutdown, configurable ports, and opt-in OpenAPI JSON plus self-contained
+  Swagger UI endpoints under the configured prefix.
 
 The dotted-package example is compiled as a pair:
 

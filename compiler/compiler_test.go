@@ -9,6 +9,59 @@ import (
 	"testing"
 )
 
+func TestBuildDocIndexUsesGoPlusSourceDeclarations(t *testing.T) {
+	source := `// Package docs describes the documentation fixture.
+package docs
+
+// User is a documented class.
+class User {
+	// Name is the display name.
+	Name string
+
+	// Save persists the user.
+	func Save() error { return nil }
+}
+
+// Status describes a lifecycle state.
+enum Status string {
+	Pending
+	Active
+}
+
+// TrimSpace is a string extension.
+extend string {
+	func TrimSpace() string { return this }
+}
+
+// Load loads a user.
+func Load(id int) (User, error) { return User(), nil }
+`
+	file, err := ParseFile("docs.gpp", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := BuildDocIndex([]*File{file})
+	if got := index.Packages["docs"].Doc; got != "Package docs describes the documentation fixture." {
+		t.Fatalf("unexpected package documentation: %q", got)
+	}
+	user := index.Find("User", false)
+	if len(user) != 1 || user[0].Doc != "User is a documented class." || len(user[0].Fields) != 1 || user[0].Fields[0].Doc != "Name is the display name." {
+		t.Fatalf("unexpected class documentation: %#v", user)
+	}
+	if methods := index.Find("User.Save", false); len(methods) != 1 || methods[0].Doc != "Save persists the user." {
+		t.Fatalf("unexpected method documentation: %#v", methods)
+	}
+	if values := index.Find("Status", false); len(values) != 1 || len(values[0].Values) != 2 {
+		t.Fatalf("unexpected enum documentation: %#v", values)
+	}
+	if extensions := index.Find("string.TrimSpace", false); len(extensions) != 1 || extensions[0].Kind != DocExtension {
+		t.Fatalf("unexpected extension documentation: %#v", extensions)
+	}
+	if functions := index.Find("Load", false); len(functions) != 1 || functions[0].Signature != "func Load(id int) (User, error)" {
+		t.Fatalf("unexpected function documentation: %#v", functions)
+	}
+}
+
 func TestCompileFilesSupportsTemplateReload(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -429,6 +482,94 @@ func main() {
 	}
 	if string(output) != "200 shared Go\nbefore-listen,after-listen,before-request,route,after-request,before-shutdown,after-shutdown\n" {
 		t.Fatalf("unexpected HTTP response:\n%s", output)
+	}
+}
+
+func TestCompileFilesServesOpenAPIAndSwaggerRoutes(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	stdhttp "net/http"
+	"strings"
+	"time"
+	http "gpp/http"
+)
+
+class App : http.Server @{http.IP("127.0.0.1"), http.OpenAPI, http.Swagger("/docs")} {
+	func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
+		return ctx.Text("hello")
+	}
+
+	func Create(ctx *http.Context) error @{http.POST("/docs")} {
+		return ctx.Text("created")
+	}
+}
+
+func request(base string, path string) {
+	response, err := stdhttp.Get(base + path)
+	if err != nil { panic(err) }
+	body, err := io.ReadAll(response.Body)
+	if err != nil { panic(err) }
+	response.Body.Close()
+	text := string(body)
+	fmt.Println(path, response.StatusCode,
+		strings.Contains(response.Header.Get("Content-Type"), "application/json"),
+		strings.Contains(response.Header.Get("Content-Type"), "text/html"),
+		strings.Contains(text, "3.0.3"),
+		strings.Contains(text, "/hello/{name}"),
+		strings.Contains(text, "Swagger UI"),
+	)
+}
+
+func main() {
+	app := App()
+	done := make(chan error, 1)
+	go func() { done <- app.Listen() }()
+	for app.HTTPServer == nil {
+		select {
+		case err := <-done:
+			if err != nil { fmt.Println("SKIP:", err); return }
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	base := "http://" + app.HTTPServer.Addr
+	request(base, "/openapi.json")
+	request(base, "/docs")
+	if err := app.Shutdown(context.Background()); err != nil { panic(err) }
+	if err := <-done; err != nil && err != stdhttp.ErrServerClosed { panic(err) }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated OpenAPI program did not run: %v\n%s", err, output)
+	}
+	if strings.HasPrefix(string(output), "SKIP:") {
+		t.Skipf("loopback sockets unavailable: %s", output)
+	}
+	result := string(output)
+	if !strings.Contains(result, "/openapi.json 200 true false true true false") {
+		t.Fatalf("unexpected OpenAPI response:\n%s", output)
+	}
+	if !strings.Contains(result, "/docs 200 false true false false true") {
+		t.Fatalf("unexpected Swagger response:\n%s", output)
 	}
 }
 

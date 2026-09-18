@@ -1,0 +1,533 @@
+package gpp.http
+
+import (
+	stdjson "encoding/json"
+	"fmt"
+	stdhttp "net/http"
+	"reflect"
+	"sort"
+	"strings"
+)
+
+type gppOpenAPIRoute struct {
+	Path    string
+	Method  string
+	Handler string
+}
+
+var gppOpenAPIRouteAnnotations = []struct {
+	Name   string
+	Method string
+}{
+	{Name: "gpp.http.GET", Method: "GET"},
+	{Name: "gpp.http.POST", Method: "POST"},
+	{Name: "gpp.http.PUT", Method: "PUT"},
+	{Name: "gpp.http.PATCH", Method: "PATCH"},
+	{Name: "gpp.http.DELETE", Method: "DELETE"},
+}
+
+func gppOpenAPIAnnotationPath(owner any, name string) string {
+	arguments := gppAnnotationArgs(owner, name)
+	if len(arguments) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(arguments[0]))
+}
+
+func gppOpenAPIJoinPath(prefix, routePath string) string {
+	if prefix == "" {
+		return routePath
+	}
+	return strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(routePath, "/")
+}
+
+func gppOpenAPIRoutes(descriptor any, prefix string) []gppOpenAPIRoute {
+	value := gppOpenAPIDeref(reflect.ValueOf(descriptor))
+	if !value.IsValid() {
+		return nil
+	}
+	methods := value.FieldByName("Methods")
+	if !methods.IsValid() || methods.Kind() != reflect.Slice {
+		return nil
+	}
+	result := []gppOpenAPIRoute{}
+	for index := 0; index < methods.Len(); index++ {
+		method := methods.Index(index)
+		name := gppOpenAPIStringField(method, "Name")
+		for _, route := range gppOpenAPIRouteAnnotations {
+			arguments := gppAnnotationArgs(method.Interface(), route.Name)
+			if len(arguments) == 0 {
+				continue
+			}
+			path := strings.TrimSpace(fmt.Sprint(arguments[0]))
+			if path == "" {
+				continue
+			}
+			result = append(result, gppOpenAPIRoute{
+				Path:    gppOpenAPIJoinPath(prefix, path),
+				Method:  route.Method,
+				Handler: name,
+			})
+		}
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].Path != result[right].Path {
+			return result[left].Path < result[right].Path
+		}
+		if result[left].Method != result[right].Method {
+			return result[left].Method < result[right].Method
+		}
+		return result[left].Handler < result[right].Handler
+	})
+	return result
+}
+
+func gppOpenAPIHasRoute(routes []gppOpenAPIRoute, method, path string) bool {
+	for _, route := range routes {
+		if route.Method == method && route.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) error {
+	hasOpenAPI := len(gppAnnotationArgs(descriptor, "gpp.http.OpenAPI")) > 0
+	hasSwagger := len(gppAnnotationArgs(descriptor, "gpp.http.Swagger")) > 0
+	openAPIPath := gppOpenAPIAnnotationPath(descriptor, "gpp.http.OpenAPI")
+	swaggerPath := gppOpenAPIAnnotationPath(descriptor, "gpp.http.Swagger")
+	if !hasOpenAPI && !hasSwagger {
+		return nil
+	}
+	if hasOpenAPI && openAPIPath == "" {
+		return fmt.Errorf("http.OpenAPI path must not be empty")
+	}
+	if hasSwagger && swaggerPath == "" {
+		return fmt.Errorf("http.Swagger path must not be empty")
+	}
+	if hasSwagger && !hasOpenAPI {
+		return fmt.Errorf("http.Swagger requires http.OpenAPI")
+	}
+	if hasOpenAPI && !strings.HasPrefix(openAPIPath, "/") {
+		return fmt.Errorf("http.OpenAPI path must start with /")
+	}
+	if hasSwagger && !strings.HasPrefix(swaggerPath, "/") {
+		return fmt.Errorf("http.Swagger path must start with /")
+	}
+
+	routes := gppOpenAPIRoutes(descriptor, prefix)
+	openAPIPath = gppOpenAPIJoinPath(prefix, openAPIPath)
+	swaggerPath = gppOpenAPIJoinPath(prefix, swaggerPath)
+	if hasOpenAPI && gppOpenAPIHasRoute(routes, "GET", openAPIPath) {
+		return fmt.Errorf("GET %s conflicts with http.OpenAPI", openAPIPath)
+	}
+	if hasSwagger && gppOpenAPIHasRoute(routes, "GET", swaggerPath) {
+		return fmt.Errorf("GET %s conflicts with http.Swagger", swaggerPath)
+	}
+	if hasOpenAPI && hasSwagger && openAPIPath == swaggerPath {
+		return fmt.Errorf("http.OpenAPI and http.Swagger use the same route %s", openAPIPath)
+	}
+
+	document, err := gppBuildOpenAPIDocument(app, descriptor, prefix)
+	if err != nil {
+		return err
+	}
+	if hasOpenAPI {
+		payload := append([]byte(nil), document...)
+		gppRegisterGeneratedGET(mux, app, openAPIPath, func(ctx *Context) error {
+			ctx.Response.Header().Set("Content-Type", "application/json")
+			if !ctx.Written {
+				ctx.Response.WriteHeader(stdhttp.StatusOK)
+				ctx.Status = stdhttp.StatusOK
+				ctx.Written = true
+			}
+			_, err := ctx.Response.Write(payload)
+			return err
+		})
+	}
+	if hasSwagger {
+		payload := gppSwaggerPage(openAPIPath)
+		gppRegisterGeneratedGET(mux, app, swaggerPath, func(ctx *Context) error {
+			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if !ctx.Written {
+				ctx.Response.WriteHeader(stdhttp.StatusOK)
+				ctx.Status = stdhttp.StatusOK
+				ctx.Written = true
+			}
+			_, err := ctx.Response.Write(payload)
+			return err
+		})
+	}
+	return nil
+}
+
+func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handler func(*Context) error) {
+	mux.HandleFunc("GET "+path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if r.Method != stdhttp.MethodGet {
+			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+			return
+		}
+		ctx := Context(Response: w, Request: r, Values: map[string]any{})
+		if err := gppCallHook(app, "BeforeRequest", &ctx); err != nil {
+			gppCallError(app, &ctx, stdhttp.StatusInternalServerError, err)
+			return
+		}
+		routeErr := handler(&ctx)
+		afterErr := gppCallHook(app, "AfterRequest", &ctx)
+		if routeErr != nil && !ctx.Written {
+			gppCallError(app, &ctx, stdhttp.StatusInternalServerError, routeErr)
+			return
+		}
+		if afterErr != nil && !ctx.Written {
+			gppCallError(app, &ctx, stdhttp.StatusInternalServerError, afterErr)
+		}
+	})
+}
+
+func gppBuildOpenAPIDocument(app any, descriptor any, prefix string) ([]byte, error) {
+	schemas := map[string]any{}
+	paths := map[string]any{}
+	usedOperationIDs := map[string]bool{}
+	for _, route := range gppOpenAPIRoutes(descriptor, prefix) {
+		operation, err := gppOpenAPIOperation(app, descriptor, route, schemas, usedOperationIDs)
+		if err != nil {
+			return nil, err
+		}
+		pathItem, ok := paths[route.Path].(map[string]any)
+		if !ok {
+			pathItem = map[string]any{}
+			paths[route.Path] = pathItem
+		}
+		pathItem[strings.ToLower(route.Method)] = operation
+	}
+
+	name := gppOpenAPIDescriptorName(descriptor)
+	if name == "" {
+		name = "Go++"
+	}
+	document := map[string]any{
+		"openapi": "3.0.3",
+		"info": map[string]any{
+			"title":   name + " API",
+			"version": "0.0.0",
+		},
+		"paths": paths,
+	}
+	if len(schemas) > 0 {
+		document["components"] = map[string]any{"schemas": schemas}
+	}
+	return stdjson.MarshalIndent(document, "", "  ")
+}
+
+func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas map[string]any, usedOperationIDs map[string]bool) (map[string]any, error) {
+	operationID := route.Handler
+	if operationID == "" {
+		operationID = strings.ToLower(route.Method) + "_operation"
+	}
+	if usedOperationIDs[operationID] {
+		operationID += "_" + strings.ToLower(route.Method)
+	}
+	for usedOperationIDs[operationID] {
+		operationID += "_2"
+	}
+	usedOperationIDs[operationID] = true
+
+	operation := map[string]any{
+		"operationId": operationID,
+		"responses": map[string]any{
+			"200": map[string]any{"description": "Successful response"},
+		},
+	}
+	method := gppOpenAPIMethodDescriptor(descriptor, route.Handler)
+	parameters := []any{}
+	boundPathParameters := map[string]bool{}
+	bodyParameter := map[string]any(nil)
+	if method.IsValid() {
+		parameterValues := method.FieldByName("Parameters")
+		for index := 0; index < parameterValues.Len(); index++ {
+			parameter := parameterValues.Index(index)
+			name := gppOpenAPIStringField(parameter, "Name")
+			typeName := gppOpenAPITypeName(parameter.FieldByName("Type"))
+			if name == "" || strings.EqualFold(name, "ctx") || strings.Contains(typeName, "Context") {
+				continue
+			}
+			schema := gppOpenAPISchemaForTypeName(typeName, schemas)
+			if gppOpenAPIPathParameter(route.Path, name) {
+				parameters = append(parameters, map[string]any{
+					"name":     name,
+					"in":       "path",
+					"required": true,
+					"schema":   schema,
+				})
+				boundPathParameters[name] = true
+				continue
+			}
+			if route.Method == "GET" || route.Method == "DELETE" {
+				parameters = append(parameters, map[string]any{
+					"name":     name,
+					"in":       "query",
+					"required": false,
+					"schema":   schema,
+				})
+				continue
+			}
+			bodyParameter = map[string]any{"content": map[string]any{
+				"application/json": map[string]any{"schema": schema},
+			}}
+		}
+	}
+	for _, name := range gppOpenAPIPathParameters(route.Path) {
+		if boundPathParameters[name] {
+			continue
+		}
+		parameters = append(parameters, map[string]any{
+			"name":     name,
+			"in":       "path",
+			"required": true,
+			"schema":   map[string]any{"type": "string"},
+		})
+	}
+	if len(parameters) > 0 {
+		operation["parameters"] = parameters
+	}
+	if bodyParameter != nil {
+		operation["requestBody"] = bodyParameter
+	}
+
+	resultType := gppOpenAPIResultType(app, route.Handler)
+	if resultType != nil {
+		response := operation["responses"].(map[string]any)["200"].(map[string]any)
+		response["content"] = map[string]any{"application/json": map[string]any{
+			"schema": gppOpenAPISchemaForReflectType(resultType, schemas),
+		}}
+	}
+	return operation, nil
+}
+
+func gppOpenAPIPathParameter(path, name string) bool {
+	for _, value := range gppOpenAPIPathParameters(path) {
+		if value == name {
+			return true
+		}
+	}
+	return false
+}
+
+func gppOpenAPIPathParameters(path string) []string {
+	result := []string{}
+	for index := 0; index < len(path); {
+		start := strings.Index(path[index:], "{")
+		if start < 0 {
+			break
+		}
+		start += index
+		end := strings.Index(path[start+1:], "}")
+		if end < 0 {
+			break
+		}
+		name := strings.TrimSpace(path[start+1 : start+1+end])
+		if name != "" {
+			result = append(result, name)
+		}
+		index = start + end + 2
+	}
+	return result
+}
+
+func gppOpenAPIMethodDescriptor(descriptor any, name string) reflect.Value {
+	value := gppOpenAPIDeref(reflect.ValueOf(descriptor))
+	if !value.IsValid() {
+		return reflect.Value{}
+	}
+	methods := value.FieldByName("Methods")
+	if !methods.IsValid() || methods.Kind() != reflect.Slice {
+		return reflect.Value{}
+	}
+	for index := 0; index < methods.Len(); index++ {
+		method := methods.Index(index)
+		if gppOpenAPIStringField(method, "Name") == name {
+			return method
+		}
+	}
+	return reflect.Value{}
+}
+
+func gppOpenAPIResultType(app any, methodName string) reflect.Type {
+	method := reflect.ValueOf(app).MethodByName(methodName)
+	if !method.IsValid() {
+		return nil
+	}
+	typeOfMethod := method.Type()
+	for index := 0; index < typeOfMethod.NumOut(); index++ {
+		candidate := typeOfMethod.Out(index)
+		if candidate.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+			continue
+		}
+		return candidate
+	}
+	return nil
+}
+
+func gppOpenAPITypeName(value reflect.Value) string {
+	value = gppOpenAPIDeref(value)
+	if !value.IsValid() {
+		return ""
+	}
+	name := value.FieldByName("Name")
+	if !name.IsValid() || name.Kind() != reflect.String {
+		return ""
+	}
+	return name.String()
+}
+
+func gppOpenAPIStringField(value reflect.Value, name string) string {
+	value = gppOpenAPIDeref(value)
+	if !value.IsValid() {
+		return ""
+	}
+	field := value.FieldByName(name)
+	if !field.IsValid() || field.Kind() != reflect.String {
+		return ""
+	}
+	return field.String()
+}
+
+func gppOpenAPIDescriptorName(descriptor any) string {
+	return gppOpenAPIStringField(reflect.ValueOf(descriptor), "Name")
+}
+
+func gppOpenAPIDeref(value reflect.Value) reflect.Value {
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() {
+			return reflect.Value{}
+		}
+		value = value.Elem()
+	}
+	return value
+}
+
+func gppOpenAPISchemaForTypeName(typeName string, schemas map[string]any) map[string]any {
+	typeName = strings.TrimSpace(strings.TrimPrefix(typeName, "*"))
+	if strings.HasPrefix(typeName, "[]") {
+		return map[string]any{"type": "array", "items": gppOpenAPISchemaForTypeName(typeName[2:], schemas)}
+	}
+	if strings.HasPrefix(typeName, "map[string]") {
+		return map[string]any{"type": "object", "additionalProperties": gppOpenAPISchemaForTypeName(typeName[len("map[string]"):], schemas)}
+	}
+	switch typeName {
+	case "string", "rune", "byte":
+		return map[string]any{"type": "string"}
+	case "bool":
+		return map[string]any{"type": "boolean"}
+	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+		return map[string]any{"type": "integer"}
+	case "float32", "float64":
+		return map[string]any{"type": "number"}
+	case "any", "interface{}", "error", "":
+		return map[string]any{}
+	case "time.Time":
+		return map[string]any{"type": "string", "format": "date-time"}
+	}
+	if strings.HasPrefix(typeName, "__gpp_record_") {
+		return map[string]any{"type": "object"}
+	}
+	name := typeName
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
+	return map[string]any{"$ref": "#/components/schemas/" + name}
+}
+
+func gppOpenAPISchemaForReflectType(typeOf reflect.Type, schemas map[string]any) map[string]any {
+	if typeOf == nil {
+		return map[string]any{}
+	}
+	for typeOf.Kind() == reflect.Pointer {
+		typeOf = typeOf.Elem()
+	}
+	if typeOf == reflect.TypeOf((*any)(nil)).Elem() {
+		return map[string]any{}
+	}
+	if typeOf.PkgPath() == "time" && typeOf.Name() == "Time" {
+		return map[string]any{"type": "string", "format": "date-time"}
+	}
+	switch typeOf.Kind() {
+	case reflect.String:
+		return map[string]any{"type": "string"}
+	case reflect.Bool:
+		return map[string]any{"type": "boolean"}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return map[string]any{"type": "integer"}
+	case reflect.Float32, reflect.Float64:
+		return map[string]any{"type": "number"}
+	case reflect.Slice:
+		if typeOf.Elem().Kind() == reflect.Uint8 {
+			return map[string]any{"type": "string", "format": "byte"}
+		}
+		return map[string]any{"type": "array", "items": gppOpenAPISchemaForReflectType(typeOf.Elem(), schemas)}
+	case reflect.Map:
+		if typeOf.Key().Kind() == reflect.String {
+			return map[string]any{"type": "object", "additionalProperties": gppOpenAPISchemaForReflectType(typeOf.Elem(), schemas)}
+		}
+		return map[string]any{}
+	case reflect.Interface:
+		return map[string]any{}
+	case reflect.Struct:
+		name := typeOf.Name()
+		if strings.HasPrefix(name, "__gpp_record_") {
+			name = "Record"
+		}
+		if name == "" {
+			name = "Anonymous"
+		}
+		if _, exists := schemas[name]; exists {
+			return map[string]any{"$ref": "#/components/schemas/" + name}
+		}
+		schema := map[string]any{"type": "object", "properties": map[string]any{}}
+		schemas[name] = schema
+		properties := schema["properties"].(map[string]any)
+		for index := 0; index < typeOf.NumField(); index++ {
+			field := typeOf.Field(index)
+			if field.PkgPath != "" {
+				continue
+			}
+			tag := field.Tag.Get("json")
+			parts := strings.Split(tag, ",")
+			fieldName := parts[0]
+			if fieldName == "-" {
+				continue
+			}
+			if fieldName == "" {
+				fieldName = field.Name
+			}
+			properties[fieldName] = gppOpenAPISchemaForReflectType(field.Type, schemas)
+		}
+		return map[string]any{"$ref": "#/components/schemas/" + name}
+	default:
+		return map[string]any{}
+	}
+}
+
+func gppSwaggerPage(openAPIPath string) []byte {
+	quotedPath := fmt.Sprintf("%q", openAPIPath)
+	return []byte(fmt.Sprintf(gppSwaggerHTML, quotedPath, openAPIPath, quotedPath))
+}
+
+const gppSwaggerHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swagger UI</title><style>body{font:16px system-ui;margin:2rem;max-width:960px}code,pre{background:#f4f4f4;padding:.25rem}.operation{border:1px solid #ddd;border-radius:6px;margin:1rem 0;padding:1rem}.method{font-weight:700;color:#1769aa}</style></head>
+<body><h1>Swagger UI</h1><p>OpenAPI document: <a href=%s>%s</a></p><main id="api">Loading…</main>
+<script>
+const source=%s;
+fetch(source).then(response=>response.json()).then(api=>{
+  const root=document.getElementById("api");
+  root.innerHTML="";
+  for(const [path,item] of Object.entries(api.paths||{})) for(const [method,operation] of Object.entries(item)) {
+    if(!operation||typeof operation!=="object"||!["get","post","put","patch","delete"].includes(method)) continue;
+    const section=document.createElement("section"); section.className="operation";
+    section.innerHTML="<div class=method>"+method.toUpperCase()+" "+path+"</div><h2>"+(operation.summary||operation.operationId||"")+"</h2><p>"+(operation.description||"")+"</p>";
+    root.appendChild(section);
+  }
+}).catch(error=>document.getElementById("api").textContent="Unable to load OpenAPI document: "+error);
+</script></body></html>`

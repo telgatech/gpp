@@ -28,6 +28,12 @@ func ParseFile(name, src string) (*File, error) {
 		if pos >= len(src) {
 			break
 		}
+		declarationPos := pos
+		doc := ""
+		if candidate, next := leadingDocComments(src, pos); candidate != "" && documentationTargetAt(src, next) {
+			doc = candidate
+			pos = next
+		}
 
 		switch {
 		case keywordAt(src, pos, "package"):
@@ -35,7 +41,7 @@ func ParseFile(name, src string) (*File, error) {
 				return nil, fmt.Errorf(
 					"%s:%d: duplicate package declaration",
 					name,
-					sourceLine(src, pos),
+					sourceLine(src, declarationPos),
 				)
 			}
 
@@ -56,6 +62,7 @@ func ParseFile(name, src string) (*File, error) {
 			}
 
 			file.Package = packageName
+			file.Doc = doc
 			rest := strings.TrimSpace(packageText[nameEnd:])
 			if rest != "" {
 				uses, _, err := parseAnnotationUses(rest, 0)
@@ -81,7 +88,8 @@ func ParseFile(name, src string) (*File, error) {
 				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
 			}
 			class.SourceFile = name
-			class.SourceLine = sourceLine(src, pos)
+			class.SourceLine = sourceLine(src, declarationPos)
+			class.Doc = doc
 			setClassAnnotationLocations(class, name)
 
 			file.Decls = append(file.Decls, class)
@@ -94,7 +102,8 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			for _, enum := range enums {
 				enum.SourceFile = name
-				enum.SourceLine = sourceLine(src, pos)
+				enum.SourceLine = sourceLine(src, declarationPos)
+				enum.Doc = doc
 			}
 			for _, enum := range enums {
 				file.Decls = append(file.Decls, enum)
@@ -107,7 +116,8 @@ func ParseFile(name, src string) (*File, error) {
 				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
 			}
 			extend.SourceFile = name
-			extend.SourceLine = sourceLine(src, pos)
+			extend.SourceLine = sourceLine(src, declarationPos)
+			extend.Doc = doc
 			for index := range extend.Methods {
 				setMethodAnnotationLocations(&extend.Methods[index], name, extend.SourceLine)
 			}
@@ -121,7 +131,8 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			for _, declaration := range declarations {
 				declaration.SourceFile = name
-				declaration.SourceLine = sourceLine(src, pos)
+				declaration.SourceLine = sourceLine(src, declarationPos)
+				declaration.Doc = doc
 				declaration.Exported = isExportedIdentifier(declaration.Name)
 			}
 			file.Decls = append(file.Decls, declarationsToDecls(declarations)...)
@@ -133,10 +144,10 @@ func ParseFile(name, src string) (*File, error) {
 				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
 			}
 			embed.SourceFile = name
-			embed.SourceLine = sourceLine(src, pos)
+			embed.SourceLine = sourceLine(src, declarationPos)
 			for index := range embed.Entries {
 				embed.Entries[index].SourceFile = name
-				embed.Entries[index].SourceLine = sourceLine(src, pos)
+				embed.Entries[index].SourceLine = sourceLine(src, declarationPos)
 			}
 			file.Decls = append(file.Decls, embed)
 			pos = end
@@ -147,7 +158,8 @@ func ParseFile(name, src string) (*File, error) {
 				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
 			}
 			template.SourceFile = name
-			template.SourceLine = sourceLine(src, pos)
+			template.SourceLine = sourceLine(src, declarationPos)
+			template.Doc = doc
 			setAnnotationUseLocations(template.Annotations, name, template.SourceLine)
 			file.Decls = append(file.Decls, template)
 			pos = end
@@ -506,6 +518,11 @@ func parseClassBody(class *ClassDecl, body string) error {
 		if pos >= len(body) {
 			break
 		}
+		doc := ""
+		if candidate, next := leadingDocComments(body, pos); candidate != "" {
+			doc = candidate
+			pos = next
+		}
 
 		if keywordAt(body, pos, "static") {
 			staticPos := pos
@@ -524,6 +541,7 @@ func parseClassBody(class *ClassDecl, body string) error {
 			if end <= staticPos {
 				return fmt.Errorf("class %s: invalid static method", class.Name)
 			}
+			method.Doc = doc
 			class.Methods = append(class.Methods, method)
 			pos = end
 			continue
@@ -536,6 +554,7 @@ func parseClassBody(class *ClassDecl, body string) error {
 				return err
 			}
 
+			method.Doc = doc
 			class.Methods = append(class.Methods, method)
 			pos = end
 			continue
@@ -556,6 +575,7 @@ func parseClassBody(class *ClassDecl, body string) error {
 					line,
 				)
 			}
+			field.Doc = doc
 
 			class.Fields = append(class.Fields, field)
 		}
@@ -1430,6 +1450,49 @@ func skipSpace(src string, pos int) int {
 	}
 
 	return pos
+}
+
+// leadingDocComments returns contiguous comments immediately before a source
+// declaration. The ordinary parser keeps comments inside raw Go declarations,
+// but Go++ declarations need their comments in the source-level AST so tools
+// such as `gpp doc` can render them without inspecting generated Go.
+func leadingDocComments(src string, pos int) (string, int) {
+	pos = skipSpace(src, pos)
+	var parts []string
+	for pos < len(src) {
+		if strings.HasPrefix(src[pos:], "//") {
+			end := lineEnd(src, pos)
+			text := strings.TrimSpace(src[pos+2 : end])
+			parts = append(parts, text)
+			pos = skipSpace(src, end)
+			continue
+		}
+		if strings.HasPrefix(src[pos:], "/*") {
+			close := strings.Index(src[pos+2:], "*/")
+			if close < 0 {
+				return strings.TrimSpace(strings.Join(parts, "\n")), pos
+			}
+			text := src[pos+2 : pos+2+close]
+			lines := strings.Split(text, "\n")
+			for index := range lines {
+				lines[index] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[index]), "*"))
+			}
+			parts = append(parts, strings.TrimSpace(strings.Join(lines, "\n")))
+			pos = skipSpace(src, pos+2+close+2)
+			continue
+		}
+		break
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n")), pos
+}
+
+func documentationTargetAt(src string, pos int) bool {
+	for _, keyword := range []string{"package", "class", "enum", "extend", "annotation", "embed", "template"} {
+		if keywordAt(src, pos, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func skipHorizontal(src string, pos int) int {

@@ -8,6 +8,7 @@ type File struct {
 	Name        string
 	SourcePath  string
 	Package     string
+	Doc         string
 	Annotations []AnnotationUse
 	Decls       []Decl
 }
@@ -45,6 +46,7 @@ type TemplateDecl struct {
 	Name        string
 	Parameters  string
 	Layout      string
+	Doc         string
 	Annotations []AnnotationUse
 	Body        string
 	SourceFile  string
@@ -55,6 +57,7 @@ func (*TemplateDecl) decl() {}
 
 type ClassDecl struct {
 	Name        string
+	Doc         string
 	SourceFile  string
 	SourceLine  int
 	Parents     []string
@@ -68,6 +71,7 @@ func (*ClassDecl) decl() {}
 type EnumDecl struct {
 	Name        string
 	BackingType string
+	Doc         string
 	Members     []EnumMember
 	SourceFile  string
 	SourceLine  int
@@ -78,11 +82,13 @@ func (*EnumDecl) decl() {}
 type EnumMember struct {
 	Name  string
 	Value string
+	Doc   string
 }
 
 type ExtendDecl struct {
 	Targets           []string
 	TargetConstraints map[string]string
+	Doc               string
 	SourceFile        string
 	SourceLine        int
 	Methods           []Method
@@ -93,11 +99,13 @@ func (*ExtendDecl) decl() {}
 type Field struct {
 	Name        string
 	Type        string
+	Doc         string
 	Annotations []AnnotationUse
 }
 
 type Method struct {
 	Name                 string
+	Doc                  string
 	TypeParams           string
 	GoName               string
 	IsStatic             bool
@@ -127,6 +135,7 @@ type AnnotationDecl struct {
 	Params     string
 	Targets    []AnnotationTarget
 	Package    string
+	Doc        string
 	SourceFile string
 	SourceLine int
 	Exported   bool

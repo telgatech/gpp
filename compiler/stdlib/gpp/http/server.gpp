@@ -161,9 +161,9 @@ func gppAnnotationArgs(owner any, name string) []any {
 	return nil
 }
 
-func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) {
+func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) error {
 	if descriptor == nil {
-		return
+		return nil
 	}
 	value := reflect.ValueOf(descriptor)
 	if value.Kind() == reflect.Pointer {
@@ -175,7 +175,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 	for index := 0; index < methods.Len(); index++ {
 		method := gppReflectIndex(methods, index)
 		methodName := fmt.Sprint(method.FieldByName("Name").Interface())
-		register := func(routePath string, httpMethod string) {
+	register := func(routePath string, httpMethod string) error {
 			path := routePath
 			if prefix != "" {
 				path = strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(path, "/")
@@ -188,13 +188,20 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 				gppRouteHandler(app, methodName, w, r)
 			}
 			if path == "/" {
+				if rootHandlers[httpMethod] != nil {
+					return fmt.Errorf("duplicate HTTP route: %s %s", httpMethod, path)
+				}
 				rootHandlers[httpMethod] = handler
-				return
+				return nil
 			}
 			if routeHandlers[path] == nil {
 				routeHandlers[path] = map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
 			}
+			if routeHandlers[path][httpMethod] != nil {
+				return fmt.Errorf("duplicate HTTP route: %s %s", httpMethod, path)
+			}
 			routeHandlers[path][httpMethod] = handler
+			return nil
 		}
 		for _, route := range []struct {
 			annotation string
@@ -207,7 +214,9 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 			{annotation: "gpp.http.DELETE", method: "DELETE"},
 		} {
 			if arguments := gppAnnotationArgs(method.Interface(), route.annotation); len(arguments) > 0 {
-				register(fmt.Sprint(arguments[0]), route.method)
+				if err := register(fmt.Sprint(arguments[0]), route.method); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -232,6 +241,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 		ctx := Context(Response: w, Request: r, Values: map[string]any{})
 		gppCallError(app, &ctx, stdhttp.StatusNotFound, nil)
 	})
+	return nil
 }
 
 type gppTemplateStamp struct {
@@ -425,7 +435,14 @@ class Server {
 			directory := fmt.Sprint(args[1])
 			mux.Handle(path, stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory))))
 		}
-		gppRegisterRoutes(mux, app, descriptor, prefix)
+		if err := gppRegisterRoutes(mux, app, descriptor, prefix); err != nil {
+			_ = listener.Close()
+			return err
+		}
+		if err := gppRegisterOpenAPIRoutes(mux, app, descriptor, prefix); err != nil {
+			_ = listener.Close()
+			return err
+		}
 		this.HTTPServer = &stdhttp.Server{Handler: mux, Addr: listener.Addr().String()}
 		if err := gppCallHook(app, "SetupShutdownHandler", nil); err != nil {
 			_ = listener.Close()

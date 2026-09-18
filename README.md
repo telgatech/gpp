@@ -50,7 +50,7 @@ go install github.com/telgatech/gpp@latest
 It provides one `gpp` executable with project commands:
 
 ```text
-gpp init|build|run|clean|fmt|test|env|doctor|version
+gpp init|build|run|clean|fmt|test|doc|env|doctor|version
 ```
 
 Create and run a starter project:
@@ -81,6 +81,15 @@ execution underneath:
 gpp test examples/testing.gpp
 gpp test --tag crud examples/testing.gpp
 gpp test --priority high examples/testing.gpp
+```
+
+Inspect Go++ source-level documentation without exposing generated Go:
+
+```bash
+gpp doc gpp/http.Server
+gpp doc string.TrimSpace
+gpp doc --json gpp/http.Server
+gpp doc --search template
 ```
 
 ## Build and run
