@@ -117,7 +117,7 @@ class Listing : orm.Model @{orm.Table("listings")} {
 	}
 }
 
-class App : http.Server @{http.IP("127.0.0.1")} {
+class App : http.Server @{http.IP("127.0.0.1"), http.OpenAPI, http.Swagger("/swagger")} {
 	DB *sql.DB
 
 	func ErrorTemplate() string {

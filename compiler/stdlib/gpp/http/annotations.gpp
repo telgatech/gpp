@@ -15,7 +15,7 @@ annotation (
 	WebSocket(path string) on method
 	Files(path string, dir string) on class
 	OpenAPI(path string = "/openapi.json") on class
-	Swagger(path string = "/docs") on class
+	Swagger(path string = "/swagger") on class
 	Auth on class, method
 	NoAuth on method
 	Role(name string) on class, method

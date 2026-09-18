@@ -502,12 +502,12 @@ import (
 	http "gpp/http"
 )
 
-class App : http.Server @{http.IP("127.0.0.1"), http.OpenAPI, http.Swagger("/docs")} {
+class App : http.Server @{http.IP("127.0.0.1"), http.OpenAPI, http.Swagger("/swagger")} {
 	func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
 		return ctx.Text("hello")
 	}
 
-	func Create(ctx *http.Context) error @{http.POST("/docs")} {
+	func Create(ctx *http.Context) error @{http.POST("/swagger")} {
 		return ctx.Text("created")
 	}
 }
@@ -542,7 +542,7 @@ func main() {
 	}
 	base := "http://" + app.HTTPServer.Addr
 	request(base, "/openapi.json")
-	request(base, "/docs")
+	request(base, "/swagger")
 	if err := app.Shutdown(context.Background()); err != nil { panic(err) }
 	if err := <-done; err != nil && err != stdhttp.ErrServerClosed { panic(err) }
 }
@@ -568,7 +568,7 @@ func main() {
 	if !strings.Contains(result, "/openapi.json 200 true false true true false") {
 		t.Fatalf("unexpected OpenAPI response:\n%s", output)
 	}
-	if !strings.Contains(result, "/docs 200 false true false false true") {
+	if !strings.Contains(result, "/swagger 200 false true false false true") {
 		t.Fatalf("unexpected Swagger response:\n%s", output)
 	}
 }

@@ -8,6 +8,8 @@ demonstrates:
 - ORM `Get`, `Select`, `Insert`, `Update`, and `Delete` operations;
 - `gpp/http` routes, status-aware responses, redirects, health checks, and
   custom error templates;
+- generated OpenAPI JSON at `/openapi.json` and self-contained Swagger UI at
+  `/swagger`;
 - external `classifieds.gpp.tpl` templates using standard `html/template`
   syntax.
 

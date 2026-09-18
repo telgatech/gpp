@@ -29,7 +29,7 @@ Optional Swagger UI support may be enabled separately:
 ```gpp
 class App : http.Server @{
     http.OpenAPI("/openapi.json")
-    http.Swagger("/docs")
+    http.Swagger("/swagger")
 }
 ```
 
@@ -1013,7 +1013,7 @@ Example:
 ```gpp
 class App : http.Server @{
     http.OpenAPI("/openapi.json")
-    http.Swagger("/docs")
+    http.Swagger("/swagger")
 }
 ```
 
@@ -1021,10 +1021,10 @@ This automatically exposes:
 
 ```text
 GET /openapi.json
-GET /docs
+GET /swagger
 ```
 
-`/docs` serves an interactive Swagger UI configured to consume:
+`/swagger` serves an interactive Swagger UI configured to consume:
 
 ```text
 /openapi.json
@@ -1038,7 +1038,7 @@ Conceptually:
 
 ```gpp
 annotation (
-    Swagger(path string = "/docs") on class
+    Swagger(path string = "/swagger") on class
 )
 ```
 
@@ -1058,7 +1058,7 @@ This should be invalid:
 
 ```gpp
 class App : http.Server @{
-    http.Swagger("/docs")
+    http.Swagger("/swagger")
 }
 ```
 
@@ -1110,13 +1110,13 @@ This preserves Go++'s single-binary deployment model.
 This:
 
 ```gpp
-@{http.Swagger("/docs")}
+@{http.Swagger("/swagger")}
 ```
 
 must conflict with any existing:
 
 ```text
-GET /docs
+GET /swagger
 ```
 
 application route.
@@ -1192,7 +1192,7 @@ GET  /users/{id}
 POST /users
 
 GET  /openapi.json
-GET  /docs
+GET  /swagger
 ```
 
 ---
@@ -1521,7 +1521,7 @@ V1 requires only:
 ```gpp
 annotation (
     OpenAPI(path string = "/openapi.json") on class
-    Swagger(path string = "/docs") on class
+    Swagger(path string = "/swagger") on class
 )
 ```
 
@@ -1545,7 +1545,7 @@ produces:
 
 ```text
 /openapi.json
-/docs
+/swagger
 ```
 
 with no explicit documentation handlers.
@@ -1576,7 +1576,7 @@ runtime router    OpenAPI generator
                 /openapi.json
                       ↓
                  Swagger UI
-                    /docs
+                    /swagger
 ```
 
 Example:
