@@ -1,6 +1,6 @@
-# Go++ v0.2 experiment
+# Go++, an attempt to add modern features to the Go Programming Language
 
-A tiny source-to-source compiler that emits ordinary Go.
+A superset of Go that provides modern features while staying true to the spirit of Go language including offering full compatibility and side by side compilation.
 
 ## Current ideas
 
@@ -134,6 +134,17 @@ gpp run \
   examples/packages/people.gpp \
   examples/packages/main.gpp
 ```
+
+Go++ and Go can also live in the same build. The mixed-compilation examples
+demonstrate both directions:
+
+```bash
+gpp run -output /tmp/gpp-go-from-gpp examples/mixed/go_from_gpp
+gpp run -output /tmp/gpp-go-imports-gpp examples/mixed/go_imports_gpp
+```
+
+The first lets Go++ call functions from `native.go`; the second lets ordinary
+Go import the generated `generated/mixed` package.
 
 The ORM example also resolves its SQLite dependency automatically:
 

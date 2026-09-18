@@ -1823,6 +1823,8 @@ func main() {
     text := " value "
     _ = text.Empty()
     _ = text.Blank()
+    _, _ = "^[a-z]+$".CompileRegex()
+    _ = "^[a-z]+$".CompileRegex().MatchString("go")
 
     options := map[string]string{"mode": "test"}
     _ = options.Has("mode")
@@ -1848,10 +1850,12 @@ func main() {
 		"func GppPreludeExt___T_Max_",
 		"func GppPreludeExt_string_Empty_",
 		"func GppPreludeExt_string_Blank_",
+		"func GppPreludeExt_string_CompileRegex_",
 		"func GppPreludeExt_map_K_V_Has_",
 		"import (",
 		"\"cmp\"",
 		"\"sort\"",
+		"\"regexp\"",
 		"\"strings\"",
 	} {
 		if !strings.Contains(generated, expected) {

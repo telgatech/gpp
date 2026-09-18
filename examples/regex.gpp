@@ -1,0 +1,20 @@
+import "fmt"
+
+func main() {
+	username := "ada"
+	pattern := "^[a-z]+$"
+
+	re := pattern.CompileRegex()
+	fmt.Println("valid username:", re.MatchString(username))
+
+	if "^[0-9]+$".CompileRegex().MatchString("12345") {
+		fmt.Println("numeric value matched")
+	}
+
+	try {
+		invalid := "[".CompileRegex()
+		fmt.Println(invalid)
+	} catch err {
+		fmt.Println("invalid pattern:", err)
+	}
+}

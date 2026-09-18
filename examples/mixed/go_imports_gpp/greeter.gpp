@@ -1,0 +1,14 @@
+package mixed
+
+class Greeting {
+	Name string
+
+	func Message() string {
+		return "Hello " + this.Name + " from Go++"
+	}
+}
+
+func Hello(name string) string {
+	greeting := Greeting(Name: name)
+	return greeting.Message()
+}

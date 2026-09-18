@@ -71,6 +71,10 @@ The examples cover:
   before running it.
 - `string_interpolation.gpp` — basic and formatted interpolation, raw
   multiline strings, and escaped delimiters for generated template source.
+- `regex.gpp` — explicit string-to-regex compilation, native regexp methods,
+  direct chaining, and ordinary invalid-pattern error handling.
+- `mixed/` — side-by-side compilation in both directions: Go++ calling
+  handwritten Go functions and handwritten Go importing generated Go++ code.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
   annotated routes, path parameters, status-aware JSON/text/template responses,
   custom error templates, request context values, lifecycle hooks, graceful

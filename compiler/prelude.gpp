@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -175,6 +176,11 @@ extend []T where T cmp.Ordered {
 }
 
 extend string {
+	func CompileRegex() (*regexp.Regexp, error) {
+		value, err := regexp.Compile(this)
+		return value, err
+	}
+
 	func Trim(cutset string) string {
 		return strings.Trim(this, cutset)
 	}
