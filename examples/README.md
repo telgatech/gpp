@@ -52,8 +52,9 @@ The examples cover:
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.
-- `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed and
-  catch-all handlers, `finally`, custom Go++ errors, and explicit error capture.
+- `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed,
+  multi-type, and catch-all handlers, `finally`, custom Go++ errors, and
+  explicit error capture.
 - `expr_catch.gpp` — expression-level error fallback with lazy fallback
   evaluation and chained `??` operators.
 - `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,

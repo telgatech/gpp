@@ -81,9 +81,9 @@ func __gppDiscard3[A any, B any, C any](first A, second B, third C, err error) {
 }
 
 type catchClause struct {
-	typeName string
-	variable string
-	body     string
+	typeNames []string
+	variable  string
+	body      string
 }
 
 func transformExceptions(src string, context constructorContext) (string, error) {
@@ -272,6 +272,11 @@ func findExceptionBlockOpen(src string, start int) int {
 }
 
 func parseCatchClause(header string, context constructorContext) (catchClause, error) {
+	header = strings.TrimSpace(header)
+	if strings.Contains(header, ",") {
+		return parseMultiCatchClause(header, context)
+	}
+
 	fields := strings.Fields(header)
 	if len(fields) > 2 {
 		return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
@@ -279,20 +284,60 @@ func parseCatchClause(header string, context constructorContext) (catchClause, e
 	clause := catchClause{}
 	switch len(fields) {
 	case 0:
-		clause.typeName = "error"
+		clause.typeNames = []string{"error"}
 	case 1:
 		if isCatchTypeName(fields[0], context) {
-			clause.typeName = fields[0]
+			clause.typeNames = []string{fields[0]}
 		} else {
-			clause.typeName = "error"
+			clause.typeNames = []string{"error"}
 			clause.variable = fields[0]
 		}
 	case 2:
-		clause.typeName = fields[0]
+		clause.typeNames = []string{fields[0]}
 		clause.variable = fields[1]
 	}
-	if !isCatchTypeName(clause.typeName, context) {
-		return catchClause{}, fmt.Errorf("invalid catch type %s", clause.typeName)
+	if clause.variable != "" && (!isIdentifier(clause.variable) || isGoKeyword(clause.variable)) {
+		return catchClause{}, fmt.Errorf("invalid catch variable %s", clause.variable)
+	}
+	if !isCatchTypeName(clause.typeNames[0], context) {
+		return catchClause{}, fmt.Errorf("invalid catch type %s", clause.typeNames[0])
+	}
+	return clause, nil
+}
+
+func parseMultiCatchClause(header string, context constructorContext) (catchClause, error) {
+	parts := strings.Split(header, ",")
+	if len(parts) < 2 {
+		return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
+	}
+
+	clause := catchClause{}
+	for index, part := range parts {
+		fields := strings.Fields(part)
+		if len(fields) == 0 || len(fields) > 2 {
+			return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
+		}
+		if len(fields) == 2 {
+			if index != len(parts)-1 || clause.variable != "" {
+				return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
+			}
+			clause.variable = fields[1]
+			if !isIdentifier(clause.variable) || isGoKeyword(clause.variable) {
+				return catchClause{}, fmt.Errorf("invalid catch variable %s", clause.variable)
+			}
+		}
+		clause.typeNames = append(clause.typeNames, fields[0])
+	}
+
+	seen := map[string]bool{}
+	for _, typeName := range clause.typeNames {
+		if !isCatchTypeName(typeName, context) {
+			return catchClause{}, fmt.Errorf("invalid catch type %s", typeName)
+		}
+		if seen[typeName] {
+			return catchClause{}, fmt.Errorf("duplicate catch type %s", typeName)
+		}
+		seen[typeName] = true
 	}
 	return clause, nil
 }
@@ -334,9 +379,21 @@ func isCatchTypeName(name string, context constructorContext) bool {
 
 func validateCatchOrdering(clauses []catchClause, context constructorContext) error {
 	for index := 0; index < len(clauses); index++ {
+		for laterIndex, laterType := range clauses[index].typeNames {
+			for earlierIndex := 0; earlierIndex < laterIndex; earlierIndex++ {
+				earlierType := clauses[index].typeNames[earlierIndex]
+				if catchTypeCovers(earlierType, laterType, context) {
+					return fmt.Errorf("unreachable catch: %s is already matched by %s", laterType, earlierType)
+				}
+			}
+		}
 		for previous := 0; previous < index; previous++ {
-			if catchTypeCovers(clauses[previous].typeName, clauses[index].typeName, context) {
-				return fmt.Errorf("unreachable catch: %s is already matched by an earlier catch", clauses[index].typeName)
+			for _, earlierType := range clauses[previous].typeNames {
+				for _, laterType := range clauses[index].typeNames {
+					if catchTypeCovers(earlierType, laterType, context) {
+						return fmt.Errorf("unreachable catch: %s is already matched by %s", laterType, earlierType)
+					}
+				}
 			}
 		}
 	}
@@ -423,12 +480,22 @@ func lowerTry(tryBody string, clauses []catchClause, finallyBody string) string 
 	}
 	for _, clause := range clauses {
 		out.WriteString("case ")
-		out.WriteString(clause.typeName)
+		out.WriteString(strings.Join(clause.typeNames, ", "))
 		out.WriteString(":\n")
 		out.WriteString("__gppHandled = true\n")
 		if clause.variable != "" {
 			out.WriteString(clause.variable)
-			out.WriteString(" := __gppCaught\n")
+			out.WriteString(" := ")
+			if len(clause.typeNames) > 1 {
+				out.WriteString("error(__gppCaught)")
+			} else {
+				out.WriteString("__gppCaught")
+			}
+			out.WriteByte('\n')
+		} else if hasCatchVariable {
+			// A type-switch variable is scoped to each case. Keep the
+			// generated Go valid when another catch clause binds it.
+			out.WriteString("_ = __gppCaught\n")
 		}
 		out.WriteString("{\n")
 		out.WriteString(clause.body)

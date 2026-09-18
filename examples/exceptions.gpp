@@ -14,6 +14,14 @@ class ValidationError {
 	}
 }
 
+class PermissionError {
+	Message string
+
+	func Error() string {
+		return this.Message
+	}
+}
+
 func ReadConfig(path string) []byte {
 	return os.ReadFile(path)
 }
@@ -34,6 +42,12 @@ func main() {
 		throw ValidationError(Field: "email", Message: "invalid")
 	} catch ValidationError e {
 		fmt.Println(e.Error())
+	}
+
+	try {
+		throw PermissionError(Message: "permission denied")
+	} catch ValidationError, PermissionError e {
+		fmt.Println("client error:", e.Error())
 	}
 
 	_, err := os.ReadFile("optional-config.json")

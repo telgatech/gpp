@@ -1253,6 +1253,116 @@ func main() {
 	}
 }
 
+func TestCompileFilesSupportsMultiTypeCatch(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "fmt"
+    "os"
+    "net/url"
+)
+
+class ValidationError {
+    Message string
+
+    func Error() string {
+        return this.Message
+    }
+}
+
+class PermissionError {
+    Message string
+
+    func Error() string {
+        return this.Message
+    }
+}
+
+func main() {
+    try {
+        throw ValidationError(Message: "invalid")
+    } catch ValidationError, PermissionError e {
+        fmt.Println("client", e.Error())
+    } catch e {
+        fmt.Println("unexpected", e)
+    }
+
+    try {
+        throw PermissionError(Message: "denied")
+    } catch ValidationError, PermissionError e {
+        fmt.Println("client", e.Error())
+    }
+
+    try {
+        os.ReadFile("/definitely/missing/gpp-multicatch-file")
+    } catch *os.PathError, *url.Error e {
+        fmt.Println("native", e.Error() != "")
+    }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated multi-catch program did not run: %v\n%s", err, output)
+	}
+	expected := "client invalid\nclient denied\nnative true\n"
+	if string(output) != expected {
+		t.Fatalf("unexpected multi-catch output:\n%s", output)
+	}
+}
+
+func TestEmitRejectsInvalidMultiTypeCatch(t *testing.T) {
+	duplicate, err := ParseFile("duplicate-multicatch.gpp", `
+class ValidationError {
+    func Error() string { return "invalid" }
+}
+
+func main() {
+    try {
+        throw ValidationError()
+    } catch ValidationError, ValidationError e {
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate catch type ValidationError") {
+		t.Fatalf("expected duplicate multi-catch diagnostic, got %v", err)
+	}
+
+	invalid, err := ParseFile("invalid-multicatch.gpp", `
+class ValidationError {
+    func Error() string { return "invalid" }
+}
+
+func main() {
+    try {
+        throw ValidationError()
+    } catch string, ValidationError e {
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(invalid); err == nil || !strings.Contains(err.Error(), "invalid catch type string") {
+		t.Fatalf("expected invalid multi-catch diagnostic, got %v", err)
+	}
+}
+
 func TestEmitRejectsNonErrorThrow(t *testing.T) {
 	file, err := ParseFile("throw.gpp", `
 func main() {
