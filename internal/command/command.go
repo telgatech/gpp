@@ -143,7 +143,9 @@ func commandHelp(name string) int {
 	case "clean":
 		fmt.Println("Usage: gpp clean [-output directory]")
 	case "fmt":
-		fmt.Println("Usage: gpp fmt [file.gpp|file.gpp.tpl|directory ...]")
+		fmt.Println("Usage: gpp fmt [--check] [--stdout] [file.gpp|file.gpp.tpl|directory ...]")
+		fmt.Println("  --check       report files that need formatting without changing them")
+		fmt.Println("  --stdout      write formatted output to stdout (exactly one file)")
 	case "test":
 		fmt.Println("Usage: gpp test [options] [directory|./...]")
 		printCompileFlags()
@@ -847,7 +849,7 @@ func isSuiteClass(class *compiler.ClassDecl, packageName string, classes map[str
 	}
 	visiting[key] = true
 	defer delete(visiting, key)
-	for _, parent := range class.Parents {
+	for _, parent := range class.ParentNames() {
 		if parent == "test.Suite" || strings.HasSuffix(parent, ".Suite") {
 			return true
 		}
@@ -879,7 +881,7 @@ func effectiveTestCases(class *compiler.ClassDecl, packageName string, classes m
 	visiting[key] = true
 	defer delete(visiting, key)
 	methods := map[string]compiler.Method{}
-	for _, parent := range class.Parents {
+	for _, parent := range class.ParentNames() {
 		if base := classes[packageName+"."+parent]; base != nil {
 			for _, testCase := range effectiveMethods(base, packageName, classes, visiting) {
 				methods[testCase.Method] = testCaseMethod(testCase)
@@ -891,7 +893,7 @@ func effectiveTestCases(class *compiler.ClassDecl, packageName string, classes m
 	}
 	var result []discoveredTestCase
 	for _, method := range methods {
-		if method.IsStatic || method.Parameters != "" || method.Result != "" || !isPublicTestName(method.Name) || reservedTestMethod(method.Name) {
+		if method.IsStatic || len(method.ParameterAST) > 0 || method.ResultAST != nil || !isPublicTestName(method.Name) || reservedTestMethod(method.Name) {
 			continue
 		}
 		result = append(result, discoveredTestCase{Method: method.Name, Priority: annotationPriority(method.Annotations), Tags: annotationTags(method.Annotations)})
@@ -916,7 +918,7 @@ func classTags(class *compiler.ClassDecl, packageName string, classes map[string
 	visiting[key] = true
 	defer delete(visiting, key)
 	result := annotationTags(class.Annotations)
-	for _, parent := range class.Parents {
+	for _, parent := range class.ParentNames() {
 		if base := classes[packageName+"."+parent]; base != nil {
 			result = appendUniqueStrings(result, classTags(base, packageName, classes, visiting)...)
 		}
@@ -928,7 +930,7 @@ func classPriority(class *compiler.ClassDecl, packageName string, classes map[st
 	if priority := annotationPriority(class.Annotations); priority != "" {
 		return priority
 	}
-	for _, parent := range class.Parents {
+	for _, parent := range class.ParentNames() {
 		if base := classes[packageName+"."+parent]; base != nil {
 			if priority := classPriority(base, packageName, classes, visiting); priority != "" {
 				return priority
@@ -944,7 +946,11 @@ func annotationTags(annotations []compiler.AnnotationUse) []string {
 		if annotation.Name != "Tag" && !strings.HasSuffix(annotation.Name, ".Tag") {
 			continue
 		}
-		value := strings.TrimSpace(annotation.Arguments)
+		args := annotation.ArgumentTexts()
+		if len(args) == 0 {
+			continue
+		}
+		value := strings.TrimSpace(args[0])
 		if unquoted, err := strconv.Unquote(value); err == nil {
 			value = unquoted
 		}
@@ -960,7 +966,11 @@ func annotationPriority(annotations []compiler.AnnotationUse) string {
 		if annotation.Name != "Priority" && !strings.HasSuffix(annotation.Name, ".Priority") {
 			continue
 		}
-		value := strings.TrimSpace(annotation.Arguments)
+		args := annotation.ArgumentTexts()
+		if len(args) == 0 {
+			continue
+		}
+		value := strings.TrimSpace(args[0])
 		if index := strings.LastIndex(value, "."); index >= 0 {
 			value = value[index+1:]
 		}
@@ -1355,84 +1365,103 @@ func runFmt(args []string) int {
 	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
 		return commandHelp("fmt")
 	}
-	if len(args) == 0 {
-		args = []string{"."}
+	check := false
+	stdout := false
+	paths := []string{}
+	for _, arg := range args {
+		switch arg {
+		case "--check":
+			check = true
+		case "--stdout":
+			stdout = true
+		case "-h", "--help":
+			return commandHelp("fmt")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return reportError(fmt.Errorf("unknown fmt option %q", arg))
+			}
+			paths = append(paths, arg)
+		}
 	}
-	sources, err := discoverSources(args)
+	if check && stdout {
+		return reportError(fmt.Errorf("--check and --stdout cannot be used together"))
+	}
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+	sources, err := discoverSources(paths)
 	if err != nil {
 		return reportError(err)
 	}
+	if stdout && len(sources) != 1 {
+		return reportError(fmt.Errorf("--stdout requires exactly one Go++ source file"))
+	}
+	needsFormatting := []string{}
 	for _, source := range sources {
 		data, err := os.ReadFile(source)
 		if err != nil {
 			return reportError(err)
 		}
-		formatted := compiler.FormatSource(string(data))
-		if err := os.WriteFile(source, []byte(formatted), 0644); err != nil {
+		formatted, err := compiler.FormatSourceFile(source, data)
+		if err != nil {
 			return reportError(err)
 		}
-		fmt.Println(source)
+		if stdout {
+			_, _ = os.Stdout.Write(formatted)
+			continue
+		}
+		if bytes.Equal(data, formatted) {
+			continue
+		}
+		if check {
+			needsFormatting = append(needsFormatting, source)
+			continue
+		}
+		if err := atomicWriteFile(source, formatted); err != nil {
+			return reportError(err)
+		}
+	}
+	if len(needsFormatting) > 0 {
+		fmt.Println("Needs formatting:")
+		for _, source := range needsFormatting {
+			fmt.Printf("    %s\n", source)
+		}
+		return 1
 	}
 	return 0
 }
 
-func formatSource(source string) string {
-	source = strings.ReplaceAll(source, "\r\n", "\n")
-	lines := strings.Split(source, "\n")
-	indent := 0
-	for index, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			lines[index] = ""
-			continue
-		}
-		if strings.HasPrefix(trimmed, "}") {
-			indent--
-			if indent < 0 {
-				indent = 0
-			}
-		}
-		lines[index] = strings.Repeat("\t", indent) + trimmed
-		indent += braceDelta(trimmed)
-		if indent < 0 {
-			indent = 0
-		}
+func atomicWriteFile(path string, contents []byte) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
 	}
-	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".gpp-fmt-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(contents); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func wantsHelp(args []string) bool {
 	return len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
-}
-
-func braceDelta(line string) int {
-	open, close := 0, 0
-	inString := false
-	escaped := false
-	for _, char := range line {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if char == '\\' && inString {
-			escaped = true
-			continue
-		}
-		if char == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		switch char {
-		case '{':
-			open++
-		case '}':
-			close++
-		}
-	}
-	return open - close
 }
 
 func runEnv(args []string) int {

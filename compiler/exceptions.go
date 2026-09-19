@@ -1,8 +1,10 @@
 package compiler
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -81,9 +83,9 @@ func __gppDiscard3[A any, B any, C any](first A, second B, third C, err error) {
 }
 
 type catchClause struct {
-	typeNames []string
+	typeNodes []TypeNode
 	variable  string
-	body      string
+	body      *ast.BlockStmt
 }
 
 func transformExceptions(src string, context constructorContext) (string, error) {
@@ -91,255 +93,279 @@ func transformExceptions(src string, context constructorContext) (string, error)
 }
 
 func transformExceptionRegion(src string, context constructorContext, rethrowName string) (string, error) {
-	var out strings.Builder
-	for index := 0; index < len(src); {
-		if end, ok, err := copyIgnoredSource(src, index, &out); err != nil {
-			return "", err
-		} else if ok {
-			index = end
-			continue
-		}
-
-		if keywordAt(src, index, "try") && exceptionStatementStart(src, index) {
-			open := skipSpace(src, index+len("try"))
-			if open >= len(src) || src[open] != '{' {
-				return "", fmt.Errorf("try must be followed by a block")
-			}
-			close, err := findMatchingBrace(src, open)
-			if err != nil {
-				return "", err
-			}
-			tryBody, err := transformExceptionRegion(src[open+1:close], context, rethrowName)
-			if err != nil {
-				return "", err
-			}
-
-			cursor := skipSpace(src, close+1)
-			clauses := []catchClause{}
-			for cursor < len(src) && keywordAt(src, cursor, "catch") {
-				headerStart := skipSpace(src, cursor+len("catch"))
-				bodyOpen := findExceptionBlockOpen(src, headerStart)
-				if bodyOpen < 0 {
-					return "", fmt.Errorf("catch must be followed by a block")
-				}
-				header := strings.TrimSpace(src[headerStart:bodyOpen])
-				clause, err := parseCatchClause(header, context)
-				if err != nil {
-					return "", err
-				}
-				bodyClose, err := findMatchingBrace(src, bodyOpen)
-				if err != nil {
-					return "", err
-				}
-				clause.body, err = transformExceptionRegion(src[bodyOpen+1:bodyClose], context, "__gppRecovered")
-				if err != nil {
-					return "", err
-				}
-				clauses = append(clauses, clause)
-				cursor = skipSpace(src, bodyClose+1)
-			}
-			if err := validateCatchOrdering(clauses, context); err != nil {
-				return "", err
-			}
-
-			finallyBody := ""
-			if cursor < len(src) && keywordAt(src, cursor, "finally") {
-				bodyOpen := skipSpace(src, cursor+len("finally"))
-				if bodyOpen >= len(src) || src[bodyOpen] != '{' {
-					return "", fmt.Errorf("finally must be followed by a block")
-				}
-				bodyClose, err := findMatchingBrace(src, bodyOpen)
-				if err != nil {
-					return "", err
-				}
-				finallyBody, err = transformExceptionRegion(src[bodyOpen+1:bodyClose], context, rethrowName)
-				if err != nil {
-					return "", err
-				}
-				if err := validateFinallyControlTransfers(finallyBody, context); err != nil {
-					return "", err
-				}
-				cursor = skipSpace(src, bodyClose+1)
-			}
-
-			if len(clauses) == 0 && finallyBody == "" {
-				out.WriteString("{\n")
-				out.WriteString(tryBody)
-				out.WriteString("\n}")
-			} else {
-				tryBody, err = transformImplicitErrorPromotion(tryBody, context)
-				if err != nil {
-					return "", err
-				}
-				tryBody, err = rewriteExceptionReturns(tryBody, context)
-				if err != nil {
-					return "", err
-				}
-				for clauseIndex := range clauses {
-					clauses[clauseIndex].body, err = transformImplicitErrorPromotion(clauses[clauseIndex].body, context)
-					if err != nil {
-						return "", err
-					}
-					clauses[clauseIndex].body, err = rewriteExceptionReturns(clauses[clauseIndex].body, context)
-					if err != nil {
-						return "", err
-					}
-				}
-				out.WriteString(lowerTry(tryBody, clauses, finallyBody))
-				out.WriteByte('\n')
-			}
-			index = cursor
-			continue
-		}
-
-		if keywordAt(src, index, "throw") && exceptionStatementStart(src, index) {
-			end, expression, err := readThrowExpression(src, index+len("throw"))
-			if err != nil {
-				return "", err
-			}
-			if strings.TrimSpace(expression) == "" {
-				if rethrowName == "" {
-					return "", fmt.Errorf("bare throw is only valid inside catch")
-				}
-				out.WriteString("panic(" + rethrowName + ")")
-			} else {
-				if err := validateThrowExpression(expression, context); err != nil {
-					return "", err
-				}
-				out.WriteString("__gppThrow(")
-				out.WriteString(expression)
-				out.WriteByte(')')
-			}
-			index = end
-			continue
-		}
-
-		out.WriteByte(src[index])
-		index++
+	if transformed, handled, err := transformExceptionRegionAST(src, context, rethrowName); handled {
+		return transformed, err
 	}
-	return out.String(), nil
+	if hasExceptionSyntaxTokens(src) {
+		return "", fmt.Errorf("exception syntax could not be represented by the body AST")
+	}
+	return src, nil
 }
 
-func exceptionStatementStart(src string, index int) bool {
-	if index == 0 {
-		return true
+func hasExceptionSyntaxTokens(src string) bool {
+	tokens, err := LexSource("exception syntax", src)
+	if err != nil {
+		return false
 	}
-	for cursor := index - 1; cursor >= 0; cursor-- {
-		switch src[cursor] {
-		case ' ', '\t', '\r':
-			continue
-		case '\n', '{', '}', ';':
+	for _, token := range tokens {
+		if token.Kind == TokenKeyword && (token.Text == "try" || token.Text == "throw") {
 			return true
-		default:
-			return false
 		}
 	}
-	return true
+	return false
 }
 
-func findExceptionBlockOpen(src string, start int) int {
-	parenDepth := 0
-	bracketDepth := 0
-	for index := start; index < len(src); index++ {
-		switch src[index] {
-		case '"', '\'', '`':
-			end, err := skipQuoted(src, index, src[index])
-			if src[index] == '`' {
-				end = strings.IndexByte(src[index+1:], '`')
-				if end >= 0 {
-					end += index + 1
-				}
-			}
-			if err != nil || end < 0 {
-				return -1
-			}
-			index = end
-		case '(':
-			parenDepth++
-		case ')':
-			parenDepth--
-		case '[':
-			bracketDepth++
-		case ']':
-			bracketDepth--
-		case '{':
-			if parenDepth == 0 && bracketDepth == 0 {
-				return index
+// transformExceptionRegionAST lowers try/catch/finally and throw statements
+// discovered from the structured body AST. It deliberately delegates only
+// the existing type validation and runtime wrapper construction to the
+// compatibility helpers below; statement boundaries and exception clauses are
+// sourced from typed nodes and spans.
+func transformExceptionRegionAST(src string, context constructorContext, rethrowName string) (string, bool, error) {
+	tokens, err := LexSource("exceptions", src)
+	if err != nil {
+		return src, false, nil
+	}
+	blocks := []*BlockStmt{}
+	// A complete function declaration is accepted by the body parser as a
+	// token fallback. Prefer its structured function body so exception syntax
+	// cannot disappear into that fallback.
+	functions := parseTopLevelFunctions("exceptions", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function != nil && function.Method.BodyAST != nil {
+				blocks = append(blocks, function.Method.BodyAST)
 			}
 		}
+	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil {
+		blocks = append(blocks, block)
 	}
-	return -1
+	if len(blocks) == 0 {
+		return src, false, nil
+	}
+	statements := []Stmt{}
+	for _, block := range blocks {
+		collectExceptionSyntaxStatements(block, &statements)
+	}
+	if len(statements) == 0 {
+		return src, false, nil
+	}
+
+	type edit struct {
+		start int
+		end   int
+		text  string
+	}
+	edits := make([]edit, 0, len(statements))
+	for _, statement := range statements {
+		if statement == nil {
+			continue
+		}
+		start := statement.Span().Start
+		end := statement.Span().End
+		if start < 0 || end > len(src) || start >= end {
+			return src, false, nil
+		}
+		switch statement := statement.(type) {
+		case *ThrowStmt:
+			text, err := lowerASTThrow(statement, context, rethrowName)
+			if err != nil {
+				return "", true, err
+			}
+			edits = append(edits, edit{start: start, end: end, text: text})
+		case *TryStmt:
+			text, err := lowerASTTry(statement, src, context, rethrowName)
+			if err != nil {
+				return "", true, err
+			}
+			edits = append(edits, edit{start: start, end: end, text: text})
+		}
+	}
+	if len(edits) == 0 {
+		return src, false, nil
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, edit := range edits {
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
 }
 
-func parseCatchClause(header string, context constructorContext) (catchClause, error) {
-	header = strings.TrimSpace(header)
-	if strings.Contains(header, ",") {
-		return parseMultiCatchClause(header, context)
+func collectExceptionSyntaxStatements(block *BlockStmt, result *[]Stmt) {
+	if block == nil {
+		return
 	}
-
-	fields := strings.Fields(header)
-	if len(fields) > 2 {
-		return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
+	for _, statement := range block.Statements {
+		collectExceptionStatement(statement, result)
 	}
-	clause := catchClause{}
-	switch len(fields) {
-	case 0:
-		clause.typeNames = []string{"error"}
-	case 1:
-		if isCatchTypeName(fields[0], context) {
-			clause.typeNames = []string{fields[0]}
-		} else {
-			clause.typeNames = []string{"error"}
-			clause.variable = fields[0]
-		}
-	case 2:
-		clause.typeNames = []string{fields[0]}
-		clause.variable = fields[1]
-	}
-	if clause.variable != "" && (!isIdentifier(clause.variable) || isGoKeyword(clause.variable)) {
-		return catchClause{}, fmt.Errorf("invalid catch variable %s", clause.variable)
-	}
-	if !isCatchTypeName(clause.typeNames[0], context) {
-		return catchClause{}, fmt.Errorf("invalid catch type %s", clause.typeNames[0])
-	}
-	return clause, nil
 }
 
-func parseMultiCatchClause(header string, context constructorContext) (catchClause, error) {
-	parts := strings.Split(header, ",")
-	if len(parts) < 2 {
-		return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
+func collectExceptionStatement(statement Stmt, result *[]Stmt) {
+	if statement == nil {
+		return
 	}
+	switch value := statement.(type) {
+	case *TryStmt, *ThrowStmt:
+		// A try statement owns its nested body. lowerASTTry recursively lowers
+		// that body, so nested statements must not overlap this edit.
+		*result = append(*result, statement)
+	case *TokenStmt:
+		collectExceptionSyntaxStatements(value.Body, result)
+		for _, child := range value.Children {
+			collectExceptionStatement(child, result)
+		}
+	case *IfStmt:
+		collectExceptionSyntaxStatements(value.Body, result)
+		collectExceptionSyntaxStatements(value.Else, result)
+		if value.ElseIf != nil {
+			collectExceptionStatement(value.ElseIf, result)
+		}
+	case *ForStmt:
+		collectExceptionSyntaxStatements(value.Body, result)
+	case *SwitchStmt:
+		collectExceptionSyntaxStatements(value.Body, result)
+	case *CaseStmt:
+		collectExceptionSyntaxStatements(value.Clause.Body, result)
+	case *BlockStmt:
+		collectExceptionSyntaxStatements(value, result)
+	}
+}
 
-	clause := catchClause{}
-	for index, part := range parts {
-		fields := strings.Fields(part)
-		if len(fields) == 0 || len(fields) > 2 {
-			return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
-		}
-		if len(fields) == 2 {
-			if index != len(parts)-1 || clause.variable != "" {
-				return catchClause{}, fmt.Errorf("invalid catch clause %q", header)
-			}
-			clause.variable = fields[1]
-			if !isIdentifier(clause.variable) || isGoKeyword(clause.variable) {
-				return catchClause{}, fmt.Errorf("invalid catch variable %s", clause.variable)
-			}
-		}
-		clause.typeNames = append(clause.typeNames, fields[0])
+func blockBodySource(block *BlockStmt, src string) (string, bool) {
+	if block == nil || block.Open.End < 0 || block.Close.Start < block.Open.End || block.Close.Start > len(src) {
+		return "", false
 	}
+	return src[block.Open.End:block.Close.Start], true
+}
 
-	seen := map[string]bool{}
-	for _, typeName := range clause.typeNames {
-		if !isCatchTypeName(typeName, context) {
-			return catchClause{}, fmt.Errorf("invalid catch type %s", typeName)
+func lowerASTThrow(statement *ThrowStmt, context constructorContext, rethrowName string) (string, error) {
+	if statement == nil || statement.Value == nil {
+		if rethrowName == "" {
+			return "", fmt.Errorf("bare throw is only valid inside catch")
 		}
-		if seen[typeName] {
-			return catchClause{}, fmt.Errorf("duplicate catch type %s", typeName)
-		}
-		seen[typeName] = true
+		return "panic(" + rethrowName + ")", nil
 	}
-	return clause, nil
+	expressionText, err := expressionNodeSource(statement.Value)
+	if err != nil {
+		return "", err
+	}
+	expression := strings.TrimSpace(expressionText)
+	if expression == "" {
+		return "", fmt.Errorf("throw requires an expression")
+	}
+	if err := validateThrowExpression(expression, context); err != nil {
+		return "", err
+	}
+	return "__gppThrow(" + expression + ")", nil
+}
+
+func lowerASTTry(statement *TryStmt, src string, context constructorContext, rethrowName string) (string, error) {
+	if statement == nil {
+		return "", fmt.Errorf("try statement is nil")
+	}
+	tryBody, ok := blockBodySource(statement.Body, src)
+	if !ok {
+		return "", fmt.Errorf("try body has invalid source span")
+	}
+	tryBody, err := transformExceptionRegion(tryBody, context, rethrowName)
+	if err != nil {
+		return "", err
+	}
+	clauses := []catchClause{}
+	clauseSources := []string{}
+	finallyBody := ""
+	for _, parsed := range statement.Catches {
+		body, bodyOK := blockBodySource(parsed.Body, src)
+		if !bodyOK {
+			return "", fmt.Errorf("exception clause has invalid source span")
+		}
+		catchTypes := append([]TypeNode(nil), parsed.Types...)
+		catchVariable := parsed.Binding
+		// The body parser cannot resolve the one-token ambiguity between
+		// `catch Problem` (a type) and `catch problem` (a binding). Resolve it
+		// against semantic context here instead of encoding source heuristics
+		// in the parser.
+		if len(catchTypes) == 0 && catchVariable != "" && isCatchTypeName(catchVariable, context) {
+			catchTypes = append(catchTypes, parseTypeText(catchVariable))
+			catchVariable = ""
+		}
+		clause := catchClause{variable: catchVariable}
+		for _, typeNode := range catchTypes {
+			nameText, typeErr := typeNodeSource(typeNode)
+			if typeErr != nil {
+				return "", typeErr
+			}
+			name := strings.TrimSpace(nameText)
+			if name == "" {
+				return "", fmt.Errorf("catch type is empty")
+			}
+			clause.typeNodes = append(clause.typeNodes, typeNode)
+		}
+		if len(clause.typeNodes) == 0 {
+			clause.typeNodes = []TypeNode{parseTypeText("error")}
+		}
+		body, err = transformExceptionRegion(body, context, "__gppRecovered")
+		if err != nil {
+			return "", err
+		}
+		for _, typeNode := range clause.typeNodes {
+			nameText, typeErr := typeNodeSource(typeNode)
+			if typeErr != nil {
+				return "", typeErr
+			}
+			typeName := strings.TrimSpace(nameText)
+			if !isCatchTypeName(typeName, context) {
+				return "", fmt.Errorf("invalid catch type %s", typeName)
+			}
+		}
+		if clause.variable != "" && (!isIdentifier(clause.variable) || isGoKeyword(clause.variable)) {
+			return "", fmt.Errorf("invalid catch variable %s", clause.variable)
+		}
+		clauses = append(clauses, clause)
+		clauseSources = append(clauseSources, body)
+	}
+	if statement.Finally != nil {
+		body, bodyOK := blockBodySource(statement.Finally, src)
+		if !bodyOK {
+			return "", fmt.Errorf("exception clause has invalid source span")
+		}
+		finallyBody, err = transformExceptionRegion(body, context, rethrowName)
+		if err != nil {
+			return "", err
+		}
+		if err := validateFinallyControlTransfers(finallyBody, context); err != nil {
+			return "", err
+		}
+	}
+	for index := range clauses {
+		body := clauseSources[index]
+		body, err = transformImplicitErrorPromotion(body, context)
+		if err != nil {
+			return "", err
+		}
+		body, err = rewriteExceptionReturns(body, context)
+		if err != nil {
+			return "", err
+		}
+		clauses[index].body, err = parseLoweredBlock(body)
+		if err != nil {
+			return "", fmt.Errorf("catch body is not valid Go after AST lowering: %w", err)
+		}
+	}
+	if err := validateCatchOrdering(clauses, context); err != nil {
+		return "", err
+	}
+	if len(clauses) == 0 && finallyBody == "" {
+		return "{\n" + tryBody + "\n}", nil
+	}
+	tryBody, err = transformImplicitErrorPromotion(tryBody, context)
+	if err != nil {
+		return "", err
+	}
+	tryBody, err = rewriteExceptionReturns(tryBody, context)
+	if err != nil {
+		return "", err
+	}
+	return lowerTryAST(tryBody, clauses, finallyBody, context)
 }
 
 func isCatchTypeName(name string, context constructorContext) bool {
@@ -379,17 +405,25 @@ func isCatchTypeName(name string, context constructorContext) bool {
 
 func validateCatchOrdering(clauses []catchClause, context constructorContext) error {
 	for index := 0; index < len(clauses); index++ {
-		for laterIndex, laterType := range clauses[index].typeNames {
+		seenTypes := map[string]bool{}
+		typeNames := catchClauseTypeNames(clauses[index])
+		for _, typeName := range typeNames {
+			if seenTypes[typeName] {
+				return fmt.Errorf("duplicate catch type %s", typeName)
+			}
+			seenTypes[typeName] = true
+		}
+		for laterIndex, laterType := range typeNames {
 			for earlierIndex := 0; earlierIndex < laterIndex; earlierIndex++ {
-				earlierType := clauses[index].typeNames[earlierIndex]
+				earlierType := typeNames[earlierIndex]
 				if catchTypeCovers(earlierType, laterType, context) {
 					return fmt.Errorf("unreachable catch: %s is already matched by %s", laterType, earlierType)
 				}
 			}
 		}
 		for previous := 0; previous < index; previous++ {
-			for _, earlierType := range clauses[previous].typeNames {
-				for _, laterType := range clauses[index].typeNames {
+			for _, earlierType := range catchClauseTypeNames(clauses[previous]) {
+				for _, laterType := range typeNames {
 					if catchTypeCovers(earlierType, laterType, context) {
 						return fmt.Errorf("unreachable catch: %s is already matched by %s", laterType, earlierType)
 					}
@@ -398,6 +432,16 @@ func validateCatchOrdering(clauses []catchClause, context constructorContext) er
 		}
 	}
 	return nil
+}
+
+func catchClauseTypeNames(clause catchClause) []string {
+	names := make([]string, 0, len(clause.typeNodes))
+	for _, typeNode := range clause.typeNodes {
+		if name, err := typeNodeSource(typeNode); err == nil {
+			names = append(names, strings.TrimSpace(name))
+		}
+	}
+	return names
 }
 
 func catchTypeCovers(earlier, later string, context constructorContext) bool {
@@ -419,53 +463,194 @@ func catchTypeCovers(earlier, later string, context constructorContext) bool {
 }
 
 func validateFinallyControlTransfers(body string, context constructorContext) error {
-	parsed, _, _, err := parseExceptionSource(body, context)
-	if err != nil {
-		return nil
+	if err, handled := validateFinallyControlTransfersAST(body); handled {
+		return err
 	}
-	var transferErr error
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if node == nil || transferErr != nil {
-			return transferErr == nil
-		}
-		if transferErr != nil {
-			return false
-		}
-		switch statement := node.(type) {
-		case *ast.FuncLit:
-			return false
-		case *ast.ReturnStmt:
-			transferErr = fmt.Errorf("control transfer from finally is not allowed: return")
-			return false
-		case *ast.BranchStmt:
-			switch statement.Tok {
-			case token.BREAK, token.CONTINUE, token.GOTO:
-				transferErr = fmt.Errorf("control transfer from finally is not allowed: %s", statement.Tok)
-				return false
-			}
-		}
-		return true
-	})
-	return transferErr
+	return nil
 }
 
-func lowerTry(tryBody string, clauses []catchClause, finallyBody string) string {
-	var out strings.Builder
-	out.WriteString("__gppRun(func() {\n")
-	out.WriteString("defer func() {\n")
-	if finallyBody != "" {
-		out.WriteString("defer func() {\n")
-		out.WriteString(finallyBody)
-		out.WriteString("\n}()\n")
+func validateFinallyControlTransfersAST(body string) (error, bool) {
+	tokens, err := LexSource("finally", body)
+	if err != nil {
+		return nil, false
 	}
-	out.WriteString("__gppRecovered := recover()\n")
-	out.WriteString("if __gppRecovered != nil {\n")
-	out.WriteString("__gppThrown, __gppIsThrown := __gppRecovered.(__gppThrownError)\n")
-	out.WriteString("if !__gppIsThrown {\n")
-	out.WriteString("panic(__gppRecovered)\n")
-	out.WriteString("}\n")
-	out.WriteString("__gppHandled := false\n")
-	out.WriteString("if __gppThrown.err != nil {\n")
+	block, err := ParseBodyAST(tokens)
+	if err != nil {
+		return nil, false
+	}
+	var transferErr error
+	var visitBlock func(*BlockStmt)
+	var visitStmt func(Stmt)
+	visitBlock = func(current *BlockStmt) {
+		if current == nil || transferErr != nil {
+			return
+		}
+		for _, statement := range current.Statements {
+			visitStmt(statement)
+			if transferErr != nil {
+				return
+			}
+		}
+	}
+	visitStmt = func(statement Stmt) {
+		if statement == nil || transferErr != nil {
+			return
+		}
+		switch value := statement.(type) {
+		case *TokenStmt:
+			switch value.Kind {
+			case BodyStmtReturn:
+				transferErr = fmt.Errorf("control transfer from finally is not allowed: return")
+			case BodyStmtBranch:
+				keyword := firstSyntaxText(value.Tokens)
+				if keyword == "break" || keyword == "continue" || keyword == "goto" {
+					transferErr = fmt.Errorf("control transfer from finally is not allowed: %s", keyword)
+				}
+			}
+			visitBlock(value.Body)
+			for _, child := range value.Children {
+				visitStmt(child)
+			}
+		case *BlockStmt:
+			visitBlock(value)
+		case *ReturnStmt:
+			transferErr = fmt.Errorf("control transfer from finally is not allowed: return")
+		case *BranchStmt:
+			if value.Keyword == "break" || value.Keyword == "continue" || value.Keyword == "goto" {
+				transferErr = fmt.Errorf("control transfer from finally is not allowed: %s", value.Keyword)
+			}
+		case *IfStmt:
+			visitBlock(value.Body)
+			visitBlock(value.Else)
+			if value.ElseIf != nil {
+				visitStmt(value.ElseIf)
+			}
+		case *ForStmt:
+			visitBlock(value.Body)
+		case *SwitchStmt:
+			visitBlock(value.Body)
+		case *CaseStmt:
+			visitBlock(value.Clause.Body)
+		case *TryStmt:
+			visitBlock(value.Body)
+			for _, clause := range value.Catches {
+				visitBlock(clause.Body)
+			}
+			visitBlock(value.Finally)
+		}
+	}
+	visitBlock(block)
+	return transferErr, true
+}
+
+func lowerTryAST(tryBody string, clauses []catchClause, finallyBody string, context constructorContext) (string, error) {
+	var err error
+	tryBody, err = transformConstructors(tryBody, context)
+	if err != nil {
+		return "", err
+	}
+	tryBlock, err := parseLoweredBlock(tryBody)
+	if err != nil {
+		return "", fmt.Errorf("try body is not valid Go after AST lowering: %w", err)
+	}
+	finallyBlock := &ast.BlockStmt{}
+	if finallyBody != "" {
+		finallyBody, err = transformConstructors(finallyBody, context)
+		if err != nil {
+			return "", err
+		}
+		finallyBlock, err = parseLoweredBlock(finallyBody)
+		if err != nil {
+			return "", fmt.Errorf("finally body is not valid Go after AST lowering: %w", err)
+		}
+	}
+	deferBody := []ast.Stmt{}
+	if finallyBody != "" {
+		deferBody = append(deferBody, &ast.DeferStmt{Call: &ast.CallExpr{
+			Fun: &ast.FuncLit{
+				Type: &ast.FuncType{Params: &ast.FieldList{}},
+				Body: finallyBlock,
+			},
+		}})
+	}
+
+	recovered := identifier("__gppRecovered")
+	thrown := identifier("__gppThrown")
+	isThrown := identifier("__gppIsThrown")
+	handled := identifier("__gppHandled")
+	thrownError := selector(thrown, "err")
+
+	catchIf := &ast.IfStmt{
+		Cond: &ast.BinaryExpr{X: thrownError, Op: token.NEQ, Y: identifier("nil")},
+		Body: &ast.BlockStmt{},
+	}
+	recoverBody := []ast.Stmt{
+		&ast.AssignStmt{
+			Lhs: []ast.Expr{recovered},
+			Tok: token.DEFINE,
+			Rhs: []ast.Expr{call(identifier("recover"))},
+		},
+		&ast.IfStmt{
+			Cond: &ast.BinaryExpr{X: recovered, Op: token.NEQ, Y: identifier("nil")},
+			Body: &ast.BlockStmt{List: []ast.Stmt{
+				&ast.AssignStmt{
+					Lhs: []ast.Expr{thrown, isThrown},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{&ast.TypeAssertExpr{
+						X:    recovered,
+						Type: identifier("__gppThrownError"),
+					}},
+				},
+				&ast.IfStmt{
+					Cond: &ast.UnaryExpr{Op: token.NOT, X: isThrown},
+					Body: &ast.BlockStmt{List: []ast.Stmt{
+						&ast.ExprStmt{X: call(identifier("panic"), recovered)},
+					}},
+				},
+				&ast.AssignStmt{
+					Lhs: []ast.Expr{handled},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{identifier("false")},
+				},
+				catchIf,
+				&ast.IfStmt{
+					Cond: &ast.UnaryExpr{Op: token.NOT, X: handled},
+					Body: &ast.BlockStmt{List: []ast.Stmt{
+						&ast.ExprStmt{X: call(identifier("panic"), recovered)},
+					}},
+				},
+			}},
+		},
+	}
+	catchSwitch, err := lowerCatchSwitch(thrownError, handled, clauses)
+	if err != nil {
+		return "", fmt.Errorf("catch body is not valid Go after AST lowering: %w", err)
+	}
+	catchIf.Body.List = []ast.Stmt{catchSwitch}
+	deferBody = append(deferBody, recoverBody...)
+
+	runBody := []ast.Stmt{
+		&ast.DeferStmt{Call: &ast.CallExpr{
+			Fun: &ast.FuncLit{
+				Type: &ast.FuncType{Params: &ast.FieldList{}},
+				Body: &ast.BlockStmt{List: deferBody},
+			},
+		}},
+	}
+	runBody = append(runBody, tryBlock.List...)
+	run := &ast.ExprStmt{X: call(identifier("__gppRun"), &ast.FuncLit{
+		Type: &ast.FuncType{Params: &ast.FieldList{}},
+		Body: &ast.BlockStmt{List: runBody},
+	})}
+
+	var output bytes.Buffer
+	if err := format.Node(&output, token.NewFileSet(), run); err != nil {
+		return "", err
+	}
+	return output.String(), nil
+}
+
+func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast.Stmt, error) {
 	hasCatchVariable := false
 	for _, clause := range clauses {
 		if clause.variable != "" {
@@ -473,89 +658,199 @@ func lowerTry(tryBody string, clauses []catchClause, finallyBody string) string 
 			break
 		}
 	}
+
+	var assign ast.Stmt
 	if hasCatchVariable {
-		out.WriteString("switch __gppCaught := __gppThrown.err.(type) {\n")
-	} else {
-		out.WriteString("switch __gppThrown.err.(type) {\n")
-	}
-	for _, clause := range clauses {
-		out.WriteString("case ")
-		out.WriteString(strings.Join(clause.typeNames, ", "))
-		out.WriteString(":\n")
-		out.WriteString("__gppHandled = true\n")
-		if clause.variable != "" {
-			out.WriteString(clause.variable)
-			out.WriteString(" := ")
-			if len(clause.typeNames) > 1 {
-				out.WriteString("error(__gppCaught)")
-			} else {
-				out.WriteString("__gppCaught")
-			}
-			out.WriteByte('\n')
-		} else if hasCatchVariable {
-			// A type-switch variable is scoped to each case. Keep the
-			// generated Go valid when another catch clause binds it.
-			out.WriteString("_ = __gppCaught\n")
+		assign = &ast.AssignStmt{
+			Lhs: []ast.Expr{identifier("__gppCaught")},
+			Tok: token.DEFINE,
+			Rhs: []ast.Expr{&ast.TypeAssertExpr{X: thrownError, Type: nil}},
 		}
-		out.WriteString("{\n")
-		out.WriteString(clause.body)
-		out.WriteString("\n}\n")
+	} else {
+		assign = &ast.ExprStmt{X: &ast.TypeAssertExpr{X: thrownError, Type: nil}}
 	}
-	out.WriteString("}\n")
-	out.WriteString("}\n")
-	out.WriteString("if !__gppHandled {\n")
-	out.WriteString("panic(__gppRecovered)\n")
-	out.WriteString("}\n")
-	out.WriteString("}\n")
-	out.WriteString("}()\n")
-	out.WriteString(tryBody)
-	out.WriteString("\n})")
-	return out.String()
+
+	body := make([]ast.Stmt, 0, len(clauses))
+	for _, clause := range clauses {
+		caseBody := []ast.Stmt{
+			&ast.AssignStmt{
+				Lhs: []ast.Expr{handled},
+				Tok: token.ASSIGN,
+				Rhs: []ast.Expr{identifier("true")},
+			},
+		}
+		if clause.variable != "" {
+			value := ast.Expr(identifier("__gppCaught"))
+			if len(clause.typeNodes) > 1 {
+				value = call(identifier("error"), value)
+			}
+			caseBody = append(caseBody, &ast.AssignStmt{
+				Lhs: []ast.Expr{identifier(clause.variable)},
+				Tok: token.DEFINE,
+				Rhs: []ast.Expr{value},
+			})
+		} else if hasCatchVariable {
+			caseBody = append(caseBody, &ast.AssignStmt{
+				Lhs: []ast.Expr{identifier("_")},
+				Tok: token.ASSIGN,
+				Rhs: []ast.Expr{identifier("__gppCaught")},
+			})
+		}
+		if clause.body != nil {
+			caseBody = append(caseBody, clause.body.List...)
+		}
+		caseExprs := make([]ast.Expr, 0, len(clause.typeNodes))
+		for _, typeNode := range clause.typeNodes {
+			typeName, typeErr := typeNodeSource(typeNode)
+			if typeErr != nil {
+				return nil, typeErr
+			}
+			expression, parseErr := parser.ParseExpr(strings.TrimSpace(typeName))
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			caseExprs = append(caseExprs, expression)
+		}
+		body = append(body, &ast.CaseClause{List: caseExprs, Body: caseBody})
+	}
+
+	return &ast.TypeSwitchStmt{
+		Assign: assign,
+		Body:   &ast.BlockStmt{List: body},
+	}, nil
+}
+
+func parseLoweredBlock(source string) (*ast.BlockStmt, error) {
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "generated.go", "package main\nfunc __gppGenerated() {\n"+source+"\n}\n", 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(parsed.Decls) != 1 {
+		return nil, fmt.Errorf("generated exception body did not parse as one function")
+	}
+	function, ok := parsed.Decls[0].(*ast.FuncDecl)
+	if !ok || function.Body == nil {
+		return nil, fmt.Errorf("generated exception body did not produce a function body")
+	}
+	return function.Body, nil
+}
+
+func identifier(name string) *ast.Ident {
+	return ast.NewIdent(name)
+}
+
+func selector(expression ast.Expr, name string) *ast.SelectorExpr {
+	return &ast.SelectorExpr{X: expression, Sel: identifier(name)}
+}
+
+func call(function ast.Expr, arguments ...ast.Expr) *ast.CallExpr {
+	return &ast.CallExpr{Fun: function, Args: arguments}
 }
 
 func rewriteExceptionReturns(body string, context constructorContext) (string, error) {
-	parsed, fileSet, prefixLength, err := parseExceptionSource(body, context)
+	if transformed, handled, err := rewriteExceptionReturnsAST(body); handled {
+		return transformed, err
+	}
+	return body, nil
+}
+
+func rewriteExceptionReturnsAST(body string) (string, bool, error) {
+	tokens, err := LexSource("exception returns", body)
 	if err != nil {
-		return body, nil
+		return body, false, nil
+	}
+	block, err := ParseBodyAST(tokens)
+	if err != nil {
+		return body, false, nil
+	}
+	returns := []*ReturnStmt{}
+	unsupported := false
+	var visitBlock func(*BlockStmt)
+	var visitStmt func(Stmt)
+	visitBlock = func(current *BlockStmt) {
+		if current == nil || unsupported {
+			return
+		}
+		for _, statement := range current.Statements {
+			visitStmt(statement)
+		}
+	}
+	visitStmt = func(statement Stmt) {
+		if statement == nil || unsupported {
+			return
+		}
+		switch value := statement.(type) {
+		case *TokenStmt:
+			if value.Kind == BodyStmtReturn {
+				unsupported = true
+				return
+			}
+			visitBlock(value.Body)
+			for _, child := range value.Children {
+				visitStmt(child)
+			}
+		case *BlockStmt:
+			visitBlock(value)
+		case *ReturnStmt:
+			returns = append(returns, value)
+		case *IfStmt:
+			visitBlock(value.Body)
+			visitBlock(value.Else)
+			if value.ElseIf != nil {
+				visitStmt(value.ElseIf)
+			}
+		case *ForStmt:
+			visitBlock(value.Body)
+		case *SwitchStmt:
+			visitBlock(value.Body)
+		case *CaseStmt:
+			visitBlock(value.Clause.Body)
+		case *TryStmt:
+			visitBlock(value.Body)
+			for _, clause := range value.Catches {
+				visitBlock(clause.Body)
+			}
+			visitBlock(value.Finally)
+		}
+	}
+	visitBlock(block)
+	if unsupported {
+		return body, false, nil
 	}
 	type edit struct {
 		start int
 		end   int
 		text  string
 	}
-	edits := []edit{}
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if node == nil {
-			return true
+	edits := make([]edit, 0, len(returns))
+	for _, statement := range returns {
+		values := make([]string, 0, len(statement.Values))
+		for _, value := range statement.Values {
+			text, sourceErr := expressionNodeSource(value)
+			if sourceErr != nil {
+				return body, false, nil
+			}
+			values = append(values, text)
 		}
-		if _, nested := node.(*ast.FuncLit); nested {
-			return false
-		}
-		returnStmt, ok := node.(*ast.ReturnStmt)
-		if !ok {
-			return true
-		}
-		text := sourceNodeText(returnStmt, fileSet, prefixLength, body)
-		if text == "" {
-			return true
-		}
-		expression := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), "return"))
 		replacement := "panic(__gppExceptionReturn{})"
-		if expression != "" {
-			replacement = "panic(__gppExceptionReturn{values: []any{" + expression + "}})"
+		if len(values) > 0 {
+			replacement = "panic(__gppExceptionReturn{values: []any{" + strings.Join(values, ", ") + "}})"
 		}
-		start := fileSet.Position(returnStmt.Pos()).Offset - prefixLength
-		end := fileSet.Position(returnStmt.End()).Offset - prefixLength
-		if start >= 0 && end <= len(body) {
-			edits = append(edits, edit{start: start, end: end, text: replacement})
+		span := statement.Span()
+		if span.Start < 0 || span.End > len(body) || span.Start >= span.End {
+			return body, false, nil
 		}
-		return true
-	})
-	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+		edits = append(edits, edit{start: span.Start, end: span.End, text: replacement})
+	}
+	if len(edits) == 0 {
+		return body, true, nil
+	}
+	sort.Slice(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
 	for _, edit := range edits {
 		body = body[:edit.start] + edit.text + body[edit.end:]
 	}
-	return body, nil
+	return body, true, nil
 }
 
 func readThrowExpression(src string, start int) (int, string, error) {
@@ -638,11 +933,11 @@ func classHasErrorMethod(class *ClassDecl, context constructorContext, visiting 
 	visiting[class.Name] = true
 	defer delete(visiting, class.Name)
 	for _, method := range class.Methods {
-		if !method.IsStatic && method.Name == "Error" && method.Parameters == "" && strings.TrimSpace(method.Result) == "string" {
+		if !method.IsStatic && method.Name == "Error" && methodParametersSource(method) == "" && strings.TrimSpace(methodResultSource(method)) == "string" {
 			return true
 		}
 	}
-	for _, parent := range class.Parents {
+	for _, parent := range classParentNames(class) {
 		if target, ok := context.Targets[parent]; ok && classHasErrorMethod(target.Class, context, visiting) {
 			return true
 		}
@@ -656,7 +951,21 @@ type promotedCall struct {
 }
 
 func transformImplicitErrorPromotion(src string, context constructorContext) (string, error) {
-	parsed, fileSet, prefixLength, err := parseExceptionSource(src, context)
+	if transformed, handled, err := transformImplicitErrorPromotionAST(src, context); handled {
+		return transformed, err
+	}
+	return src, nil
+}
+
+// transformImplicitErrorPromotionLegacy is retained temporarily as a source
+// compatibility reference while callers use the structured implementation
+// above. It is intentionally not part of the compiler pipeline.
+func transformImplicitErrorPromotionLegacy(src string, context constructorContext) (string, error) {
+	if transformed, handled, err := transformImplicitErrorPromotionAST(src, context); handled {
+		return transformed, err
+	}
+	return src, nil
+	parsed, fileSet, prefixLength, err := parseExceptionSourceLegacy(src, context)
 	if err != nil {
 		return src, nil
 	}
@@ -767,6 +1076,489 @@ func transformImplicitErrorPromotion(src string, context constructorContext) (st
 	return src, nil
 }
 
+type promotionASTBlock struct {
+	block       *BlockStmt
+	resultCount int
+}
+
+func transformImplicitErrorPromotionAST(src string, context constructorContext) (string, bool, error) {
+	tokens, err := LexSource("implicit error promotion", src)
+	if err != nil {
+		return src, false, nil
+	}
+	for _, token := range tokens {
+		if token.Text == "??" {
+			// Error coalescing owns this expression and must see the original
+			// multi-result call before promotion can wrap it.
+			return src, true, nil
+		}
+	}
+	blocks := []promotionASTBlock{}
+	functions := parseTopLevelFunctions("implicit error promotion", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function == nil || function.Method.BodyAST == nil {
+				continue
+			}
+			blocks = append(blocks, promotionASTBlock{
+				block:       function.Method.BodyAST,
+				resultCount: exceptionMethodResultCount(function.Method),
+			})
+		}
+	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil && block != nil {
+		blocks = append(blocks, promotionASTBlock{block: block, resultCount: exceptionContextResultCount(context)})
+	}
+	if len(blocks) == 0 {
+		return src, false, nil
+	}
+
+	astContext := context
+	astContext.CurrentParameterTypes = cloneStringMap(context.CurrentParameterTypes)
+	if astContext.CurrentParameterTypes == nil {
+		astContext.CurrentParameterTypes = map[string]string{}
+	}
+	for _, function := range functions {
+		if function == nil {
+			continue
+		}
+		for _, parameter := range function.Method.ParameterAST {
+			if parameter.Type == nil {
+				continue
+			}
+			if typeName, typeErr := typeNodeSource(parameter.Type); typeErr == nil {
+				astContext.CurrentParameterTypes[parameter.Name] = strings.TrimSpace(typeName)
+			}
+		}
+	}
+	valueTypes := lambdaValueTypesAST(promotionBlocks(blocks), astContext)
+	edits := []introspectionASTEdit{}
+	var promotionErr error
+	for _, current := range blocks {
+		promotionWalkBlock(current.block, func(call *CallExpr, parent ExprNode, statement Stmt) {
+			if promotionErr != nil || call == nil {
+				return
+			}
+			if promotionASTAlreadyWrapped(parent) {
+				return
+			}
+			result, ok := promotedCallForExpr(call, astContext, valueTypes)
+			if !ok || !result.trailingError || len(result.types) == 0 {
+				return
+			}
+			if _, isGoroutine := statement.(*GoStmt); isGoroutine && parent == nil {
+				promotionErr = fmt.Errorf("cannot implicitly propagate error from goroutine call; handle the error inside the goroutine")
+				return
+			}
+			resultCount := len(result.types)
+			if promotionASTExplicitlyCaptured(statement, call, resultCount) ||
+				promotionASTReturnMatches(statement, current.resultCount, resultCount) {
+				return
+			}
+			direct := parent == nil
+			discard := direct && isExpressionStatement(statement)
+			if !discard && resultCount > 1 && !promotionASTHasExpectedReducedResults(statement, resultCount-1) && !promotionASTRequiresSingleValue(parent) {
+				return
+			}
+			nonErrorCount := resultCount - 1
+			if nonErrorCount == 0 && !discard {
+				return
+			}
+			callText, sourceErr := expressionNodeSource(call)
+			if sourceErr != nil {
+				return
+			}
+			replacement := promotionASTReplacement(callText, result.types, discard, astContext)
+			if replacement == "" {
+				return
+			}
+			span := call.Span()
+			if span.Start >= 0 && span.End <= len(src) && span.Start < span.End {
+				edits = append(edits, introspectionASTEdit{start: span.Start, end: span.End, text: replacement})
+			}
+		})
+	}
+	if promotionErr != nil {
+		return src, true, promotionErr
+	}
+	if len(edits) == 0 {
+		return src, true, nil
+	}
+	sort.SliceStable(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
+	for _, edit := range edits {
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
+}
+
+func promotionBlocks(blocks []promotionASTBlock) []*BlockStmt {
+	result := make([]*BlockStmt, 0, len(blocks))
+	for _, block := range blocks {
+		result = append(result, block.block)
+	}
+	return result
+}
+
+func exceptionContextResultCount(context constructorContext) int {
+	if context.CurrentResultAST == nil {
+		return 0
+	}
+	text, err := typeNodeSource(context.CurrentResultAST)
+	if err != nil {
+		return 0
+	}
+	return exceptionResultCountFromText(text)
+}
+
+func exceptionMethodResultCount(method Method) int {
+	return exceptionResultCountFromText(methodResultSource(method))
+}
+
+func exceptionResultCountFromText(text string) int {
+	parts, err := resultTypeParts(strings.TrimSpace(text))
+	if err != nil {
+		return 0
+	}
+	return len(parts)
+}
+
+func promotionWalkBlock(block *BlockStmt, visit func(*CallExpr, ExprNode, Stmt)) {
+	if block == nil || visit == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		promotionWalkStatement(statement, visit)
+	}
+}
+
+func promotionWalkStatement(statement Stmt, visit func(*CallExpr, ExprNode, Stmt)) {
+	if statement == nil {
+		return
+	}
+	root := func(expression ExprNode) {
+		promotionWalkExpression(expression, nil, statement, visit)
+	}
+	switch value := statement.(type) {
+	case *TokenStmt:
+		for _, expression := range value.Exprs {
+			root(expression)
+		}
+		promotionWalkBlock(value.Body, visit)
+		for _, child := range value.Children {
+			promotionWalkStatement(child, visit)
+		}
+	case *ExpressionStmt:
+		root(value.Expression)
+	case *DeclarationStmt:
+		for _, expression := range value.Values {
+			root(expression)
+		}
+	case *AssignmentStmt:
+		for _, expression := range value.Left {
+			root(expression)
+		}
+		for _, expression := range value.Right {
+			root(expression)
+		}
+	case *ReturnStmt:
+		for _, expression := range value.Values {
+			root(expression)
+		}
+	case *ThrowStmt:
+		root(value.Value)
+	case *DeferStmt:
+		root(value.Expression)
+	case *GoStmt:
+		root(value.Expression)
+	case *SendStmt:
+		root(value.Channel)
+		root(value.Value)
+	case *IncDecStmt:
+		root(value.Expression)
+	case *IfStmt:
+		root(value.Init)
+		root(value.Condition)
+		promotionWalkBlock(value.Body, visit)
+		promotionWalkBlock(value.Else, visit)
+		if value.ElseIf != nil {
+			promotionWalkStatement(value.ElseIf, visit)
+		}
+	case *ForStmt:
+		root(value.Init)
+		root(value.Condition)
+		root(value.Post)
+		root(value.RangeExpr)
+		promotionWalkBlock(value.Body, visit)
+	case *SwitchStmt:
+		root(value.Init)
+		root(value.Tag)
+		promotionWalkBlock(value.Body, visit)
+	case *CaseStmt:
+		for _, expression := range value.Clause.Expressions {
+			root(expression)
+		}
+		promotionWalkBlock(value.Clause.Body, visit)
+	case *TryStmt:
+		promotionWalkBlock(value.Body, visit)
+		for _, clause := range value.Catches {
+			promotionWalkBlock(clause.Body, visit)
+		}
+		promotionWalkBlock(value.Finally, visit)
+	}
+}
+
+func promotionWalkExpression(expression ExprNode, parent ExprNode, statement Stmt, visit func(*CallExpr, ExprNode, Stmt)) {
+	if expression == nil {
+		return
+	}
+	if call, ok := expression.(*CallExpr); ok {
+		visit(call, parent, statement)
+	}
+	next := func(child ExprNode) { promotionWalkExpression(child, expression, statement, visit) }
+	switch value := expression.(type) {
+	case *UnaryExpr:
+		next(value.Operand)
+	case *BinaryExpr:
+		next(value.Left)
+		next(value.Right)
+	case *SelectorExpr:
+		next(value.Receiver)
+	case *IndexExpr:
+		next(value.Receiver)
+		next(value.Index)
+	case *IndexListExpr:
+		next(value.Receiver)
+		for _, index := range value.Indices {
+			next(index)
+		}
+	case *SliceExpr:
+		next(value.Receiver)
+		next(value.Low)
+		next(value.High)
+		next(value.Max)
+	case *TypeAssertExpr:
+		next(value.Expression)
+	case *PostfixExpr:
+		next(value.Expression)
+	case *SpreadExpr:
+		next(value.Expression)
+	case *SendExpr:
+		next(value.Channel)
+		next(value.Value)
+	case *CallExpr:
+		next(value.Callee)
+		for _, argument := range value.Arguments {
+			next(argument.Value)
+		}
+	case *ParenthesizedExpr:
+		next(value.Inner)
+	case *CompositeLiteralExpr:
+		for _, element := range value.Elements {
+			next(element.Key)
+			next(element.Value)
+		}
+	case *InterpolatedStringExpr:
+		for _, segment := range value.Segments {
+			next(segment.Expression)
+		}
+	case *LambdaExpr:
+		next(value.Body)
+		promotionWalkBlock(value.BlockBody, visit)
+	case *FunctionLiteralExpr:
+		promotionWalkBlock(value.Body, visit)
+	}
+}
+
+func isExpressionStatement(statement Stmt) bool {
+	_, ok := statement.(*ExpressionStmt)
+	return ok
+}
+
+func promotionASTExplicitlyCaptured(statement Stmt, call *CallExpr, resultCount int) bool {
+	switch value := statement.(type) {
+	case *AssignmentStmt:
+		return len(value.Right) == 1 && len(value.Left) == resultCount && value.Right[0] == call
+	case *DeclarationStmt:
+		return len(value.Values) == 1 && len(value.Names) == resultCount && value.Values[0] == call
+	case *ReturnStmt:
+		return len(value.Values) == resultCount && len(value.Values) == 1 && value.Values[0] == call
+	default:
+		return false
+	}
+}
+
+func promotionASTReturnMatches(statement Stmt, functionResultCount, resultCount int) bool {
+	value, ok := statement.(*ReturnStmt)
+	return ok && len(value.Values) == 1 && functionResultCount == resultCount
+}
+
+func promotionASTHasExpectedReducedResults(statement Stmt, reducedCount int) bool {
+	switch value := statement.(type) {
+	case *AssignmentStmt:
+		return len(value.Right) == 1 && len(value.Left) == reducedCount
+	case *DeclarationStmt:
+		return len(value.Values) == 1 && len(value.Names) == reducedCount
+	case *ReturnStmt:
+		return len(value.Values) == reducedCount
+	default:
+		return false
+	}
+}
+
+func promotionASTRequiresSingleValue(expression ExprNode) bool {
+	switch expression.(type) {
+	case *BinaryExpr, *UnaryExpr, *ParenthesizedExpr, *SelectorExpr, *IndexExpr, *IndexListExpr, *SliceExpr, *TypeAssertExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+func promotionASTAlreadyWrapped(expression ExprNode) bool {
+	call, ok := expression.(*CallExpr)
+	if !ok || call == nil {
+		return false
+	}
+	name, ok := call.Callee.(*NameExpr)
+	if !ok {
+		return false
+	}
+	switch name.Name {
+	case "__gppUnwrap", "__gppUnwrap2", "__gppUnwrap3", "__gppDiscard", "__gppDiscard2", "__gppDiscard3", "__gppThrow":
+		return true
+	default:
+		return false
+	}
+}
+
+func promotionASTReplacement(callText string, resultTypes []string, discard bool, context constructorContext) string {
+	nonErrorCount := len(resultTypes) - 1
+	if discard {
+		switch nonErrorCount {
+		case 0:
+			return "__gppThrow(" + callText + ")"
+		case 1:
+			return "__gppDiscard(" + callText + ")"
+		case 2:
+			return "__gppDiscard2(" + callText + ")"
+		case 3:
+			return "__gppDiscard3(" + callText + ")"
+		}
+	}
+	switch nonErrorCount {
+	case 1:
+		return "__gppUnwrap(" + callText + ")"
+	case 2:
+		return "__gppUnwrap2(" + callText + ")"
+	case 3:
+		return "__gppUnwrap3(" + callText + ")"
+	default:
+		return inlineUnwrapCall(callText, resultTypes, discard, context)
+	}
+}
+
+func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
+	if call == nil {
+		return promotedCall{}, false
+	}
+	candidates := []callableSignature{}
+	switch function := call.Callee.(type) {
+	case *NameExpr:
+		candidates = append(candidates, context.FunctionSignatures[function.Name]...)
+		for _, signatures := range context.StaticMethodSignatures {
+			for _, methods := range signatures {
+				for _, candidate := range methods {
+					if candidate.GoName == function.Name {
+						candidates = append(candidates, candidate)
+					}
+				}
+			}
+		}
+		for _, extension := range context.Extensions {
+			if extension.GoName == function.Name {
+				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: parseTypeText(strings.TrimSpace(methodResultSource(extension.Method)))})
+			}
+		}
+	case *SelectorExpr:
+		actualType := staticExpressionTypeNode(function.Receiver, context, valueTypes)
+		if receiver, ok := function.Receiver.(*NameExpr); ok {
+			if _, isClass := context.Targets[receiver.Name]; isClass {
+				candidates = append(candidates, context.StaticMethodSignatures[receiver.Name][function.Name]...)
+			} else {
+				className := strings.TrimPrefix(strings.TrimSpace(actualType), "*")
+				if receiver.Name == "this" && context.CurrentClass != "" {
+					className = context.CurrentClass
+				}
+				candidates = append(candidates, context.ClassMethodSignatures[className][function.Name]...)
+			}
+		}
+		for _, extension := range context.Extensions {
+			if extension.Method.Name == function.Name && extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
+				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: parseTypeText(strings.TrimSpace(methodResultSource(extension.Method)))})
+			}
+		}
+		if native, ok := promotedNativePackageCall(function, call, context); ok {
+			return native, true
+		}
+		if native, ok := promotedNativeMethodCall(function, call, context, valueTypes); ok {
+			return native, true
+		}
+	}
+	for _, candidate := range candidates {
+		if len(call.Arguments) < requiredParameterCount(candidate) || len(call.Arguments) > len(candidate.Parameters) {
+			continue
+		}
+		resultTypes := resultTypesFromText(candidate.resultText())
+		if len(resultTypes) > 0 && isErrorLikeType(resultTypes[len(resultTypes)-1], context) {
+			return promotedCall{types: resultTypes, trailingError: true}, true
+		}
+	}
+	return promotedCall{}, false
+}
+
+func promotedNativePackageCall(function *SelectorExpr, call *CallExpr, context constructorContext) (promotedCall, bool) {
+	receiver, ok := function.Receiver.(*NameExpr)
+	if !ok {
+		return promotedCall{}, false
+	}
+	importPath := context.AvailableImports[receiver.Name]
+	if importPath == "" {
+		importPath = receiver.Name
+	}
+	pkg, err := importNativePackage(importPath)
+	if err != nil {
+		return promotedCall{}, false
+	}
+	object, ok := pkg.Scope().Lookup(function.Name).(*types.Func)
+	if !ok {
+		return promotedCall{}, false
+	}
+	signature, ok := object.Type().(*types.Signature)
+	if !ok {
+		return promotedCall{}, false
+	}
+	return promotedCallFromNativeSignature(signature)
+}
+
+func promotedNativeMethodCall(function *SelectorExpr, call *CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
+	typeName := staticExpressionTypeNode(function.Receiver, context, valueTypes)
+	named, pkg, ok := nativeNamedType(typeName, context)
+	if !ok {
+		return promotedCall{}, false
+	}
+	method := types.NewMethodSet(types.NewPointer(named)).Lookup(pkg, function.Name)
+	if method == nil {
+		method = types.NewMethodSet(named).Lookup(pkg, function.Name)
+	}
+	if method == nil {
+		return promotedCall{}, false
+	}
+	signature, ok := method.Type().(*types.Signature)
+	if !ok {
+		return promotedCall{}, false
+	}
+	return promotedCallFromNativeSignature(signature)
+}
+
 func inlineUnwrapCall(callText string, resultTypes []string, discard bool, context constructorContext) string {
 	nonErrorCount := len(resultTypes) - 1
 	valueNames := make([]string, nonErrorCount)
@@ -794,12 +1586,28 @@ func inlineUnwrapCall(callText string, resultTypes []string, discard bool, conte
 
 type exceptionResultField struct {
 	name     string
-	typeName string
+	typeNode TypeNode
+}
+
+func exceptionResultFieldType(field exceptionResultField) string {
+	if field.typeNode == nil {
+		return ""
+	}
+	text, err := typeNodeSource(field.typeNode)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(text)
 }
 
 func transformExceptionABIBoundaries(src string, context constructorContext) (string, error) {
-	parsed, fileSet, prefixLength, err := parseExceptionSource(src, context)
-	if err != nil {
+	// This is the final ABI boundary for a structured top-level function. The
+	// source has already gone through the Go++ body AST lowerers, so use the
+	// parsed FunctionDecl/Method metadata directly instead of reparsing the
+	// lowered fragment through go/parser. The generated wrapper is still
+	// materialized as Go source at the emission boundary.
+	functions := parseTopLevelFunctions("exception ABI", "main", src, 0, src, "", 0)
+	if len(functions) == 0 {
 		return src, nil
 	}
 	type replacement struct {
@@ -808,28 +1616,27 @@ func transformExceptionABIBoundaries(src string, context constructorContext) (st
 		text  string
 	}
 	replacements := []replacement{}
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		function, ok := node.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			return true
+	for _, function := range functions {
+		if function == nil || function.Method.BodyAST == nil {
+			continue
+		}
+		bodyStart := function.Method.BodySpan.Start
+		bodyEnd := function.Method.BodySpan.End
+		if bodyStart < 0 || bodyEnd < bodyStart || bodyEnd > len(src) {
+			continue
 		}
 		used := map[string]bool{}
-		ast.Inspect(function, func(node ast.Node) bool {
-			if identifier, ok := node.(*ast.Ident); ok {
-				used[identifier.Name] = true
+		for _, token := range function.Method.BodyTokens {
+			if token.Kind == TokenIdentifier || token.Kind == TokenKeyword {
+				used[token.Text] = true
 			}
-			return true
-		})
-		bodyStart := fileSet.Position(function.Body.Lbrace).Offset - prefixLength + 1
-		bodyEnd := fileSet.Position(function.Body.Rbrace).Offset - prefixLength
-		if bodyStart < 0 || bodyEnd < bodyStart || bodyEnd > len(src) {
-			return true
 		}
 		bodyText := src[bodyStart:bodyEnd]
-		fields, hasResults := exceptionResultFields(function.Type.Results)
-		if !hasResults {
-			if !strings.Contains(bodyText, "__gppExceptionReturn") {
-				return true
+		hasExceptionReturn := strings.Contains(bodyText, "__gppExceptionReturn")
+		fields, hasResults := exceptionResultFieldsFromText(methodResultSource(function.Method))
+		if !hasResults || len(fields) == 0 {
+			if !hasExceptionReturn {
+				continue
 			}
 			bodyText, _ = rewriteExceptionReturns(bodyText, context)
 			replacements = append(replacements, replacement{
@@ -837,13 +1644,13 @@ func transformExceptionABIBoundaries(src string, context constructorContext) (st
 				end:   bodyEnd,
 				text:  exceptionVoidBoundaryBody(bodyText, nextExceptionName(used, "__gppBoundaryReturned"), used),
 			})
-			return true
+			continue
 		}
-		isErrorBoundary := fields[len(fields)-1].typeName == "error"
-		if !isErrorBoundary && !strings.Contains(bodyText, "__gppExceptionReturn") {
-			return true
+		isErrorBoundary := exceptionResultFieldType(fields[len(fields)-1]) == "error"
+		if !isErrorBoundary && !hasExceptionReturn {
+			continue
 		}
-		if strings.Contains(bodyText, "__gppExceptionReturn") {
+		if hasExceptionReturn {
 			bodyText, _ = rewriteExceptionReturns(bodyText, context)
 		}
 		for index := range fields {
@@ -863,8 +1670,7 @@ func transformExceptionABIBoundaries(src string, context constructorContext) (st
 			end:   bodyEnd,
 			text:  opening + bodyText + "\nreturn\n}()",
 		})
-		return true
-	})
+	}
 	sort.Slice(replacements, func(i, j int) bool { return replacements[i].start > replacements[j].start })
 	for _, replacement := range replacements {
 		src = src[:replacement.start] + replacement.text + src[replacement.end:]
@@ -918,27 +1724,60 @@ func exceptionResultFields(results *ast.FieldList) ([]exceptionResultField, bool
 		if err != nil {
 			return nil, false
 		}
+		typeNode := parseTypeText(strings.TrimSpace(typeName))
+		if typeNode == nil {
+			return nil, false
+		}
 		if len(field.Names) == 0 {
-			fields = append(fields, exceptionResultField{typeName: strings.TrimSpace(typeName)})
+			fields = append(fields, exceptionResultField{typeNode: typeNode})
 			continue
 		}
 		for _, name := range field.Names {
-			fields = append(fields, exceptionResultField{name: name.Name, typeName: strings.TrimSpace(typeName)})
+			fields = append(fields, exceptionResultField{name: name.Name, typeNode: typeNode})
 		}
 	}
 	return fields, true
 }
 
 func exceptionResultFieldsFromText(result string) ([]exceptionResultField, bool) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "result.go", "package main\nfunc __gpp_result() "+strings.TrimSpace(result)+" {}", 0)
-	if err != nil || len(parsed.Decls) != 1 {
+	parts, err := resultTypeParts(result)
+	if err != nil {
 		return nil, false
 	}
-	function, ok := parsed.Decls[0].(*ast.FuncDecl)
-	if !ok {
-		return nil, false
+	fields := make([]exceptionResultField, 0, len(parts))
+	for _, part := range parts {
+		parameters, parameterErr := parseParameterInfos(part)
+		if parameterErr != nil || len(parameters) != 1 {
+			return nil, false
+		}
+		typeNode := parameters[0].TypeAST
+		if typeNode == nil {
+			typeNode = parseTypeText(strings.TrimSpace(parameters[0].typeText()))
+		}
+		if typeNode == nil {
+			return nil, false
+		}
+		fields = append(fields, exceptionResultField{name: parameters[0].Name, typeNode: typeNode})
 	}
-	return exceptionResultFields(function.Type.Results)
+	return fields, true
+}
+
+func resultTypeParts(result string) ([]string, error) {
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return nil, nil
+	}
+	if result[0] != '(' {
+		return []string{result}, nil
+	}
+	close, err := findMatchingParen(result, 0)
+	if err != nil || strings.TrimSpace(result[close+1:]) != "" {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("invalid result type %q", result)
+	}
+	return splitTopLevel(result[1:close], ',')
 }
 
 func wrapExceptionBoundaryBody(body, result string, context constructorContext) (string, bool) {
@@ -955,7 +1794,7 @@ func wrapExceptionBoundaryBody(body, result string, context constructorContext) 
 		returnedName := nextExceptionName(used, "__gppBoundaryReturned")
 		return exceptionVoidBoundaryBody(body, returnedName, used), true
 	}
-	isErrorBoundary := fields[len(fields)-1].typeName == "error"
+	isErrorBoundary := exceptionResultFieldType(fields[len(fields)-1]) == "error"
 	if !isErrorBoundary && !strings.Contains(body, "__gppExceptionReturn") {
 		return body, false
 	}
@@ -963,16 +1802,16 @@ func wrapExceptionBoundaryBody(body, result string, context constructorContext) 
 		body, _ = rewriteExceptionReturns(body, context)
 	}
 	used := map[string]bool{}
-	if parsed, err := parser.ParseFile(token.NewFileSet(), "body.go", "package main\nfunc __gpp_body() {\n"+body+"\n}", 0); err == nil {
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			if identifier, ok := node.(*ast.Ident); ok {
-				used[identifier.Name] = true
+	if tokens, err := LexSource("exception boundary body", body); err == nil {
+		for _, token := range tokens {
+			if token.Kind == TokenIdentifier || token.Kind == TokenKeyword {
+				used[token.Text] = true
 			}
-			return true
-		})
+		}
 	}
 	for index := range fields {
-		fields[index].typeName = transformPolymorphicType(fields[index].typeName, context)
+		typeName := transformPolymorphicType(exceptionResultFieldType(fields[index]), context)
+		fields[index].typeNode = parseTypeText(typeName)
 		if fields[index].name == "" || fields[index].name == "_" {
 			fields[index].name = nextExceptionName(used, fmt.Sprintf("__gppBoundaryResult%d", index))
 		}
@@ -999,7 +1838,7 @@ func nextExceptionName(used map[string]bool, base string) string {
 func exceptionBoundaryOpening(fields []exceptionResultField, recoverName, thrownName, okName string) string {
 	resultParts := make([]string, len(fields))
 	for index, field := range fields {
-		resultParts[index] = field.name + " " + field.typeName
+		resultParts[index] = field.name + " " + exceptionResultFieldType(field)
 	}
 	var out strings.Builder
 	out.WriteString("return func() (")
@@ -1020,7 +1859,7 @@ func exceptionBoundaryOpening(fields []exceptionResultField, recoverName, thrown
 		out.WriteString(" = __gppReturned.values[")
 		out.WriteString(fmt.Sprintf("%d", index))
 		out.WriteString("].(")
-		out.WriteString(field.typeName)
+		out.WriteString(exceptionResultFieldType(field))
 		out.WriteString(")\n")
 	}
 	out.WriteString("return\n")
@@ -1041,7 +1880,7 @@ func exceptionBoundaryOpening(fields []exceptionResultField, recoverName, thrown
 		out.WriteString("var ")
 		out.WriteString(zeroName)
 		out.WriteByte(' ')
-		out.WriteString(field.typeName)
+		out.WriteString(exceptionResultFieldType(field))
 		out.WriteByte('\n')
 		out.WriteString(field.name)
 		out.WriteString(" = ")
@@ -1060,7 +1899,7 @@ func exceptionBoundaryOpening(fields []exceptionResultField, recoverName, thrown
 func exceptionReturnBoundaryOpening(fields []exceptionResultField, recoverName, _, _ string) string {
 	resultParts := make([]string, len(fields))
 	for index, field := range fields {
-		resultParts[index] = field.name + " " + field.typeName
+		resultParts[index] = field.name + " " + exceptionResultFieldType(field)
 	}
 	var out strings.Builder
 	out.WriteString("return func() (")
@@ -1084,7 +1923,7 @@ func exceptionReturnBoundaryOpening(fields []exceptionResultField, recoverName, 
 		out.WriteString(" = __gppReturned.values[")
 		out.WriteString(fmt.Sprintf("%d", index))
 		out.WriteString("].(")
-		out.WriteString(field.typeName)
+		out.WriteString(exceptionResultFieldType(field))
 		out.WriteString(")\n")
 	}
 	out.WriteString("}\n")
@@ -1092,7 +1931,7 @@ func exceptionReturnBoundaryOpening(fields []exceptionResultField, recoverName, 
 	return out.String()
 }
 
-func parseExceptionSource(src string, context constructorContext) (*ast.File, *token.FileSet, int, error) {
+func parseExceptionSourceLegacy(src string, context constructorContext) (*ast.File, *token.FileSet, int, error) {
 	fileSet := token.NewFileSet()
 	const filePrefix = "package main\n\n"
 	parsed, err := parser.ParseFile(fileSet, "generated.go", filePrefix+src, 0)
@@ -1100,8 +1939,8 @@ func parseExceptionSource(src string, context constructorContext) (*ast.File, *t
 		return parsed, fileSet, len(filePrefix), nil
 	}
 	functionPrefix := filePrefix + "func __gpp_scope()"
-	if strings.TrimSpace(context.CurrentResult) != "" {
-		functionPrefix += " " + strings.TrimSpace(context.CurrentResult)
+	if result := context.currentResultText(); result != "" {
+		functionPrefix += " " + result
 	}
 	functionPrefix += " {\n"
 	functionSet := token.NewFileSet()
@@ -1190,7 +2029,7 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 			if extension.GoName == function.Name {
 				candidates = append(candidates, callableSignature{
 					Parameters: extensionCallParameters(extension),
-					Result:     strings.TrimSpace(extension.Method.Result),
+					ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(extension.Method))),
 				})
 			}
 		}
@@ -1211,7 +2050,7 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 					hasQualifiedExtension = true
 					candidates = append(candidates, callableSignature{
 						Parameters: extensionCallParameters(extension),
-						Result:     strings.TrimSpace(extension.Method.Result),
+						ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(extension.Method))),
 					})
 				}
 			}
@@ -1229,7 +2068,7 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 		if len(call.Args) < requiredParameterCount(candidate) || len(call.Args) > len(candidate.Parameters) {
 			continue
 		}
-		resultTypes := resultTypesFromText(candidate.Result)
+		resultTypes := resultTypesFromText(candidate.resultText())
 		if len(resultTypes) == 0 || !isErrorLikeType(resultTypes[len(resultTypes)-1], context) {
 			continue
 		}
@@ -1247,36 +2086,18 @@ func mustParameters(source string) []parameterInfo {
 }
 
 func extensionCallParameters(extension extensionMethod) []parameterInfo {
-	parameters := []parameterInfo{{Name: "this", Type: extension.ReceiverType}}
-	return append(parameters, mustParameters(extension.Method.Parameters)...)
+	parameters := []parameterInfo{{Name: "this", TypeAST: parseTypeText(extension.ReceiverType)}}
+	return append(parameters, mustParameters(methodParametersSource(extension.Method))...)
 }
 
 func resultTypesFromText(result string) []string {
-	result = strings.TrimSpace(result)
-	if result == "" {
+	fields, ok := exceptionResultFieldsFromText(result)
+	if !ok {
 		return nil
 	}
-	parsed, err := parser.ParseFile(token.NewFileSet(), "result.go", "package main\nfunc __gpp_result() "+result+" {}", 0)
-	if err != nil || len(parsed.Decls) != 1 {
-		return nil
-	}
-	function, ok := parsed.Decls[0].(*ast.FuncDecl)
-	if !ok || function.Type.Results == nil {
-		return nil
-	}
-	values := []string{}
-	for _, field := range function.Type.Results.List {
-		typeName, err := formatNode(field.Type)
-		if err != nil {
-			return nil
-		}
-		count := len(field.Names)
-		if count == 0 {
-			count = 1
-		}
-		for range count {
-			values = append(values, strings.TrimSpace(typeName))
-		}
+	values := make([]string, 0, len(fields))
+	for _, field := range fields {
+		values = append(values, exceptionResultFieldType(field))
 	}
 	return values
 }

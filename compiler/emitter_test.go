@@ -24,14 +24,41 @@ class Person {
 	return file
 }
 
+func appendMixedSourceDecl(file *File, source string) {
+	start := len(file.Source)
+	if start > 0 && file.Source[start-1] != '\n' {
+		file.Source += "\n"
+		start++
+	}
+	file.Source += source
+	end := len(file.Source)
+	file.Source += "\n"
+	tokens, _ := LexSource(file.Name, file.Source[start:end])
+	tokens = rebaseTokens(tokens, file.Source, start)
+	line, column := sourcePosition(file.Source, start)
+	functions := parseTopLevelFunctions(file.Name, file.Package, source, start, file.Source, "", start)
+	for _, function := range functions {
+		attachFunctionOwner(file, function)
+	}
+	goASTDecls, goASTFileSet := parseGoDeclarations(file.Name, file.Package, source)
+	file.Decls = append(file.Decls, &MixedDecl{
+		GoASTDecls:   goASTDecls,
+		GoASTFileSet: goASTFileSet,
+		Functions:    functions,
+		Tokens:       tokens,
+		Owner:        file,
+		SourceSpan:   Span{Start: start, End: end, Line: line, Column: column},
+		SourceFile:   file.Name,
+		SourceLine:   line,
+	})
+}
+
 func TestEmitPositionalConstructor(t *testing.T) {
 	file := testPersonFile(t)
-	file.Decls = append(file.Decls, &RawDecl{
-		Code: `func main() {
+	appendMixedSourceDecl(file, `func main() {
     p := Person("Bob", 42)
     _ = p
-}`,
-	})
+}`)
 
 	code, err := Emit(file)
 	if err != nil {
@@ -45,15 +72,13 @@ func TestEmitPositionalConstructor(t *testing.T) {
 
 func TestEmitNamedConstructor(t *testing.T) {
 	file := testPersonFile(t)
-	file.Decls = append(file.Decls, &RawDecl{
-		Code: `func main() {
+	appendMixedSourceDecl(file, `func main() {
     p := Person(
     Name: "Bob",
     Age: 42,
     )
     _ = p
-}`,
-	})
+}`)
 
 	code, err := Emit(file)
 	if err != nil {
@@ -208,12 +233,10 @@ class User {
 
 func TestEmitConstructorHandlesNestedExpressions(t *testing.T) {
 	file := testPersonFile(t)
-	file.Decls = append(file.Decls, &RawDecl{
-		Code: `func main() {
+	appendMixedSourceDecl(file, `func main() {
     p := Person(makeName("Bob, Jr."), add(20, 22))
     _ = p
-}`,
-	})
+}`)
 
 	code, err := Emit(file)
 	if err != nil {
@@ -227,12 +250,10 @@ func TestEmitConstructorHandlesNestedExpressions(t *testing.T) {
 
 func TestEmitConstructorRejectsUnknownNamedField(t *testing.T) {
 	file := testPersonFile(t)
-	file.Decls = append(file.Decls, &RawDecl{
-		Code: `func main() {
+	appendMixedSourceDecl(file, `func main() {
     p := Person(Name: "Bob", Height: 180)
     _ = p
-}`,
-	})
+}`)
 
 	_, err := Emit(file)
 	if err == nil || !strings.Contains(err.Error(), "unknown field Height") {
@@ -242,12 +263,10 @@ func TestEmitConstructorRejectsUnknownNamedField(t *testing.T) {
 
 func TestEmitConstructorRejectsWrongArity(t *testing.T) {
 	file := testPersonFile(t)
-	file.Decls = append(file.Decls, &RawDecl{
-		Code: `func main() {
+	appendMixedSourceDecl(file, `func main() {
     p := Person("Bob")
     _ = p
-}`,
-	})
+}`)
 
 	_, err := Emit(file)
 	if err == nil || !strings.Contains(err.Error(), "expects 2 arguments, got 1") {
@@ -1096,6 +1115,56 @@ func main() {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("safe access output missing %q:\n%s", expected, code)
 		}
+	}
+}
+
+func TestSafeAccessLoweringConsumesTopLevelFunctionBodyAST(t *testing.T) {
+	file, err := ParseFile("safe_access_ast.gpp", `
+class Person {
+    Name string
+}
+
+func main() {
+    var person *Person
+    name := person?.Name
+    _ = name
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := ResolveProgram(&Program{Files: []*File{file}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := localConstructorContext(model.Packages[file.Package].Classes)
+	function := file.Decls[1].(*FunctionDecl)
+	lowered, err := transformSafeAccessInFunctionSource(functionSource(function), function, context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lowered, `__gpp_safe(person == nil, func() string { return person.Name })`) {
+		t.Fatalf("top-level safe access was not lowered from its body AST:\n%s", lowered)
+	}
+	wholeFunction, err := transformSafeAccess(functionSource(function), context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(wholeFunction, `__gpp_safe(person == nil, func() string { return person.Name })`) {
+		t.Fatalf("whole-function safe access was not lowered from its body AST:\n%s", wholeFunction)
+	}
+}
+
+func TestSafeValueTypesUsesBodyASTForGoPlusDeclarations(t *testing.T) {
+	types, ok := safeValueTypesAST(`
+let person *Person
+alias := person
+`)
+	if !ok {
+		t.Fatal("expected Go++ body AST type collection to succeed")
+	}
+	if types["person"] != "*Person" || types["alias"] != "*Person" {
+		t.Fatalf("unexpected AST-inferred safe-access types: %#v", types)
 	}
 }
 

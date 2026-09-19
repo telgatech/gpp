@@ -3,7 +3,6 @@ package compiler
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"path"
 	"strconv"
@@ -37,21 +36,15 @@ func classLocation(class *ClassDecl) string {
 	return class.SourceFile
 }
 
-func rawTypeNames(source string) map[string]bool {
+func rawTypeNamesAST(declaration ast.Decl) map[string]bool {
 	result := map[string]bool{}
-	parsed, err := parser.ParseFile(token.NewFileSet(), "raw.gpp", "package main\n"+source, 0)
-	if err != nil {
+	group, ok := declaration.(*ast.GenDecl)
+	if !ok || group.Tok != token.TYPE {
 		return result
 	}
-	for _, declaration := range parsed.Decls {
-		group, ok := declaration.(*ast.GenDecl)
-		if !ok || group.Tok != token.TYPE {
-			continue
-		}
-		for _, spec := range group.Specs {
-			if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-				result[typeSpec.Name.Name] = true
-			}
+	for _, spec := range group.Specs {
+		if typeSpec, ok := spec.(*ast.TypeSpec); ok {
+			result[typeSpec.Name.Name] = true
 		}
 	}
 	return result
@@ -95,12 +88,46 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				pkg.Annotations[annotation.Name] = annotation
 				continue
 			}
-			if raw, ok := decl.(*RawDecl); ok {
-				for name := range rawTypeNames(raw.Code) {
+			if raw, ok := decl.(*MixedDecl); ok {
+				tokens := raw.Tokens
+				types := rawTypeNamesTokens(tokens)
+				if len(raw.GoASTDecls) > 0 {
+					types = map[string]bool{}
+					for _, declaration := range raw.GoASTDecls {
+						for name := range rawTypeNamesAST(declaration) {
+							types[name] = true
+						}
+					}
+				}
+				for name := range types {
 					pkg.Types[name] = true
 				}
-				for name := range rawPackageNames(raw.Code) {
+				values := rawPackageNamesTokens(tokens)
+				if len(raw.GoASTDecls) > 0 {
+					values = map[string]bool{}
+					for _, declaration := range raw.GoASTDecls {
+						for name := range rawPackageNamesAST(declaration) {
+							values[name] = true
+						}
+					}
+				}
+				for name := range values {
 					pkg.Values[name] = true
+				}
+			}
+			if goDecl, ok := decl.(*GoDecl); ok {
+				for _, declaration := range goDecl.Declarations {
+					for name := range rawTypeNamesAST(declaration) {
+						pkg.Types[name] = true
+					}
+					for name := range rawPackageNamesAST(declaration) {
+						pkg.Values[name] = true
+					}
+				}
+			}
+			if valueDecl, ok := decl.(*ValueDecl); ok {
+				for _, name := range valueDecl.Names {
+					pkg.Values[name.Text] = true
 				}
 			}
 			if embed, ok := decl.(*EmbedDecl); ok {
@@ -188,8 +215,28 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				continue
 			}
 			for _, decl := range file.Decls {
-				if raw, ok := decl.(*RawDecl); ok {
-					for _, signature := range rawFunctionNames(raw.Code) {
+				if function, ok := decl.(*FunctionDecl); ok {
+					pkg.Functions[function.Name] = true
+					continue
+				}
+				if raw, ok := decl.(*MixedDecl); ok {
+					tokens := raw.Tokens
+					functions := []string{}
+					if len(raw.Functions) > 0 {
+						functions = make([]string, 0, len(raw.Functions))
+						for _, function := range raw.Functions {
+							functions = append(functions, function.Name)
+						}
+					} else {
+						if len(raw.GoASTDecls) > 0 {
+							for _, declaration := range raw.GoASTDecls {
+								functions = append(functions, rawFunctionNamesAST(declaration)...)
+							}
+						} else {
+							functions = rawFunctionNamesTokens(tokens)
+						}
+					}
+					for _, signature := range functions {
 						pkg.Functions[signature] = true
 					}
 				}
@@ -232,7 +279,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				if layout.Name == template.Name {
 					return nil, fmt.Errorf("%s: template cannot use itself as a layout", templateLocation(template))
 				}
-				if strings.TrimSpace(layout.Parameters) != "" {
+				if len(layout.ParameterAST) > 0 {
 					return nil, fmt.Errorf("%s: layout template %s must not declare parameters", templateLocation(template), template.Layout)
 				}
 			}
@@ -315,41 +362,29 @@ func annotationLocation(annotation *AnnotationDecl) string {
 	return annotation.SourceFile
 }
 
-func rawFunctionNames(src string) []string {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "raw.go", "package main\n\n"+stripAnnotationSyntaxPreserve(src), 0)
-	if err != nil {
+func rawFunctionNamesAST(declaration ast.Decl) []string {
+	function, ok := declaration.(*ast.FuncDecl)
+	if !ok || function.Recv != nil {
 		return nil
 	}
-	result := []string{}
-	for _, declaration := range parsed.Decls {
-		if function, ok := declaration.(*ast.FuncDecl); ok && function.Recv == nil {
-			result = append(result, function.Name.Name)
-		}
-	}
-	return result
+	return []string{function.Name.Name}
 }
 
-func rawPackageNames(src string) map[string]bool {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "raw.go", "package main\n\n"+stripAnnotationSyntaxPreserve(src), 0)
-	if err != nil {
-		return nil
-	}
+func rawPackageNamesAST(declaration ast.Decl) map[string]bool {
 	result := map[string]bool{}
-	for _, declaration := range parsed.Decls {
-		switch declaration := declaration.(type) {
-		case *ast.FuncDecl:
-			if declaration.Recv == nil {
-				result[declaration.Name.Name] = true
-			}
-		case *ast.GenDecl:
-			for _, spec := range declaration.Specs {
-				switch spec := spec.(type) {
-				case *ast.TypeSpec:
-					result[spec.Name.Name] = true
-				case *ast.ValueSpec:
-					for _, name := range spec.Names {
-						result[name.Name] = true
-					}
+	switch declaration := declaration.(type) {
+	case *ast.FuncDecl:
+		if declaration.Recv == nil {
+			result[declaration.Name.Name] = true
+		}
+	case *ast.GenDecl:
+		for _, spec := range declaration.Specs {
+			switch spec := spec.(type) {
+			case *ast.TypeSpec:
+				result[spec.Name.Name] = true
+			case *ast.ValueSpec:
+				for _, name := range spec.Names {
+					result[name.Name] = true
 				}
 			}
 		}
@@ -357,14 +392,189 @@ func rawPackageNames(src string) map[string]bool {
 	return result
 }
 
+func rawFunctionNamesTokens(tokens []Token) []string {
+	result := []string{}
+	braceDepth := 0
+	for index := 0; index < len(tokens); index++ {
+		token := tokens[index]
+		if token.Kind == TokenComment || token.Kind == TokenNewline || token.Kind == TokenEOF {
+			continue
+		}
+		if token.Text == "{" {
+			braceDepth++
+			continue
+		}
+		if token.Text == "}" {
+			if braceDepth > 0 {
+				braceDepth--
+			}
+			continue
+		}
+		if braceDepth != 0 || token.Text != "func" {
+			continue
+		}
+		index = nextSemanticToken(tokens, index+1)
+		if index >= len(tokens) || tokens[index].Text == "(" {
+			// A leading parenthesized token is a method receiver, not a
+			// package-level function declaration.
+			continue
+		}
+		if tokens[index].Kind == TokenIdentifier || tokens[index].Kind == TokenKeyword {
+			result = append(result, tokens[index].Text)
+		}
+	}
+	return result
+}
+
+// rawTypeNamesTokens discovers type declarations without reparsing a mixed
+// Go++ declaration as Go. The token stream is lossless and already scoped to
+// this MixedDecl, so a top-level type name is unambiguous even when a nearby
+// function has Go++ syntax such as defaults or lambdas.
+func rawTypeNamesTokens(tokens []Token) map[string]bool {
+	result := map[string]bool{}
+	braceDepth := 0
+	for index := 0; index < len(tokens); index++ {
+		token := tokens[index]
+		if token.Kind == TokenComment || token.Kind == TokenNewline || token.Kind == TokenEOF {
+			continue
+		}
+		if token.Text == "{" {
+			braceDepth++
+			continue
+		}
+		if token.Text == "}" {
+			if braceDepth > 0 {
+				braceDepth--
+			}
+			continue
+		}
+		if braceDepth != 0 || token.Text != "type" {
+			continue
+		}
+		index++
+		for index < len(tokens) && (tokens[index].Kind == TokenComment || tokens[index].Kind == TokenNewline) {
+			index++
+		}
+		if index < len(tokens) && tokens[index].Text == "(" {
+			index++
+			for index < len(tokens) {
+				if tokens[index].Text == ")" {
+					break
+				}
+				if tokens[index].Kind == TokenIdentifier || tokens[index].Kind == TokenKeyword {
+					result[tokens[index].Text] = true
+					for index < len(tokens) && tokens[index].Text != "\n" && tokens[index].Text != ";" {
+						index++
+					}
+				}
+				index++
+			}
+			continue
+		}
+		if index < len(tokens) && (tokens[index].Kind == TokenIdentifier || tokens[index].Kind == TokenKeyword) {
+			result[tokens[index].Text] = true
+		}
+	}
+	return result
+}
+
+// rawPackageNamesTokens provides the small amount of top-level symbol
+// discovery needed by semantic resolution for mixed declarations. It does not
+// interpret executable expressions; it only records declaration names.
+func rawPackageNamesTokens(tokens []Token) map[string]bool {
+	result := map[string]bool{}
+	braceDepth := 0
+	for index := 0; index < len(tokens); index++ {
+		token := tokens[index]
+		if token.Kind == TokenComment || token.Kind == TokenEOF {
+			continue
+		}
+		if token.Text == "{" {
+			braceDepth++
+			continue
+		}
+		if token.Text == "}" {
+			if braceDepth > 0 {
+				braceDepth--
+			}
+			continue
+		}
+		if braceDepth != 0 {
+			continue
+		}
+		switch token.Text {
+		case "func":
+			index = nextSemanticToken(tokens, index+1)
+			if index < len(tokens) && tokens[index].Text == "(" {
+				index = skipSemanticBalanced(tokens, index, "(", ")")
+				index = nextSemanticToken(tokens, index+1)
+			}
+			if index < len(tokens) && (tokens[index].Kind == TokenIdentifier || tokens[index].Kind == TokenKeyword) {
+				result[tokens[index].Text] = true
+			}
+		case "type":
+			index = nextSemanticToken(tokens, index+1)
+			if index < len(tokens) && (tokens[index].Kind == TokenIdentifier || tokens[index].Kind == TokenKeyword) {
+				result[tokens[index].Text] = true
+			}
+		case "var", "const":
+			index = nextSemanticToken(tokens, index+1)
+			if index >= len(tokens) {
+				continue
+			}
+			if tokens[index].Text == "(" {
+				end := skipSemanticBalanced(tokens, index, "(", ")")
+				for cursor := index + 1; cursor < end; cursor++ {
+					if cursor == index+1 || tokens[cursor-1].Kind == TokenNewline || tokens[cursor-1].Text == ";" {
+						cursor = nextSemanticToken(tokens, cursor)
+						if cursor < end && (tokens[cursor].Kind == TokenIdentifier || tokens[cursor].Kind == TokenKeyword) {
+							result[tokens[cursor].Text] = true
+						}
+					}
+				}
+				index = end
+				continue
+			}
+			if tokens[index].Kind == TokenIdentifier || tokens[index].Kind == TokenKeyword {
+				result[tokens[index].Text] = true
+			}
+		}
+	}
+	return result
+}
+
+func nextSemanticToken(tokens []Token, index int) int {
+	for index < len(tokens) && tokens[index].Kind == TokenComment {
+		index++
+	}
+	return index
+}
+
+func skipSemanticBalanced(tokens []Token, open int, opening, closing string) int {
+	depth := 0
+	for index := open; index < len(tokens); index++ {
+		switch tokens[index].Text {
+		case opening:
+			depth++
+		case closing:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return len(tokens)
+}
+
 func validateExtensions(pkg *PackageSymbols) error {
 	seen := map[string]bool{}
 	for _, extension := range pkg.Extensions {
-		if len(extension.Targets) == 0 {
+		targetNames := extensionTargetNames(extension)
+		if len(targetNames) == 0 {
 			return fmt.Errorf("%s: extension target cannot be empty", extension.SourceFile)
 		}
 		targets := map[string]bool{}
-		for _, rawTarget := range extension.Targets {
+		for _, rawTarget := range targetNames {
 			target := strings.TrimSpace(rawTarget)
 			if target == "" {
 				return fmt.Errorf("%s: extension target cannot be empty", extension.SourceFile)
@@ -376,11 +586,11 @@ func validateExtensions(pkg *PackageSymbols) error {
 			targets[normalized] = true
 		}
 		for _, method := range extension.Methods {
-			parameters, err := parseParameterInfos(method.Parameters)
+			parameters, err := parameterInfosForMethod(method)
 			if err != nil {
-				return fmt.Errorf("%s: extension %s.%s has invalid parameters: %w", extension.SourceFile, strings.Join(extension.Targets, ", "), method.Name, err)
+				return fmt.Errorf("%s: extension %s.%s has invalid parameters: %w", extension.SourceFile, strings.Join(targetNames, ", "), method.Name, err)
 			}
-			for _, rawTarget := range extension.Targets {
+			for _, rawTarget := range targetNames {
 				target := strings.TrimSpace(rawTarget)
 				key := normalizeExtensionTarget(target) + "/" + method.Name + "/" + parameterSignatureKey(parameters)
 				if seen[key] {
@@ -395,9 +605,11 @@ func validateExtensions(pkg *PackageSymbols) error {
 
 func normalizeExtensionTarget(target string) string {
 	target = strings.TrimSpace(target)
-	if parsed, err := parser.ParseExpr(target); err == nil {
-		if formatted, err := formatNode(parsed); err == nil {
-			return strings.TrimSpace(formatted)
+	if tokens, err := LexSource("extension target", target); err == nil {
+		if typeNode, err := ParseTypeTokens(tokens); err == nil && typeNode != nil {
+			if formatted, err := typeNodeSource(typeNode); err == nil {
+				return strings.TrimSpace(formatted)
+			}
 		}
 	}
 	return strings.Join(strings.Fields(target), " ")
@@ -442,7 +654,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	methods := map[string][]methodEntry{}
 	for index, method := range class.Methods {
-		if method.IsStatic && sourceContainsIdentifier(method.Body, "this") {
+		if method.IsStatic && tokensContainIdentifier(methodBodyTokens(method), "this") {
 			return fmt.Errorf(
 				"%s: static method %s has no this",
 				classLocation(class),
@@ -465,7 +677,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 				method.Name,
 			)
 		}
-		arity, err := parameterCount(method.Parameters)
+		arity, err := parameterCount(methodParametersSource(method))
 		if err != nil {
 			return fmt.Errorf(
 				"%s: class %s method %s has invalid parameters: %w",
@@ -476,7 +688,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			)
 		}
 
-		parameters, err := parseParameterInfos(method.Parameters)
+		parameters, err := parameterInfosForMethod(method)
 		if err != nil {
 			return fmt.Errorf(
 				"%s: class %s method %s has invalid parameters: %w",
@@ -528,7 +740,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 
 	parents := map[string]bool{}
-	for _, parentName := range class.Parents {
+	for _, parentName := range classParentNames(class) {
 		if parents[parentName] {
 			return fmt.Errorf(
 				"%s: class %s lists parent %s more than once",
@@ -575,34 +787,21 @@ func sourceContainsIdentifier(source, wanted string) bool {
 	return false
 }
 
-func parameterCount(params string) (int, error) {
-	if strings.TrimSpace(params) == "" {
-		return 0, nil
-	}
-	params, err := stripParameterDefaults(params)
-	if err != nil {
-		return 0, err
-	}
-
-	parsed, err := parser.ParseFile(
-		token.NewFileSet(),
-		"parameters.go",
-		"package main\nfunc __gpp_parameters("+params+") {}\n",
-		0,
-	)
-	if err != nil {
-		return 0, err
-	}
-
-	count := 0
-	for _, field := range parsed.Decls[0].(*ast.FuncDecl).Type.Params.List {
-		if len(field.Names) == 0 {
-			count++
-		} else {
-			count += len(field.Names)
+func tokensContainIdentifier(tokens []Token, wanted string) bool {
+	for _, token := range tokens {
+		if (token.Kind == TokenIdentifier || token.Kind == TokenKeyword) && token.Text == wanted {
+			return true
 		}
 	}
-	return count, nil
+	return false
+}
+
+func parameterCount(params string) (int, error) {
+	parameters, err := parseParameterInfos(params)
+	if err != nil {
+		return 0, err
+	}
+	return len(parameters), nil
 }
 
 func overloadedName(name string, arity int) string {
@@ -658,7 +857,7 @@ func validateInheritanceCycles(pkg *PackageSymbols) error {
 		state[className] = 1
 		stack = append(stack, className)
 
-		for _, parentName := range pkg.Classes[className].Parents {
+		for _, parentName := range classParentNames(pkg.Classes[className]) {
 			if _, local := pkg.Classes[parentName]; local {
 				if err := visit(parentName); err != nil {
 					return err
@@ -782,18 +981,17 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		if qualifier != "" {
 			importedTypes := map[string]map[string]bool{qualifier: pkg.Types}
 			for index := range importedExtensions {
-				importedExtensions[index].Method.Parameters = qualifyImportedTypeNames(
-					importedExtensions[index].Method.Parameters,
-					qualifier+"._",
-					pkg.Classes,
-					importedTypes,
-				)
-				importedExtensions[index].Method.Result = qualifyImportedTypeNames(
-					importedExtensions[index].Method.Result,
-					qualifier+"._",
-					pkg.Classes,
-					importedTypes,
-				)
+				parameters := methodParametersSource(importedExtensions[index].Method)
+				result := methodResultSource(importedExtensions[index].Method)
+				// These are copied into the importing package and then qualified;
+				// detach the source-backed spans before replacing their text.
+				importedExtensions[index].Method.Owner = nil
+				importedExtensions[index].Method.ParametersSpan = Span{}
+				importedExtensions[index].Method.ResultSpan = Span{}
+				qualifiedParameters := qualifyImportedTypeNames(parameters, qualifier+"._", pkg.Classes, importedTypes)
+				qualifiedResult := qualifyImportedTypeNames(result, qualifier+"._", pkg.Classes, importedTypes)
+				importedExtensions[index].Method.ParameterAST = parseParameterNodes(qualifiedParameters)
+				importedExtensions[index].Method.ResultAST = parseTypeText(qualifiedResult)
 			}
 			for index := range importedExtensions {
 				baseTarget := strings.TrimPrefix(importedExtensions[index].Target, "*")
@@ -848,7 +1046,7 @@ func addMethodOverload(overloads *overloadContext, class *ClassDecl, className s
 		if method.GoName == "" || method.IsStatic {
 			continue
 		}
-		arity, err := parameterCount(method.Parameters)
+		arity, err := parameterCount(methodParametersSource(method))
 		if err != nil {
 			continue
 		}
@@ -893,24 +1091,192 @@ func astParameterCount(functionType *ast.FuncType) (int, error) {
 }
 
 func goImports(file *File) ([]*ast.ImportSpec, error) {
-	var raw strings.Builder
+	imports := []*ast.ImportSpec{}
 	for _, decl := range file.Decls {
-		if code, ok := decl.(*RawDecl); ok {
-			raw.WriteString(stripAnnotationSyntaxPreserve(code.Code))
+		if goDecl, ok := decl.(*GoDecl); ok {
+			for _, declaration := range goDecl.Declarations {
+				if group, ok := declaration.(*ast.GenDecl); ok && group.Tok == token.IMPORT {
+					for _, spec := range group.Specs {
+						if importSpec, ok := spec.(*ast.ImportSpec); ok {
+							imports = append(imports, importSpec)
+						}
+					}
+				}
+			}
+			continue
+		}
+		raw, ok := decl.(*MixedDecl)
+		if !ok {
+			continue
+		}
+		// Ordinary Go declarations, including imports, are represented by their
+		// Go AST. Other raw declarations must not force us to concatenate and
+		// reparse executable source just to discover imports.
+		for _, declaration := range raw.GoASTDecls {
+			if group, ok := declaration.(*ast.GenDecl); ok && group.Tok == token.IMPORT {
+				for _, spec := range group.Specs {
+					if importSpec, ok := spec.(*ast.ImportSpec); ok {
+						imports = append(imports, importSpec)
+					}
+				}
+			}
+		}
+		if len(raw.GoASTDecls) == 0 {
+			tokenImports, err := importSpecsFromTokens(raw.Tokens)
+			if err != nil {
+				return nil, err
+			}
+			imports = append(imports, tokenImports...)
 		}
 	}
+	return imports, nil
+}
 
-	parsed, err := parser.ParseFile(
-		token.NewFileSet(),
-		file.Name,
-		"package main\n\n"+raw.String(),
-		parser.ImportsOnly,
-	)
-	if err != nil {
-		return nil, err
+// importSpecsFromTokens extracts ordinary Go import declarations without
+// reparsing a compatibility declaration's executable source. A MixedDecl can
+// contain Go++ syntax (for example default parameters) that Go's parser must
+// reject, while its import tokens remain fully unambiguous.
+func importSpecsFromTokens(tokens []Token) ([]*ast.ImportSpec, error) {
+	imports := []*ast.ImportSpec{}
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Text != "import" {
+			continue
+		}
+		index++
+		index = nextSignificantToken(tokens, index)
+		if index >= len(tokens) || tokens[index].Text != "(" {
+			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			if !ok {
+				return nil, fmt.Errorf("invalid import declaration")
+			}
+			imports = append(imports, newTokenImportSpec(name, tokens[pathIndex]))
+			index = next - 1
+			continue
+		}
+
+		index++
+		for {
+			index = nextSignificantToken(tokens, index)
+			if index >= len(tokens) {
+				return nil, fmt.Errorf("unterminated import group")
+			}
+			if tokens[index].Text == ")" {
+				break
+			}
+			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			if !ok {
+				return nil, fmt.Errorf("invalid import declaration")
+			}
+			imports = append(imports, newTokenImportSpec(name, tokens[pathIndex]))
+			index = next
+		}
 	}
+	return imports, nil
+}
 
-	return parsed.Imports, nil
+func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
+	imports := []ImportDecl{}
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Text != "import" {
+			continue
+		}
+		startToken := tokens[index]
+		index = nextSignificantToken(tokens, index+1)
+		if index >= len(tokens) {
+			return nil, fmt.Errorf("import declaration is missing a path")
+		}
+		if tokens[index].Text != "(" {
+			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			if !ok {
+				return nil, fmt.Errorf("invalid import declaration")
+			}
+			declaration, err := tokenImportNode(name, tokens[pathIndex], startToken)
+			if err != nil {
+				return nil, err
+			}
+			imports = append(imports, declaration)
+			index = next - 1
+			continue
+		}
+
+		index++
+		for {
+			index = nextSignificantToken(tokens, index)
+			if index >= len(tokens) {
+				return nil, fmt.Errorf("unterminated import group")
+			}
+			if tokens[index].Text == ")" {
+				break
+			}
+			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			if !ok {
+				return nil, fmt.Errorf("invalid import declaration")
+			}
+			declaration, err := tokenImportNode(name, tokens[pathIndex], startToken)
+			if err != nil {
+				return nil, err
+			}
+			imports = append(imports, declaration)
+			index = next
+		}
+	}
+	return imports, nil
+}
+
+func tokenImportNode(name *ast.Ident, pathToken Token, startToken Token) (ImportDecl, error) {
+	importPath, err := strconv.Unquote(pathToken.Text)
+	if err != nil || importPath == "" {
+		if err != nil {
+			return ImportDecl{}, err
+		}
+		return ImportDecl{}, fmt.Errorf("import path cannot be empty")
+	}
+	alias := ""
+	if name != nil {
+		alias = name.Name
+	}
+	return ImportDecl{Alias: alias, Path: importPath, SpanValue: Span{
+		Start:  startToken.Span.Start,
+		End:    pathToken.Span.End,
+		Line:   startToken.Span.Line,
+		Column: startToken.Span.Column,
+	}}, nil
+}
+
+func nextSignificantToken(tokens []Token, index int) int {
+	for index < len(tokens) {
+		if tokens[index].Kind != TokenComment && tokens[index].Kind != TokenNewline && tokens[index].Kind != TokenEOF {
+			return index
+		}
+		index++
+	}
+	return index
+}
+
+func importTokenSpec(tokens []Token, index int) (*ast.Ident, int, int, bool) {
+	index = nextSignificantToken(tokens, index)
+	if index >= len(tokens) {
+		return nil, 0, index, false
+	}
+	if tokens[index].Kind == TokenString {
+		return nil, index, index + 1, true
+	}
+	name := tokens[index].Text
+	if tokens[index].Kind != TokenIdentifier && name != "." && name != "_" {
+		return nil, 0, index, false
+	}
+	pathIndex := nextSignificantToken(tokens, index+1)
+	if pathIndex >= len(tokens) || tokens[pathIndex].Kind != TokenString {
+		return nil, 0, pathIndex, false
+	}
+	return &ast.Ident{Name: name}, pathIndex, pathIndex + 1, true
+}
+
+func newTokenImportSpec(name *ast.Ident, path Token) *ast.ImportSpec {
+	return &ast.ImportSpec{
+		Name: name,
+		Path: &ast.BasicLit{Kind: token.STRING, Value: path.Text},
+	}
 }
 
 func logicalPackageForImport(importPath, modulePath string, model *SemanticModel) (string, bool) {
@@ -947,7 +1313,7 @@ func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error 
 	}
 
 	for _, method := range class.Methods {
-		member := findAmbiguousThisMember(method.Body, ambiguous)
+		member := findAmbiguousThisMemberTokens(methodBodyTokens(method), ambiguous)
 		if member == "" {
 			continue
 		}
@@ -1023,7 +1389,7 @@ func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]map[st
 		members[method.Name] = []string{method.Name}
 	}
 
-	for _, parentName := range class.Parents {
+	for _, parentName := range classParentNames(class) {
 		parent := pkg.Classes[parentName]
 		if parent == nil {
 			parent = pkg.ImportedClasses[parentName]
@@ -1109,5 +1475,31 @@ func findAmbiguousThisMember(src string, ambiguous map[string][]string) string {
 		i += n
 	}
 
+	return ""
+}
+
+func findAmbiguousThisMemberTokens(tokens []Token, ambiguous map[string][]string) string {
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Text != "this" || (tokens[index].Kind != TokenIdentifier && tokens[index].Kind != TokenKeyword) {
+			continue
+		}
+		memberIndex := index + 1
+		for memberIndex < len(tokens) && (tokens[memberIndex].Kind == TokenComment || tokens[memberIndex].Kind == TokenNewline) {
+			memberIndex++
+		}
+		if memberIndex >= len(tokens) || (tokens[memberIndex].Text != "." && tokens[memberIndex].Text != "?.") {
+			continue
+		}
+		memberIndex++
+		for memberIndex < len(tokens) && (tokens[memberIndex].Kind == TokenComment || tokens[memberIndex].Kind == TokenNewline) {
+			memberIndex++
+		}
+		if memberIndex < len(tokens) {
+			member := tokens[memberIndex].Text
+			if _, ok := ambiguous[member]; ok && (tokens[memberIndex].Kind == TokenIdentifier || tokens[memberIndex].Kind == TokenKeyword) {
+				return member
+			}
+		}
+	}
 	return ""
 }

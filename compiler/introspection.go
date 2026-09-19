@@ -26,8 +26,16 @@ func newIntrospectionContext(classes map[string]*ClassDecl) *introspectionContex
 func fileUsesIntrospection(file *File) bool {
 	for _, declaration := range file.Decls {
 		switch value := declaration.(type) {
-		case *RawDecl:
-			if strings.Contains(value.Code, ".class") {
+		case *MixedDecl:
+			if tokenSequence(mixedDeclTokens(value), ".", "class") {
+				return true
+			}
+		case *GoDecl:
+			if tokenSequence(goDeclTokens(value), ".", "class") {
+				return true
+			}
+		case *ValueDecl:
+			if tokenSequence(valueDeclTokens(value), ".", "class") {
 				return true
 			}
 		case *ClassDecl:
@@ -40,7 +48,7 @@ func fileUsesIntrospection(file *File) bool {
 				}
 			}
 			for _, method := range value.Methods {
-				if len(method.Annotations) > 0 || len(method.ParameterAnnotations) > 0 || strings.Contains(method.Body, ".class") {
+				if len(method.Annotations) > 0 || len(method.ParameterAnnotations) > 0 || tokenSequence(methodBodyTokens(method), ".", "class") {
 					return true
 				}
 			}
@@ -49,6 +57,10 @@ func fileUsesIntrospection(file *File) bool {
 				if len(method.Annotations) > 0 || len(method.ParameterAnnotations) > 0 {
 					return true
 				}
+			}
+		case *FunctionDecl:
+			if len(value.Annotations) > 0 || len(value.Method.ParameterAnnotations) > 0 || tokenSequence(methodBodyTokens(value.Method), ".", "class") {
+				return true
 			}
 		}
 	}
@@ -287,8 +299,9 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		return err
 	}
 
-	parentReferences := make([]string, 0, len(class.Parents))
-	for _, parent := range class.Parents {
+	parentNames := classParentNames(class)
+	parentReferences := make([]string, 0, len(parentNames))
+	for _, parent := range parentNames {
 		if reference := classDescriptorReference(parent, classes, context); reference != "" {
 			parentReferences = append(parentReferences, reference)
 		}
@@ -321,7 +334,8 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 			owner = class.Name
 		}
 
-		fmt.Fprintf(out, "\t{Name: %q, Owner: nil, Type: &GppType{Name: %q}, Annotations: %s,\n", field.Name, field.Type, annotationUsesLiteral(field.Annotations, context))
+		fieldType := field.Type
+		fmt.Fprintf(out, "\t{Name: %q, Owner: nil, Type: &GppType{Name: %q}, Annotations: %s,\n", field.Name, fieldType, annotationUsesLiteral(field.Annotations, context))
 		fmt.Fprintf(out, "\t\tGet: func(root any) any {\n")
 		fmt.Fprintf(out, "\t\t\tswitch value := root.(type) {\n")
 		fmt.Fprintf(out, "\t\t\tcase *%s:\n\t\t\t\treturn value.%s\n", class.Name, access)
@@ -330,10 +344,10 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 
 		fmt.Fprintf(out, "\t\tSet: func(root any, input any) {\n")
 		fmt.Fprintf(out, "\t\t\tvalue, ok := root.(*%s)\n\t\t\tif !ok { return }\n", class.Name)
-		if isNilableGoType(field.Type) {
+		if isNilableGoType(fieldType) {
 			fmt.Fprintf(out, "\t\t\tif input == nil { value.%s = nil; return }\n", access)
 		}
-		runtimeType := transformPolymorphicType(field.Type, context)
+		runtimeType := transformPolymorphicType(fieldType, context)
 		fmt.Fprintf(out, "\t\t\tconverted, ok := input.(%s)\n\t\t\tif !ok { return }\n", runtimeType)
 		fmt.Fprintf(out, "\t\t\tvalue.%s = converted\n\t\t},\n", access)
 
@@ -389,13 +403,13 @@ func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl,
 			continue
 		}
 		result = append(result, methodDescriptor{Method: method, Owner: class.Name})
-		arity, err := parameterCount(method.Parameters)
+		arity, err := parameterCount(methodParametersSource(method))
 		if err != nil {
 			return nil, err
 		}
 		seen[method.Name+fmt.Sprintf("/%d", arity)] = true
 	}
-	for _, parentName := range class.Parents {
+	for _, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			return nil, fmt.Errorf("class %s has unresolved parent %s", class.Name, parentName)
@@ -405,7 +419,7 @@ func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl,
 			return nil, err
 		}
 		for _, descriptor := range inherited {
-			arity, err := parameterCount(descriptor.Method.Parameters)
+			arity, err := parameterCount(methodParametersSource(descriptor.Method))
 			if err != nil {
 				return nil, err
 			}
@@ -439,7 +453,7 @@ func effectiveStaticMethodDescriptors(class *ClassDecl, classes map[string]*Clas
 		result = append(result, methodDescriptor{Method: method, Owner: class.Name})
 		localNames[method.Name] = true
 	}
-	for _, parentName := range class.Parents {
+	for _, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			continue
@@ -463,19 +477,19 @@ func effectiveStaticMethodDescriptors(class *ClassDecl, classes map[string]*Clas
 }
 
 func methodParametersLiteral(method Method, context constructorContext) string {
-	parameters, err := parseParameterInfos(method.Parameters)
+	parameters, err := parameterInfosForMethod(method)
 	if err != nil || len(parameters) == 0 {
 		return "nil"
 	}
 	parts := make([]string, 0, len(parameters))
 	for _, parameter := range parameters {
-		parts = append(parts, fmt.Sprintf("GppParameter{Name: %q, Type: &GppType{Name: %q}, Annotations: %s}", parameter.Name, parameter.Type, annotationUsesLiteral(method.ParameterAnnotations[parameter.Name], context)))
+		parts = append(parts, fmt.Sprintf("GppParameter{Name: %q, Type: &GppType{Name: %q}, Annotations: %s}", parameter.Name, parameter.typeText(), annotationUsesLiteral(method.ParameterAnnotations[parameter.Name], context)))
 	}
 	return "[]GppParameter{" + strings.Join(parts, ", ") + "}"
 }
 
 func methodResultLiteral(method Method) string {
-	result := strings.TrimSpace(method.Result)
+	result := strings.TrimSpace(methodResultSource(method))
 	if result == "" {
 		return "nil"
 	}
@@ -570,89 +584,13 @@ var introspectionSelectorNames = map[string]string{
 }
 
 func transformIntrospection(src string, context constructorContext) (string, error) {
-	src = rewriteIntrospectionTypeSelectors(src)
-	if context.Introspection == nil || !strings.Contains(src, ".class") {
-		// Metadata selectors may still follow a class descriptor introduced in a
-		// previous transform, so only skip when there is no metadata-looking
-		// syntax at all.
-		if !strings.Contains(src, ".fields") && !strings.Contains(src, ".name") &&
-			!strings.Contains(src, ".type") && !strings.Contains(src, ".get") &&
-			!strings.Contains(src, ".set") && !strings.Contains(src, ".addr") &&
-			!strings.Contains(src, ".owner") && !strings.Contains(src, ".annotations") &&
-			!strings.Contains(src, ".methods") && !strings.Contains(src, ".has") &&
-			!strings.Contains(src, ".parents") && !strings.Contains(src, ".parameters") &&
-			!strings.Contains(src, ".result") &&
-			!strings.Contains(src, ".get") && !strings.Contains(src, ".all") &&
-			!strings.Contains(src, ".fullName") && !strings.Contains(src, ".args") {
-			return src, nil
-		}
+	if transformed, handled, err := transformIntrospectionAST(src, context); handled {
+		return transformed, err
 	}
-
-	parsed, fileSet, prefixLength, err := parseIntrospectionSource(src, context)
-	if err != nil {
-		return src, nil
-	}
-
-	valueTypes := polymorphicValueTypes(parsed, context)
-	if context.CurrentClass != "" {
-		valueTypes["this"] = "*" + context.CurrentClass
-	} else if context.CurrentExtensionReceiver != "" {
-		valueTypes["this"] = context.CurrentExtensionReceiver
-	}
-
-	type edit struct {
-		start int
-		end   int
-		text  string
-	}
-	edits := []edit{}
-	invalidClassAccess := ""
-	addEdit := func(node ast.Node, text string) {
-		start := fileSet.Position(node.Pos()).Offset - prefixLength
-		end := fileSet.Position(node.End()).Offset - prefixLength
-		if start >= 0 && end <= len(src) && start <= end {
-			edits = append(edits, edit{start: start, end: end, text: text})
-		}
-	}
-
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		if !ok || selector.Sel.Name != "class" {
-			return true
-		}
-
-		receiver, receiverErr := formatNode(selector.X)
-		if receiverErr != nil {
-			return true
-		}
-		if target, ok := introspectionStaticTarget(receiver, context); ok {
-			addEdit(selector, introspectionDescriptorName(target))
-			return true
-		}
-
-		className := introspectionClassName(selector.X, context, valueTypes)
-		if className == "" {
-			invalidClassAccess = receiver
-			return true
-		}
-		addEdit(selector, receiver+".GppRuntimeClass()")
-		return true
-	})
-
-	if invalidClassAccess != "" {
-		return "", fmt.Errorf("%s.class is only available on Go++ class instances or class names", invalidClassAccess)
-	}
-	if len(edits) > 0 {
-		sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-		for _, change := range edits {
-			src = src[:change.start] + change.text + src[change.end:]
-		}
-	}
-
-	return transformIntrospectionMetadataSelectors(src, context)
+	return src, nil
 }
 
-func rewriteIntrospectionTypeSelectors(src string) string {
+func rewriteIntrospectionTypeSelectorsLegacy(src string) string {
 	var output strings.Builder
 	for index := 0; index < len(src); {
 		if end, ok, _ := copyIgnoredSource(src, index, &output); ok {
@@ -683,7 +621,7 @@ func rewriteIntrospectionTypeSelectors(src string) string {
 	return output.String()
 }
 
-func parseIntrospectionSource(src string, context constructorContext) (ast.Node, *token.FileSet, int, error) {
+func parseIntrospectionSourceLegacy(src string, context constructorContext) (ast.Node, *token.FileSet, int, error) {
 	const prefix = "package main\n\n"
 	fileSet := token.NewFileSet()
 	parsed, err := parser.ParseFile(fileSet, "", prefix+src, 0)
@@ -692,8 +630,8 @@ func parseIntrospectionSource(src string, context constructorContext) (ast.Node,
 	}
 
 	functionPrefix := prefix + "func __gpp_scope()"
-	if strings.TrimSpace(context.CurrentResult) != "" {
-		functionPrefix += " " + strings.TrimSpace(context.CurrentResult)
+	if result := context.currentResultText(); result != "" {
+		functionPrefix += " " + result
 	}
 	functionPrefix += " {\n"
 	functionSet := token.NewFileSet()
@@ -704,7 +642,7 @@ func parseIntrospectionSource(src string, context constructorContext) (ast.Node,
 	return parsed, functionSet, len(functionPrefix), nil
 }
 
-func introspectionStaticTarget(receiver string, context constructorContext) (constructorTarget, bool) {
+func introspectionStaticTargetLegacy(receiver string, context constructorContext) (constructorTarget, bool) {
 	target, ok := context.Targets[receiver]
 	if ok {
 		return target, true
@@ -719,7 +657,7 @@ func introspectionDescriptorName(target constructorTarget) string {
 	return descriptorName(target.Qualifier, target.Class.Name)
 }
 
-func introspectionClassName(expr ast.Expr, context constructorContext, valueTypes map[string]string) string {
+func introspectionClassNameLegacy(expr ast.Expr, context constructorContext, valueTypes map[string]string) string {
 	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "this" && context.CurrentClass != "" {
 		return context.CurrentClass
 	}
@@ -744,8 +682,8 @@ func introspectionClassName(expr ast.Expr, context constructorContext, valueType
 	return ""
 }
 
-func transformIntrospectionMetadataSelectors(src string, context constructorContext) (string, error) {
-	parsed, fileSet, prefixLength, err := parseIntrospectionSource(src, context)
+func transformIntrospectionMetadataSelectorsLegacy(src string, context constructorContext) (string, error) {
+	parsed, fileSet, prefixLength, err := parseIntrospectionSourceLegacy(src, context)
 	if err != nil {
 		return src, nil
 	}
@@ -758,22 +696,22 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 		switch statement := node.(type) {
 		case *ast.RangeStmt:
 			if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionFields {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionFields {
 				metadataTypes[key.Name] = int(introspectionField)
 			} else if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionMethods {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionMethods {
 				metadataTypes[key.Name] = int(introspectionMethod)
 			} else if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParents {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionParents {
 				metadataTypes[key.Name] = int(introspectionClass)
 			} else if key, ok := statement.Key.(*ast.Ident); ok && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParameters {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionParameters {
 				metadataTypes[key.Name] = int(introspectionParameter)
 			}
 		case *ast.ValueSpec:
 			for index, name := range statement.Names {
 				if index < len(statement.Values) {
-					if kind := introspectionExpressionKind(statement.Values[index], metadataTypes); kind != introspectionUnknown {
+					if kind := introspectionExpressionKindLegacy(statement.Values[index], metadataTypes); kind != introspectionUnknown {
 						metadataTypes[name.Name] = int(kind)
 					}
 				}
@@ -782,7 +720,7 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 			for index, left := range statement.Lhs {
 				name, ok := left.(*ast.Ident)
 				if ok && index < len(statement.Rhs) {
-					if kind := introspectionExpressionKind(statement.Rhs[index], metadataTypes); kind != introspectionUnknown {
+					if kind := introspectionExpressionKindLegacy(statement.Rhs[index], metadataTypes); kind != introspectionUnknown {
 						metadataTypes[name.Name] = int(kind)
 					}
 				}
@@ -813,25 +751,25 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 	ast.Inspect(parsed, func(node ast.Node) bool {
 		if statement, ok := node.(*ast.RangeStmt); ok {
 			if key, keyOK := statement.Key.(*ast.Ident); keyOK && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionFields {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionFields {
 				start := fileSet.Position(key.Pos()).Offset - prefixLength
 				if start >= 0 && start <= len(src) {
 					edits = append(edits, edit{start: start, end: start, text: "_, "})
 				}
 			} else if key, keyOK := statement.Key.(*ast.Ident); keyOK && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionMethods {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionMethods {
 				start := fileSet.Position(key.Pos()).Offset - prefixLength
 				if start >= 0 && start <= len(src) {
 					edits = append(edits, edit{start: start, end: start, text: "_, "})
 				}
 			} else if key, keyOK := statement.Key.(*ast.Ident); keyOK && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParents {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionParents {
 				start := fileSet.Position(key.Pos()).Offset - prefixLength
 				if start >= 0 && start <= len(src) {
 					edits = append(edits, edit{start: start, end: start, text: "_, "})
 				}
 			} else if key, keyOK := statement.Key.(*ast.Ident); keyOK && key.Name != "_" &&
-				introspectionExpressionKind(statement.X, metadataTypes) == introspectionParameters {
+				introspectionExpressionKindLegacy(statement.X, metadataTypes) == introspectionParameters {
 				start := fileSet.Position(key.Pos()).Offset - prefixLength
 				if start >= 0 && start <= len(src) {
 					edits = append(edits, edit{start: start, end: start, text: "_, "})
@@ -843,7 +781,7 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 		if !ok {
 			return true
 		}
-		kind := introspectionExpressionKind(selector.X, metadataTypes)
+		kind := introspectionExpressionKindLegacy(selector.X, metadataTypes)
 		if replacement, ok := introspectionSelectorNames[selector.Sel.Name]; ok {
 			valid := (kind == introspectionClass && (selector.Sel.Name == "name" || selector.Sel.Name == "fields" || selector.Sel.Name == "annotations" || selector.Sel.Name == "methods" || selector.Sel.Name == "parents")) ||
 				(kind == introspectionField && (selector.Sel.Name == "name" || selector.Sel.Name == "owner" || selector.Sel.Name == "type" || selector.Sel.Name == "get" || selector.Sel.Name == "set" || selector.Sel.Name == "addr" || selector.Sel.Name == "annotations")) ||
@@ -865,34 +803,34 @@ func transformIntrospectionMetadataSelectors(src string, context constructorCont
 			return true
 		}
 		function, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || introspectionExpressionKind(function.X, metadataTypes) != introspectionField {
+		if !ok || introspectionExpressionKindLegacy(function.X, metadataTypes) != introspectionField {
 			return true
 		}
 		if function.Sel.Name != "set" && function.Sel.Name != "addr" {
 			return true
 		}
 		actual := expressionStaticType(call.Args[0], context, valueTypes)
-		if actual != "" && !strings.HasPrefix(strings.TrimSpace(actual), "*") && introspectionClassName(call.Args[0], context, valueTypes) != "" {
+		if actual != "" && !strings.HasPrefix(strings.TrimSpace(actual), "*") && introspectionClassNameLegacy(call.Args[0], context, valueTypes) != "" {
 			addPointer(call.Args[0])
 		}
 		return true
 	})
 
 	if len(edits) == 0 {
-		return transformAnnotationDescriptorArguments(src, context)
+		return transformAnnotationDescriptorArgumentsLegacy(src, context)
 	}
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	for _, change := range edits {
 		src = src[:change.start] + change.text + src[change.end:]
 	}
-	return transformAnnotationDescriptorArguments(src, context)
+	return transformAnnotationDescriptorArgumentsLegacy(src, context)
 }
 
-func transformAnnotationDescriptorArguments(src string, context constructorContext) (string, error) {
+func transformAnnotationDescriptorArgumentsLegacy(src string, context constructorContext) (string, error) {
 	if len(context.Annotations) == 0 {
 		return src, nil
 	}
-	parsed, fileSet, prefixLength, err := parseIntrospectionSource(src, context)
+	parsed, fileSet, prefixLength, err := parseIntrospectionSourceLegacy(src, context)
 	if err != nil {
 		return src, nil
 	}
@@ -937,7 +875,7 @@ func transformAnnotationDescriptorArguments(src string, context constructorConte
 	return src, nil
 }
 
-func introspectionExpressionKind(expr ast.Expr, variables map[string]int) introspectionExprKind {
+func introspectionExpressionKindLegacy(expr ast.Expr, variables map[string]int) introspectionExprKind {
 	switch value := expr.(type) {
 	case *ast.Ident:
 		if kind, ok := variables[value.Name]; ok {
@@ -947,7 +885,7 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 			return introspectionClass
 		}
 	case *ast.ParenExpr:
-		return introspectionExpressionKind(value.X, variables)
+		return introspectionExpressionKindLegacy(value.X, variables)
 	case *ast.CallExpr:
 		if selector, ok := value.Fun.(*ast.SelectorExpr); ok &&
 			(selector.Sel.Name == "__gpp_class" || selector.Sel.Name == "GppRuntimeClass") {
@@ -956,17 +894,17 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 		if selector, ok := value.Fun.(*ast.SelectorExpr); ok {
 			switch selector.Sel.Name {
 			case "Get", "get":
-				if introspectionExpressionKind(selector.X, variables) == introspectionAnnotations {
+				if introspectionExpressionKindLegacy(selector.X, variables) == introspectionAnnotations {
 					return introspectionAnnotation
 				}
 			case "All", "all":
-				if introspectionExpressionKind(selector.X, variables) == introspectionAnnotations {
+				if introspectionExpressionKindLegacy(selector.X, variables) == introspectionAnnotations {
 					return introspectionAnnotations
 				}
 			}
 		}
 	case *ast.IndexExpr:
-		switch introspectionExpressionKind(value.X, variables) {
+		switch introspectionExpressionKindLegacy(value.X, variables) {
 		case introspectionFields:
 			return introspectionField
 		case introspectionMethods:
@@ -977,7 +915,7 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 			return introspectionAnnotation
 		}
 	case *ast.IndexListExpr:
-		switch introspectionExpressionKind(value.X, variables) {
+		switch introspectionExpressionKindLegacy(value.X, variables) {
 		case introspectionFields:
 			return introspectionField
 		case introspectionMethods:
@@ -991,7 +929,7 @@ func introspectionExpressionKind(expr ast.Expr, variables map[string]int) intros
 		if strings.HasPrefix(value.Sel.Name, "Gpp") && strings.HasSuffix(value.Sel.Name, "Class") {
 			return introspectionClass
 		}
-		base := introspectionExpressionKind(value.X, variables)
+		base := introspectionExpressionKindLegacy(value.X, variables)
 		switch value.Sel.Name {
 		case "fields", "Fields":
 			if base == introspectionClass {

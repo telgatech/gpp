@@ -19,6 +19,36 @@ func TestParseReportsSourceLineForExtensionErrors(t *testing.T) {
 	}
 }
 
+func TestParseSplitsDocumentedTopLevelFunctionsIntoASTDeclarations(t *testing.T) {
+	file, err := ParseFile("documented-functions.gpp", `
+func first() {
+    println("first")
+}
+
+// second is documented between two top-level functions.
+func second() {
+    println("second")
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 2 {
+		t.Fatalf("expected two declarations, got %#v", file.Decls)
+	}
+	first, firstOK := file.Decls[0].(*FunctionDecl)
+	second, secondOK := file.Decls[1].(*FunctionDecl)
+	if !firstOK || !secondOK || first.Name != "first" || second.Name != "second" {
+		t.Fatalf("top-level functions were not split into AST declarations: %#v", file.Decls)
+	}
+	if second.Doc != "second is documented between two top-level functions." {
+		t.Fatalf("documentation comment was not attached to second function: %q", second.Doc)
+	}
+	if source := functionSource(second); !strings.Contains(source, "// second is documented") {
+		t.Fatalf("function source lost its documentation comment: %q", source)
+	}
+}
+
 func TestParseRejectsDuplicatePackageDeclaration(t *testing.T) {
 	_, err := ParseFile("duplicate.gpp", "package one\npackage two\n")
 	if err == nil || !strings.Contains(err.Error(), "duplicate package declaration") {
@@ -55,8 +85,8 @@ func TestParseTemplateDeclaration(t *testing.T) {
 	file, err := ParseFile("page.gpp", `
 template Page(post Post): Layout @{tpl.Path("/posts/{id}")} {
     <article data-id="{{param "id"}}">
-        <h1>{{.Title}}</h1>
-    </article>
+	<h1>{{.Title}}</h1>
+	</article>
 }
 `)
 	if err != nil {
@@ -69,11 +99,99 @@ template Page(post Post): Layout @{tpl.Path("/posts/{id}")} {
 	if !ok {
 		t.Fatalf("expected TemplateDecl, got %#v", file.Decls[0])
 	}
-	if template.Name != "Page" || template.Parameters != "post Post" || template.Layout != "Layout" || len(template.Annotations) != 1 {
+	if template.Name != "Page" || templateParametersSource(template) != "post Post" || template.Layout != "Layout" || len(template.Annotations) != 1 {
 		t.Fatalf("unexpected template metadata: %#v", template)
 	}
 	if !strings.Contains(template.Body, `{{param "id"}}`) {
 		t.Fatalf("template body was not preserved: %q", template.Body)
+	}
+}
+
+func TestParseDoesNotTreatFunctionTypeAsTopLevelFunction(t *testing.T) {
+	file, err := ParseFile("function-type-decl.gpp", `
+type Handler func(string) error
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one declaration, got %d", len(file.Decls))
+	}
+	goDecl, ok := file.Decls[0].(*GoDecl)
+	if !ok || len(goDecl.Declarations) != 1 {
+		t.Fatalf("function type was not retained as a structured Go declaration: %#v", file.Decls[0])
+	}
+}
+
+func TestParseTopLevelFunctionValidationDoesNotCountMethods(t *testing.T) {
+	file, err := ParseFile("method.gpp", `
+type worker struct{}
+
+func (w *worker) Run() {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 2 {
+		t.Fatalf("method-only source was not retained as structured Go declarations: %#v", file.Decls)
+	}
+	for _, declaration := range file.Decls {
+		if _, ok := declaration.(*GoDecl); !ok {
+			t.Fatalf("method-only source used an unexpected declaration fallback: %#v", declaration)
+		}
+	}
+}
+
+func TestParseRejectsUnstructuredTopLevelFunctionBody(t *testing.T) {
+	_, err := ParseFile("broken-function.gpp", `
+func broken() {
+    if true {
+`)
+	if err == nil || !strings.Contains(err.Error(), "invalid function body") {
+		t.Fatalf("expected structured function-body diagnostic, got %v", err)
+	}
+}
+
+func TestParseRejectsUnstructuredTopLevelSyntax(t *testing.T) {
+	_, err := ParseFile("unsupported-top-level.gpp", "magic value\n")
+	if err == nil || !strings.Contains(err.Error(), "no structured AST representation") {
+		t.Fatalf("expected structured top-level syntax diagnostic, got %v", err)
+	}
+}
+
+func TestParseStructuredAnnotatedTopLevelFunction(t *testing.T) {
+	file, err := ParseFile("annotated-function.gpp", `
+annotation Trace on function
+
+func Helper(value string) string @{Trace} {
+    return value
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function, ok := file.Decls[1].(*FunctionDecl)
+	if !ok || len(function.Annotations) != 1 || function.Annotations[0].Name != "Trace" {
+		t.Fatalf("annotated function was not represented structurally: %#v", file.Decls)
+	}
+}
+
+func TestParseStructuredLeadingAnnotatedTopLevelFunction(t *testing.T) {
+	file, err := ParseFile("leading-annotated-function.gpp", `
+annotation Route(path string) on function
+
+@{Route("/users")}
+func Users() {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function, ok := file.Decls[1].(*FunctionDecl)
+	if !ok || len(function.Annotations) != 1 || function.Annotations[0].Name != "Route" {
+		t.Fatalf("leading annotation was not promoted to FunctionDecl: %#v", file.Decls)
+	}
+	if function.SourceSpan.Start != strings.Index(file.Source, "@{Route") {
+		t.Fatalf("function span did not include leading annotation: %#v", function.SourceSpan)
 	}
 }
 
@@ -99,11 +217,11 @@ enum (
 		t.Fatalf("expected two enum declarations, got %d", len(file.Decls))
 	}
 	status := file.Decls[0].(*EnumDecl)
-	if status.BackingType != "int" || status.Members[2].Value != "5" {
+	if enumBackingType(status) != "int" || enumMemberValueSource(status.Members[2]) != "5" {
 		t.Fatalf("unexpected implicit enum values: %#v", status)
 	}
 	role := file.Decls[1].(*EnumDecl)
-	if role.BackingType != "string" || role.Members[0].Value != `"User"` || role.Members[1].Value != `"admin"` {
+	if enumBackingType(role) != "string" || enumMemberValueSource(role.Members[0]) != `"User"` || enumMemberValueSource(role.Members[1]) != `"admin"` {
 		t.Fatalf("unexpected string enum values: %#v", role)
 	}
 }
@@ -147,7 +265,7 @@ func TestParseIgnoresExtensionsInsideGoBodiesAndStrings(t *testing.T) {
 	}
 
 	if len(file.Decls) != 2 {
-		t.Fatalf("expected one raw declaration and one class, got %d", len(file.Decls))
+		t.Fatalf("expected one compatibility declaration and one class, got %d", len(file.Decls))
 	}
 	if class, ok := file.Decls[1].(*ClassDecl); !ok || class.Name != "RealClass" {
 		t.Fatalf("expected RealClass after Go body, got %#v", file.Decls[1])
@@ -178,8 +296,8 @@ extend
 		t.Fatalf("expected extension declaration, got %#v", file.Decls[0])
 	}
 	expected := []string{"string", "[]byte", "map[string]int"}
-	if strings.Join(extension.Targets, "|") != strings.Join(expected, "|") {
-		t.Fatalf("unexpected extension targets: %#v", extension.Targets)
+	if strings.Join(extensionTargetNames(extension), "|") != strings.Join(expected, "|") {
+		t.Fatalf("unexpected extension targets: %#v", extensionTargetNames(extension))
 	}
 }
 
@@ -196,8 +314,8 @@ extend []T where T cmp.Ordered {
 	if !ok {
 		t.Fatalf("expected extension declaration, got %#v", file.Decls[0])
 	}
-	if len(extension.Targets) != 1 || extension.Targets[0] != "[]T" {
-		t.Fatalf("unexpected generic target: %#v", extension.Targets)
+	if len(extensionTargetNames(extension)) != 1 || extensionTargetNames(extension)[0] != "[]T" {
+		t.Fatalf("unexpected generic target: %#v", extensionTargetNames(extension))
 	}
 	if extension.TargetConstraints["T"] != "cmp.Ordered" {
 		t.Fatalf("unexpected target constraints: %#v", extension.TargetConstraints)

@@ -85,7 +85,7 @@ func expandSerializableClass(class *ClassDecl, qualifier string) error {
 			if existing.Name != generated.name || existing.IsStatic != generated.static {
 				continue
 			}
-			if !sameGeneratedParameters(existing.Parameters, generated.parameters) {
+			if !sameGeneratedParameters(methodParametersSource(existing), generated.parameters) {
 				continue
 			}
 			found = true
@@ -104,16 +104,31 @@ func expandSerializableClass(class *ClassDecl, qualifier string) error {
 		if found {
 			continue
 		}
+		owner, bodyTokens, bodyAST := generatedMethodBody(generated.body)
 		class.Methods = append(class.Methods, Method{
-			Name:       generated.name,
-			IsStatic:   generated.static,
-			Generated:  true,
-			Parameters: generated.parameters,
-			Result:     generated.result,
-			Body:       generated.body,
+			Name:         generated.name,
+			IsStatic:     generated.static,
+			Generated:    true,
+			ParameterAST: parseParameterNodes(generated.parameters),
+			ResultAST:    parseTypeText(generated.result),
+			Owner:        owner,
+			BodyTokens:   bodyTokens,
+			BodyAST:      bodyAST,
+			BodySpan:     Span{Start: 0, End: len(generated.body), Line: 1, Column: 1},
 		})
 	}
 	return nil
+}
+
+func generatedMethodBody(source string) (*File, []Token, *BlockStmt) {
+	owner := &File{Name: "<generated method>", Source: source}
+	tokens, _ := LexSource(owner.Name, source)
+	body, _ := ParseBodyAST(tokens)
+	if body == nil {
+		return owner, tokens, nil
+	}
+	body.SpanValue = Span{Start: 0, End: len(source), Line: 1, Column: 1}
+	return owner, tokens, body
 }
 
 func sameGeneratedParameters(actual, expected string) bool {
@@ -126,7 +141,7 @@ func sameGeneratedParameters(actual, expected string) bool {
 		return false
 	}
 	for index := range actualParameters {
-		if strings.Join(strings.Fields(actualParameters[index].Type), " ") != strings.Join(strings.Fields(expectedParameters[index].Type), " ") {
+		if strings.Join(strings.Fields(actualParameters[index].typeText()), " ") != strings.Join(strings.Fields(expectedParameters[index].typeText()), " ") {
 			return false
 		}
 	}
@@ -134,7 +149,7 @@ func sameGeneratedParameters(actual, expected string) bool {
 }
 
 func compatibleGeneratedMethod(method Method, parameters, result string) bool {
-	actualParameters, err := parseParameterInfos(method.Parameters)
+	actualParameters, err := parameterInfosForMethod(method)
 	if err != nil {
 		return false
 	}
@@ -143,11 +158,11 @@ func compatibleGeneratedMethod(method Method, parameters, result string) bool {
 		return false
 	}
 	for index := range actualParameters {
-		if strings.Join(strings.Fields(actualParameters[index].Type), " ") != strings.Join(strings.Fields(expectedParameters[index].Type), " ") {
+		if strings.Join(strings.Fields(actualParameters[index].typeText()), " ") != strings.Join(strings.Fields(expectedParameters[index].typeText()), " ") {
 			return false
 		}
 	}
-	return normalizeGeneratedType(method.Result) == normalizeGeneratedType(result)
+	return normalizeGeneratedType(methodResultSource(method)) == normalizeGeneratedType(result)
 }
 
 func normalizeGeneratedType(value string) string {

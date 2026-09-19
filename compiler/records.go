@@ -3,9 +3,6 @@ package compiler
 import (
 	"crypto/sha256"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"sort"
 	"strings"
 )
@@ -25,7 +22,9 @@ type recordContext struct {
 	Shapes          map[string]*recordShape
 	FunctionResults map[string]string
 	MethodResults   map[string]map[string]string
+	FunctionParams  map[string]map[int]string
 	Emitted         map[string]bool
+	Prepared        bool
 }
 
 func newRecordContext() *recordContext {
@@ -33,6 +32,7 @@ func newRecordContext() *recordContext {
 		Shapes:          map[string]*recordShape{},
 		FunctionResults: map[string]string{},
 		MethodResults:   map[string]map[string]string{},
+		FunctionParams:  map[string]map[int]string{},
 		Emitted:         map[string]bool{},
 	}
 }
@@ -55,9 +55,16 @@ func cloneRecordContext(source *recordContext) *recordContext {
 			result.MethodResults[className][name] = typeName
 		}
 	}
+	for functionName, parameters := range source.FunctionParams {
+		result.FunctionParams[functionName] = map[int]string{}
+		for index, typeName := range parameters {
+			result.FunctionParams[functionName][index] = typeName
+		}
+	}
 	for name, emitted := range source.Emitted {
 		result.Emitted[name] = emitted
 	}
+	result.Prepared = source.Prepared
 	return result
 }
 
@@ -170,78 +177,341 @@ func transformRecords(src string, context constructorContext) (string, error) {
 	return transformed, nil
 }
 
-func rewriteLetSyntax(src string) string {
-	var output strings.Builder
-	for index := 0; index < len(src); {
-		if end, ok, _ := copyIgnoredSource(src, index, &output); ok {
-			index = end
-			continue
-		}
-		if !keywordAt(src, index, "let") {
-			output.WriteByte(src[index])
-			index++
-			continue
-		}
-		nameStart := skipSpace(src, index+len("let"))
-		name, nameLength := readIdent(src[nameStart:])
-		if nameLength == 0 {
-			output.WriteString(src[index : index+len("let")])
-			index += len("let")
-			continue
-		}
-		equals := skipSpace(src, nameStart+nameLength)
-		if equals >= len(src) || src[equals] != '=' {
-			output.WriteString(src[index : index+len("let")])
-			index += len("let")
-			continue
-		}
-		output.WriteString(name)
-		output.WriteString(" :=")
-		index = equals + 1
+// prepareRecordContextForFunction preserves cross-function record inference
+// after standalone top-level functions stop being grouped inside MixedDecl. The
+// preparation pass observes the structured FunctionDecl siblings once, so a
+// function parameter can still be inferred from a record call in a later
+// function without making the declaration parser depend on a source bundle.
+func prepareRecordContextForFunction(function *FunctionDecl, context constructorContext) error {
+	if function == nil || function.Owner == nil || context.Records == nil || context.Records.Prepared {
+		return nil
 	}
-	return output.String()
+	functions := []string{}
+	for _, declaration := range function.Owner.Decls {
+		candidate, ok := declaration.(*FunctionDecl)
+		if !ok {
+			continue
+		}
+		source := functionSource(candidate)
+		if strings.TrimSpace(source) != "" {
+			functions = append(functions, source)
+		}
+	}
+	if len(functions) < 2 {
+		return nil
+	}
+	combined := strings.Join(functions, "\n\n")
+	if !strings.Contains(combined, "record") && !strings.Contains(combined, "let") {
+		context.Records.Prepared = true
+		return nil
+	}
+	if _, err := transformRecords(combined, context); err != nil {
+		return err
+	}
+	context.Records.Prepared = true
+	return nil
+}
+
+func rewriteLetSyntax(src string) string {
+	tokens, err := LexSource("let", src)
+	if err != nil || !tokenSequence(tokens, "let") {
+		return src
+	}
+	if transformed, handled := rewriteLetSyntaxAST(src); handled {
+		return transformed
+	}
+	return src
 }
 
 func transformRecordLiterals(src string, valueTypes map[string]string, context constructorContext, strict bool) (string, error) {
-	var output strings.Builder
-	for index := 0; index < len(src); {
-		if end, ok, err := copyIgnoredSource(src, index, &output); err != nil {
-			return "", err
-		} else if ok {
-			index = end
-			continue
-		}
-
-		name, length := readIdent(src[index:])
-		if length == 0 {
-			output.WriteByte(src[index])
-			index++
-			continue
-		}
-		if name != "record" || (index > 0 && (isIdentPart(src[index-1]) || src[index-1] == '.')) {
-			output.WriteString(src[index : index+length])
-			index += length
-			continue
-		}
-
-		open := skipSpace(src, index+length)
-		if open >= len(src) || src[open] != '(' {
-			output.WriteString(src[index : index+length])
-			index += length
-			continue
-		}
-		close, err := findMatchingParen(src, open)
-		if err != nil {
-			return "", fmt.Errorf("record literal: %w", err)
-		}
-		literal, err := transformRecordLiteral(src[open+1:close], valueTypes, context, strict)
-		if err != nil {
-			return "", err
-		}
-		output.WriteString(literal)
-		index = close + 1
+	tokens, err := LexSource("record", src)
+	if err != nil || !tokenSequence(tokens, "record", "(") {
+		return src, nil
 	}
-	return output.String(), nil
+	if transformed, handled, err := transformRecordLiteralsAST(src, valueTypes, context, strict); handled {
+		return transformed, err
+	}
+	return "", fmt.Errorf("record literal could not be represented by the body AST")
+}
+
+func rewriteLetSyntaxAST(src string) (string, bool) {
+	tokens, err := LexSource("let", src)
+	if err != nil {
+		return src, false
+	}
+	blocks := []*BlockStmt{}
+	functions := parseTopLevelFunctions("let", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function != nil && function.Method.BodyAST != nil {
+				blocks = append(blocks, function.Method.BodyAST)
+			}
+		}
+	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil && block != nil {
+		blocks = append(blocks, block)
+	}
+	if len(blocks) == 0 {
+		return src, false
+	}
+	type edit struct {
+		start int
+		end   int
+		text  string
+	}
+	edits := []edit{}
+	for _, block := range blocks {
+		collectRecordDeclarationStatements(block, func(statement *DeclarationStmt) {
+			if statement == nil || statement.Keyword != "let" || len(statement.Names) != 1 || len(statement.Values) != 1 {
+				return
+			}
+			value, valueErr := expressionNodeSource(statement.Values[0])
+			if valueErr != nil {
+				return
+			}
+			edits = append(edits, edit{
+				start: statement.SpanValue.Start,
+				end:   statement.SpanValue.End,
+				text:  statement.Names[0].Text + " := " + value,
+			})
+		})
+	}
+	if len(edits) == 0 {
+		return src, false
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, edit := range edits {
+		if edit.start < 0 || edit.end > len(src) || edit.start >= edit.end {
+			return src, false
+		}
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true
+}
+
+func collectRecordDeclarationStatements(block *BlockStmt, visit func(*DeclarationStmt)) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		collectRecordStmtDeclarations(statement, visit)
+	}
+}
+
+func collectRecordStmtDeclarations(statement Stmt, visit func(*DeclarationStmt)) {
+	if statement == nil {
+		return
+	}
+	switch value := statement.(type) {
+	case *TokenStmt:
+		collectRecordDeclarationStatements(value.Body, visit)
+		for _, child := range value.Children {
+			collectRecordStmtDeclarations(child, visit)
+		}
+	case *DeclarationStmt:
+		visit(value)
+	case *IfStmt:
+		collectRecordDeclarationStatements(value.Body, visit)
+		collectRecordDeclarationStatements(value.Else, visit)
+		if value.ElseIf != nil {
+			collectRecordStmtDeclarations(value.ElseIf, visit)
+		}
+	case *ForStmt:
+		collectRecordDeclarationStatements(value.Body, visit)
+	case *SwitchStmt:
+		collectRecordDeclarationStatements(value.Body, visit)
+	case *CaseStmt:
+		collectRecordDeclarationStatements(value.Clause.Body, visit)
+	case *TryStmt:
+		collectRecordDeclarationStatements(value.Body, visit)
+		for _, clause := range value.Catches {
+			collectRecordDeclarationStatements(clause.Body, visit)
+		}
+		collectRecordDeclarationStatements(value.Finally, visit)
+	case *BlockStmt:
+		collectRecordDeclarationStatements(value, visit)
+	}
+}
+
+type recordCallNode struct {
+	call       *CallExpr
+	start, end int
+}
+
+func transformRecordLiteralsAST(src string, valueTypes map[string]string, context constructorContext, strict bool) (string, bool, error) {
+	tokens, err := LexSource("record", src)
+	if err != nil {
+		return src, false, nil
+	}
+	blocks := []*BlockStmt{}
+	functions := parseTopLevelFunctions("record", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function != nil && function.Method.BodyAST != nil {
+				blocks = append(blocks, function.Method.BodyAST)
+			}
+		}
+	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil && block != nil {
+		blocks = append(blocks, block)
+	}
+	if len(blocks) == 0 {
+		return src, false, nil
+	}
+	calls := []recordCallNode{}
+	for _, block := range blocks {
+		collectRecordBodyExpressions(block, func(expression ExprNode) {
+			collectRecordCalls(expression, &calls)
+		})
+	}
+	if len(calls) == 0 {
+		return src, false, nil
+	}
+	outermost := []recordCallNode{}
+	for index, candidate := range calls {
+		nested := false
+		for otherIndex, other := range calls {
+			if index != otherIndex && other.start <= candidate.start && other.end >= candidate.end &&
+				(other.start < candidate.start || other.end > candidate.end) {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			outermost = append(outermost, candidate)
+		}
+	}
+	type edit struct {
+		start int
+		end   int
+		text  string
+	}
+	edits := []edit{}
+	for _, candidate := range outermost {
+		args := make([]string, 0, len(candidate.call.Arguments))
+		for _, argument := range candidate.call.Arguments {
+			value, valueErr := expressionNodeSource(argument.Value)
+			if valueErr != nil {
+				return "", true, valueErr
+			}
+			if argument.Name == "" {
+				return "", true, fmt.Errorf("record literal arguments must be named")
+			}
+			args = append(args, argument.Name+": "+value)
+		}
+		literal, literalErr := transformRecordLiteral(strings.Join(args, ", "), valueTypes, context, strict)
+		if literalErr != nil {
+			return "", true, literalErr
+		}
+		edits = append(edits, edit{start: candidate.start, end: candidate.end, text: literal})
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, edit := range edits {
+		if edit.start < 0 || edit.end > len(src) || edit.start >= edit.end {
+			return src, false, nil
+		}
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
+}
+
+func collectRecordBodyExpressions(block *BlockStmt, visit func(ExprNode)) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		collectRecordStmtExpressions(statement, visit)
+	}
+}
+
+func collectRecordStmtExpressions(statement Stmt, visit func(ExprNode)) {
+	walkStmtExpressions(statement, visit)
+}
+
+func collectRecordStructuredHeader(statement Stmt, visit func(ExprNode)) {
+	switch value := statement.(type) {
+	case *IfStmt:
+		visit(value.Init)
+		visit(value.Condition)
+	case *ForStmt:
+		visit(value.Init)
+		visit(value.Condition)
+		visit(value.Post)
+		visit(value.RangeExpr)
+	case *SwitchStmt:
+		visit(value.Init)
+		visit(value.Tag)
+	case *CaseStmt:
+		for _, expression := range value.Clause.Expressions {
+			visit(expression)
+		}
+	}
+}
+
+func collectRecordCalls(expression ExprNode, result *[]recordCallNode) {
+	if expression == nil {
+		return
+	}
+	switch value := expression.(type) {
+	case *CallExpr:
+		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "record" {
+			span := value.Span()
+			*result = append(*result, recordCallNode{call: value, start: span.Start, end: span.End})
+		}
+		collectRecordCalls(value.Callee, result)
+		for _, argument := range value.Arguments {
+			collectRecordCalls(argument.Value, result)
+		}
+	case *UnaryExpr:
+		collectRecordCalls(value.Operand, result)
+	case *BinaryExpr:
+		collectRecordCalls(value.Left, result)
+		collectRecordCalls(value.Right, result)
+	case *SelectorExpr:
+		collectRecordCalls(value.Receiver, result)
+	case *IndexExpr:
+		collectRecordCalls(value.Receiver, result)
+		collectRecordCalls(value.Index, result)
+	case *IndexListExpr:
+		collectRecordCalls(value.Receiver, result)
+		for _, index := range value.Indices {
+			collectRecordCalls(index, result)
+		}
+	case *SliceExpr:
+		collectRecordCalls(value.Receiver, result)
+		collectRecordCalls(value.Low, result)
+		collectRecordCalls(value.High, result)
+		collectRecordCalls(value.Max, result)
+	case *TypeAssertExpr:
+		collectRecordCalls(value.Expression, result)
+	case *PostfixExpr:
+		collectRecordCalls(value.Expression, result)
+	case *SpreadExpr:
+		collectRecordCalls(value.Expression, result)
+	case *TypeExpr:
+		// Type expressions do not contain record calls.
+	case *SendExpr:
+		collectRecordCalls(value.Channel, result)
+		collectRecordCalls(value.Value, result)
+	case *ParenthesizedExpr:
+		collectRecordCalls(value.Inner, result)
+	case *CompositeLiteralExpr:
+		for _, element := range value.Elements {
+			collectRecordCalls(element.Key, result)
+			collectRecordCalls(element.Value, result)
+		}
+	case *InterpolatedStringExpr:
+		for _, segment := range value.Segments {
+			collectRecordCalls(segment.Expression, result)
+		}
+	case *LambdaExpr:
+		collectRecordCalls(value.Body, result)
+		collectRecordBodyExpressions(value.BlockBody, func(expression ExprNode) {
+			collectRecordCalls(expression, result)
+		})
+	case *FunctionLiteralExpr:
+		collectRecordBodyExpressions(value.Body, func(expression ExprNode) {
+			collectRecordCalls(expression, result)
+		})
+	}
 }
 
 func transformRecordLiteral(argsSource string, valueTypes map[string]string, context constructorContext, strict bool) (string, error) {
@@ -302,6 +572,9 @@ func transformRecordLiteral(argsSource string, valueTypes map[string]string, con
 }
 
 func rewriteRecordCollectionLiterals(src string, context constructorContext) (string, error) {
+	if transformed, handled, err := rewriteRecordCollectionLiteralsAST(src, context); handled {
+		return transformed, err
+	}
 	var output strings.Builder
 	for index := 0; index < len(src); {
 		if end, ok, err := copyIgnoredSource(src, index, &output); err != nil {
@@ -344,6 +617,163 @@ func rewriteRecordCollectionLiterals(src string, context constructorContext) (st
 	return output.String(), nil
 }
 
+func rewriteRecordCollectionLiteralsAST(src string, context constructorContext) (string, bool, error) {
+	tokens, err := LexSource("record collections", src)
+	if err != nil {
+		return src, false, nil
+	}
+	blocks := []*BlockStmt{}
+	functions := parseTopLevelFunctions("record collections", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function == nil || function.Method.BodyAST == nil {
+				return src, false, nil
+			}
+			blocks = append(blocks, function.Method.BodyAST)
+		}
+	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil && block != nil {
+		blocks = append(blocks, block)
+	}
+	if len(blocks) == 0 {
+		return src, false, nil
+	}
+	edits := []introspectionASTEdit{}
+	for _, block := range blocks {
+		collectRecordCompositeLiterals(block, func(literal *CompositeLiteralExpr) {
+			if literal == nil || literal.Type == nil {
+				return
+			}
+			collectionType, ok := literal.Type.(interface{ recordCollectionElement() TypeNode })
+			if !ok {
+				return
+			}
+			elementType := collectionType.recordCollectionElement()
+			if named, namedOK := elementType.(*NamedType); !namedOK || len(named.Parts) != 1 || named.Parts[0] != "record" {
+				return
+			}
+			shapeName := ""
+			for _, element := range literal.Elements {
+				candidate := inferRecordExprType(element.Value, map[string]string{}, context)
+				if strings.HasPrefix(candidate, "__gpp_record_") {
+					shapeName = candidate
+					break
+				}
+			}
+			if shapeName == "" {
+				return
+			}
+			span := literal.Type.Span()
+			edits = append(edits, introspectionASTEdit{start: span.Start, end: span.End, text: collectionTypeSource(literal.Type, shapeName)})
+		})
+	}
+	if len(edits) == 0 {
+		return src, true, nil
+	}
+	sort.SliceStable(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
+	for _, edit := range edits {
+		if edit.start < 0 || edit.end < edit.start || edit.end > len(src) {
+			return src, false, nil
+		}
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
+}
+
+type recordCollectionType interface {
+	TypeNode
+	recordCollectionElement() TypeNode
+}
+
+func (value *SliceType) recordCollectionElement() TypeNode { return value.Element }
+func (value *MapType) recordCollectionElement() TypeNode   { return value.Value }
+
+func collectionTypeSource(typeNode TypeNode, shapeName string) string {
+	switch value := typeNode.(type) {
+	case *SliceType:
+		return "[]" + shapeName
+	case *MapType:
+		key, err := typeNodeSource(value.Key)
+		if err != nil {
+			return "map[]" + shapeName
+		}
+		return "map[" + key + "]" + shapeName
+	default:
+		return shapeName
+	}
+}
+
+func collectRecordCompositeLiterals(block *BlockStmt, visit func(*CompositeLiteralExpr)) {
+	if block == nil || visit == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		walkStmtExpressions(statement, func(expression ExprNode) {
+			collectRecordCompositeExpression(expression, visit)
+		})
+	}
+}
+
+func collectRecordCompositeExpression(expression ExprNode, visit func(*CompositeLiteralExpr)) {
+	if expression == nil {
+		return
+	}
+	if literal, ok := expression.(*CompositeLiteralExpr); ok {
+		visit(literal)
+	}
+	switch value := expression.(type) {
+	case *UnaryExpr:
+		collectRecordCompositeExpression(value.Operand, visit)
+	case *BinaryExpr:
+		collectRecordCompositeExpression(value.Left, visit)
+		collectRecordCompositeExpression(value.Right, visit)
+	case *SelectorExpr:
+		collectRecordCompositeExpression(value.Receiver, visit)
+	case *IndexExpr:
+		collectRecordCompositeExpression(value.Receiver, visit)
+		collectRecordCompositeExpression(value.Index, visit)
+	case *IndexListExpr:
+		collectRecordCompositeExpression(value.Receiver, visit)
+		for _, index := range value.Indices {
+			collectRecordCompositeExpression(index, visit)
+		}
+	case *SliceExpr:
+		collectRecordCompositeExpression(value.Receiver, visit)
+		collectRecordCompositeExpression(value.Low, visit)
+		collectRecordCompositeExpression(value.High, visit)
+		collectRecordCompositeExpression(value.Max, visit)
+	case *TypeAssertExpr:
+		collectRecordCompositeExpression(value.Expression, visit)
+	case *PostfixExpr:
+		collectRecordCompositeExpression(value.Expression, visit)
+	case *SpreadExpr:
+		collectRecordCompositeExpression(value.Expression, visit)
+	case *SendExpr:
+		collectRecordCompositeExpression(value.Channel, visit)
+		collectRecordCompositeExpression(value.Value, visit)
+	case *CallExpr:
+		collectRecordCompositeExpression(value.Callee, visit)
+		for _, argument := range value.Arguments {
+			collectRecordCompositeExpression(argument.Value, visit)
+		}
+	case *ParenthesizedExpr:
+		collectRecordCompositeExpression(value.Inner, visit)
+	case *CompositeLiteralExpr:
+		for _, element := range value.Elements {
+			collectRecordCompositeExpression(element.Key, visit)
+			collectRecordCompositeExpression(element.Value, visit)
+		}
+	case *InterpolatedStringExpr:
+		for _, segment := range value.Segments {
+			collectRecordCompositeExpression(segment.Expression, visit)
+		}
+	case *LambdaExpr:
+		collectRecordCompositeExpression(value.Body, visit)
+		collectRecordCompositeLiterals(value.BlockBody, visit)
+	case *FunctionLiteralExpr:
+		collectRecordCompositeLiterals(value.Body, visit)
+	}
+}
+
 func firstRecordTypeName(src string) string {
 	for index := 0; index < len(src); index++ {
 		if strings.HasPrefix(src[index:], "__gpp_record_") &&
@@ -359,16 +789,20 @@ func firstRecordTypeName(src string) string {
 }
 
 func inferRecordExpressionType(source string, valueTypes map[string]string, context constructorContext) string {
-	parsed, err := parser.ParseExpr(strings.TrimSpace(source))
+	tokens, err := LexSource("record field", strings.TrimSpace(source))
 	if err != nil {
 		return ""
 	}
-	return inferRecordASTType(parsed, valueTypes, context)
+	expression, err := ParseExpressionTokens(tokens)
+	if err != nil || expression == nil {
+		return ""
+	}
+	return inferRecordExprType(expression, valueTypes, context)
 }
 
-func inferRecordASTType(expr ast.Expr, valueTypes map[string]string, context constructorContext) string {
-	switch value := expr.(type) {
-	case *ast.Ident:
+func inferRecordExprType(expression ExprNode, valueTypes map[string]string, context constructorContext) string {
+	switch value := expression.(type) {
+	case *NameExpr:
 		if valueTypes[value.Name] != "" {
 			return valueTypes[value.Name]
 		}
@@ -376,37 +810,76 @@ func inferRecordASTType(expr ast.Expr, valueTypes map[string]string, context con
 		case "true", "false":
 			return "bool"
 		}
-	case *ast.BasicLit:
+	case *LiteralExpr:
 		switch value.Kind {
-		case token.STRING:
+		case TokenString, TokenRawString:
 			return "string"
-		case token.INT:
+		case TokenNumber:
+			if strings.ContainsAny(value.Text, ".eEpP") {
+				return "float64"
+			}
 			return "int"
-		case token.FLOAT:
-			return "float64"
-		case token.CHAR:
+		case TokenRune:
 			return "rune"
 		}
-	case *ast.CompositeLit:
-		if recordType := formatRecordTypeExpr(value.Type); recordType != "" {
-			return recordType
+		switch value.Text {
+		case "true", "false":
+			return "bool"
 		}
-		typeName, err := formatNode(value.Type)
+	case *InterpolatedStringExpr:
+		return "string"
+	case *CompositeLiteralExpr:
+		typeName, err := typeNodeSource(value.Type)
 		if err == nil {
 			return strings.Join(strings.Fields(typeName), " ")
 		}
-	case *ast.ParenExpr:
-		return inferRecordASTType(value.X, valueTypes, context)
-	case *ast.UnaryExpr:
-		inner := inferRecordASTType(value.X, valueTypes, context)
-		if inner != "" && value.Op.String() == "&" {
+	case *ParenthesizedExpr:
+		return inferRecordExprType(value.Inner, valueTypes, context)
+	case *IndexListExpr:
+		return inferRecordExprType(value.Receiver, valueTypes, context)
+	case *SliceExpr:
+		receiverType := strings.TrimSpace(inferRecordExprType(value.Receiver, valueTypes, context))
+		if strings.HasPrefix(receiverType, "[]") {
+			return strings.TrimPrefix(receiverType, "[]")
+		}
+		if receiverType == "string" {
+			return "string"
+		}
+	case *TypeAssertExpr:
+		if value.TypeSwitch || value.Type == nil {
+			return ""
+		}
+		if typeText, err := typeNodeSource(value.Type); err == nil {
+			return typeText
+		}
+	case *PostfixExpr:
+		return inferRecordExprType(value.Expression, valueTypes, context)
+	case *SpreadExpr:
+		return inferRecordExprType(value.Expression, valueTypes, context)
+	case *TypeExpr:
+		if value.Type != nil {
+			if typeText, err := typeNodeSource(value.Type); err == nil {
+				return typeText
+			}
+		}
+	case *SendExpr:
+		return inferRecordExprType(value.Value, valueTypes, context)
+	case *FunctionLiteralExpr:
+		if value.Type != nil {
+			if typeText, err := typeNodeSource(value.Type); err == nil {
+				return typeText
+			}
+		}
+	case *UnaryExpr:
+		inner := inferRecordExprType(value.Operand, valueTypes, context)
+		if inner != "" && value.Operator == "&" {
 			return "*" + inner
 		}
 		return inner
-	case *ast.BinaryExpr:
-		left := inferRecordASTType(value.X, valueTypes, context)
-		right := inferRecordASTType(value.Y, valueTypes, context)
-		switch value.Op.String() {
+	case *BinaryExpr:
+		left := inferRecordExprType(value.Left, valueTypes, context)
+		right := inferRecordExprType(value.Right, valueTypes, context)
+		switch value.Operator {
 		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
 			return "bool"
 		case "+":
@@ -417,22 +890,61 @@ func inferRecordASTType(expr ast.Expr, valueTypes map[string]string, context con
 				return "int"
 			}
 		}
-	case *ast.CallExpr:
-		return inferRecordCallResult(value, valueTypes, context)
-	case *ast.SelectorExpr:
-		base := inferRecordASTType(value.X, valueTypes, context)
-		if shape := context.Records.recordByGoName(strings.TrimPrefix(base, "*")); shape != nil {
-			for _, field := range shape.Fields {
-				if field.Name == value.Sel.Name {
-					return field.Type
+	case *CallExpr:
+		return inferRecordCallExprResult(value, valueTypes, context)
+	case *SelectorExpr:
+		base := inferRecordExprType(value.Receiver, valueTypes, context)
+		if context.Records != nil {
+			if shape := context.Records.recordByGoName(strings.TrimPrefix(base, "*")); shape != nil {
+				for _, field := range shape.Fields {
+					if field.Name == value.Name {
+						return field.Type
+					}
 				}
 			}
 		}
 		if classTarget, ok := context.Targets[strings.TrimPrefix(base, "*")]; ok {
 			for _, field := range classTarget.Class.Fields {
-				if field.Name == value.Sel.Name {
-					return field.Type
+				if field.Name == value.Name {
+					return fieldTypeSource(field)
 				}
+			}
+		}
+	}
+	return ""
+}
+
+func inferRecordCallExprResult(call *CallExpr, valueTypes map[string]string, context constructorContext) string {
+	switch function := call.Callee.(type) {
+	case *NameExpr:
+		if context.Records != nil && context.Records.FunctionResults[function.Name] != "" {
+			return context.Records.FunctionResults[function.Name]
+		}
+		if result := commonGoFunctionResult(function.Name); result != "" {
+			return result
+		}
+		for _, signature := range context.FunctionSignatures[function.Name] {
+			if signature.resultText() != "" {
+				return strings.TrimSpace(signature.resultText())
+			}
+		}
+	case *SelectorExpr:
+		if receiver, ok := function.Receiver.(*NameExpr); ok {
+			className := strings.TrimPrefix(valueTypes[receiver.Name], "*")
+			if className == "" {
+				className = context.CurrentClass
+			}
+			if context.Records != nil && context.Records.MethodResults[className][function.Name] != "" {
+				return context.Records.MethodResults[className][function.Name]
+			}
+			for _, signature := range context.ClassMethodSignatures[className][function.Name] {
+				if signature.resultText() != "" {
+					return strings.TrimSpace(signature.resultText())
+				}
+			}
+			switch function.Name {
+			case "Sprintf", "Itoa", "ToUpper", "ToLower", "TrimSpace", "Join":
+				return "string"
 			}
 		}
 	}
@@ -449,49 +961,6 @@ func (context *recordContext) recordByGoName(name string) *recordShape {
 		}
 	}
 	return nil
-}
-
-func formatRecordTypeExpr(expr ast.Expr) string {
-	if ident, ok := expr.(*ast.Ident); ok && strings.HasPrefix(ident.Name, "__gpp_record_") {
-		return ident.Name
-	}
-	return ""
-}
-
-func inferRecordCallResult(call *ast.CallExpr, valueTypes map[string]string, context constructorContext) string {
-	switch function := call.Fun.(type) {
-	case *ast.Ident:
-		if result := context.Records.FunctionResults[function.Name]; result != "" {
-			return result
-		}
-		if result := commonGoFunctionResult(function.Name); result != "" {
-			return result
-		}
-		for _, signature := range context.FunctionSignatures[function.Name] {
-			if signature.Result != "" {
-				return strings.TrimSpace(signature.Result)
-			}
-		}
-	case *ast.SelectorExpr:
-		if receiver, ok := function.X.(*ast.Ident); ok {
-			className := strings.TrimPrefix(valueTypes[receiver.Name], "*")
-			if className == "" {
-				className = context.CurrentClass
-			}
-			if result := context.Records.MethodResults[className][function.Sel.Name]; result != "" {
-				return result
-			}
-			for _, signature := range context.ClassMethodSignatures[className][function.Sel.Name] {
-				if signature.Result != "" {
-					return strings.TrimSpace(signature.Result)
-				}
-			}
-			if function.Sel.Name == "Sprintf" || function.Sel.Name == "Itoa" || function.Sel.Name == "ToUpper" || function.Sel.Name == "ToLower" || function.Sel.Name == "TrimSpace" || function.Sel.Name == "Join" {
-				return "string"
-			}
-		}
-	}
-	return ""
 }
 
 func commonGoFunctionResult(name string) string {
@@ -515,256 +984,505 @@ func commonGoFunctionResult(name string) string {
 }
 
 func collectRecordValueTypes(src string, context constructorContext) map[string]string {
-	result := map[string]string{}
-	parsed, err := parser.ParseFile(token.NewFileSet(), "records.go", "package main\n\n"+src, 0)
-	if err != nil {
-		parsed, err = parser.ParseFile(token.NewFileSet(), "records.go", "package main\n\nfunc __gpp_scope() {\n"+src+"\n}\n", 0)
-	}
-	if err != nil {
+	if result, handled := collectRecordValueTypesAST(src, context); handled {
 		return result
 	}
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		switch declaration := node.(type) {
-		case *ast.FuncDecl:
-			if declaration.Type.Params != nil {
-				for _, field := range declaration.Type.Params.List {
-					typeName, err := formatNode(field.Type)
-					if err != nil {
-						continue
-					}
-					for _, name := range field.Names {
-						result[name.Name] = strings.Join(strings.Fields(typeName), " ")
-					}
-				}
+	return map[string]string{}
+}
+
+func collectRecordValueTypesAST(src string, context constructorContext) (map[string]string, bool) {
+	tokens, err := LexSource("records", src)
+	if err != nil {
+		return nil, false
+	}
+	result := map[string]string{}
+	functions := parseTopLevelFunctions("records", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function == nil || function.Method.BodyAST == nil {
+				continue
 			}
-		case *ast.ValueSpec:
-			declared := ""
-			if declaration.Type != nil {
-				declared, _ = formatNode(declaration.Type)
-			}
-			for index, name := range declaration.Names {
-				typeName := declared
-				if typeName == "" && index < len(declaration.Values) {
-					typeName = inferRecordASTType(declaration.Values[index], result, context)
-				}
-				if typeName != "" {
-					result[name.Name] = strings.Join(strings.Fields(typeName), " ")
-				}
-			}
-		case *ast.AssignStmt:
-			for index, left := range declaration.Lhs {
-				name, ok := left.(*ast.Ident)
-				if !ok || index >= len(declaration.Rhs) {
+			for _, parameter := range function.Method.ParameterAST {
+				if parameter.Type == nil || parameter.Name == "" {
 					continue
 				}
-				if typeName := inferRecordASTType(declaration.Rhs[index], result, context); typeName != "" {
-					result[name.Name] = strings.Join(strings.Fields(typeName), " ")
+				if typeName, typeErr := typeNodeSource(parameter.Type); typeErr == nil && strings.TrimSpace(typeName) != "" {
+					result[parameter.Name] = strings.TrimSpace(typeName)
 				}
 			}
+			collectRecordValueTypesBlock(function.Method.BodyAST, result, context)
 		}
-		return true
-	})
-	return result
+		return result, true
+	}
+	block, parseErr := ParseBodyAST(tokens)
+	if parseErr != nil || block == nil {
+		return nil, false
+	}
+	collectRecordValueTypesBlock(block, result, context)
+	return result, true
+}
+
+func collectRecordValueTypesBlock(block *BlockStmt, valueTypes map[string]string, context constructorContext) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		collectRecordValueTypesStatement(statement, valueTypes, context)
+	}
+}
+
+func collectRecordValueTypesStatement(statement Stmt, valueTypes map[string]string, context constructorContext) {
+	if statement == nil {
+		return
+	}
+	visitExpression := func(expression ExprNode) string {
+		return inferRecordExprType(expression, valueTypes, context)
+	}
+	switch value := statement.(type) {
+	case *TokenStmt:
+		collectRecordValueTypesBlock(value.Body, valueTypes, context)
+		for _, child := range value.Children {
+			collectRecordValueTypesStatement(child, valueTypes, context)
+		}
+	case *DeclarationStmt:
+		declared := ""
+		if value.Type != nil {
+			declared, _ = typeNodeSource(value.Type)
+		}
+		for index, name := range value.Names {
+			inferred := strings.TrimSpace(declared)
+			if inferred == "" && index < len(value.Values) {
+				inferred = visitExpression(value.Values[index])
+			}
+			if inferred != "" {
+				valueTypes[name.Text] = inferred
+			}
+		}
+	case *AssignmentStmt:
+		for index, left := range value.Left {
+			name, ok := left.(*NameExpr)
+			if !ok || index >= len(value.Right) {
+				continue
+			}
+			if inferred := visitExpression(value.Right[index]); inferred != "" {
+				valueTypes[name.Name] = inferred
+			}
+		}
+	case *IfStmt:
+		collectRecordValueTypesBlock(value.Body, valueTypes, context)
+		collectRecordValueTypesBlock(value.Else, valueTypes, context)
+		if value.ElseIf != nil {
+			collectRecordValueTypesStatement(value.ElseIf, valueTypes, context)
+		}
+	case *ForStmt:
+		collectRecordValueTypesBlock(value.Body, valueTypes, context)
+	case *SwitchStmt:
+		collectRecordValueTypesBlock(value.Body, valueTypes, context)
+	case *CaseStmt:
+		collectRecordValueTypesBlock(value.Clause.Body, valueTypes, context)
+	case *TryStmt:
+		collectRecordValueTypesBlock(value.Body, valueTypes, context)
+		for _, clause := range value.Catches {
+			collectRecordValueTypesBlock(clause.Body, valueTypes, context)
+		}
+		collectRecordValueTypesBlock(value.Finally, valueTypes, context)
+	}
 }
 
 func rewriteRecordFunctionResults(src string, context constructorContext) (string, error) {
-	parsed, fileSet, prefixLength, err := parseRecordSource(src)
-	if err != nil {
-		return src, nil
+	if transformed, handled, err := rewriteRecordFunctionResultsAST(src, context); handled {
+		return transformed, err
 	}
-	valueTypes := collectRecordValueTypes(src, context)
-	type replacements struct {
-		start int
-		end   int
-		text  string
-	}
-	edits := []replacements{}
-	type functionResult struct {
-		name        string
-		kind        string
-		goType      string
-		declaration *ast.FuncDecl
-	}
-	functions := []functionResult{}
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		declaration, ok := node.(*ast.FuncDecl)
-		if !ok || declaration.Type.Results == nil || len(declaration.Type.Results.List) != 1 || declaration.Body == nil {
-			return true
-		}
-		kind, ok := recordResultKind(declaration.Type.Results.List[0].Type)
-		if !ok {
-			return true
-		}
-		functions = append(functions, functionResult{name: declaration.Name.Name, kind: kind, declaration: declaration})
-		return true
-	})
+	return src, nil
+}
 
-	for pass := 0; pass <= len(functions); pass++ {
+func rewriteRecordFunctionResultsAST(src string, context constructorContext) (string, bool, error) {
+	functions := parseTopLevelFunctions("records", "main", src, 0, src, "", 0)
+	if len(functions) == 0 {
+		return src, false, nil
+	}
+	valueTypes, handled := collectRecordValueTypesAST(src, context)
+	if !handled {
+		return src, false, nil
+	}
+	type inferredFunction struct {
+		function *FunctionDecl
+		kind     string
+		goType   string
+	}
+	inferred := make([]inferredFunction, 0, len(functions))
+	for _, function := range functions {
+		if function == nil || function.Method.ResultAST == nil || function.Method.BodyAST == nil {
+			continue
+		}
+		kind, ok := recordResultKindAST(function.Method.ResultAST)
+		if !ok {
+			continue
+		}
+		inferred = append(inferred, inferredFunction{function: function, kind: kind})
+	}
+	if len(inferred) == 0 {
+		return src, true, nil
+	}
+	for pass := 0; pass <= len(inferred); pass++ {
 		changed := false
-		for index := range functions {
-			declaration := functions[index].declaration
-			goType, err := inferRecordFunctionResult(declaration, functions[index].kind, valueTypes, context)
+		for index := range inferred {
+			goType, err := inferRecordFunctionResultAST(inferred[index].function.Method.BodyAST, inferred[index].kind, valueTypes, context, inferred[index].function.Name)
 			if err != nil {
-				return "", err
+				return "", true, err
 			}
 			if goType == "" {
 				continue
 			}
-			if functions[index].goType != goType {
-				functions[index].goType = goType
+			if inferred[index].goType != goType {
+				inferred[index].goType = goType
 				changed = true
 			}
-			if context.CurrentClass != "" && declaration.Name.Name == "__gpp_scope" {
-				if context.Records.MethodResults[context.CurrentClass] == nil {
-					context.Records.MethodResults[context.CurrentClass] = map[string]string{}
+			name := inferred[index].function.Name
+			if context.Records != nil {
+				if context.CurrentClass != "" && name == "__gpp_scope" {
+					if context.Records.MethodResults[context.CurrentClass] == nil {
+						context.Records.MethodResults[context.CurrentClass] = map[string]string{}
+					}
+					context.Records.MethodResults[context.CurrentClass][context.CurrentMethod] = goType
+				} else {
+					context.Records.FunctionResults[name] = goType
 				}
-				context.Records.MethodResults[context.CurrentClass][context.CurrentMethod] = goType
-			} else {
-				context.Records.FunctionResults[declaration.Name.Name] = goType
 			}
 		}
 		if !changed {
 			break
 		}
-		valueTypes = collectRecordValueTypes(src, context)
+		valueTypes, _ = collectRecordValueTypesAST(src, context)
 	}
-	for _, function := range functions {
-		if function.goType == "" {
-			return "", fmt.Errorf("cannot infer record return type for %s", function.name)
+	edits := []introspectionASTEdit{}
+	for _, item := range inferred {
+		if item.goType == "" {
+			return "", true, fmt.Errorf("cannot infer record return type for %s", item.function.Name)
 		}
-	}
-
-	seenFunctions := 0
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		declaration, ok := node.(*ast.FuncDecl)
-		if !ok || declaration.Type.Results == nil || len(declaration.Type.Results.List) != 1 {
-			return true
-		}
-		kind, ok := recordResultKind(declaration.Type.Results.List[0].Type)
-		if !ok {
-			return true
-		}
-		if seenFunctions >= len(functions) || functions[seenFunctions].name != declaration.Name.Name {
-			return true
-		}
-		goType := functions[seenFunctions].goType
-		seenFunctions++
-		if goType == "" {
-			return true
-		}
-		resultType := declaration.Type.Results.List[0].Type
-		start := fileSet.Position(resultType.Pos()).Offset - prefixLength
-		end := fileSet.Position(resultType.End()).Offset - prefixLength
-		switch kind {
+		resultType := item.goType
+		switch item.kind {
 		case "slice":
-			goType = "[]" + goType
+			resultType = "[]" + resultType
 		case "map":
-			if mapping, ok := resultType.(*ast.MapType); ok {
-				keyType, _ := formatNode(mapping.Key)
-				goType = "map[" + strings.TrimSpace(keyType) + "]" + goType
+			if mapping, ok := item.function.Method.ResultAST.(*MapType); ok {
+				keyType, keyErr := typeNodeSource(mapping.Key)
+				if keyErr != nil {
+					return "", true, keyErr
+				}
+				resultType = "map[" + strings.TrimSpace(keyType) + "]" + resultType
 			}
 		}
-		edits = append(edits, replacements{start: start, end: end, text: goType})
-		return true
-	})
-
-	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-	for _, edit := range edits {
-		if edit.start >= 0 && edit.end <= len(src) && edit.start <= edit.end {
-			src = src[:edit.start] + edit.text + src[edit.end:]
+		span := item.function.Method.ResultSpan
+		if span.Start >= 0 && span.End <= len(src) && span.Start < span.End {
+			edits = append(edits, introspectionASTEdit{start: span.Start, end: span.End, text: resultType})
 		}
+	}
+	sort.Slice(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
+	for _, edit := range edits {
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
+}
+
+func recordResultKindAST(typeNode TypeNode) (string, bool) {
+	switch value := typeNode.(type) {
+	case *NamedType:
+		return namedRecordResultKind(value.Parts)
+	case *SliceType:
+		if named, ok := value.Element.(*NamedType); ok {
+			if kind, isRecord := namedRecordResultKind(named.Parts); isRecord && kind == "record" {
+				return "slice", true
+			}
+		}
+	case *MapType:
+		if named, ok := value.Value.(*NamedType); ok {
+			if kind, isRecord := namedRecordResultKind(named.Parts); isRecord && kind == "record" {
+				return "map", true
+			}
+		}
+	}
+	return "", false
+}
+
+func namedRecordResultKind(parts []string) (string, bool) {
+	if len(parts) == 1 && parts[0] == "record" {
+		return "record", true
+	}
+	return "", false
+}
+
+func inferRecordFunctionResultAST(block *BlockStmt, kind string, valueTypes map[string]string, context constructorContext, functionName string) (string, error) {
+	results := []string{}
+	collectRecordReturnStatements(block, func(statement *ReturnStmt) {
+		if statement == nil || len(statement.Values) != 1 {
+			return
+		}
+		if literal, ok := statement.Values[0].(*CompositeLiteralExpr); ok && (kind == "slice" || kind == "map") {
+			for _, element := range literal.Elements {
+				value := element.Value
+				if kind == "map" && value == nil {
+					continue
+				}
+				typeName := inferRecordExprType(value, valueTypes, context)
+				if strings.HasPrefix(typeName, "__gpp_record_") {
+					results = append(results, typeName)
+				}
+			}
+			return
+		}
+		typeName := inferRecordExprType(statement.Values[0], valueTypes, context)
+		if strings.HasPrefix(typeName, "__gpp_record_") {
+			results = append(results, typeName)
+		}
+	})
+	if len(results) == 0 {
+		return "", nil
+	}
+	for _, result := range results[1:] {
+		if result != results[0] {
+			return "", fmt.Errorf("inconsistent record return types in %s: expected %s, got %s", functionName, recordShapeDescription(results[0], context.Records), recordShapeDescription(result, context.Records))
+		}
+	}
+	return results[0], nil
+}
+
+func collectRecordReturnStatements(block *BlockStmt, visit func(*ReturnStmt)) {
+	if block == nil || visit == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		collectRecordReturnStatement(statement, visit)
+	}
+}
+
+func collectRecordReturnStatement(statement Stmt, visit func(*ReturnStmt)) {
+	if statement == nil {
+		return
+	}
+	switch value := statement.(type) {
+	case *ReturnStmt:
+		visit(value)
+	case *TokenStmt:
+		collectRecordReturnStatements(value.Body, visit)
+		for _, child := range value.Children {
+			collectRecordReturnStatement(child, visit)
+		}
+	case *IfStmt:
+		collectRecordReturnStatements(value.Body, visit)
+		collectRecordReturnStatements(value.Else, visit)
+		if value.ElseIf != nil {
+			collectRecordReturnStatement(value.ElseIf, visit)
+		}
+	case *ForStmt:
+		collectRecordReturnStatements(value.Body, visit)
+	case *SwitchStmt:
+		collectRecordReturnStatements(value.Body, visit)
+	case *CaseStmt:
+		collectRecordReturnStatements(value.Clause.Body, visit)
+	case *TryStmt:
+		collectRecordReturnStatements(value.Body, visit)
+		for _, clause := range value.Catches {
+			collectRecordReturnStatements(clause.Body, visit)
+		}
+		collectRecordReturnStatements(value.Finally, visit)
+	}
+}
+
+func rewriteRecordFunctionParameters(src string, context constructorContext) (string, error) {
+	if transformed, handled, err := rewriteRecordFunctionParametersAST(src, context); handled {
+		return transformed, err
 	}
 	return src, nil
 }
 
-func parseRecordSource(src string) (*ast.File, *token.FileSet, int, error) {
-	const filePrefix = "package main\n\n"
-	fileSet := token.NewFileSet()
-	parsed, err := parser.ParseFile(fileSet, "records.go", filePrefix+src, 0)
-	if err == nil {
-		return parsed, fileSet, len(filePrefix), nil
+func rewriteRecordFunctionParametersAST(src string, context constructorContext) (string, bool, error) {
+	functions := parseTopLevelFunctions("records", "main", src, 0, src, "", 0)
+	if len(functions) == 0 {
+		return src, false, nil
 	}
-	functionPrefix := "package main\n\nfunc __gpp_scope() {\n"
-	fileSet = token.NewFileSet()
-	parsed, err = parser.ParseFile(fileSet, "records.go", functionPrefix+src+"\n}\n", 0)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	return parsed, fileSet, len(functionPrefix), nil
-}
-
-func rewriteRecordFunctionParameters(src string, context constructorContext) (string, error) {
-	parsed, fileSet, prefixLength, err := parseRecordSource(src)
-	if err != nil {
-		return src, nil
-	}
-	valueTypes := collectRecordValueTypes(src, context)
-	calls := []*ast.CallExpr{}
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if call, ok := node.(*ast.CallExpr); ok {
-			calls = append(calls, call)
+	for _, function := range functions {
+		if function == nil || function.Method.BodyAST == nil {
+			return src, false, nil
 		}
-		return true
-	})
-	type replacement struct {
+	}
+	valueTypes, handled := collectRecordValueTypesAST(src, context)
+	if !handled {
+		return src, false, nil
+	}
+	type parameterEdit struct {
 		start int
 		end   int
 		text  string
 	}
-	edits := []replacement{}
-	var resolutionErr error
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if resolutionErr != nil {
-			return false
-		}
-		declaration, ok := node.(*ast.FuncDecl)
-		if !ok || declaration.Type.Params == nil {
-			return true
-		}
-		parameterIndex := 0
-		for _, field := range declaration.Type.Params.List {
-			kind, ok := recordResultKind(field.Type)
+	edits := []parameterEdit{}
+	for _, function := range functions {
+		for parameterIndex, parameter := range function.Method.ParameterAST {
+			kind, ok := recordResultKindAST(parameter.Type)
 			if !ok {
-				parameterIndex += maxInt(1, len(field.Names))
 				continue
 			}
 			provided := ""
-			for _, call := range calls {
-				function, ok := call.Fun.(*ast.Ident)
-				if !ok || function.Name != declaration.Name.Name || parameterIndex >= len(call.Args) {
-					continue
+			inconsistent := false
+			if context.Records != nil && context.Records.FunctionParams[function.Name] != nil {
+				provided = context.Records.FunctionParams[function.Name][parameterIndex]
+			}
+			collectRecordCallsInFunctions(functions, func(call *CallExpr) {
+				callee, ok := call.Callee.(*NameExpr)
+				if !ok || callee.Name != function.Name || parameterIndex >= len(call.Arguments) {
+					return
 				}
-				actual := inferRecordASTType(call.Args[parameterIndex], valueTypes, context)
+				actual := inferRecordExprType(call.Arguments[parameterIndex].Value, valueTypes, context)
 				if !recordTypeMatchesKind(actual, kind) {
-					continue
+					return
 				}
 				if provided != "" && provided != actual {
-					resolutionErr = fmt.Errorf("inconsistent record argument types for %s parameter %d", declaration.Name.Name, parameterIndex+1)
-					return false
+					inconsistent = true
+					return
 				}
 				provided = actual
+			})
+			if inconsistent {
+				return "", true, fmt.Errorf("inconsistent record argument types for %s parameter %d", function.Name, parameterIndex+1)
 			}
 			if provided == "" {
-				resolutionErr = fmt.Errorf("cannot infer record parameter %d of %s from call sites", parameterIndex+1, declaration.Name.Name)
-				return false
+				return "", true, fmt.Errorf("cannot infer record parameter %d of %s from call sites", parameterIndex+1, function.Name)
 			}
-			start := fileSet.Position(field.Type.Pos()).Offset - prefixLength
-			end := fileSet.Position(field.Type.End()).Offset - prefixLength
-			edits = append(edits, replacement{start: start, end: end, text: provided})
-			parameterIndex += maxInt(1, len(field.Names))
+			if context.Records != nil {
+				if context.Records.FunctionParams[function.Name] == nil {
+					context.Records.FunctionParams[function.Name] = map[int]string{}
+				}
+				context.Records.FunctionParams[function.Name][parameterIndex] = provided
+			}
+			start, end, ok := recordParameterTypeSpan(src, function.Method, parameterIndex, parameter)
+			if !ok {
+				return src, false, nil
+			}
+			edits = append(edits, parameterEdit{start: start, end: end, text: provided})
 		}
-		return true
-	})
-	if resolutionErr != nil {
-		return "", resolutionErr
 	}
-	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	sort.Slice(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
 	for _, edit := range edits {
-		if edit.start >= 0 && edit.end <= len(src) && edit.start <= edit.end {
-			src = src[:edit.start] + edit.text + src[edit.end:]
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
+}
+
+func collectRecordCallsInFunctions(functions []*FunctionDecl, visit func(*CallExpr)) {
+	if visit == nil {
+		return
+	}
+	for _, function := range functions {
+		if function == nil || function.Method.BodyAST == nil {
+			continue
+		}
+		collectRecordCallsInBlock(function.Method.BodyAST, visit)
+	}
+}
+
+func collectRecordCallsInBlock(block *BlockStmt, visit func(*CallExpr)) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		walkStmtExpressions(statement, func(expression ExprNode) {
+			collectRecordCallsInExpression(expression, visit)
+		})
+	}
+}
+
+func collectRecordCallsInExpression(expression ExprNode, visit func(*CallExpr)) {
+	if expression == nil {
+		return
+	}
+	switch value := expression.(type) {
+	case *CallExpr:
+		visit(value)
+		collectRecordCallsInExpression(value.Callee, visit)
+		for _, argument := range value.Arguments {
+			collectRecordCallsInExpression(argument.Value, visit)
+		}
+	case *UnaryExpr:
+		collectRecordCallsInExpression(value.Operand, visit)
+	case *BinaryExpr:
+		collectRecordCallsInExpression(value.Left, visit)
+		collectRecordCallsInExpression(value.Right, visit)
+	case *SelectorExpr:
+		collectRecordCallsInExpression(value.Receiver, visit)
+	case *IndexExpr:
+		collectRecordCallsInExpression(value.Receiver, visit)
+		collectRecordCallsInExpression(value.Index, visit)
+	case *IndexListExpr:
+		collectRecordCallsInExpression(value.Receiver, visit)
+		for _, index := range value.Indices {
+			collectRecordCallsInExpression(index, visit)
+		}
+	case *SliceExpr:
+		collectRecordCallsInExpression(value.Receiver, visit)
+		collectRecordCallsInExpression(value.Low, visit)
+		collectRecordCallsInExpression(value.High, visit)
+		collectRecordCallsInExpression(value.Max, visit)
+	case *TypeAssertExpr:
+		collectRecordCallsInExpression(value.Expression, visit)
+	case *PostfixExpr:
+		collectRecordCallsInExpression(value.Expression, visit)
+	case *SpreadExpr:
+		collectRecordCallsInExpression(value.Expression, visit)
+	case *SendExpr:
+		collectRecordCallsInExpression(value.Channel, visit)
+		collectRecordCallsInExpression(value.Value, visit)
+	case *ParenthesizedExpr:
+		collectRecordCallsInExpression(value.Inner, visit)
+	case *CompositeLiteralExpr:
+		for _, element := range value.Elements {
+			collectRecordCallsInExpression(element.Key, visit)
+			collectRecordCallsInExpression(element.Value, visit)
+		}
+	case *InterpolatedStringExpr:
+		for _, segment := range value.Segments {
+			collectRecordCallsInExpression(segment.Expression, visit)
+		}
+	case *LambdaExpr:
+		collectRecordCallsInExpression(value.Body, visit)
+		collectRecordCallsInBlock(value.BlockBody, visit)
+	case *FunctionLiteralExpr:
+		collectRecordCallsInBlock(value.Body, visit)
+	}
+}
+
+func recordParameterTypeSpan(src string, method Method, index int, parameter ParameterNode) (int, int, bool) {
+	if method.ParametersSpan.Start < 0 || method.ParametersSpan.End > len(src) || method.ParametersSpan.Start > method.ParametersSpan.End {
+		return 0, 0, false
+	}
+	parameterSource := src[method.ParametersSpan.Start:method.ParametersSpan.End]
+	parts, err := splitTopLevel(parameterSource, ',')
+	if err != nil || index >= len(parts) {
+		return 0, 0, false
+	}
+	base := 0
+	for partIndex := 0; partIndex < index; partIndex++ {
+		base += len(parts[partIndex]) + 1
+	}
+	part := parts[index]
+	trimmed := strings.TrimSpace(part)
+	leading := strings.Index(part, trimmed)
+	typeText, err := typeNodeSource(parameter.Type)
+	if err != nil || typeText == "" {
+		return 0, 0, false
+	}
+	search := trimmed
+	if parameter.Name != "" {
+		nameAt := strings.Index(search, parameter.Name)
+		if nameAt >= 0 {
+			search = search[nameAt+len(parameter.Name):]
 		}
 	}
-	return src, nil
+	typeAt := strings.Index(search, typeText)
+	if typeAt < 0 {
+		return 0, 0, false
+	}
+	start := method.ParametersSpan.Start + base + leading + (len(trimmed) - len(search)) + typeAt
+	return start, start + len(typeText), true
 }
 
 func recordTypeMatchesKind(typeName, kind string) bool {
@@ -785,69 +1503,6 @@ func maxInt(left, right int) int {
 		return left
 	}
 	return right
-}
-
-func recordResultKind(expr ast.Expr) (string, bool) {
-	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "record" {
-		return "record", true
-	}
-	if array, ok := expr.(*ast.ArrayType); ok {
-		if ident, ok := array.Elt.(*ast.Ident); ok && ident.Name == "record" {
-			return "slice", true
-		}
-	}
-	if mapping, ok := expr.(*ast.MapType); ok {
-		if ident, ok := mapping.Value.(*ast.Ident); ok && ident.Name == "record" {
-			return "map", true
-		}
-	}
-	return "", false
-}
-
-func inferRecordFunctionResult(declaration *ast.FuncDecl, kind string, valueTypes map[string]string, context constructorContext) (string, error) {
-	results := []string{}
-	ast.Inspect(declaration.Body, func(node ast.Node) bool {
-		returnStmt, ok := node.(*ast.ReturnStmt)
-		if !ok || len(returnStmt.Results) != 1 {
-			return true
-		}
-		if literal, ok := returnStmt.Results[0].(*ast.CompositeLit); ok && (kind == "slice" || kind == "map") {
-			for _, element := range literal.Elts {
-				value := ast.Expr(element)
-				if kind == "map" {
-					pair, ok := element.(*ast.KeyValueExpr)
-					if !ok {
-						continue
-					}
-					value = pair.Value
-				}
-				typeName := inferRecordASTType(value, valueTypes, context)
-				if strings.HasPrefix(typeName, "__gpp_record_") {
-					results = append(results, typeName)
-				}
-			}
-		} else {
-			typeName := inferRecordASTType(returnStmt.Results[0], valueTypes, context)
-			if strings.HasPrefix(typeName, "__gpp_record_") {
-				results = append(results, typeName)
-			}
-		}
-		return true
-	})
-	if len(results) == 0 {
-		return "", nil
-	}
-	for _, result := range results[1:] {
-		if result != results[0] {
-			return "", fmt.Errorf(
-				"inconsistent record return types in %s: expected %s, got %s",
-				declaration.Name.Name,
-				recordShapeDescription(results[0], context.Records),
-				recordShapeDescription(result, context.Records),
-			)
-		}
-	}
-	return results[0], nil
 }
 
 func recordShapeDescription(goName string, context *recordContext) string {
@@ -875,25 +1530,18 @@ func transformRecordMethodResult(result, body string, context constructorContext
 	if err != nil {
 		return "", "", err
 	}
-	parsed, _, _, err := parseRecordSource(transformed)
-	if err != nil || len(parsed.Decls) == 0 {
-		return result, body, nil
+	if functions := parseTopLevelFunctions("records", "main", transformed, 0, transformed, "", 0); len(functions) > 0 && functions[0] != nil {
+		method := functions[0].Method
+		newResult := result
+		if method.ResultAST != nil {
+			if rendered, renderErr := typeNodeSource(method.ResultAST); renderErr == nil && strings.TrimSpace(rendered) != "" {
+				newResult = rendered
+			}
+		}
+		start, end := method.BodySpan.Start, method.BodySpan.End
+		if start >= 0 && end >= start && end <= len(transformed) {
+			return newResult, transformed[start:end], nil
+		}
 	}
-	declaration, ok := parsed.Decls[0].(*ast.FuncDecl)
-	if !ok {
-		return result, body, nil
-	}
-	newResult := result
-	if declaration.Type.Results != nil && len(declaration.Type.Results.List) == 1 {
-		newResult, _ = formatNode(declaration.Type.Results.List[0].Type)
-	}
-	open := strings.Index(transformed, "{")
-	if open < 0 || len(transformed) == 0 || transformed[len(transformed)-1] != '\n' {
-		return newResult, body, nil
-	}
-	close := strings.LastIndex(transformed, "}")
-	if close <= open {
-		return newResult, body, nil
-	}
-	return newResult, transformed[open+1 : close], nil
+	return result, body, nil
 }

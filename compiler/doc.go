@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"go/ast"
 	gofmt "go/format"
-	goparser "go/parser"
 	gotoken "go/token"
 	"sort"
 	"strings"
@@ -206,11 +205,11 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 		symbol := DocSymbol{
 			Kind: DocClass, Name: value.Name, FullName: qualified(value.Name), Package: packageName,
 			Doc: value.Doc, Source: classSource(value), SourceFile: value.SourceFile, SourceLine: value.SourceLine,
-			Exported: exportedDocName(value.Name), Parents: append([]string{}, value.Parents...),
+			Exported: exportedDocName(value.Name), Parents: classParentNames(value),
 			Annotations: formatAnnotationUses(value.Annotations),
 		}
 		for _, field := range value.Fields {
-			symbol.Fields = append(symbol.Fields, DocFieldInfo{Name: field.Name, Type: field.Type, Doc: field.Doc, Annotations: formatAnnotationUses(field.Annotations)})
+			symbol.Fields = append(symbol.Fields, DocFieldInfo{Name: field.Name, Type: fieldTypeSource(field), Doc: field.Doc, Annotations: formatAnnotationUses(field.Annotations)})
 		}
 		for _, method := range value.Methods {
 			member := documentationMethod(packageName, value.Name, method, value.SourceFile, value.SourceLine)
@@ -224,17 +223,17 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 	case *EnumDecl:
 		symbol := DocSymbol{
 			Kind: DocEnum, Name: value.Name, FullName: qualified(value.Name), Package: packageName,
-			Doc: value.Doc, Signature: "enum " + value.Name + " " + value.BackingType,
-			Source: "enum " + value.Name + " " + value.BackingType, SourceFile: value.SourceFile,
+			Doc: value.Doc, Signature: "enum " + value.Name + " " + enumBackingType(value),
+			Source: "enum " + value.Name + " " + enumBackingType(value), SourceFile: value.SourceFile,
 			SourceLine: value.SourceLine, Exported: exportedDocName(value.Name),
 		}
 		for _, member := range value.Members {
-			symbol.Values = append(symbol.Values, DocValueInfo{Name: member.Name, Value: member.Value, Doc: member.Doc})
+			symbol.Values = append(symbol.Values, DocValueInfo{Name: member.Name, Value: enumMemberValueSource(member), Doc: member.Doc})
 		}
 		return []DocSymbol{symbol}
 	case *ExtendDecl:
 		result := []DocSymbol{}
-		for _, target := range value.Targets {
+		for _, target := range extensionTargetNames(value) {
 			for _, method := range value.Methods {
 				fullName := packageName + "." + target + "." + method.Name
 				result = append(result, DocSymbol{
@@ -254,12 +253,12 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 		}
 		return []DocSymbol{{
 			Kind: DocAnnotation, Name: value.Name, FullName: qualified(value.Name), Package: packageName,
-			Doc: value.Doc, Signature: "annotation " + value.Name + "(" + value.Params + ") on " + strings.Join(targets, ", "),
-			Source: "annotation " + value.Name + "(" + value.Params + ")", SourceFile: value.SourceFile,
+			Doc: value.Doc, Signature: "annotation " + value.Name + "(" + annotationParameterSource(value) + ") on " + strings.Join(targets, ", "),
+			Source: "annotation " + value.Name + "(" + annotationParameterSource(value) + ")", SourceFile: value.SourceFile,
 			SourceLine: value.SourceLine, Exported: value.Exported,
 		}}
 	case *TemplateDecl:
-		signature := "template " + value.Name + "(" + value.Parameters + ")"
+		signature := "template " + value.Name + "(" + templateParametersSource(value) + ")"
 		if value.Layout != "" {
 			signature += " : " + value.Layout
 		}
@@ -268,11 +267,27 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 			Doc: value.Doc, Signature: signature, Source: signature, SourceFile: value.SourceFile,
 			SourceLine: value.SourceLine, Exported: exportedDocName(value.Name), Annotations: formatAnnotationUses(value.Annotations),
 		}}
-	case *RawDecl:
-		return documentationRawFunctions(packageName, value)
+	case *MixedDecl:
+		return documentationMixedFunctions(packageName, value)
+	case *FunctionDecl:
+		return []DocSymbol{{
+			Kind: DocFunction, Name: value.Name, FullName: packageName + "." + value.Name,
+			Package: packageName, Parent: "", Doc: value.Doc,
+			Signature: functionDeclDocumentationSignature(value), Source: functionDeclDocumentationSignature(value),
+			SourceFile: value.SourceFile, SourceLine: value.SourceLine,
+			Exported: exportedDocName(value.Name), Annotations: formatAnnotationUses(value.Annotations),
+		}}
 	default:
 		return nil
 	}
+}
+
+func functionDeclDocumentationSignature(function *FunctionDecl) string {
+	if function == nil {
+		return ""
+	}
+	method := function.Method
+	return "func " + function.Name + methodTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
 }
 
 func documentationMethod(packageName, parent string, method Method, sourceFile string, sourceLine int) DocSymbol {
@@ -287,29 +302,48 @@ func documentationMethod(packageName, parent string, method Method, sourceFile s
 		Exported: exportedDocName(method.Name), Generated: method.Generated, Annotations: formatAnnotationUses(method.Annotations)}
 }
 
-func documentationRawFunctions(packageName string, raw *RawDecl) []DocSymbol {
-	fileSet := gotoken.NewFileSet()
-	parsed, err := goparser.ParseFile(fileSet, raw.SourceFile, "package main\n\n"+stripAnnotationSyntaxPreserve(raw.Code), goparser.ParseComments)
-	if err != nil {
-		return nil
-	}
-	result := []DocSymbol{}
-	for _, declaration := range parsed.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Recv != nil {
-			continue
+func documentationMixedFunctions(packageName string, raw *MixedDecl) []DocSymbol {
+	if len(raw.Functions) > 0 {
+		result := make([]DocSymbol, 0, len(raw.Functions))
+		for _, function := range raw.Functions {
+			signature := functionDeclDocumentationSignature(function)
+			result = append(result, DocSymbol{
+				Kind: DocFunction, Name: function.Name, FullName: packageName + "." + function.Name,
+				Package: packageName, Doc: function.Doc, Signature: signature, Source: signature,
+				SourceFile: function.SourceFile, SourceLine: function.SourceLine,
+				Exported: exportedDocName(function.Name), Annotations: formatAnnotationUses(function.Annotations),
+			})
 		}
-		signature := goFunctionSignature(function)
-		line := raw.SourceLine + fileSet.Position(function.Pos()).Line - 2
-		doc := ""
-		if function.Doc != nil {
-			doc = strings.TrimSpace(function.Doc.Text())
-		}
-		result = append(result, DocSymbol{Kind: DocFunction, Name: function.Name.Name, FullName: packageName + "." + function.Name.Name,
-			Package: packageName, Doc: doc, Signature: signature, Source: signature, SourceFile: raw.SourceFile, SourceLine: line,
-			Exported: exportedDocName(function.Name.Name)})
+		return result
 	}
-	return result
+	if len(raw.GoASTDecls) > 0 {
+		result := []DocSymbol{}
+		for _, declaration := range raw.GoASTDecls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv != nil {
+				continue
+			}
+			doc := ""
+			if function.Doc != nil {
+				doc = strings.TrimSpace(function.Doc.Text())
+			}
+			line := raw.SourceLine
+			if raw.GoASTFileSet != nil {
+				line += raw.GoASTFileSet.Position(function.Pos()).Line - 2
+			}
+			name := function.Name.Name
+			signature := goFunctionSignature(function)
+			result = append(result, DocSymbol{Kind: DocFunction, Name: name, FullName: packageName + "." + name,
+				Package: packageName, Doc: doc, Signature: signature, Source: signature,
+				SourceFile: raw.SourceFile, SourceLine: line, Exported: exportedDocName(name)})
+		}
+		return result
+	}
+	// Parsed mixed declarations without a Go AST are represented by
+	// MixedDecl.Functions. If neither structured metadata nor a Go declaration
+	// exists, there is no executable function node for documentation to emit;
+	// do not reparse opaque source text here.
+	return nil
 }
 
 func goFunctionSignature(function *ast.FuncDecl) string {
@@ -322,8 +356,9 @@ func goFunctionSignature(function *ast.FuncDecl) string {
 
 func classSource(class *ClassDecl) string {
 	result := "class " + class.Name
-	if len(class.Parents) > 0 {
-		result += " : " + strings.Join(class.Parents, ", ")
+	parents := classParentNames(class)
+	if len(parents) > 0 {
+		result += " : " + strings.Join(parents, ", ")
 	}
 	return result
 }
@@ -333,11 +368,11 @@ func methodSignature(parent string, method Method) string {
 	if method.IsStatic {
 		prefix = "static func " + parent + "."
 	}
-	return prefix + method.Name + method.TypeParams + "(" + method.Parameters + ")" + resultSuffix(method.Result)
+	return prefix + method.Name + methodTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
 }
 
 func extensionSignature(target string, method Method) string {
-	return "extension func " + target + "." + method.Name + method.TypeParams + "(" + method.Parameters + ")" + resultSuffix(method.Result)
+	return "extension func " + target + "." + method.Name + methodTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
 }
 
 func resultSuffix(result string) string {
@@ -353,7 +388,7 @@ func formatAnnotationUses(uses []AnnotationUse) []string {
 	for _, use := range uses {
 		value := "@" + use.Name
 		if use.HasArguments {
-			value += "(" + use.Arguments + ")"
+			value += "(" + strings.Join(annotationArgumentTexts(use), ", ") + ")"
 		}
 		result = append(result, value)
 	}

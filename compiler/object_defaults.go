@@ -16,7 +16,7 @@ func addDefaultObjectMethods(model *SemanticModel) {
 				class.Methods = append(class.Methods, Method{
 					Name:      name,
 					Generated: true,
-					Result:    "string",
+					ResultAST: parseTypeText("string"),
 				})
 			}
 		}
@@ -25,7 +25,7 @@ func addDefaultObjectMethods(model *SemanticModel) {
 
 func hasGeneratedObjectMethod(class *ClassDecl, name string) bool {
 	for _, method := range class.Methods {
-		if method.Generated && !method.IsStatic && method.Name == name && method.Result == "string" {
+		if method.Generated && !method.IsStatic && method.Name == name && methodResultSource(method) == "string" {
 			return true
 		}
 	}
@@ -51,13 +51,13 @@ func hasEffectiveUserMethod(model *SemanticModel, packageName string, class *Cla
 	defer delete(visiting, class)
 
 	for _, method := range class.Methods {
-		if !method.IsStatic && !method.Generated && method.Name == name && method.Parameters == "" {
+		if !method.IsStatic && !method.Generated && method.Name == name && methodParametersSource(method) == "" {
 			return true
 		}
 	}
 
 	pkg := model.Packages[packageName]
-	for _, parentName := range class.Parents {
+	for _, parentName := range classParentNames(class) {
 		parent, parentPackage := resolveParentClass(model, pkg, parentName)
 		if parent != nil && hasEffectiveUserMethod(model, parentPackage, parent, name, visiting) {
 			return true

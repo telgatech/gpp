@@ -12,8 +12,8 @@ func serializationFieldTag(uses []AnnotationUse) string {
 	for _, use := range uses {
 		switch serializationAnnotationKind(use) {
 		case "Name":
-			args, err := splitTopLevel(use.Arguments, ',')
-			if err == nil && len(args) == 1 {
+			args := annotationArgumentTexts(use)
+			if len(args) == 1 {
 				if value, err := strconv.Unquote(strings.TrimSpace(args[0])); err == nil {
 					name = value
 				}

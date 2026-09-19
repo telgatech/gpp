@@ -4,8 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"go/types"
 	"path"
 	"sort"
@@ -28,7 +26,7 @@ type extensionMethod struct {
 func extensionMethodsForDeclarations(declarations []*ExtendDecl, qualifier string) []extensionMethod {
 	methods := []extensionMethod{}
 	for _, declaration := range declarations {
-		for _, rawTarget := range declaration.Targets {
+		for _, rawTarget := range extensionTargetNames(declaration) {
 			target := normalizeExtensionTarget(rawTarget)
 			for _, method := range declaration.Methods {
 				methods = append(methods, extensionMethod{
@@ -86,7 +84,7 @@ func extensionValueType(name string) bool {
 func extensionGoName(target string, method Method) string {
 	base := strings.NewReplacer(".", "_", "*", "ptr_", "[", "_", "]", "_").Replace(strings.TrimSpace(target))
 	base = sanitizeExtensionName(base)
-	hash := sha256.Sum256([]byte(strings.TrimSpace(target) + "\x00" + method.Name + "\x00" + method.TypeParams + "\x00" + method.Parameters))
+	hash := sha256.Sum256([]byte(strings.TrimSpace(target) + "\x00" + method.Name + "\x00" + methodTypeParamsSource(method) + "\x00" + methodParametersSource(method)))
 	return fmt.Sprintf("GppExt_%s_%s_%x", base, method.Name, hash[:4])
 }
 
@@ -125,224 +123,615 @@ func transformExtensionsWithTypes(src string, context constructorContext, inheri
 	if len(context.Extensions) == 0 {
 		return src, nil
 	}
-	var err error
-	src, err = normalizeExtensionArguments(src, context)
+	if transformed, handled, err := transformExtensionsAST(src, context, inheritedTypes); handled {
+		return transformed, err
+	}
+	return src, nil
+}
+
+type extensionASTEdit struct {
+	start int
+	end   int
+	text  string
+}
+
+type extensionASTBody struct {
+	block *BlockStmt
+	types map[string]string
+}
+
+func transformExtensionsAST(src string, context constructorContext, inheritedTypes map[string]string) (string, bool, error) {
+	tokens, err := LexSource("extensions", src)
+	if err != nil {
+		return src, false, nil
+	}
+	bodies := []extensionASTBody{}
+	functions := parseTopLevelFunctions("extensions", "main", src, 0, src, "", 0)
+	for _, function := range functions {
+		if function == nil || function.Method.BodyAST == nil {
+			continue
+		}
+		types := cloneStringMap(inheritedTypes)
+		if types == nil {
+			types = map[string]string{}
+		}
+		for _, parameter := range function.Method.ParameterAST {
+			if parameter.Type == nil {
+				continue
+			}
+			if typeName, typeErr := typeNodeSource(parameter.Type); typeErr == nil {
+				types[parameter.Name] = strings.TrimSpace(typeName)
+			}
+		}
+		bodies = append(bodies, extensionASTBody{block: function.Method.BodyAST, types: types})
+	}
+	if len(bodies) == 0 {
+		if extensionSourceHasTopLevelDeclaration(tokens) {
+			return src, false, nil
+		}
+		block, parseErr := ParseBodyAST(tokens)
+		if parseErr != nil || block == nil {
+			return src, false, nil
+		}
+		types := cloneStringMap(inheritedTypes)
+		if types == nil {
+			types = map[string]string{}
+		}
+		bodies = append(bodies, extensionASTBody{block: block, types: types})
+	}
+
+	edits := []extensionASTEdit{}
+	for _, body := range bodies {
+		collectOverloadStatementTypes(body.block, body.types)
+		collectExtensionStatementTypes(body.block, body.types, context)
+		var resolutionErr error
+		seenCalls := map[string]bool{}
+		seenResults := map[string]bool{}
+		visit := func(call *CallExpr) bool {
+			if resolutionErr != nil {
+				return false
+			}
+			span := call.Span()
+			key := strconv.Itoa(span.Start) + ":" + strconv.Itoa(span.End)
+			if seenCalls[key] {
+				return seenResults[key]
+			}
+			seenCalls[key] = true
+			rendered, lowered, renderErr := renderExtensionASTCall(call, context, body.types)
+			if renderErr != nil {
+				resolutionErr = renderErr
+				return false
+			}
+			if !lowered {
+				seenResults[key] = true
+				return true
+			}
+			seenResults[key] = false
+			if span.End > span.Start && span.Start >= 0 && span.End <= len(src) {
+				edits = append(edits, extensionASTEdit{start: span.Start, end: span.End, text: rendered})
+			}
+			return false
+		}
+		collectExtensionASTCalls(body.block, visit)
+		collectExtensionTokenCalls(tokens, body.block.Span(), visit)
+		if resolutionErr != nil {
+			return src, true, resolutionErr
+		}
+	}
+	if len(edits) == 0 {
+		return src, true, nil
+	}
+	sort.SliceStable(edits, func(left, right int) bool {
+		return edits[left].start > edits[right].start
+	})
+	for index, edit := range edits {
+		if index > 0 && edit.start == edits[index-1].start && edit.end == edits[index-1].end {
+			continue
+		}
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, true, nil
+}
+
+func collectExtensionStatementTypes(block *BlockStmt, types map[string]string, context constructorContext) {
+	if block == nil || types == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		collectExtensionStatementType(statement, types, context)
+	}
+}
+
+func collectExtensionStatementType(statement Stmt, types map[string]string, context constructorContext) {
+	if statement == nil {
+		return
+	}
+	switch value := statement.(type) {
+	case *TokenStmt:
+		collectExtensionStatementTypes(value.Body, types, context)
+		for _, child := range value.Children {
+			collectExtensionStatementType(child, types, context)
+		}
+	case *DeclarationStmt:
+		declared := ""
+		if value.Type != nil {
+			declared, _ = typeNodeSource(value.Type)
+		}
+		for index, name := range value.Names {
+			inferred := strings.TrimSpace(declared)
+			if inferred == "" && index < len(value.Values) {
+				inferred = extensionASTStaticType(value.Values[index], context, types)
+			}
+			if inferred != "" {
+				types[name.Text] = inferred
+			}
+		}
+	case *AssignmentStmt:
+		for index, left := range value.Left {
+			name, ok := left.(*NameExpr)
+			if !ok || index >= len(value.Right) {
+				continue
+			}
+			if inferred := extensionASTStaticType(value.Right[index], context, types); inferred != "" {
+				types[name.Name] = inferred
+			}
+		}
+	case *IfStmt:
+		collectExtensionStatementTypes(value.Body, types, context)
+		collectExtensionStatementTypes(value.Else, types, context)
+		if value.ElseIf != nil {
+			collectExtensionStatementType(value.ElseIf, types, context)
+		}
+	case *ForStmt:
+		collectExtensionStatementTypes(value.Body, types, context)
+	case *SwitchStmt:
+		collectExtensionStatementTypes(value.Body, types, context)
+	case *CaseStmt:
+		collectExtensionStatementTypes(value.Clause.Body, types, context)
+	case *TryStmt:
+		collectExtensionStatementTypes(value.Body, types, context)
+		for _, clause := range value.Catches {
+			collectExtensionStatementTypes(clause.Body, types, context)
+		}
+		collectExtensionStatementTypes(value.Finally, types, context)
+	}
+}
+
+func extensionSourceHasTopLevelDeclaration(tokens []Token) bool {
+	depth := 0
+	for index, token := range tokens {
+		if token.Kind == TokenEOF || token.Kind == TokenComment || token.Kind == TokenNewline {
+			continue
+		}
+		if token.Text == "{" {
+			depth++
+			continue
+		}
+		if token.Text == "}" {
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth != 0 {
+			continue
+		}
+		switch token.Text {
+		case "package", "import", "class", "extend", "enum", "record", "annotation", "type", "var", "const":
+			return true
+		case "func":
+			if index+1 < len(tokens) && (tokens[index+1].Kind == TokenIdentifier || tokens[index+1].Kind == TokenKeyword) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func collectExtensionASTCalls(block *BlockStmt, visit func(*CallExpr) bool) {
+	if block == nil || visit == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		walkStmtExpressions(statement, func(expression ExprNode) {
+			collectExtensionASTExpression(expression, visit)
+		})
+		if tokenStatement, ok := statement.(*TokenStmt); ok {
+			collectExtensionTokenCalls(tokenStatement.Tokens, tokenStatement.Span(), visit)
+		}
+	}
+}
+
+// collectExtensionTokenCalls covers syntax that the body parser has retained
+// losslessly but has not yet promoted to a typed expression node. It still
+// constructs CallExpr values with the original token spans; no executable
+// source is stored or reparsed through go/parser.
+func collectExtensionTokenCalls(tokens []Token, bounds Span, visit func(*CallExpr) bool) {
+	if len(tokens) == 0 || visit == nil {
+		return
+	}
+	type candidate struct {
+		call *CallExpr
+		span Span
+	}
+	candidates := []candidate{}
+	for index := 0; index+3 < len(tokens); index++ {
+		if tokens[index].Text != "." ||
+			(tokens[index+1].Kind != TokenIdentifier && tokens[index+1].Kind != TokenKeyword) ||
+			tokens[index+2].Text != "(" {
+			continue
+		}
+		close := matchingToken(tokens, index+2, "(", ")")
+		if close < 0 {
+			continue
+		}
+		start := extensionTokenExpressionStart(tokens, index-1)
+		if start < 0 || start >= index || tokens[start].Span.Start < bounds.Start || tokens[close].Span.End > bounds.End {
+			continue
+		}
+		expression, err := ParseExpressionTokens(tokens[start : close+1])
+		if err != nil || expression == nil {
+			continue
+		}
+		call, ok := expression.(*CallExpr)
+		if !ok {
+			continue
+		}
+		if _, _, _, ok := extensionASTCallParts(call); !ok {
+			continue
+		}
+		candidates = append(candidates, candidate{call: call, span: call.Span()})
+	}
+	// Visit enclosing calls first. If one is lowered, its renderer recursively
+	// handles nested calls and the nested candidate must not add an overlapping
+	// edit of its own.
+	sort.SliceStable(candidates, func(left, right int) bool {
+		if candidates[left].span.Start != candidates[right].span.Start {
+			return candidates[left].span.Start < candidates[right].span.Start
+		}
+		return candidates[left].span.End > candidates[right].span.End
+	})
+	blocked := []Span{}
+	for _, candidate := range candidates {
+		skip := false
+		for _, span := range blocked {
+			if candidate.span.Start >= span.Start && candidate.span.End <= span.End {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		if !visit(candidate.call) {
+			blocked = append(blocked, candidate.span)
+		}
+	}
+}
+
+func extensionTokenExpressionStart(tokens []Token, end int) int {
+	if end < 0 || end >= len(tokens) {
+		return -1
+	}
+	switch tokens[end].Text {
+	case ")":
+		open := matchingTokenBackward(tokens, end, "(", ")")
+		if open < 0 {
+			return -1
+		}
+		end = extensionTokenExpressionStart(tokens, open-1)
+	case "]":
+		open := matchingTokenBackward(tokens, end, "[", "]")
+		if open < 0 {
+			return -1
+		}
+		end = extensionTokenExpressionStart(tokens, open-1)
+	case "}":
+		open := matchingTokenBackward(tokens, end, "{", "}")
+		if open < 0 {
+			return -1
+		}
+		end = extensionTokenExpressionStart(tokens, open-1)
+	}
+	if end < 0 {
+		return -1
+	}
+	if end >= 1 && tokens[end-1].Text == "." {
+		return extensionTokenExpressionStart(tokens, end-2)
+	}
+	return end
+}
+
+func matchingTokenBackward(tokens []Token, close int, opening, closing string) int {
+	depth := 0
+	for index := close; index >= 0; index-- {
+		switch tokens[index].Text {
+		case closing:
+			depth++
+		case opening:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func collectExtensionASTExpression(expression ExprNode, visit func(*CallExpr) bool) {
+	if expression == nil {
+		return
+	}
+	switch value := expression.(type) {
+	case *CallExpr:
+		if !visit(value) {
+			return
+		}
+		collectExtensionASTExpression(value.Callee, visit)
+		for _, argument := range value.Arguments {
+			collectExtensionASTExpression(argument.Value, visit)
+		}
+	case *UnaryExpr:
+		collectExtensionASTExpression(value.Operand, visit)
+	case *BinaryExpr:
+		collectExtensionASTExpression(value.Left, visit)
+		collectExtensionASTExpression(value.Right, visit)
+	case *SelectorExpr:
+		collectExtensionASTExpression(value.Receiver, visit)
+	case *IndexExpr:
+		collectExtensionASTExpression(value.Receiver, visit)
+		collectExtensionASTExpression(value.Index, visit)
+	case *IndexListExpr:
+		collectExtensionASTExpression(value.Receiver, visit)
+		for _, index := range value.Indices {
+			collectExtensionASTExpression(index, visit)
+		}
+	case *ParenthesizedExpr:
+		collectExtensionASTExpression(value.Inner, visit)
+	case *CompositeLiteralExpr:
+		for _, element := range value.Elements {
+			collectExtensionASTExpression(element.Key, visit)
+			collectExtensionASTExpression(element.Value, visit)
+		}
+	case *InterpolatedStringExpr:
+		for _, segment := range value.Segments {
+			collectExtensionASTExpression(segment.Expression, visit)
+		}
+	case *LambdaExpr:
+		collectExtensionASTExpression(value.Body, visit)
+		collectExtensionASTCalls(value.BlockBody, visit)
+	case *FunctionLiteralExpr:
+		collectExtensionASTCalls(value.Body, visit)
+	}
+}
+
+func extensionASTCallParts(call *CallExpr) (ExprNode, string, []TypeNode, bool) {
+	if call == nil || call.Callee == nil {
+		return nil, "", nil, false
+	}
+	switch callee := call.Callee.(type) {
+	case *SelectorExpr:
+		return callee.Receiver, callee.Name, nil, true
+	case *IndexExpr:
+		selector, ok := callee.Receiver.(*SelectorExpr)
+		if !ok {
+			return nil, "", nil, false
+		}
+		return selector.Receiver, selector.Name, []TypeNode{extensionASTTypeArgument(callee.Index)}, true
+	case *IndexListExpr:
+		selector, ok := callee.Receiver.(*SelectorExpr)
+		if !ok {
+			return nil, "", nil, false
+		}
+		arguments := make([]TypeNode, 0, len(callee.Indices))
+		for _, index := range callee.Indices {
+			arguments = append(arguments, extensionASTTypeArgument(index))
+		}
+		return selector.Receiver, selector.Name, arguments, true
+	default:
+		return nil, "", nil, false
+	}
+}
+
+func extensionASTTypeArgument(expression ExprNode) TypeNode {
+	if typeExpr, ok := expression.(*TypeExpr); ok {
+		return typeExpr.Type
+	}
+	text, err := expressionNodeSource(expression)
+	if err != nil {
+		return nil
+	}
+	return parseTypeText(text)
+}
+
+func renderExtensionASTCall(call *CallExpr, context constructorContext, valueTypes map[string]string) (string, bool, error) {
+	receiver, methodName, typeArguments, ok := extensionASTCallParts(call)
+	if ok {
+		actualType := extensionASTStaticType(receiver, context, valueTypes)
+		candidates := applicableExtensionASTs(methodName, actualType, call.Arguments, typeArguments, valueTypes, context)
+		if len(candidates) > 0 && !realMethodAppliesAST(actualType, methodName, call.Arguments, context) {
+			if len(candidates) > 1 {
+				return "", false, fmt.Errorf("ambiguous extension method %s for %s", methodName, actualType)
+			}
+			candidate := candidates[0]
+			receiverText, err := renderExtensionASTExpression(receiver, context, valueTypes)
+			if err != nil {
+				return "", false, err
+			}
+			if extensionNeedsAddress(candidate.Method.ReceiverType, actualType) {
+				receiverText = "&" + receiverText
+			}
+			arguments := []string{receiverText}
+			arguments = append(arguments, candidate.Arguments...)
+			functionName := candidate.Method.GoName
+			if candidate.Method.Qualifier != "" {
+				functionName = candidate.Method.Qualifier + "." + functionName
+			}
+			if len(typeArguments) > 0 {
+				formatted := make([]string, len(typeArguments))
+				for index, argument := range typeArguments {
+					text, typeErr := typeNodeSource(argument)
+					if typeErr != nil || text == "" {
+						return "", false, nil
+					}
+					formatted[index] = text
+				}
+				functionName += "[" + strings.Join(formatted, ", ") + "]"
+			}
+			return functionName + "(" + strings.Join(arguments, ", ") + ")", true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func renderExtensionASTExpression(expression ExprNode, context constructorContext, valueTypes map[string]string) (string, error) {
+	call, ok := expression.(*CallExpr)
+	if !ok {
+		return expressionNodeSource(expression)
+	}
+	if rendered, lowered, err := renderExtensionASTCall(call, context, valueTypes); err != nil {
+		return "", err
+	} else if lowered {
+		return rendered, nil
+	}
+	callee, err := renderExtensionASTExpression(call.Callee, context, valueTypes)
 	if err != nil {
 		return "", err
 	}
-	parsed, fileSet, prefixLength, err := parseExtensionSource(src)
-	if err != nil {
-		return src, nil
+	arguments := make([]string, len(call.Arguments))
+	for index, argument := range call.Arguments {
+		text, argumentErr := renderExtensionASTExpression(argument.Value, context, valueTypes)
+		if argumentErr != nil {
+			return "", argumentErr
+		}
+		if argument.Name != "" {
+			text = argument.Name + ": " + text
+		}
+		arguments[index] = text
 	}
-	valueTypes := map[string]string{}
-	for name, typeName := range inheritedTypes {
-		valueTypes[name] = typeName
-	}
-	for name, typeName := range polymorphicValueTypes(parsed, context) {
-		valueTypes[name] = typeName
-	}
-	if context.CurrentClass != "" {
-		valueTypes["this"] = "*" + context.CurrentClass
-	} else if context.CurrentExtensionReceiver != "" {
-		valueTypes["this"] = context.CurrentExtensionReceiver
-	}
-
-	type edit struct {
-		start int
-		end   int
-		text  string
-	}
-	edits := []edit{}
-	var resolutionErr error
-	addEdit := func(node ast.Node, text string) {
-		start := fileSet.Position(node.Pos()).Offset - prefixLength
-		end := fileSet.Position(node.End()).Offset - prefixLength
-		if start >= 0 && end <= len(src) && start <= end {
-			edits = append(edits, edit{start: start, end: end, text: text})
-		}
-	}
-
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		receiver, methodName, typeArguments, ok := extensionCallParts(call)
-		if !ok {
-			return true
-		}
-		actualType := expressionStaticType(receiver, context, valueTypes)
-		candidates := applicableExtensions(methodName, actualType, call.Args, call.Ellipsis.IsValid(), typeArguments, valueTypes, context)
-		if len(candidates) == 0 {
-			return true
-		}
-		if realMethodApplies(actualType, methodName, call.Args, context) {
-			return true
-		}
-		if len(candidates) > 1 {
-			resolutionErr = fmt.Errorf("ambiguous extension method %s for %s", methodName, actualType)
-			return false
-		}
-
-		candidate := candidates[0].Method
-		receiverText, err := formatNode(receiver)
-		if err != nil {
-			return true
-		}
-		receiverText, err = transformExtensionsWithTypes(receiverText, context, valueTypes)
-		if err != nil {
-			resolutionErr = err
-			return false
-		}
-		if extensionNeedsAddress(candidate.ReceiverType, actualType) {
-			receiverText = "&" + receiverText
-		}
-		arguments := []string{receiverText}
-		arguments = append(arguments, candidates[0].Arguments...)
-		for index := 1; index < len(arguments); index++ {
-			arguments[index], err = transformExtensionsWithTypes(arguments[index], context, valueTypes)
-			if err != nil {
-				resolutionErr = err
-				return false
-			}
-		}
-		functionName := candidate.GoName
-		if candidate.Qualifier != "" {
-			functionName = candidate.Qualifier + "." + functionName
-		}
-		if len(typeArguments) > 0 {
-			formatted := make([]string, len(typeArguments))
-			for index, argument := range typeArguments {
-				formatted[index], err = formatNode(argument)
-				if err != nil {
-					return true
-				}
-			}
-			functionName += "[" + strings.Join(formatted, ", ") + "]"
-		}
-		addEdit(call, functionName+"("+strings.Join(arguments, ", ")+")")
-		// The receiver and arguments were recursively transformed above. Avoid
-		// adding overlapping edits for their nested calls.
-		return false
-	})
-
-	if resolutionErr != nil {
-		return "", resolutionErr
-	}
-	if len(edits) == 0 {
-		return src, nil
-	}
-	for index := len(edits) - 1; index >= 0; index-- {
-		for other := index - 1; other >= 0; other-- {
-			if edits[other].start == edits[index].start && edits[other].end == edits[index].end {
-				edits = append(edits[:other], edits[other+1:]...)
-				index--
-				break
-			}
-		}
-	}
-	// Rebuild from right to left so nested calls are not invalidated by edits
-	// to earlier source positions.
-	for i := 0; i < len(edits); i++ {
-		for j := i + 1; j < len(edits); j++ {
-			if edits[j].start > edits[i].start {
-				edits[i], edits[j] = edits[j], edits[i]
-			}
-		}
-	}
-	for _, change := range edits {
-		src = src[:change.start] + change.text + src[change.end:]
-	}
-	return src, nil
+	return callee + "(" + strings.Join(arguments, ", ") + ")", nil
 }
 
-func normalizeExtensionArguments(src string, context constructorContext) (string, error) {
-	knownNames := map[string]bool{}
-	signatures := map[string][]callableSignature{}
+type applicableExtensionAST struct {
+	Method    extensionMethod
+	Arguments []string
+}
+
+func applicableExtensionASTs(name, actualType string, args []CallArg, typeArguments []TypeNode, valueTypes map[string]string, context constructorContext) []applicableExtensionAST {
+	result := []applicableExtensionAST{}
 	for _, extension := range context.Extensions {
-		name := extension.Method.Name
-		knownNames[name] = true
-		parameters, err := parseParameterInfos(extension.Method.Parameters)
-		if err != nil {
+		if extension.Method.Name != name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 			continue
 		}
-		signatures[name] = append(signatures[name], callableSignature{Name: name, Parameters: parameters})
+		if len(typeArguments) > 0 && extensionTypeParameterCount(methodTypeParamsSource(extension.Method)) != len(typeArguments) {
+			continue
+		}
+		arguments, ok := resolveExtensionArgumentsAST(extension, actualType, args, valueTypes, context)
+		if ok {
+			result = append(result, applicableExtensionAST{Method: extension, Arguments: arguments})
+		}
 	}
-	for index := 0; index < len(src); {
-		if end, ok, err := copyIgnoredSource(src, index, &strings.Builder{}); err != nil {
-			return "", err
-		} else if ok {
-			index = end
-			continue
+	userExtensions := result[:0]
+	for _, candidate := range result {
+		if !candidate.Method.Prelude {
+			userExtensions = append(userExtensions, candidate)
 		}
-		name, length := readIdent(src[index:])
-		if length == 0 || !knownNames[name] || (index > 0 && isIdentPart(src[index-1])) {
-			index++
-			continue
-		}
-		previous := index - 1
-		for previous >= 0 && (src[previous] == ' ' || src[previous] == '\t' || src[previous] == '\n' || src[previous] == '\r') {
-			previous--
-		}
-		if previous < 0 || src[previous] != '.' {
-			index += length
-			continue
-		}
-		open := skipSpace(src, index+length)
-		if open < len(src) && src[open] == '[' {
-			end, err := findMatchingBracket(src, open)
-			if err != nil {
-				return "", err
-			}
-			open = skipSpace(src, end+1)
-		}
-		if open >= len(src) || src[open] != '(' {
-			index += length
-			continue
-		}
-		close, err := findMatchingParen(src, open)
-		if err != nil {
-			return "", err
-		}
-		args, err := splitTopLevel(src[open+1:close], ',')
-		if err != nil {
-			return "", err
-		}
-		hasNamed := false
-		for _, argument := range args {
-			if topLevelColon(argument) >= 0 {
-				hasNamed = true
-				break
-			}
-		}
-		if !hasNamed {
-			index = close + 1
-			continue
-		}
-		resolved, _, err := resolveCallableCall(name, args, signatures[name])
-		if err != nil {
-			return "", err
-		}
-		src = src[:open+1] + strings.Join(resolved, ", ") + src[close:]
-		index = open + 1 + len(strings.Join(resolved, ", ")) + 1
 	}
-	return src, nil
+	if len(userExtensions) > 0 {
+		return userExtensions
+	}
+	return result
 }
 
-func parseExtensionSource(src string) (ast.Node, *token.FileSet, int, error) {
-	const prefix = "package main\n\n"
-	fileSet := token.NewFileSet()
-	parsed, err := parser.ParseFile(fileSet, "", prefix+src, 0)
-	if err == nil {
-		return parsed, fileSet, len(prefix), nil
-	}
-	functionPrefix := prefix + "func __gpp_scope() {\n"
-	functionSet := token.NewFileSet()
-	parsed, err = parser.ParseFile(functionSet, "", functionPrefix+src+"\n}\n", 0)
+func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, args []CallArg, valueTypes map[string]string, context constructorContext) ([]string, bool) {
+	parameters, err := parameterInfosForMethod(extension.Method)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, false
 	}
-	return parsed, functionSet, len(functionPrefix), nil
+	bindings := extensionTargetBindings(extension.Target, actualType)
+	for index := range parameters {
+		parameters[index].TypeAST = parseTypeText(substituteLambdaType(parameters[index].typeText(), bindings))
+	}
+	argumentText := make([]string, len(args))
+	for index, argument := range args {
+		text, sourceErr := expressionNodeSource(argument.Value)
+		if sourceErr != nil {
+			return nil, false
+		}
+		if argument.Name != "" {
+			text = argument.Name + ": " + text
+		}
+		argumentText[index] = text
+		actual := extensionASTStaticType(argument.Value, context, valueTypes)
+		parameterIndex := index
+		if parameterIndex >= len(parameters) {
+			if len(parameters) == 0 || !strings.HasPrefix(strings.TrimSpace(parameters[len(parameters)-1].typeText()), "...") {
+				return nil, false
+			}
+			parameterIndex = len(parameters) - 1
+		}
+		expected := parameters[parameterIndex].typeText()
+		if strings.HasPrefix(strings.TrimSpace(expected), "...") {
+			expected = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expected), "..."))
+		}
+		generic := extensionTypeParameterNames(methodTypeParamsSource(extension.Method))
+		if actual != "" && !generic[expected] && !extensionArgumentMatches(actual, expected, text, context) && !genericExtensionArgumentMatches(actual, expected, generic) {
+			return nil, false
+		}
+	}
+	variadic := len(parameters) > 0 && strings.HasPrefix(strings.TrimSpace(parameters[len(parameters)-1].typeText()), "...")
+	if variadic && len(args) < len(parameters)-1 {
+		return nil, false
+	}
+	if !variadic {
+		required := 0
+		for _, parameter := range parameters {
+			if !parameter.HasDefault {
+				required++
+			}
+		}
+		if len(args) < required || len(args) > len(parameters) {
+			return nil, false
+		}
+	}
+	resolved, _, resolveErr := resolveCallableCall(extension.Method.Name, argumentText, []callableSignature{{Name: extension.Method.Name, Parameters: parameters}})
+	if resolveErr != nil {
+		return nil, false
+	}
+	return resolved, true
+}
+
+func extensionASTStaticType(expression ExprNode, context constructorContext, valueTypes map[string]string) string {
+	call, ok := expression.(*CallExpr)
+	if !ok {
+		return staticExpressionTypeNode(expression, context, valueTypes)
+	}
+	receiver, name, typeArguments, ok := extensionASTCallParts(call)
+	if !ok {
+		return staticExpressionTypeNode(expression, context, valueTypes)
+	}
+	actualType := extensionASTStaticType(receiver, context, valueTypes)
+	candidates := applicableExtensionASTs(name, actualType, call.Arguments, typeArguments, valueTypes, context)
+	if len(candidates) != 1 || realMethodAppliesAST(actualType, name, call.Arguments, context) {
+		return staticExpressionTypeNode(expression, context, valueTypes)
+	}
+	result := strings.TrimSpace(methodResultSource(candidates[0].Method.Method))
+	if result == "" {
+		return ""
+	}
+	return substituteLambdaType(result, extensionTargetBindings(candidates[0].Method.Target, actualType))
+}
+
+func realMethodAppliesAST(actualType, methodName string, args []CallArg, context constructorContext) bool {
+	name := strings.TrimPrefix(strings.TrimSpace(actualType), "*")
+	if _, ok := context.Targets[name]; ok {
+		for _, signature := range context.ClassMethodSignatures[name][methodName] {
+			if len(args) >= requiredParameterCount(signature) && len(args) <= len(signature.Parameters) {
+				return true
+			}
+		}
+	}
+	return context.NativeMethods[actualType][methodName] || context.NativeMethods[name][methodName]
 }
 
 func extensionCallParts(call *ast.CallExpr) (ast.Expr, string, []ast.Expr, bool) {
@@ -377,7 +766,7 @@ func applicableExtensions(name, actualType string, args []ast.Expr, ellipsis boo
 		if extension.Method.Name != name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 			continue
 		}
-		if len(typeArguments) > 0 && extensionTypeParameterCount(extension.Method.TypeParams) != len(typeArguments) {
+		if len(typeArguments) > 0 && extensionTypeParameterCount(methodTypeParamsSource(extension.Method)) != len(typeArguments) {
 			continue
 		}
 		resolved, ok := resolveExtensionArguments(extension, actualType, args, ellipsis, valueTypes, context)
@@ -399,13 +788,13 @@ func applicableExtensions(name, actualType string, args []ast.Expr, ellipsis boo
 }
 
 func resolveExtensionArguments(extension extensionMethod, actualType string, args []ast.Expr, ellipsis bool, valueTypes map[string]string, context constructorContext) ([]string, bool) {
-	parameters, err := parseParameterInfos(extension.Method.Parameters)
+	parameters, err := parameterInfosForMethod(extension.Method)
 	if err != nil {
 		return nil, false
 	}
 	bindings := extensionTargetBindings(extension.Target, actualType)
 	for index := range parameters {
-		parameters[index].Type = substituteLambdaType(parameters[index].Type, bindings)
+		parameters[index].TypeAST = parseTypeText(substituteLambdaType(parameters[index].typeText(), bindings))
 	}
 	argumentText := make([]string, len(args))
 	for index, argument := range args {
@@ -418,7 +807,7 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		}
 	}
 	signature := callableSignature{Name: extension.Method.Name, Parameters: parameters}
-	variadic := len(parameters) > 0 && strings.HasPrefix(strings.TrimSpace(parameters[len(parameters)-1].Type), "...")
+	variadic := len(parameters) > 0 && strings.HasPrefix(strings.TrimSpace(parameters[len(parameters)-1].typeText()), "...")
 	var resolved []string
 	var changed bool
 	if variadic {
@@ -445,12 +834,12 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		if strings.HasSuffix(argumentForType, "...") {
 			argumentForType = strings.TrimSpace(strings.TrimSuffix(argumentForType, "..."))
 		}
-		parsed, err := parser.ParseExpr(argumentForType)
+		parsed, err := parseStaticArgumentNode(argumentForType)
 		if err != nil {
 			return nil, false
 		}
-		actual := expressionStaticType(parsed, context, valueTypes)
-		generic := extensionTypeParameterNames(extension.Method.TypeParams)
+		actual := staticExpressionTypeNode(parsed, context, valueTypes)
+		generic := extensionTypeParameterNames(methodTypeParamsSource(extension.Method))
 		for name := range extensionTargetTypeParameterNames(extension.Target) {
 			generic[name] = true
 		}
@@ -461,7 +850,7 @@ func resolveExtensionArguments(extension extensionMethod, actualType string, arg
 		if parameterIndex >= len(parameters) {
 			return nil, false
 		}
-		expected := parameters[parameterIndex].Type
+		expected := parameters[parameterIndex].typeText()
 		if strings.HasPrefix(strings.TrimSpace(expected), "...") {
 			expected = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expected), "..."))
 		}
@@ -492,11 +881,13 @@ func genericExtensionArgumentMatches(actual, expected string, generic map[string
 			return false
 		}
 		for index := range actualFunction.Parameters {
-			if !genericTypeMatches(actualFunction.Parameters[index], expectedFunction.Parameters[index], generic) {
+			actualType, _ := typeNodeSource(actualFunction.Parameters[index])
+			expectedType, _ := typeNodeSource(expectedFunction.Parameters[index])
+			if !genericTypeMatches(actualType, expectedType, generic) {
 				return false
 			}
 		}
-		return genericTypeMatches(actualFunction.Result, expectedFunction.Result, generic)
+		return genericTypeMatches(actualFunction.resultText(), expectedFunction.resultText(), generic)
 	}
 	return genericTypeMatches(actual, expected, generic)
 }
@@ -526,7 +917,7 @@ func extensionCallResultType(call *ast.CallExpr, context constructorContext, val
 	if len(candidates) != 1 || realMethodApplies(actualType, methodName, call.Args, context) {
 		return ""
 	}
-	result := strings.TrimSpace(candidates[0].Method.Method.Result)
+	result := strings.TrimSpace(methodResultSource(candidates[0].Method.Method))
 	if result == "" {
 		return ""
 	}
@@ -846,7 +1237,7 @@ func extensionMapKeyParameter(target string) string {
 
 func extensionFunctionTypeParameters(extension extensionMethod) string {
 	targetParameters := extensionTargetTypeParameters(extension.Target, extension.TargetConstraints)
-	methodParameters := extensionTypeParameters(extension.Method.TypeParams)
+	methodParameters := extensionTypeParameters(methodTypeParamsSource(extension.Method))
 	if targetParameters == "" {
 		return methodParameters
 	}
@@ -860,7 +1251,7 @@ func extensionFunctionTypeParameters(extension extensionMethod) string {
 
 func emitExtension(out *strings.Builder, file *File, declaration *ExtendDecl, context constructorContext, interpolationName string) error {
 	sourcePath := sourceDirectivePath(file)
-	for _, target := range declaration.Targets {
+	for _, target := range extensionTargetNames(declaration) {
 		target = normalizeExtensionTarget(target)
 		for _, method := range declaration.Methods {
 			extension := extensionMethod{
@@ -881,7 +1272,7 @@ func emitExtension(out *strings.Builder, file *File, declaration *ExtendDecl, co
 }
 
 func emitExtensionMethod(out *strings.Builder, extension extensionMethod, context constructorContext, interpolationName string) error {
-	parameters, err := stripParameterDefaults(extension.Method.Parameters)
+	parameters, err := stripParameterDefaults(methodParametersSource(extension.Method))
 	if err != nil {
 		return err
 	}
@@ -896,7 +1287,7 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		fmt.Fprintf(out, ", %s", parameters)
 	}
 	out.WriteByte(')')
-	result := transformPolymorphicResultType(strings.TrimSpace(extension.Method.Result), context)
+	result := transformPolymorphicResultType(strings.TrimSpace(methodResultSource(extension.Method)), context)
 	if result != "" {
 		fmt.Fprintf(out, " %s", result)
 	}
@@ -908,15 +1299,19 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if parameterInfos, parseErr := parseParameterInfos(parameters); parseErr == nil {
 		for _, parameter := range parameterInfos {
 			if parameter.Name != "" {
-				methodContext.CurrentParameterTypes[parameter.Name] = parameter.Type
+				methodContext.CurrentParameterTypes[parameter.Name] = parameter.typeText()
 			}
 		}
 	}
-	body, err := transformInterpolationWithNameChecked(extension.Method.Body, interpolationName)
+	body, err := transformMethodInterpolation(extension.Method, interpolationName)
 	if err != nil {
 		return err
 	}
 	body, err = transformEnums(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformImplicitErrorPromotion(body, methodContext)
 	if err != nil {
 		return err
 	}
@@ -968,10 +1363,6 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if err != nil {
 		return err
 	}
-	body, err = transformImplicitErrorPromotion(body, methodContext)
-	if err != nil {
-		return err
-	}
 	body, _ = wrapExceptionBoundaryBody(body, result, methodContext)
 	out.WriteString(body)
 	out.WriteString("\n}\n\n")
@@ -988,9 +1379,9 @@ func transformExtensionParameterList(params string, context constructorContext) 
 	}
 	parts := make([]string, 0, len(parameters))
 	for _, parameter := range parameters {
-		typeName := transformPolymorphicType(parameter.Type, context)
-		if typeName == parameter.Type {
-			name := strings.TrimSpace(parameter.Type)
+		typeName := transformPolymorphicType(parameter.typeText(), context)
+		if typeName == parameter.typeText() {
+			name := strings.TrimSpace(parameter.typeText())
 			if target, ok := context.Targets[name]; ok && target.Qualifier == "" {
 				typeName = "Gpp" + target.Class.Name
 			}

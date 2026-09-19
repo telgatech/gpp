@@ -16,7 +16,16 @@ var identRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*`)
 func ParseFile(name, src string) (*File, error) {
 	file := &File{
 		Name:    name,
+		Source:  src,
 		Package: "main",
+	}
+	if tokens, err := LexSource(name, src); err == nil {
+		file.Tokens = tokens
+		for _, token := range tokens {
+			if token.Kind == TokenComment {
+				file.Comments = append(file.Comments, token)
+			}
+		}
 	}
 	hasPackage := false
 
@@ -64,6 +73,10 @@ func ParseFile(name, src string) (*File, error) {
 			file.Package = packageName
 			file.Doc = doc
 			rest := strings.TrimSpace(packageText[nameEnd:])
+			packageDecl := &PackageDecl{
+				Name:      packageName,
+				SpanValue: sourceSpan(src, pos, end),
+			}
 			if rest != "" {
 				uses, _, err := parseAnnotationUses(rest, 0)
 				if err != nil {
@@ -71,7 +84,9 @@ func ParseFile(name, src string) (*File, error) {
 				}
 				setAnnotationUseLocations(uses, name, sourceLine(src, pos))
 				file.Annotations = append(file.Annotations, uses...)
+				packageDecl.Annotations = uses
 			}
+			file.PackageAST = packageDecl
 			hasPackage = true
 			pos = end
 
@@ -89,8 +104,11 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			class.SourceFile = name
 			class.SourceLine = sourceLine(src, declarationPos)
+			class.SpanValue = sourceSpan(src, declarationPos, end)
 			class.Doc = doc
 			setClassAnnotationLocations(class, name)
+			attachMethodOwners(file, class.Methods)
+			attachFieldOwners(file, class.Fields)
 
 			file.Decls = append(file.Decls, class)
 			pos = end
@@ -103,6 +121,7 @@ func ParseFile(name, src string) (*File, error) {
 			for _, enum := range enums {
 				enum.SourceFile = name
 				enum.SourceLine = sourceLine(src, declarationPos)
+				enum.SpanValue = sourceSpan(src, declarationPos, end)
 				enum.Doc = doc
 			}
 			for _, enum := range enums {
@@ -117,7 +136,9 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			extend.SourceFile = name
 			extend.SourceLine = sourceLine(src, declarationPos)
+			extend.SpanValue = sourceSpan(src, declarationPos, end)
 			extend.Doc = doc
+			attachMethodOwners(file, extend.Methods)
 			for index := range extend.Methods {
 				setMethodAnnotationLocations(&extend.Methods[index], name, extend.SourceLine)
 			}
@@ -132,6 +153,7 @@ func ParseFile(name, src string) (*File, error) {
 			for _, declaration := range declarations {
 				declaration.SourceFile = name
 				declaration.SourceLine = sourceLine(src, declarationPos)
+				declaration.SpanValue = sourceSpan(src, declarationPos, end)
 				declaration.Doc = doc
 				declaration.Exported = isExportedIdentifier(declaration.Name)
 			}
@@ -145,6 +167,7 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			embed.SourceFile = name
 			embed.SourceLine = sourceLine(src, declarationPos)
+			embed.SpanValue = sourceSpan(src, declarationPos, end)
 			for index := range embed.Entries {
 				embed.Entries[index].SourceFile = name
 				embed.Entries[index].SourceLine = sourceLine(src, declarationPos)
@@ -159,6 +182,7 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			template.SourceFile = name
 			template.SourceLine = sourceLine(src, declarationPos)
+			template.SpanValue = sourceSpan(src, declarationPos, end)
 			template.Doc = doc
 			setAnnotationUseLocations(template.Annotations, name, template.SourceLine)
 			file.Decls = append(file.Decls, template)
@@ -189,9 +213,72 @@ func ParseFile(name, src string) (*File, error) {
 				if err != nil {
 					return nil, fmt.Errorf("%s:%d: invalid annotation use: %w", name, sourceLine(src, start), err)
 				}
-				file.Decls = append(file.Decls, &RawDecl{
-					Code:                 code,
+				bodyTokens, _ := LexSource(name, code)
+				bodyTokens = rebaseTokens(bodyTokens, src, start)
+				imports, importErr := importNodesFromTokens(bodyTokens)
+				if importErr != nil {
+					return nil, fmt.Errorf("%s:%d: invalid import declaration: %w", name, sourceLine(src, start), importErr)
+				}
+				file.Imports = append(file.Imports, imports...)
+				goASTDecls, goASTFileSet := parseGoDeclarations(name, file.Package, code)
+				functions, functionErr := parseTopLevelFunctionsChecked(name, file.Package, code, start, src, doc, declarationPos)
+				if functionErr != nil {
+					return nil, fmt.Errorf("%s:%d: invalid function body: %w", name, sourceLine(src, start), functionErr)
+				}
+				for _, function := range functions {
+					attachFunctionOwner(file, function)
+				}
+				if structuredFunctionAnnotations(placements) && standaloneFunctionChunk(src, declarationPos, next, functions) {
+					for _, function := range functions {
+						promoteLeadingFunctionAnnotations(src, start, function, placements)
+						file.Decls = append(file.Decls, function)
+					}
+					pos = next
+					continue
+				}
+				if structuredFunctionAnnotations(placements) && len(functions) == 0 {
+					if value := parseTopLevelValueDecl(bodyTokens); value != nil {
+						line, column := sourcePosition(src, start)
+						value.Owner = file
+						value.SourceSpan = Span{Start: start, End: next, Line: line, Column: column}
+						value.SourceFile = name
+						value.SourceLine = sourceLine(src, start)
+						file.Decls = append(file.Decls, value)
+						pos = next
+						continue
+					}
+				}
+				if len(functions) == 0 && len(goASTDecls) > 0 {
+					line, column := sourcePosition(src, start)
+					file.Decls = append(file.Decls, &GoDecl{
+						Declarations:         goASTDecls,
+						FileSet:              goASTFileSet,
+						Tokens:               bodyTokens,
+						AnnotationPlacements: placements,
+						Owner:                file,
+						SourceSpan:           Span{Start: start, End: next, Line: line, Column: column},
+						SourceFile:           name,
+						SourceLine:           sourceLine(src, start),
+					})
+					pos = next
+					continue
+				}
+				if len(functions) == 0 && len(goASTDecls) == 0 {
+					return nil, fmt.Errorf(
+						"%s:%d: unsupported top-level syntax; no structured AST representation",
+						name,
+						sourceLine(src, start),
+					)
+				}
+				line, column := sourcePosition(src, start)
+				file.Decls = append(file.Decls, &MixedDecl{
+					GoASTDecls:           goASTDecls,
+					GoASTFileSet:         goASTFileSet,
+					Functions:            functions,
+					Tokens:               bodyTokens,
 					AnnotationPlacements: placements,
+					Owner:                file,
+					SourceSpan:           Span{Start: start, End: next, Line: line, Column: column},
 					SourceFile:           name,
 					SourceLine:           sourceLine(src, start),
 				})
@@ -202,6 +289,326 @@ func ParseFile(name, src string) (*File, error) {
 	}
 
 	return file, nil
+}
+
+func funcDeclAST(declaration ast.Decl) *ast.FuncDecl {
+	function, _ := declaration.(*ast.FuncDecl)
+	if function != nil && function.Recv == nil {
+		return function
+	}
+	return nil
+}
+
+func structuredFunctionAnnotations(placements []AnnotationPlacement) bool {
+	for _, placement := range placements {
+		if placement.Target != AnnotationTargetFunction && placement.Target != AnnotationTargetParameter {
+			return false
+		}
+	}
+	return true
+}
+
+func parseTopLevelValueDecl(tokens []Token) *ValueDecl {
+	block, err := ParseBodyAST(tokens)
+	if err != nil || block == nil || len(block.Statements) != 1 {
+		return nil
+	}
+	declaration, ok := block.Statements[0].(*DeclarationStmt)
+	if !ok || len(declaration.Names) == 0 {
+		return nil
+	}
+	return &ValueDecl{
+		Keyword: declaration.Keyword,
+		Names:   append([]Token(nil), declaration.Names...),
+		Type:    declaration.Type,
+		Values:  append([]ExprNode(nil), declaration.Values...),
+		Tokens:  append([]Token(nil), tokens...),
+	}
+}
+
+func attachFunctionOwner(file *File, function *FunctionDecl) {
+	if function == nil {
+		return
+	}
+	function.Owner = file
+	function.Method.Owner = file
+	function.Annotations = append([]AnnotationUse(nil), function.Method.Annotations...)
+}
+
+func standaloneFunctionChunk(source string, start, end int, functions []*FunctionDecl) bool {
+	if len(functions) == 0 || start < 0 || end < start || end > len(source) {
+		return false
+	}
+	position := start
+	for _, function := range functions {
+		if function == nil {
+			return false
+		}
+		functionStart := function.SourceSpan.Start
+		functionEnd := function.SourceSpan.End
+		if functionStart < position || functionEnd < functionStart || functionEnd > end {
+			return false
+		}
+		prefix := source[position:functionStart]
+		if strings.TrimSpace(prefix) != "" && !leadingAnnotationsOnly(prefix) {
+			return false
+		}
+		position = functionEnd
+	}
+	suffix := source[position:end]
+	if strings.TrimSpace(suffix) == "" {
+		return true
+	}
+	if leadingCommentsOnly(suffix) {
+		// Keep trailing documentation/comments attached to the final
+		// structured function rather than losing them in a compatibility
+		// declaration between adjacent top-level functions.
+		functions[len(functions)-1].SourceSpan.End = end
+		return true
+	}
+	return false
+}
+
+func leadingAnnotationsOnly(source string) bool {
+	position := skipSpace(source, 0)
+	for position < len(source) {
+		if strings.HasPrefix(source[position:], "//") {
+			position = skipSpace(source, lineEnd(source, position))
+			continue
+		}
+		if strings.HasPrefix(source[position:], "/*") {
+			end := strings.Index(source[position+2:], "*/")
+			if end < 0 {
+				return false
+			}
+			position = skipSpace(source, position+end+4)
+			continue
+		}
+		if source[position] != '@' || position+1 >= len(source) || source[position+1] != '{' {
+			return false
+		}
+		_, end, err := parseAnnotationUses(source, position)
+		if err != nil {
+			return false
+		}
+		position = skipSpace(source, end)
+	}
+	return true
+}
+
+func leadingCommentsOnly(source string) bool {
+	position := skipSpace(source, 0)
+	for position < len(source) {
+		if strings.HasPrefix(source[position:], "//") {
+			position = skipSpace(source, lineEnd(source, position))
+			continue
+		}
+		if strings.HasPrefix(source[position:], "/*") {
+			end := strings.Index(source[position+2:], "*/")
+			if end < 0 {
+				return false
+			}
+			position = skipSpace(source, position+end+4)
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func topLevelDeclarationBoundary(source string, start, position int) bool {
+	if keywordAt(source, position, "func") && leadingAnnotationsOnly(source[start:position]) {
+		return false
+	}
+	for _, keyword := range []string{"func", "var", "const", "let", "type", "import"} {
+		if keywordAt(source, position, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func promoteLeadingFunctionAnnotations(source string, declarationStart int, function *FunctionDecl, placements []AnnotationPlacement) {
+	if function == nil || function.SourceSpan.Start <= declarationStart || !leadingAnnotationsOnly(source[declarationStart:function.SourceSpan.Start]) {
+		return
+	}
+	for _, placement := range placements {
+		if placement.Target != AnnotationTargetFunction {
+			continue
+		}
+		function.Annotations = append(function.Annotations, placement.Use)
+		function.Method.Annotations = append(function.Method.Annotations, placement.Use)
+	}
+	function.SourceSpan.Start = declarationStart
+	function.SourceLine = sourceLine(source, declarationStart)
+}
+
+func parseTopLevelFunctions(filename, packageName, source string, sourceBase int, fullSource, doc string, declarationStart int) []*FunctionDecl {
+	tokens, err := LexSource(filename, source)
+	if err != nil {
+		return nil
+	}
+	functions := []*FunctionDecl{}
+	braceDepth := 0
+	for index := 0; index < len(tokens); index++ {
+		current := tokens[index]
+		if current.Kind == TokenEOF {
+			break
+		}
+		if current.Kind == TokenKeyword && current.Text == "func" && braceDepth == 0 && topLevelFunctionStart(tokens, index) && topLevelFunctionHasName(tokens, index) {
+			localStart := current.Span.Start
+			method, consumed, methodErr := parseMethod(source[localStart:], 0, sourceBase+localStart, fullSource)
+			if methodErr == nil && consumed > 0 {
+				functionDoc := doc
+				functionSourceStart := localStart
+				functionSourceAbsolute := sourceBase + localStart
+				if len(functions) == 0 && doc != "" && declarationStart < sourceBase {
+					functionSourceAbsolute = declarationStart
+				}
+				if len(functions) > 0 {
+					previousEnd := functions[len(functions)-1].SourceSpan.End - sourceBase
+					if candidate, next := leadingDocComments(source, previousEnd); candidate != "" && next == localStart {
+						functionDoc = candidate
+						functionSourceStart = skipSpace(source, previousEnd)
+						functionSourceAbsolute = sourceBase + functionSourceStart
+					}
+				}
+				method.Doc = functionDoc
+				owned := []Method{method}
+				line, column := sourcePosition(fullSource, functionSourceAbsolute)
+				functionSourceText := source[functionSourceStart : localStart+consumed]
+				goAST, goASTFileSet := parseGoDeclaration(filename, packageName, functionSourceText)
+				functions = append(functions, &FunctionDecl{
+					Name:         method.Name,
+					Doc:          functionDoc,
+					Method:       owned[0],
+					GoAST:        funcDeclAST(goAST),
+					GoASTFileSet: goASTFileSet,
+					SourceSpan:   Span{Start: functionSourceAbsolute, End: sourceBase + localStart + consumed, Line: line, Column: column},
+					SourceFile:   filename,
+					SourceLine:   line,
+				})
+				index = tokenIndexAtOrAfter(tokens, localStart+consumed) - 1
+				continue
+			}
+		}
+		if current.Kind == TokenPunctuation {
+			switch current.Text {
+			case "{":
+				braceDepth++
+			case "}":
+				if braceDepth > 0 {
+					braceDepth--
+				}
+			}
+		}
+	}
+	return functions
+}
+
+// parseTopLevelFunctionsChecked is the source-parser entry point. The
+// transformation helpers intentionally tolerate a fragment that contains no
+// complete function, but the frontend must not silently downgrade a malformed
+// top-level function to MixedDecl. Once a top-level func token is found, every
+// such declaration must have a structured Method/BodyAST representation.
+func parseTopLevelFunctionsChecked(filename, packageName, source string, sourceBase int, fullSource, doc string, declarationStart int) ([]*FunctionDecl, error) {
+	functions := parseTopLevelFunctions(filename, packageName, source, sourceBase, fullSource, doc, declarationStart)
+	tokens, err := LexSource(filename, source)
+	if err != nil {
+		return nil, err
+	}
+	topLevelFunctions := 0
+	braceDepth := 0
+	for index, current := range tokens {
+		if current.Kind == TokenEOF {
+			break
+		}
+		if current.Kind == TokenKeyword && current.Text == "func" && braceDepth == 0 && topLevelFunctionStart(tokens, index) && topLevelFunctionHasName(tokens, index) {
+			topLevelFunctions++
+		}
+		switch current.Text {
+		case "{":
+			braceDepth++
+		case "}":
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		}
+	}
+	if topLevelFunctions != len(functions) {
+		return nil, fmt.Errorf("top-level function could not be represented by the structured body AST")
+	}
+	return functions, nil
+}
+
+func topLevelFunctionStart(tokens []Token, index int) bool {
+	for previous := index - 1; previous >= 0; previous-- {
+		token := tokens[previous]
+		if token.Kind == TokenComment {
+			continue
+		}
+		if token.Kind == TokenNewline || token.Text == ";" || token.Text == "}" {
+			return true
+		}
+		// A function type (for example, `type Handler func(...) error`),
+		// function literal, or variable initializer has a non-separator token
+		// immediately before `func`; it is not a top-level declaration.
+		return false
+	}
+	return true
+}
+
+func topLevelFunctionHasName(tokens []Token, index int) bool {
+	for index++; index < len(tokens); index++ {
+		if tokens[index].Kind == TokenComment || tokens[index].Kind == TokenNewline {
+			continue
+		}
+		return tokens[index].Kind == TokenIdentifier
+	}
+	return false
+}
+
+func tokenIndexAtOrAfter(tokens []Token, offset int) int {
+	for index, token := range tokens {
+		if token.Span.Start >= offset {
+			return index
+		}
+	}
+	return len(tokens)
+}
+
+func attachMethodOwners(file *File, methods []Method) {
+	for index := range methods {
+		methods[index].Owner = file
+	}
+}
+
+func attachFieldOwners(file *File, fields []Field) {
+	for index := range fields {
+		fields[index].Owner = file
+	}
+}
+
+func parseGoDeclaration(filename, packageName, source string) (ast.Decl, *token.FileSet) {
+	declarations, fileSet := parseGoDeclarations(filename, packageName, source)
+	if len(declarations) != 1 {
+		return nil, nil
+	}
+	return declarations[0], fileSet
+}
+
+func parseGoDeclarations(filename, packageName, source string) ([]ast.Decl, *token.FileSet) {
+	fileSet := token.NewFileSet()
+	// Annotation syntax is Go++ metadata, not Go syntax. Preserve its byte
+	// spans as whitespace while asking go/parser for the ordinary declaration
+	// AST, so annotated Go declarations can still use GoDecl instead of the
+	// compatibility MixedDecl path.
+	goSource := stripAnnotationSyntaxPreserve(source)
+	parsed, err := parser.ParseFile(fileSet, filename, "package "+goPackageName(packageName)+"\n"+goSource, parser.ParseComments)
+	if err != nil {
+		return nil, nil
+	}
+	return parsed.Decls, fileSet
 }
 
 func parseEmbed(src string, start int) (*EmbedDecl, int, error) {
@@ -348,12 +755,16 @@ func parseTemplate(src string, start int) (*TemplateDecl, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	body := src[pos+1 : closeBody]
+	bodyTokens, _ := LexSource("template body", body)
+	bodyTokens = rebaseTokens(bodyTokens, src, pos+1)
 	return &TemplateDecl{
-		Name:        name,
-		Parameters:  parameters,
-		Layout:      layout,
-		Annotations: annotations,
-		Body:        src[pos+1 : closeBody],
+		Name:         name,
+		ParameterAST: parseParameterNodes(parameters),
+		Layout:       layout,
+		Annotations:  annotations,
+		Body:         body,
+		BodyTokens:   bodyTokens,
 	}, closeBody + 1, nil
 }
 
@@ -448,7 +859,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 				)
 			}
 
-			class.Parents = append(class.Parents, parent)
+			class.ParentAST = append(class.ParentAST, parseTypeText(parent))
 
 			pos += n
 			pos = skipSpace(src, pos)
@@ -485,7 +896,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 
 	body := src[pos+1 : close]
 
-	if err := parseClassBody(class, body); err != nil {
+	if err := parseClassBody(class, body, pos+1, src); err != nil {
 		return nil, 0, err
 	}
 
@@ -509,7 +920,7 @@ func readQualifiedIdent(src string) (string, int) {
 	return name, end
 }
 
-func parseClassBody(class *ClassDecl, body string) error {
+func parseClassBody(class *ClassDecl, body string, sourceBase int, fullSource string) error {
 	pos := 0
 
 	for pos < len(body) {
@@ -533,7 +944,7 @@ func parseClassBody(class *ClassDecl, body string) error {
 					class.Name,
 				)
 			}
-			method, end, err := parseMethod(body, pos)
+			method, end, err := parseMethod(body, pos, sourceBase, fullSource)
 			if err != nil {
 				return err
 			}
@@ -548,7 +959,7 @@ func parseClassBody(class *ClassDecl, body string) error {
 		}
 
 		if keywordAt(body, pos, "func") {
-			method, end, err := parseMethod(body, pos)
+			method, end, err := parseMethod(body, pos, sourceBase, fullSource)
 
 			if err != nil {
 				return err
@@ -576,6 +987,18 @@ func parseClassBody(class *ClassDecl, body string) error {
 				)
 			}
 			field.Doc = doc
+			fieldStart := sourceBase + pos
+			fieldLine, fieldColumn := sourcePosition(fullSource, fieldStart)
+			field.SpanValue = Span{Start: fieldStart, End: sourceBase + end, Line: fieldLine, Column: fieldColumn}
+			if field.TypeAST != nil {
+				if typeText, typeErr := typeNodeSource(field.TypeAST); typeErr == nil {
+					if typeOffset := strings.Index(line, typeText); typeOffset >= 0 {
+						start := sourceBase + pos + typeOffset
+						lineNumber, column := sourcePosition(fullSource, start)
+						field.TypeSpan = Span{Start: start, End: start + len(typeText), Line: lineNumber, Column: column}
+					}
+				}
+			}
 
 			class.Fields = append(class.Fields, field)
 		}
@@ -608,9 +1031,10 @@ func parseFieldLine(line string) (Field, error) {
 	if len(parts) < 2 {
 		return Field{}, nil
 	}
+	typeText := strings.Join(parts[1:], " ")
 	return Field{
 		Name:        parts[0],
-		Type:        strings.Join(parts[1:], " "),
+		TypeAST:     parseTypeText(typeText),
 		Annotations: annotations,
 	}, nil
 }
@@ -713,7 +1137,11 @@ func parseAnnotationSpec(src string) (*AnnotationDecl, error) {
 	if _, err := parseParameterInfos(params); err != nil {
 		return nil, fmt.Errorf("annotation %s has invalid parameters: %w", name, err)
 	}
-	return &AnnotationDecl{Name: name, Params: params, Targets: targets}, nil
+	return &AnnotationDecl{
+		Name:         name,
+		ParameterAST: parseParameterNodes(params),
+		Targets:      targets,
+	}, nil
 }
 
 func validAnnotationTarget(target AnnotationTarget) bool {
@@ -830,7 +1258,17 @@ func parseAnnotationUseSpec(src string) (AnnotationUse, error) {
 			return AnnotationUse{}, fmt.Errorf("unexpected annotation use suffix %q", src[close+1:])
 		}
 		use.HasArguments = true
-		use.Arguments = strings.TrimSpace(src[pos+1 : close])
+		argumentTokens, err := LexSource("annotation arguments", src[pos+1:close])
+		if err != nil {
+			return AnnotationUse{}, err
+		}
+		use.ArgumentTokens = splitExpressionTokens(argumentTokens)
+		for _, tokens := range use.ArgumentTokens {
+			expression, parseErr := ParseExpressionTokens(tokens)
+			if parseErr == nil && expression != nil {
+				use.ArgumentsAST = append(use.ArgumentsAST, expression)
+			}
+		}
 	}
 	return use, nil
 }
@@ -987,9 +1425,47 @@ func collectRawAnnotationPlacements(src, fileName string) ([]AnnotationPlacement
 			}
 			return true
 		})
+		// A postfix annotation sits after the Go declaration's End position,
+		// so the AST interval check above cannot see `type T ... @{Marker}`.
+		// Recover that ownership from the lossless token stream instead of
+		// classifying every non-function postfix annotation as a function.
+		if target == AnnotationTargetFunction && topLevelDeclarationKeywordBefore(src, item.pos) == "type" {
+			target = AnnotationTargetType
+		}
 		placements[index] = AnnotationPlacement{Use: item.use, Target: target}
 	}
 	return placements, nil
+}
+
+func topLevelDeclarationKeywordBefore(src string, position int) string {
+	tokens, err := LexSource("annotation target", src)
+	if err != nil {
+		return ""
+	}
+	depth := 0
+	keyword := ""
+	for _, token := range tokens {
+		if token.Span.Start >= position {
+			break
+		}
+		if token.Kind == TokenPunctuation {
+			switch token.Text {
+			case "{":
+				depth++
+			case "}":
+				if depth > 0 {
+					depth--
+				}
+			}
+		}
+		if depth == 0 && token.Kind == TokenKeyword {
+			switch token.Text {
+			case "func", "var", "const", "let", "type", "import":
+				keyword = token.Text
+			}
+		}
+	}
+	return keyword
 }
 
 func stripAnnotationSyntaxPreserve(src string) string {
@@ -1052,13 +1528,17 @@ func parseExtend(src string, start int) (*ExtendDecl, int, error) {
 		return nil, 0, err
 	}
 	container := &ClassDecl{Name: "<extension>"}
-	if err := parseClassBody(container, src[bodyOpen+1:close]); err != nil {
+	if err := parseClassBody(container, src[bodyOpen+1:close], bodyOpen+1, src); err != nil {
 		return nil, 0, err
 	}
 	if len(container.Fields) > 0 {
 		return nil, 0, fmt.Errorf("extension declarations may contain methods only")
 	}
-	return &ExtendDecl{Targets: targets, TargetConstraints: constraints, Methods: container.Methods}, close + 1, nil
+	targetAST := make([]TypeNode, 0, len(targets))
+	for _, target := range targets {
+		targetAST = append(targetAST, parseTypeText(target))
+	}
+	return &ExtendDecl{TargetAST: targetAST, TargetConstraints: constraints, Methods: container.Methods}, close + 1, nil
 }
 
 func splitExtensionTargetConstraints(src string) (string, map[string]string, error) {
@@ -1134,7 +1614,7 @@ func findExtendBodyOpen(src string, start int) int {
 	return -1
 }
 
-func parseMethod(src string, start int) (Method, int, error) {
+func parseMethod(src string, start, sourceBase int, fullSource string) (Method, int, error) {
 	pos := start + len("func")
 	pos = skipSpace(src, pos)
 
@@ -1147,6 +1627,7 @@ func parseMethod(src string, start int) (Method, int, error) {
 	}
 
 	pos += n
+	nameStart := sourceBase + pos - n
 	pos = skipSpace(src, pos)
 	typeParams := ""
 	if pos < len(src) && src[pos] == '[' {
@@ -1165,7 +1646,8 @@ func parseMethod(src string, start int) (Method, int, error) {
 		)
 	}
 
-	paramEnd, err := findMatchingParen(src, pos)
+	parameterOpen := pos
+	paramEnd, err := findMatchingParen(src, parameterOpen)
 	if err != nil {
 		return Method{}, 0, err
 	}
@@ -1194,14 +1676,43 @@ func parseMethod(src string, start int) (Method, int, error) {
 		return Method{}, 0, err
 	}
 
+	body := src[bodyOpen+1 : close]
+	bodyTokens, lexErr := LexSource("method body", body)
+	if lexErr != nil {
+		return Method{}, 0, fmt.Errorf("method %s body: %w", name, lexErr)
+	}
+	bodyStart := sourceBase + bodyOpen + 1
+	bodyEnd := sourceBase + close
+	bodyTokens = rebaseTokens(bodyTokens, fullSource, bodyStart)
+	bodyAST, bodyErr := ParseBodyAST(bodyTokens)
+	if bodyErr != nil {
+		return Method{}, 0, fmt.Errorf("method %s body: %w", name, bodyErr)
+	}
+	bodyLine, bodyColumn := sourcePosition(fullSource, bodyStart)
+	parameterStart := sourceBase + parameterOpen + 1
+	parameterLine, parameterColumn := sourcePosition(fullSource, parameterStart)
+	resultSpan := Span{}
+	if result != "" {
+		if resultOffset := strings.Index(src[resultStart:bodyOpen], result); resultOffset >= 0 {
+			resultStartOffset := sourceBase + resultStart + resultOffset
+			resultLine, resultColumn := sourcePosition(fullSource, resultStartOffset)
+			resultSpan = Span{Start: resultStartOffset, End: resultStartOffset + len(result), Line: resultLine, Column: resultColumn}
+		}
+	}
 	return Method{
 		Name:                 name,
-		TypeParams:           typeParams,
-		Parameters:           params,
-		Result:               result,
+		NameSpan:             sourceSpan(fullSource, nameStart, nameStart+n),
+		TypeParamsAST:        parseTypeParameterNodes(typeParams),
+		ParametersSpan:       Span{Start: parameterStart, End: sourceBase + paramEnd, Line: parameterLine, Column: parameterColumn},
+		ParameterAST:         parseParameterNodes(params),
+		ResultSpan:           resultSpan,
+		ResultAST:            parseTypeText(result),
 		ParameterAnnotations: parameterAnnotations,
 		Annotations:          annotations,
-		Body:                 src[bodyOpen+1 : close],
+		BodySpan:             Span{Start: bodyStart, End: bodyEnd, Line: bodyLine, Column: bodyColumn},
+		SpanValue:            sourceSpan(fullSource, sourceBase+start, sourceBase+close+1),
+		BodyTokens:           bodyTokens,
+		BodyAST:              bodyAST,
 	}, close + 1, nil
 }
 
@@ -1306,8 +1817,9 @@ func findNextExtension(src string, start int) int {
 			p := skipHorizontal(src, i)
 
 			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || keywordAt(src, p, "extend") ||
-				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "template") || keywordAt(src, p, "package") {
-				return p
+				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "template") || keywordAt(src, p, "package") ||
+				(p > start && topLevelDeclarationBoundary(src, start, p)) {
+				return leadingCommentStart(src, start, p)
 			}
 		}
 
@@ -1367,6 +1879,31 @@ func findNextExtension(src string, start int) int {
 	}
 
 	return -1
+}
+
+func leadingCommentStart(source string, start, end int) int {
+	candidate := end
+	for candidate > start {
+		probe := candidate - 1
+		for probe >= start && (source[probe] == ' ' || source[probe] == '\t' || source[probe] == '\r' || source[probe] == '\n' || source[probe] == '\v' || source[probe] == '\f') {
+			probe--
+		}
+		if probe < start {
+			return candidate
+		}
+		lineStart := strings.LastIndex(source[start:probe+1], "\n")
+		if lineStart >= 0 {
+			lineStart += start + 1
+		} else {
+			lineStart = start
+		}
+		if strings.HasPrefix(strings.TrimSpace(source[lineStart:probe+1]), "//") {
+			candidate = lineStart
+			continue
+		}
+		return candidate
+	}
+	return candidate
 }
 
 func legacyUseAt(src string, pos int) bool {
@@ -1487,7 +2024,7 @@ func leadingDocComments(src string, pos int) (string, int) {
 }
 
 func documentationTargetAt(src string, pos int) bool {
-	for _, keyword := range []string{"package", "class", "enum", "extend", "annotation", "embed", "template"} {
+	for _, keyword := range []string{"package", "func", "class", "enum", "extend", "annotation", "embed", "template"} {
 		if keywordAt(src, pos, keyword) {
 			return true
 		}

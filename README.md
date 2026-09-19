@@ -71,6 +71,16 @@ gpp build examples/hello.gpp -o ./hello
 Use `gpp doctor` to check the Go toolchain and embedded standard library, and
 `gpp clean` to remove generated build artifacts.
 
+Format Go++ source with the shared canonical formatter. It uses four-space
+indentation, preserves comments and opaque literal/template content, and
+supports CI-friendly check mode:
+
+```bash
+gpp fmt examples/hello.gpp
+gpp fmt --check ./...
+gpp fmt --stdout examples/hello.gpp
+```
+
 Pass `-emit-go` to `gpp build` when you want the generated Go workspace path
 reported for inspection.
 

@@ -124,11 +124,11 @@ func validateHTTPOAuthAnnotations(pkg *PackageSymbols, class *ClassDecl, uses []
 }
 
 func httpOAuthStaticName(use AnnotationUse) (string, error) {
-	if !use.HasArguments || strings.TrimSpace(use.Arguments) == "" {
+	if !use.HasArguments {
 		return "", fmt.Errorf("http.OAuth requires a provider or explicit provider configuration")
 	}
-	args, err := splitTopLevel(use.Arguments, ',')
-	if err != nil || len(args) == 0 {
+	args := annotationArgumentTexts(use)
+	if len(args) == 0 {
 		return "", fmt.Errorf("http.OAuth has invalid arguments")
 	}
 	first := strings.TrimSpace(args[0])
@@ -186,15 +186,15 @@ func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 		if method.Name != "OAuthLogin" && method.Name != "OAuthError" {
 			continue
 		}
-		parameters, err := parseParameterInfos(method.Parameters)
+		parameters, err := parameterInfosForMethod(method)
 		if err != nil {
 			return fmt.Errorf("%s: %s has invalid parameters: %w", classLocation(class), method.Name, err)
 		}
-		if method.Result != "" && strings.TrimSpace(method.Result) != "error" {
+		if methodResultSource(method) != "" && strings.TrimSpace(methodResultSource(method)) != "error" {
 			return fmt.Errorf("%s: %s may return only error", classLocation(class), method.Name)
 		}
 		if method.Name == "OAuthError" {
-			if len(parameters) != 3 || !httpOAuthTypeMatches(pkg, parameters[0].Type, "Context", true, false) || normalizeHTTPHookType(parameters[1].Type) != "string" || normalizeHTTPHookType(parameters[2].Type) != "error" {
+			if len(parameters) != 3 || !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || normalizeHTTPHookType(parameters[1].typeText()) != "string" || normalizeHTTPHookType(parameters[2].typeText()) != "error" {
 				return fmt.Errorf("%s: OAuthError must have signature (ctx *http.Context, provider string, err error)", classLocation(class))
 			}
 			continue
@@ -202,10 +202,10 @@ func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 		if len(parameters) != 2 && len(parameters) != 3 {
 			return fmt.Errorf("%s: OAuthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])", classLocation(class))
 		}
-		if !httpOAuthTypeMatches(pkg, parameters[0].Type, "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].Type, "OAuthIdentity", false, true) {
+		if !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].typeText(), "OAuthIdentity", false, true) {
 			return fmt.Errorf("%s: OAuthLogin has invalid signature", classLocation(class))
 		}
-		if len(parameters) == 3 && !httpOAuthTypeMatches(pkg, parameters[2].Type, "OAuthToken", false, true) {
+		if len(parameters) == 3 && !httpOAuthTypeMatches(pkg, parameters[2].typeText(), "OAuthToken", false, true) {
 			return fmt.Errorf("%s: OAuthLogin token parameter must be http.OAuthToken", classLocation(class))
 		}
 	}
@@ -250,7 +250,7 @@ func httpServerClass(pkg *PackageSymbols, class *ClassDecl, visiting map[*ClassD
 		return false
 	}
 	visiting[class] = true
-	for _, parent := range class.Parents {
+	for _, parent := range classParentNames(class) {
 		if parent == "http.Server" || parent == "gpp.http.Server" {
 			return true
 		}
@@ -270,11 +270,11 @@ func httpClassAnnotationPath(pkg *PackageSymbols, class *ClassDecl, name, fallba
 		if httpAnnotationKind(use, pkg) != name {
 			continue
 		}
-		if !use.HasArguments || strings.TrimSpace(use.Arguments) == "" {
+		if !use.HasArguments {
 			return fallback
 		}
-		args, err := splitTopLevel(use.Arguments, ',')
-		if err != nil || len(args) == 0 {
+		args := annotationArgumentTexts(use)
+		if len(args) == 0 {
 			return fallback
 		}
 		value, err := strconv.Unquote(strings.TrimSpace(args[0]))
@@ -304,11 +304,11 @@ func httpClassRoutes(pkg *PackageSymbols, class *ClassDecl, prefix string) []htt
 }
 
 func httpUsePath(use AnnotationUse) string {
-	if !use.HasArguments || strings.TrimSpace(use.Arguments) == "" {
+	if !use.HasArguments {
 		return ""
 	}
-	args, err := splitTopLevel(use.Arguments, ',')
-	if err != nil || len(args) == 0 {
+	args := annotationArgumentTexts(use)
+	if len(args) == 0 {
 		return ""
 	}
 	value, err := strconv.Unquote(strings.TrimSpace(args[0]))

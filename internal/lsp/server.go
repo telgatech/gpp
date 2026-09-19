@@ -974,7 +974,11 @@ func (s *server) formatting(uri string) []TextEdit {
 	if state == nil {
 		return []TextEdit{}
 	}
-	formatted := compiler.FormatSource(state.Source)
+	formattedBytes, err := compiler.FormatSourceFile(state.Path, []byte(state.Source))
+	if err != nil {
+		return []TextEdit{}
+	}
+	formatted := string(formattedBytes)
 	if formatted == state.Source {
 		return []TextEdit{}
 	}

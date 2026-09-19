@@ -80,9 +80,10 @@ func emitPreludeExtensions(context constructorContext, body string) (string, err
 	if len(context.PreludeExtensions) == 0 {
 		return "", nil
 	}
+	bodyTokens, _ := LexSource("generated prelude", body)
 	var out strings.Builder
 	for _, extension := range context.PreludeExtensions {
-		if !context.EmitPreludeAll && !containsExtensionSelector(body, extension.Method.Name) && !strings.Contains(body, extension.GoName+"(") {
+		if !context.EmitPreludeAll && !containsExtensionSelectorTokens(bodyTokens, extension.Method.Name) && !tokenSequence(bodyTokens, extension.GoName, "(") {
 			continue
 		}
 		if err := emitExtensionMethod(&out, extension, context, ""); err != nil {
@@ -108,22 +109,28 @@ func preludeUsedInFile(file *File) (bool, error) {
 		}
 	}
 	for _, declaration := range file.Decls {
-		var bodies []string
+		var tokenGroups [][]Token
 		switch value := declaration.(type) {
-		case *RawDecl:
-			bodies = append(bodies, value.Code)
+		case *MixedDecl:
+			tokenGroups = append(tokenGroups, mixedDeclTokens(value))
+		case *GoDecl:
+			tokenGroups = append(tokenGroups, goDeclTokens(value))
+		case *ValueDecl:
+			tokenGroups = append(tokenGroups, valueDeclTokens(value))
+		case *FunctionDecl:
+			tokenGroups = append(tokenGroups, methodBodyTokens(value.Method))
 		case *ClassDecl:
 			for _, method := range value.Methods {
-				bodies = append(bodies, method.Body)
+				tokenGroups = append(tokenGroups, methodBodyTokens(method))
 			}
 		case *ExtendDecl:
 			for _, method := range value.Methods {
-				bodies = append(bodies, method.Body)
+				tokenGroups = append(tokenGroups, methodBodyTokens(method))
 			}
 		}
-		for _, body := range bodies {
+		for _, tokens := range tokenGroups {
 			for name := range names {
-				if containsExtensionSelector(body, name) {
+				if containsExtensionSelectorTokens(tokens, name) {
 					return true, nil
 				}
 			}
@@ -132,23 +139,17 @@ func preludeUsedInFile(file *File) (bool, error) {
 	return false, nil
 }
 
-func containsExtensionSelector(body, name string) bool {
-	for index := 0; index < len(body); index++ {
-		if body[index] != '.' || index+1 >= len(body) {
+func containsExtensionSelectorTokens(tokens []Token, name string) bool {
+	for index, token := range tokens {
+		if token.Text != "." {
 			continue
 		}
-		cursor := index + 1
-		if !strings.HasPrefix(body[cursor:], name) {
+		memberIndex := nextSignificantToken(tokens, index+1)
+		if memberIndex >= len(tokens) || tokens[memberIndex].Text != name {
 			continue
 		}
-		cursor += len(name)
-		if cursor < len(body) && (isIdentPart(body[cursor]) || body[cursor] == '[') {
-			continue
-		}
-		for cursor < len(body) && (body[cursor] == ' ' || body[cursor] == '\t' || body[cursor] == '\n' || body[cursor] == '\r') {
-			cursor++
-		}
-		if cursor < len(body) && body[cursor] == '(' || cursor < len(body) && body[cursor] == '[' {
+		callIndex := nextSignificantToken(tokens, memberIndex+1)
+		if callIndex < len(tokens) && (tokens[callIndex].Text == "(" || tokens[callIndex].Text == "[") {
 			return true
 		}
 	}
@@ -159,10 +160,11 @@ func preludeImportsForBody(body string, imports []string) []string {
 	if body == "" {
 		return nil
 	}
+	tokens, _ := LexSource("generated prelude imports", body)
 	result := []string{}
 	for _, importPath := range imports {
 		name := path.Base(importPath)
-		if strings.Contains(body, name+".") {
+		if tokenSequence(tokens, name, ".") {
 			result = append(result, importPath)
 		}
 	}
