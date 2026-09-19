@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"sort"
@@ -102,6 +101,77 @@ func transformExceptionRegion(src string, context constructorContext, rethrowNam
 	return src, nil
 }
 
+// transformExceptionMethodBodyAST lowers an already-parsed method body. It is
+// used by declaration emitters that still have to assemble a surrounding
+// declaration from source, but must not send the executable body through the
+// source parser a second time merely to lower exceptions.
+func transformExceptionMethodBodyAST(body string, method *Method, context constructorContext) (string, bool, error) {
+	if method == nil || method.BodyAST == nil || !blockContainsExceptionSyntax(method.BodyAST) {
+		return body, false, nil
+	}
+	methodContext := context
+	methodContext.CurrentResultAST = method.ResultAST
+	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
+	methodContext.CurrentParameterAST = parameterTypeNodeMapFromNodes(method.ParameterAST)
+	if err := lowerExceptionPromotions(method.BodyAST, methodContext); err != nil {
+		return body, true, err
+	}
+	lowered, err := lowerFunctionGoBlockNode(method.BodyAST, methodContext, "")
+	if err != nil {
+		// TokenStmt and other unsupported nodes are still handled by the
+		// compatibility source lowerer. Do not claim that the typed path handled
+		// a body it could not represent completely.
+		return body, false, nil
+	}
+	text, err := formatExceptionASTBody(lowered)
+	if err != nil {
+		return body, true, err
+	}
+	return text, true, nil
+}
+
+func blockContainsExceptionSyntax(block *BlockStmt) bool {
+	if block == nil {
+		return false
+	}
+	for _, statement := range block.Statements {
+		if statementContainsExceptionSyntax(statement) {
+			return true
+		}
+	}
+	return false
+}
+
+func statementContainsExceptionSyntax(statement Stmt) bool {
+	if statement == nil || isNilStmt(statement) {
+		return false
+	}
+	switch value := statement.(type) {
+	case *TryStmt, *ThrowStmt:
+		return true
+	case *TokenStmt:
+		if blockContainsExceptionSyntax(value.Body) {
+			return true
+		}
+		for _, child := range value.Children {
+			if statementContainsExceptionSyntax(child) {
+				return true
+			}
+		}
+	case *IfStmt:
+		return blockContainsExceptionSyntax(value.Body) || blockContainsExceptionSyntax(value.Else) || statementContainsExceptionSyntax(value.ElseIf)
+	case *ForStmt:
+		return blockContainsExceptionSyntax(value.Body)
+	case *SwitchStmt:
+		return blockContainsExceptionSyntax(value.Body)
+	case *CaseStmt:
+		return blockContainsExceptionSyntax(value.Clause.Body)
+	case *BlockStmt:
+		return blockContainsExceptionSyntax(value)
+	}
+	return false
+}
+
 func hasExceptionSyntaxTokens(src string) bool {
 	tokens, err := LexSource("exception syntax", src)
 	if err != nil {
@@ -167,15 +237,23 @@ func transformExceptionRegionAST(src string, context constructorContext, rethrow
 		}
 		switch statement := statement.(type) {
 		case *ThrowStmt:
-			text, err := lowerASTThrow(statement, context, rethrowName)
+			lowered, err := lowerASTThrowNode(statement, context, rethrowName)
 			if err != nil {
 				return "", true, err
 			}
+			text, formatErr := formatExceptionASTNode(lowered)
+			if formatErr != nil {
+				return "", true, formatErr
+			}
 			edits = append(edits, edit{start: start, end: end, text: text})
 		case *TryStmt:
-			text, err := lowerASTTry(statement, src, context, rethrowName)
+			lowered, err := lowerASTTryNode(statement, context, rethrowName)
 			if err != nil {
 				return "", true, err
+			}
+			text, formatErr := formatExceptionASTNode(lowered)
+			if formatErr != nil {
+				return "", true, formatErr
 			}
 			edits = append(edits, edit{start: start, end: end, text: text})
 		}
@@ -230,142 +308,88 @@ func collectExceptionStatement(statement Stmt, result *[]Stmt) {
 	}
 }
 
-func blockBodySource(block *BlockStmt, src string) (string, bool) {
-	if block == nil || block.Open.End < 0 || block.Close.Start < block.Open.End || block.Close.Start > len(src) {
-		return "", false
-	}
-	return src[block.Open.End:block.Close.Start], true
-}
-
-func lowerASTThrow(statement *ThrowStmt, context constructorContext, rethrowName string) (string, error) {
+func lowerASTThrowNode(statement *ThrowStmt, context constructorContext, rethrowName string) (ast.Stmt, error) {
 	if statement == nil || statement.Value == nil {
 		if rethrowName == "" {
-			return "", fmt.Errorf("bare throw is only valid inside catch")
+			return nil, fmt.Errorf("bare throw is only valid inside catch")
 		}
-		return "panic(" + rethrowName + ")", nil
+		return &ast.ExprStmt{X: &ast.CallExpr{Fun: ast.NewIdent("panic"), Args: []ast.Expr{ast.NewIdent(rethrowName)}}}, nil
 	}
-	expressionText, err := expressionNodeSource(statement.Value)
+	if err := validateThrowExpressionNode(statement.Value, context); err != nil {
+		return nil, err
+	}
+	expression, err := lowerExceptionExprNode(statement.Value, context)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	expression := strings.TrimSpace(expressionText)
-	if expression == "" {
-		return "", fmt.Errorf("throw requires an expression")
+	lowered, err := goExprNode(expression)
+	if err != nil {
+		return nil, err
 	}
-	if err := validateThrowExpression(expression, context); err != nil {
-		return "", err
-	}
-	return "__gppThrow(" + expression + ")", nil
+	return &ast.ExprStmt{X: &ast.CallExpr{Fun: ast.NewIdent("__gppThrow"), Args: []ast.Expr{lowered}}}, nil
 }
 
-func lowerASTTry(statement *TryStmt, src string, context constructorContext, rethrowName string) (string, error) {
+func lowerASTTryNode(statement *TryStmt, context constructorContext, rethrowName string) (ast.Stmt, error) {
 	if statement == nil {
-		return "", fmt.Errorf("try statement is nil")
+		return nil, fmt.Errorf("try statement is nil")
 	}
-	tryBody, ok := blockBodySource(statement.Body, src)
-	if !ok {
-		return "", fmt.Errorf("try body has invalid source span")
+	if err := validateASTCatchClauses(statement, context); err != nil {
+		return nil, err
 	}
-	tryBody, err := transformExceptionRegion(tryBody, context, rethrowName)
-	if err != nil {
+	if lowered, handled, err := lowerASTTryDirectNode(statement, context, rethrowName); handled {
+		return lowered, err
+	}
+	// The compatibility path remains node-first for constructs that cannot use
+	// the stricter direct subset but are still representable by Go AST nodes.
+	if lowered, err := lowerASTTryCompatibilityNode(statement, context, rethrowName); err == nil {
+		return lowered, nil
+	}
+	return nil, fmt.Errorf("try statement could not be lowered from its AST")
+}
+
+func formatExceptionASTNode(node ast.Node) (string, error) {
+	if node == nil {
+		return "", fmt.Errorf("exception lowering produced a nil Go AST node")
+	}
+	var output bytes.Buffer
+	if err := format.Node(&output, token.NewFileSet(), node); err != nil {
 		return "", err
 	}
-	clauses := []catchClause{}
-	clauseSources := []string{}
-	finallyBody := ""
-	for _, parsed := range statement.Catches {
-		body, bodyOK := blockBodySource(parsed.Body, src)
-		if !bodyOK {
-			return "", fmt.Errorf("exception clause has invalid source span")
+	return output.String(), nil
+}
+
+func validateASTCatchClauses(statement *TryStmt, context constructorContext) error {
+	if statement == nil {
+		return fmt.Errorf("try statement is nil")
+	}
+	for _, clause := range statement.Catches {
+		types := clause.Types
+		if len(types) == 0 && clause.Binding != "" && isCatchTypeName(clause.Binding, context) {
+			types = []TypeNode{parseTypeText(clause.Binding)}
 		}
-		catchTypes := append([]TypeNode(nil), parsed.Types...)
-		catchVariable := parsed.Binding
-		// The body parser cannot resolve the one-token ambiguity between
-		// `catch Problem` (a type) and `catch problem` (a binding). Resolve it
-		// against semantic context here instead of encoding source heuristics
-		// in the parser.
-		if len(catchTypes) == 0 && catchVariable != "" && isCatchTypeName(catchVariable, context) {
-			catchTypes = append(catchTypes, parseTypeText(catchVariable))
-			catchVariable = ""
+		if len(types) == 0 {
+			types = []TypeNode{parseTypeText("error")}
 		}
-		clause := catchClause{variable: catchVariable}
-		for _, typeNode := range catchTypes {
-			nameText, typeErr := typeNodeSource(typeNode)
-			if typeErr != nil {
-				return "", typeErr
+		seen := map[string]bool{}
+		for _, typeNode := range types {
+			name, err := typeNodeSource(typeNode)
+			if err != nil {
+				return err
 			}
-			name := strings.TrimSpace(nameText)
-			if name == "" {
-				return "", fmt.Errorf("catch type is empty")
+			name = strings.TrimSpace(name)
+			if !isCatchTypeName(name, context) {
+				return fmt.Errorf("invalid catch type %s", name)
 			}
-			clause.typeNodes = append(clause.typeNodes, typeNode)
-		}
-		if len(clause.typeNodes) == 0 {
-			clause.typeNodes = []TypeNode{parseTypeText("error")}
-		}
-		body, err = transformExceptionRegion(body, context, "__gppRecovered")
-		if err != nil {
-			return "", err
-		}
-		for _, typeNode := range clause.typeNodes {
-			nameText, typeErr := typeNodeSource(typeNode)
-			if typeErr != nil {
-				return "", typeErr
+			if seen[name] {
+				return fmt.Errorf("duplicate catch type %s", name)
 			}
-			typeName := strings.TrimSpace(nameText)
-			if !isCatchTypeName(typeName, context) {
-				return "", fmt.Errorf("invalid catch type %s", typeName)
-			}
+			seen[name] = true
 		}
-		if clause.variable != "" && (!isIdentifier(clause.variable) || isGoKeyword(clause.variable)) {
-			return "", fmt.Errorf("invalid catch variable %s", clause.variable)
-		}
-		clauses = append(clauses, clause)
-		clauseSources = append(clauseSources, body)
-	}
-	if statement.Finally != nil {
-		body, bodyOK := blockBodySource(statement.Finally, src)
-		if !bodyOK {
-			return "", fmt.Errorf("exception clause has invalid source span")
-		}
-		finallyBody, err = transformExceptionRegion(body, context, rethrowName)
-		if err != nil {
-			return "", err
-		}
-		if err := validateFinallyControlTransfers(finallyBody, context); err != nil {
-			return "", err
+		if clause.Binding != "" && (!isIdentifier(clause.Binding) || isGoKeyword(clause.Binding) || seen[clause.Binding]) {
+			return fmt.Errorf("invalid catch variable %s", clause.Binding)
 		}
 	}
-	for index := range clauses {
-		body := clauseSources[index]
-		body, err = transformImplicitErrorPromotion(body, context)
-		if err != nil {
-			return "", err
-		}
-		body, err = rewriteExceptionReturns(body, context)
-		if err != nil {
-			return "", err
-		}
-		clauses[index].body, err = parseLoweredBlock(body)
-		if err != nil {
-			return "", fmt.Errorf("catch body is not valid Go after AST lowering: %w", err)
-		}
-	}
-	if err := validateCatchOrdering(clauses, context); err != nil {
-		return "", err
-	}
-	if len(clauses) == 0 && finallyBody == "" {
-		return "{\n" + tryBody + "\n}", nil
-	}
-	tryBody, err = transformImplicitErrorPromotion(tryBody, context)
-	if err != nil {
-		return "", err
-	}
-	tryBody, err = rewriteExceptionReturns(tryBody, context)
-	if err != nil {
-		return "", err
-	}
-	return lowerTryAST(tryBody, clauses, finallyBody, context)
+	return nil
 }
 
 func isCatchTypeName(name string, context constructorContext) bool {
@@ -462,69 +486,2024 @@ func catchTypeCovers(earlier, later string, context constructorContext) bool {
 	return classInheritsTarget(laterTarget, earlierTarget, context)
 }
 
-func validateFinallyControlTransfers(body string, context constructorContext) error {
-	if err, handled := validateFinallyControlTransfersAST(body); handled {
-		return err
+// lowerASTTryDirect handles the ordinary Go-compatible subset without ever
+// materializing a body as source.
+func lowerASTTryDirectNode(statement *TryStmt, context constructorContext, rethrowName string) (ast.Stmt, bool, error) {
+	// Keep this path conservative: promotion and expression lowering must finish
+	// before the ordinary Go AST is constructed, while finally/return handling
+	// remains owned by the exception wrapper below.
+	if statement == nil {
+		return nil, false, nil
+	}
+	if !directEmissionAllowed(context) {
+		return nil, false, nil
+	}
+	if err := lowerExceptionPromotions(statement.Body, context); err != nil {
+		return nil, false, nil
+	}
+	if err := lowerPolymorphismBlockNode(statement.Body, context); err != nil {
+		return nil, false, nil
+	}
+	for index := range statement.Catches {
+		if err := lowerExceptionPromotions(statement.Catches[index].Body, context); err != nil {
+			return nil, false, nil
+		}
+		if err := lowerPolymorphismBlockNode(statement.Catches[index].Body, context); err != nil {
+			return nil, false, nil
+		}
+	}
+	if err := lowerExceptionPromotions(statement.Finally, context); err != nil {
+		return nil, false, nil
+	}
+	if err := lowerPolymorphismBlockNode(statement.Finally, context); err != nil {
+		return nil, false, nil
+	}
+	if !exceptionDirectSafe(statement, context) {
+		return nil, false, nil
+	}
+	tryBlock, err := lowerExceptionGoBlockNode(statement.Body, context, rethrowName)
+	if err != nil {
+		return nil, false, nil
+	}
+	clauses := make([]catchClause, 0, len(statement.Catches))
+	for _, parsed := range statement.Catches {
+		types := append([]TypeNode(nil), parsed.Types...)
+		variable := parsed.Binding
+		if len(types) == 0 && variable != "" && isCatchTypeName(variable, context) {
+			types = append(types, parseTypeText(variable))
+			variable = ""
+		}
+		if len(types) == 0 {
+			types = []TypeNode{parseTypeText("error")}
+		}
+		for _, typeNode := range types {
+			name, typeErr := typeNodeSource(typeNode)
+			if typeErr != nil || !isCatchTypeName(strings.TrimSpace(name), context) {
+				return nil, false, nil
+			}
+		}
+		body, bodyErr := lowerExceptionGoBlockNode(parsed.Body, context, "__gppRecovered")
+		if bodyErr != nil {
+			return nil, false, nil
+		}
+		clauses = append(clauses, catchClause{typeNodes: types, variable: variable, body: body})
+	}
+	finallyBlock := &ast.BlockStmt{}
+	hasFinally := statement.Finally != nil
+	if hasFinally {
+		finallyBlock, err = lowerExceptionGoBlockNode(statement.Finally, context, rethrowName)
+		if err != nil {
+			return nil, false, nil
+		}
+		if transferErr := validateFinallyControlTransfersBlock(statement.Finally); transferErr != nil {
+			return nil, true, transferErr
+		}
+	}
+	if err := validateCatchOrdering(clauses, context); err != nil {
+		return nil, true, err
+	}
+	lowered, err := lowerTryASTNode(tryBlock, clauses, finallyBlock, hasFinally)
+	return lowered, true, err
+}
+
+// lowerASTTryCompatibilityNode is the node-first fallback for exception
+// lowering.  It intentionally does not require directEmissionAllowed: the
+// surrounding function may still need one of the older source-rewrite
+// lowerers, while the try/catch tree itself can be represented entirely by Go
+// AST nodes.
+func lowerASTTryCompatibilityNode(statement *TryStmt, context constructorContext, rethrowName string) (ast.Stmt, error) {
+	if statement == nil {
+		return nil, fmt.Errorf("try statement is nil")
+	}
+	if err := lowerExceptionPromotions(statement.Body, context); err != nil {
+		return nil, err
+	}
+	if err := lowerPolymorphismBlockNode(statement.Body, context); err != nil {
+		return nil, err
+	}
+	for index := range statement.Catches {
+		if err := lowerExceptionPromotions(statement.Catches[index].Body, context); err != nil {
+			return nil, err
+		}
+		if err := lowerPolymorphismBlockNode(statement.Catches[index].Body, context); err != nil {
+			return nil, err
+		}
+	}
+	if err := lowerExceptionPromotions(statement.Finally, context); err != nil {
+		return nil, err
+	}
+	if err := lowerPolymorphismBlockNode(statement.Finally, context); err != nil {
+		return nil, err
+	}
+	if err := lowerExceptionBlockNodes(statement.Body, context); err != nil {
+		return nil, err
+	}
+	for index := range statement.Catches {
+		if err := lowerExceptionBlockNodes(statement.Catches[index].Body, context); err != nil {
+			return nil, err
+		}
+	}
+	if err := lowerExceptionBlockNodes(statement.Finally, context); err != nil {
+		return nil, err
+	}
+
+	tryBlock, err := lowerExceptionGoBlockNode(statement.Body, context, rethrowName)
+	if err != nil {
+		return nil, err
+	}
+	clauses, err := exceptionCatchClauses(statement, context)
+	if err != nil {
+		return nil, err
+	}
+	finallyBlock := &ast.BlockStmt{}
+	hasFinally := statement.Finally != nil
+	if hasFinally {
+		finallyBlock, err = lowerExceptionGoBlockNode(statement.Finally, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		if transferErr := validateFinallyControlTransfersBlock(statement.Finally); transferErr != nil {
+			return nil, transferErr
+		}
+	}
+	if err := validateCatchOrdering(clauses, context); err != nil {
+		return nil, err
+	}
+	return lowerTryASTNode(tryBlock, clauses, finallyBlock, hasFinally)
+}
+
+func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]catchClause, error) {
+	if statement == nil {
+		return nil, fmt.Errorf("try statement is nil")
+	}
+	clauses := make([]catchClause, 0, len(statement.Catches))
+	for _, parsed := range statement.Catches {
+		types := append([]TypeNode(nil), parsed.Types...)
+		variable := parsed.Binding
+		if len(types) == 0 && variable != "" && isCatchTypeName(variable, context) {
+			types = append(types, parseTypeText(variable))
+			variable = ""
+		}
+		if len(types) == 0 {
+			types = []TypeNode{parseTypeText("error")}
+		}
+		for _, typeNode := range types {
+			name, typeErr := typeNodeSource(typeNode)
+			if typeErr != nil || !isCatchTypeName(strings.TrimSpace(name), context) {
+				if typeErr != nil {
+					return nil, typeErr
+				}
+				return nil, fmt.Errorf("invalid catch type %s", strings.TrimSpace(name))
+			}
+		}
+		if variable != "" && (!isIdentifier(variable) || isGoKeyword(variable)) {
+			return nil, fmt.Errorf("invalid catch variable %s", variable)
+		}
+		body, bodyErr := lowerExceptionGoBlockNode(parsed.Body, context, "__gppRecovered")
+		if bodyErr != nil {
+			return nil, bodyErr
+		}
+		clauses = append(clauses, catchClause{typeNodes: types, variable: variable, body: body})
+	}
+	return clauses, nil
+}
+
+func lowerExceptionPromotions(block *BlockStmt, context constructorContext) error {
+	if block == nil {
+		return nil
+	}
+	resultCount := exceptionContextResultCount(context)
+	for _, statement := range block.Statements {
+		if err := lowerExceptionPromotionStatement(statement, context, resultCount); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func validateFinallyControlTransfersAST(body string) (error, bool) {
-	tokens, err := LexSource("finally", body)
-	if err != nil {
-		return nil, false
+// lowerNestedExceptionPromotionExpr handles calls that occur inside another
+// expression, such as `CompileRegex().MatchString(value)` or an if condition.
+// The original statement-level pass only considered a call when it was the
+// entire initializer/assignment/return expression, which left multi-result
+// calls in selectors untouched and produced Go's "multiple-value ... in
+// single-value context" error.
+func lowerNestedExceptionPromotionExpr(expression ExprNode, context constructorContext) (ExprNode, error) {
+	if expression == nil {
+		return nil, nil
 	}
-	block, err := ParseBodyAST(tokens)
-	if err != nil {
-		return nil, false
+	lower := func(value ExprNode) (ExprNode, error) {
+		return lowerNestedExceptionPromotionExpr(value, context)
 	}
-	var transferErr error
+	switch value := expression.(type) {
+	case *CallExpr:
+		if promotionASTAlreadyWrapped(value) {
+			return value, nil
+		}
+		var err error
+		value.Callee, err = lower(value.Callee)
+		if err != nil {
+			return nil, err
+		}
+		for index := range value.Arguments {
+			value.Arguments[index].Value, err = lower(value.Arguments[index].Value)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return promoteExceptionCallNode(value, context, false)
+	case *UnaryExpr:
+		var err error
+		value.Operand, err = lower(value.Operand)
+		return value, err
+	case *BinaryExpr:
+		var err error
+		value.Left, err = lower(value.Left)
+		if err != nil {
+			return nil, err
+		}
+		value.Right, err = lower(value.Right)
+		return value, err
+	case *AssignmentExpr:
+		for index := range value.Left {
+			var err error
+			value.Left[index], err = lower(value.Left[index])
+			if err != nil {
+				return nil, err
+			}
+		}
+		for index := range value.Right {
+			var err error
+			if call, ok := value.Right[index].(*CallExpr); ok {
+				if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found &&
+					result.trailingError && len(value.Left) == len(result.types) {
+					value.Right[index], err = lowerExceptionPromotionCallChildren(call, context)
+				} else {
+					value.Right[index], err = lower(value.Right[index])
+				}
+			} else {
+				value.Right[index], err = lower(value.Right[index])
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *SelectorExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		return value, err
+	case *IndexExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Index, err = lower(value.Index)
+		return value, err
+	case *IndexListExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		for index := range value.Indices {
+			value.Indices[index], err = lower(value.Indices[index])
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *SliceExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Low, err = lower(value.Low)
+		if err != nil {
+			return nil, err
+		}
+		value.High, err = lower(value.High)
+		if err != nil {
+			return nil, err
+		}
+		value.Max, err = lower(value.Max)
+		if err != nil {
+			return nil, err
+		}
+	case *TypeAssertExpr:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return value, err
+	case *PostfixExpr:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return value, err
+	case *SpreadExpr:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return value, err
+	case *SendExpr:
+		var err error
+		value.Channel, err = lower(value.Channel)
+		if err != nil {
+			return nil, err
+		}
+		value.Value, err = lower(value.Value)
+		return value, err
+	case *ParenthesizedExpr:
+		var err error
+		value.Inner, err = lower(value.Inner)
+		return value, err
+	case *CompositeLiteralExpr:
+		for index := range value.Elements {
+			var err error
+			value.Elements[index].Key, err = lower(value.Elements[index].Key)
+			if err != nil {
+				return nil, err
+			}
+			value.Elements[index].Value, err = lower(value.Elements[index].Value)
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *InterpolatedStringExpr:
+		for index := range value.Segments {
+			var err error
+			value.Segments[index].Expression, err = lower(value.Segments[index].Expression)
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *LambdaExpr:
+		var err error
+		value.Body, err = lower(value.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := lowerExceptionPromotions(value.BlockBody, context); err != nil {
+			return nil, err
+		}
+	case *FunctionLiteralExpr:
+		if err := lowerExceptionPromotions(value.Body, context); err != nil {
+			return nil, err
+		}
+	}
+	return expression, nil
+}
+
+func lowerExceptionPromotionCallChildren(call *CallExpr, context constructorContext) (*CallExpr, error) {
+	if call == nil {
+		return nil, nil
+	}
+	loweredCallee, err := lowerNestedExceptionPromotionExpr(call.Callee, context)
+	if err != nil {
+		return nil, err
+	}
+	call.Callee = loweredCallee
+	for index := range call.Arguments {
+		call.Arguments[index].Value, err = lowerNestedExceptionPromotionExpr(call.Arguments[index].Value, context)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return call, nil
+}
+
+func promoteExceptionCallNode(call *CallExpr, context constructorContext, discard bool) (ExprNode, error) {
+	if call == nil || promotionASTAlreadyWrapped(call) {
+		return call, nil
+	}
+	result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes)
+	if !found || !result.trailingError || len(result.types) == 0 {
+		return call, nil
+	}
+	nonErrorCount := len(result.types) - 1
+	// A call returning only error is already a valid value expression. It is
+	// propagated by an enclosing statement when appropriate, but it must not be
+	// rewritten as a value unwrap while lowering a throw operand or return.
+	if nonErrorCount == 0 && !discard {
+		return call, nil
+	}
+	name := ""
+	if discard {
+		switch nonErrorCount {
+		case 0:
+			name = "__gppThrow"
+		case 1:
+			name = "__gppDiscard"
+		case 2:
+			name = "__gppDiscard2"
+		case 3:
+			name = "__gppDiscard3"
+		}
+	} else {
+		switch nonErrorCount {
+		case 1:
+			name = "__gppUnwrap"
+		case 2:
+			name = "__gppUnwrap2"
+		case 3:
+			name = "__gppUnwrap3"
+		}
+	}
+	if name == "" {
+		return call, fmt.Errorf("direct exception lowering does not support %d-result error promotion", len(result.types))
+	}
+	return &CallExpr{Callee: &NameExpr{Name: name}, Arguments: []CallArg{{Value: call}}}, nil
+}
+
+func lowerExceptionPromotionStatement(statement Stmt, context constructorContext, functionResultCount int) error {
+	if statement == nil {
+		return nil
+	}
+	wrap := func(expression ExprNode, discard bool) (ExprNode, error) {
+		call, ok := expression.(*CallExpr)
+		if !ok {
+			return lowerNestedExceptionPromotionExpr(expression, context)
+		}
+		if promotionASTAlreadyWrapped(call) {
+			return call, nil
+		}
+		// Promote calls nested in the callee or arguments before deciding
+		// whether the outer call itself returns an error. This matters for
+		// selectors such as `compile().MatchString(...)`: the outer call is
+		// single-result, but its receiver still needs an unwrap.
+		var err error
+		call.Callee, err = lowerNestedExceptionPromotionExpr(call.Callee, context)
+		if err != nil {
+			return nil, err
+		}
+		for index := range call.Arguments {
+			call.Arguments[index].Value, err = lowerNestedExceptionPromotionExpr(call.Arguments[index].Value, context)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return promoteExceptionCallNode(call, context, discard)
+	}
+	switch value := statement.(type) {
+	case *ExpressionStmt:
+		lowered, err := wrap(value.Expression, true)
+		if err != nil {
+			return err
+		}
+		value.Expression = lowered
+	case *DeclarationStmt:
+		if len(value.Values) == 1 {
+			if call, ok := value.Values[0].(*CallExpr); ok {
+				if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found && result.trailingError && len(value.Names) == len(result.types)-1 {
+					lowered, err := wrap(call, false)
+					if err != nil {
+						return err
+					}
+					value.Values[0] = lowered
+				}
+			}
+		} else {
+			for index := range value.Values {
+				lowered, err := lowerNestedExceptionPromotionExpr(value.Values[index], context)
+				if err != nil {
+					return err
+				}
+				value.Values[index] = lowered
+			}
+		}
+	case *AssignmentStmt:
+		if len(value.Right) == 1 {
+			if call, ok := value.Right[0].(*CallExpr); ok {
+				if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found && result.trailingError && len(value.Left) == len(result.types)-1 {
+					lowered, err := wrap(call, false)
+					if err != nil {
+						return err
+					}
+					value.Right[0] = lowered
+				}
+			}
+		} else {
+			for index := range value.Right {
+				lowered, err := lowerNestedExceptionPromotionExpr(value.Right[index], context)
+				if err != nil {
+					return err
+				}
+				value.Right[index] = lowered
+			}
+		}
+	case *ReturnStmt:
+		if len(value.Values) == 1 {
+			if call, ok := value.Values[0].(*CallExpr); ok {
+				if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found && result.trailingError && functionResultCount != len(result.types) && len(value.Values) == len(result.types)-1 {
+					lowered, err := wrap(call, false)
+					if err != nil {
+						return err
+					}
+					value.Values[0] = lowered
+				}
+			}
+		} else {
+			for index := range value.Values {
+				lowered, err := lowerNestedExceptionPromotionExpr(value.Values[index], context)
+				if err != nil {
+					return err
+				}
+				value.Values[index] = lowered
+			}
+		}
+	case *IfStmt:
+		var err error
+		value.Init, err = lowerNestedExceptionPromotionExpr(value.Init, context)
+		if err != nil {
+			return err
+		}
+		value.Condition, err = lowerNestedExceptionPromotionExpr(value.Condition, context)
+		if err != nil {
+			return err
+		}
+		if err := lowerExceptionPromotions(value.Body, context); err != nil {
+			return err
+		}
+		if err := lowerExceptionPromotions(value.Else, context); err != nil {
+			return err
+		}
+		if value.ElseIf != nil {
+			return lowerExceptionPromotionStatement(value.ElseIf, context, functionResultCount)
+		}
+	case *ForStmt:
+		var err error
+		value.Init, err = lowerNestedExceptionPromotionExpr(value.Init, context)
+		if err != nil {
+			return err
+		}
+		value.Condition, err = lowerNestedExceptionPromotionExpr(value.Condition, context)
+		if err != nil {
+			return err
+		}
+		value.Post, err = lowerNestedExceptionPromotionExpr(value.Post, context)
+		if err != nil {
+			return err
+		}
+		value.RangeExpr, err = lowerNestedExceptionPromotionExpr(value.RangeExpr, context)
+		if err != nil {
+			return err
+		}
+		return lowerExceptionPromotions(value.Body, context)
+	case *SwitchStmt:
+		var err error
+		value.Init, err = lowerNestedExceptionPromotionExpr(value.Init, context)
+		if err != nil {
+			return err
+		}
+		value.Tag, err = lowerNestedExceptionPromotionExpr(value.Tag, context)
+		if err != nil {
+			return err
+		}
+		return lowerExceptionPromotions(value.Body, context)
+	case *CaseStmt:
+		for index := range value.Clause.Expressions {
+			lowered, err := lowerNestedExceptionPromotionExpr(value.Clause.Expressions[index], context)
+			if err != nil {
+				return err
+			}
+			value.Clause.Expressions[index] = lowered
+		}
+		return lowerExceptionPromotions(value.Clause.Body, context)
+	case *BlockStmt:
+		return lowerExceptionPromotions(value, context)
+	case *TryStmt:
+		if err := lowerExceptionPromotions(value.Body, context); err != nil {
+			return err
+		}
+		for _, clause := range value.Catches {
+			if err := lowerExceptionPromotions(clause.Body, context); err != nil {
+				return err
+			}
+		}
+		return lowerExceptionPromotions(value.Finally, context)
+	case *GoStmt:
+		if call, ok := value.Expression.(*CallExpr); ok {
+			if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found && result.trailingError {
+				return fmt.Errorf("cannot implicitly propagate error from goroutine call")
+			}
+		}
+	case *ThrowStmt:
+		lowered, err := lowerNestedExceptionPromotionExpr(value.Value, context)
+		if err != nil {
+			return err
+		}
+		value.Value = lowered
+	case *DeferStmt:
+		lowered, err := lowerNestedExceptionPromotionExpr(value.Expression, context)
+		if err != nil {
+			return err
+		}
+		value.Expression = lowered
+	case *SendStmt:
+		var err error
+		value.Channel, err = lowerNestedExceptionPromotionExpr(value.Channel, context)
+		if err != nil {
+			return err
+		}
+		value.Value, err = lowerNestedExceptionPromotionExpr(value.Value, context)
+		if err != nil {
+			return err
+		}
+	case *IncDecStmt:
+		lowered, err := lowerNestedExceptionPromotionExpr(value.Expression, context)
+		if err != nil {
+			return err
+		}
+		value.Expression = lowered
+	}
+	return nil
+}
+
+// lowerExceptionGoBlockNode is the structural exception-body lowering path.
+// It is separate from goExceptionBlockNode because nested try statements need
+// the semantic context in order to recursively produce their wrapper AST.
+func lowerExceptionGoBlockNode(block *BlockStmt, context constructorContext, rethrowName string) (*ast.BlockStmt, error) {
+	if block == nil {
+		return &ast.BlockStmt{}, nil
+	}
+	result := &ast.BlockStmt{}
+	for _, statement := range block.Statements {
+		lowered, err := lowerExceptionGoStmtNode(statement, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		result.List = append(result.List, lowered...)
+	}
+	return result, nil
+}
+
+// lowerFunctionGoBlockNode lowers a complete function body while preserving
+// ordinary function returns. A try statement owns its nested return semantics
+// and is lowered through lowerASTTryDirectNode; returns outside try remain
+// ordinary Go return statements.
+func lowerFunctionGoBlockNode(block *BlockStmt, context constructorContext, rethrowName string) (*ast.BlockStmt, error) {
+	if block == nil {
+		return &ast.BlockStmt{}, nil
+	}
+	result := &ast.BlockStmt{}
+	for _, statement := range block.Statements {
+		lowered, err := lowerFunctionGoStmtNode(statement, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		result.List = append(result.List, lowered...)
+	}
+	return result, nil
+}
+
+func lowerFunctionGoStmtNode(statement Stmt, context constructorContext, rethrowName string) ([]ast.Stmt, error) {
+	if statement == nil {
+		return nil, nil
+	}
+	lowerExpression := func(expression ExprNode) (ExprNode, error) {
+		return lowerExceptionExprNode(expression, context)
+	}
+	switch value := statement.(type) {
+	case *TryStmt:
+		lowered, handled, err := lowerASTTryDirectNode(value, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			lowered, err = lowerASTTryCompatibilityNode(value, context, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return []ast.Stmt{lowered}, nil
+	case *IfStmt:
+		init, err := lowerExpression(value.Init)
+		if err != nil {
+			return nil, err
+		}
+		condition, err := lowerExpression(value.Condition)
+		if err != nil {
+			return nil, err
+		}
+		body, err := lowerFunctionGoBlockNode(value.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		result := &ast.IfStmt{Body: body}
+		result.Cond, err = goExprNode(condition)
+		if err != nil {
+			return nil, err
+		}
+		if init != nil {
+			result.Init, err = goSimpleStmt(init, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Else != nil {
+			result.Else, err = lowerFunctionGoBlockNode(value.Else, context, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.ElseIf != nil {
+			nested, nestedErr := lowerFunctionGoStmtNode(value.ElseIf, context, rethrowName)
+			if nestedErr != nil {
+				return nil, nestedErr
+			}
+			if len(nested) != 1 {
+				return nil, fmt.Errorf("unsupported else-if")
+			}
+			result.Else = nested[0]
+		}
+		return []ast.Stmt{result}, nil
+	case *ForStmt:
+		body, err := lowerFunctionGoBlockNode(value.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		if value.RangeExpr != nil {
+			keys := make([]ast.Expr, 0, len(value.RangeKey))
+			for _, item := range value.RangeKey {
+				lowered, itemErr := lowerExpression(item)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				key, itemErr := goExprNode(lowered)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				keys = append(keys, key)
+			}
+			rangeExpr, err := lowerExpression(value.RangeExpr)
+			if err != nil {
+				return nil, err
+			}
+			var key, item ast.Expr
+			if len(keys) > 0 {
+				key = keys[0]
+			}
+			if len(keys) > 1 {
+				item = keys[1]
+			}
+			rangeAST, err := goExprNode(rangeExpr)
+			if err != nil {
+				return nil, err
+			}
+			rangeToken := token.DEFINE
+			if value.RangeOperator == "=" {
+				rangeToken = token.ASSIGN
+			}
+			return []ast.Stmt{&ast.RangeStmt{Key: key, Value: item, Tok: rangeToken, X: rangeAST, Body: body}}, nil
+		}
+		result := &ast.ForStmt{Body: body}
+		if value.Init != nil {
+			init, lowerErr := lowerExpression(value.Init)
+			if lowerErr != nil {
+				return nil, lowerErr
+			}
+			result.Init, err = goSimpleStmt(init, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Condition != nil {
+			condition, lowerErr := lowerExpression(value.Condition)
+			if lowerErr != nil {
+				return nil, lowerErr
+			}
+			result.Cond, err = goExprNode(condition)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Post != nil {
+			post, lowerErr := lowerExpression(value.Post)
+			if lowerErr != nil {
+				return nil, lowerErr
+			}
+			result.Post, err = goSimpleStmt(post, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return []ast.Stmt{result}, nil
+	case *SwitchStmt:
+		if value.Select {
+			selectStmt, selectErr := goSelectStmtFromBlock(value.Body, func(block *BlockStmt) (*ast.BlockStmt, error) {
+				return lowerFunctionGoBlockNode(block, context, rethrowName)
+			})
+			if selectErr != nil {
+				return nil, selectErr
+			}
+			return []ast.Stmt{selectStmt}, nil
+		}
+		if isTypeSwitchAssertion(value.Tag) || isTypeSwitchAssignment(value.Init) {
+			body, err := lowerFunctionGoBlockNode(value.Body, context, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+			var assignment ast.Stmt
+			if value.Init != nil {
+				init, lowerErr := lowerExpression(value.Init)
+				if lowerErr != nil {
+					return nil, lowerErr
+				}
+				assignment, err = goSimpleStmt(init, rethrowName)
+			} else {
+				tag, lowerErr := lowerExpression(value.Tag)
+				if lowerErr != nil {
+					return nil, lowerErr
+				}
+				var expression ast.Expr
+				expression, err = goExprNode(tag)
+				if err == nil {
+					assignment = &ast.ExprStmt{X: expression}
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+			return []ast.Stmt{&ast.TypeSwitchStmt{Assign: assignment, Body: body}}, nil
+		}
+		body, err := lowerFunctionGoBlockNode(value.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		result := &ast.SwitchStmt{Body: body}
+		if value.Init != nil {
+			init, lowerErr := lowerExpression(value.Init)
+			if lowerErr != nil {
+				return nil, lowerErr
+			}
+			result.Init, err = goSimpleStmt(init, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Tag != nil {
+			tag, lowerErr := lowerExpression(value.Tag)
+			if lowerErr != nil {
+				return nil, lowerErr
+			}
+			result.Tag, err = goExprNode(tag)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return []ast.Stmt{result}, nil
+	case *CaseStmt:
+		body, err := lowerFunctionGoBlockNode(value.Clause.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		var expressions []ast.Expr
+		if !value.Clause.Default {
+			expressions = make([]ast.Expr, 0, len(value.Clause.Expressions))
+			for _, expression := range value.Clause.Expressions {
+				lowered, lowerErr := lowerExpression(expression)
+				if lowerErr != nil {
+					return nil, lowerErr
+				}
+				item, lowerErr := goExprNode(lowered)
+				if lowerErr != nil {
+					return nil, lowerErr
+				}
+				expressions = append(expressions, item)
+			}
+		}
+		return []ast.Stmt{&ast.CaseClause{List: expressions, Body: body.List}}, nil
+	case *BlockStmt:
+		body, err := lowerFunctionGoBlockNode(value, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		return []ast.Stmt{body}, nil
+	default:
+		if err := lowerExceptionStmtNodes(statement, context); err != nil {
+			return nil, err
+		}
+		return goStmtNode(statement, rethrowName)
+	}
+}
+
+// lowerExceptionABIBoundaryNode wraps a lowered function body structurally.
+// The wrapper catches the internal control-transfer panic used for returns
+// from try blocks and converts thrown errors to a declared trailing error.
+func lowerExceptionABIBoundaryNode(body *ast.BlockStmt, resultType TypeNode, resultFields []ParameterNode, context constructorContext) (*ast.BlockStmt, error) {
+	fields, ok := exceptionResultFieldsForResult(resultType, resultFields)
+	if !ok {
+		result, _ := directTypeText(resultType)
+		return nil, fmt.Errorf("invalid exception boundary result %q", result)
+	}
+	used := map[string]bool{}
+	if body != nil {
+		ast.Inspect(body, func(node ast.Node) bool {
+			if identifier, ok := node.(*ast.Ident); ok {
+				used[identifier.Name] = true
+			}
+			return true
+		})
+	}
+	for index := range fields {
+		transformed, ok := transformPolymorphicTypeNode(fields[index].typeNode, context)
+		if !ok || transformed == nil {
+			result, _ := directTypeText(fields[index].typeNode)
+			return nil, fmt.Errorf("invalid exception boundary result type %q", result)
+		}
+		fields[index].typeNode = transformed
+		if fields[index].name == "" || fields[index].name == "_" {
+			fields[index].name = nextExceptionName(used, fmt.Sprintf("__gppBoundaryResult%d", index))
+		} else {
+			used[fields[index].name] = true
+		}
+	}
+	if len(fields) == 0 {
+		return lowerExceptionVoidBoundaryNode(body, used)
+	}
+	return lowerExceptionResultBoundaryNode(body, fields, used)
+}
+
+// transformPolymorphicTypeNode is the typed counterpart of
+// transformPolymorphicType. It is deliberately limited to type forms whose
+// semantics are known here; opaque token-preserving types remain on the
+// compatibility path instead of being rendered and reparsed.
+func transformPolymorphicTypeNode(typeNode TypeNode, context constructorContext) (TypeNode, bool) {
+	switch value := typeNode.(type) {
+	case nil:
+		return nil, true
+	case *NamedType:
+		name := strings.Join(value.Parts, ".")
+		target, ok := context.Targets[name]
+		if !ok || !classHasDerived(target.Class, target.Classes) {
+			return typeNode, true
+		}
+		interfaceName := dispatchInterfaceType(target)
+		return &NamedType{Parts: strings.Split(interfaceName, ".")}, true
+	case *PointerType:
+		// Match transformPolymorphicType: pointer declarations already carry
+		// their intended representation and are not replaced by an interface.
+		return typeNode, true
+	case *TupleType:
+		elements := make([]TypeNode, len(value.Elements))
+		for index, element := range value.Elements {
+			transformed, ok := transformPolymorphicTypeNode(element, context)
+			if !ok || transformed == nil {
+				return nil, false
+			}
+			elements[index] = transformed
+		}
+		return &TupleType{Elements: elements, SpanValue: value.SpanValue}, true
+	case *TokenType:
+		return nil, false
+	default:
+		return typeNode, true
+	}
+}
+
+func lowerExceptionVoidBoundaryNode(body *ast.BlockStmt, used map[string]bool) (*ast.BlockStmt, error) {
+	returned := ast.NewIdent(nextExceptionName(used, "__gppBoundaryReturned"))
+	recovered := ast.NewIdent(nextExceptionName(used, "__gppBoundaryRecovered"))
+	isReturned := ast.NewIdent(nextExceptionName(used, "__gppIsReturned"))
+	deferBody := &ast.BlockStmt{List: []ast.Stmt{
+		&ast.AssignStmt{Lhs: []ast.Expr{recovered}, Tok: token.DEFINE, Rhs: []ast.Expr{call(ast.NewIdent("recover"))}},
+		&ast.IfStmt{Cond: &ast.BinaryExpr{X: recovered, Op: token.NEQ, Y: ast.NewIdent("nil")}, Body: &ast.BlockStmt{List: []ast.Stmt{
+			&ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent("_"), isReturned}, Tok: token.DEFINE, Rhs: []ast.Expr{&ast.TypeAssertExpr{X: recovered, Type: ast.NewIdent("__gppExceptionReturn")}}},
+			&ast.IfStmt{Cond: &ast.UnaryExpr{Op: token.NOT, X: isReturned}, Body: &ast.BlockStmt{List: []ast.Stmt{
+				&ast.ExprStmt{X: call(ast.NewIdent("panic"), recovered)},
+			}}},
+			&ast.AssignStmt{Lhs: []ast.Expr{returned}, Tok: token.ASSIGN, Rhs: []ast.Expr{ast.NewIdent("true")}},
+		}}},
+	}}
+	deferStatement := &ast.DeferStmt{Call: &ast.CallExpr{Fun: &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: deferBody}}}
+	functionBody := &ast.BlockStmt{List: append([]ast.Stmt{deferStatement}, body.List...)}
+	run := &ast.ExprStmt{X: call(&ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: functionBody})}
+	return &ast.BlockStmt{List: []ast.Stmt{
+		&ast.DeclStmt{Decl: &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{Names: []*ast.Ident{returned}, Type: ast.NewIdent("bool")}}}},
+		run,
+		&ast.IfStmt{Cond: returned, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{}}}},
+	}}, nil
+}
+
+func lowerExceptionResultBoundaryNode(body *ast.BlockStmt, fields []exceptionResultField, used map[string]bool) (*ast.BlockStmt, error) {
+	resultFields := &ast.FieldList{}
+	fieldTypes := make([]ast.Expr, len(fields))
+	for index, field := range fields {
+		typeExpr, err := goTypeExpr(field.typeNode)
+		if err != nil {
+			return nil, err
+		}
+		fieldTypes[index] = typeExpr
+		resultFields.List = append(resultFields.List, &ast.Field{Names: []*ast.Ident{ast.NewIdent(field.name)}, Type: typeExpr})
+	}
+	recovered := ast.NewIdent(nextExceptionName(used, "__gppBoundaryRecovered"))
+	deferStatements := []ast.Stmt{
+		&ast.AssignStmt{Lhs: []ast.Expr{recovered}, Tok: token.DEFINE, Rhs: []ast.Expr{call(ast.NewIdent("recover"))}},
+	}
+	returned := ast.NewIdent(nextExceptionName(used, "__gppReturned"))
+	isReturned := ast.NewIdent(nextExceptionName(used, "__gppIsReturned"))
+	returnBody := []ast.Stmt{
+		&ast.IfStmt{Cond: &ast.BinaryExpr{X: call(ast.NewIdent("len"), selector(returned, "values")), Op: token.EQL, Y: &ast.BasicLit{Kind: token.INT, Value: "0"}}, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{}}}},
+	}
+	for index, field := range fields {
+		returnBody = append(returnBody, &ast.AssignStmt{
+			Lhs: []ast.Expr{ast.NewIdent(field.name)}, Tok: token.ASSIGN,
+			Rhs: []ast.Expr{&ast.TypeAssertExpr{X: &ast.IndexExpr{X: selector(returned, "values"), Index: &ast.BasicLit{Kind: token.INT, Value: fmt.Sprintf("%d", index)}}, Type: fieldTypes[index]}},
+		})
+	}
+	returnBody = append(returnBody, &ast.ReturnStmt{})
+	isErrorBoundary := exceptionResultFieldType(fields[len(fields)-1]) == "error"
+	if isErrorBoundary {
+		thrown := ast.NewIdent(nextExceptionName(used, "__gppBoundaryThrown"))
+		isThrown := ast.NewIdent(nextExceptionName(used, "__gppBoundaryIsThrown"))
+		thrownBody := []ast.Stmt{
+			&ast.AssignStmt{Lhs: []ast.Expr{thrown, isThrown}, Tok: token.DEFINE, Rhs: []ast.Expr{&ast.TypeAssertExpr{X: recovered, Type: ast.NewIdent("__gppThrownError")}}},
+			&ast.IfStmt{Cond: &ast.UnaryExpr{Op: token.NOT, X: isThrown}, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ExprStmt{X: call(ast.NewIdent("panic"), recovered)}}}},
+		}
+		for index, field := range fields[:len(fields)-1] {
+			zero := ast.NewIdent(nextExceptionName(used, fmt.Sprintf("__gppBoundaryZero%d", index)))
+			thrownBody = append(thrownBody,
+				&ast.DeclStmt{Decl: &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{Names: []*ast.Ident{zero}, Type: fieldTypes[index]}}}},
+				&ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent(field.name)}, Tok: token.ASSIGN, Rhs: []ast.Expr{zero}},
+			)
+		}
+		thrownBody = append(thrownBody, &ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent(fields[len(fields)-1].name)}, Tok: token.ASSIGN, Rhs: []ast.Expr{selector(thrown, "err")}})
+		deferStatements = append(deferStatements, &ast.IfStmt{Cond: &ast.BinaryExpr{X: recovered, Op: token.NEQ, Y: ast.NewIdent("nil")}, Body: &ast.BlockStmt{List: append([]ast.Stmt{
+			&ast.AssignStmt{Lhs: []ast.Expr{returned, isReturned}, Tok: token.DEFINE, Rhs: []ast.Expr{&ast.TypeAssertExpr{X: recovered, Type: ast.NewIdent("__gppExceptionReturn")}}},
+			&ast.IfStmt{Cond: isReturned, Body: &ast.BlockStmt{List: returnBody}},
+		}, thrownBody...)}})
+	} else {
+		deferStatements = append(deferStatements, &ast.IfStmt{Cond: &ast.BinaryExpr{X: recovered, Op: token.NEQ, Y: ast.NewIdent("nil")}, Body: &ast.BlockStmt{List: []ast.Stmt{
+			&ast.AssignStmt{Lhs: []ast.Expr{returned, isReturned}, Tok: token.DEFINE, Rhs: []ast.Expr{&ast.TypeAssertExpr{X: recovered, Type: ast.NewIdent("__gppExceptionReturn")}}},
+			&ast.IfStmt{Cond: &ast.UnaryExpr{Op: token.NOT, X: isReturned}, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ExprStmt{X: call(ast.NewIdent("panic"), recovered)}}}},
+			&ast.IfStmt{Cond: isReturned, Body: &ast.BlockStmt{List: returnBody}},
+		}}})
+	}
+	deferStmt := &ast.DeferStmt{Call: &ast.CallExpr{Fun: &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: &ast.BlockStmt{List: deferStatements}}}}
+	closureBody := &ast.BlockStmt{List: append([]ast.Stmt{deferStmt}, append(body.List, &ast.ReturnStmt{})...)}
+	closure := &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}, Results: resultFields}, Body: closureBody}
+	return &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{Results: []ast.Expr{&ast.CallExpr{Fun: closure}}}}}, nil
+}
+
+func lowerExceptionGoStmtNode(statement Stmt, context constructorContext, rethrowName string) ([]ast.Stmt, error) {
+	if statement == nil {
+		return nil, nil
+	}
+	switch value := statement.(type) {
+	case *TryStmt:
+		lowered, handled, err := lowerASTTryDirectNode(value, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			compatibility, compatibilityErr := lowerASTTryCompatibilityNode(value, context, rethrowName)
+			if compatibilityErr != nil {
+				return nil, compatibilityErr
+			}
+			lowered = compatibility
+		}
+		return []ast.Stmt{lowered}, nil
+	case *IfStmt:
+		condition, err := goExprNode(value.Condition)
+		if err != nil {
+			return nil, err
+		}
+		body, err := lowerExceptionGoBlockNode(value.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		result := &ast.IfStmt{Cond: condition, Body: body}
+		if value.Else != nil {
+			result.Else, err = lowerExceptionGoBlockNode(value.Else, context, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.ElseIf != nil {
+			nested, nestedErr := lowerExceptionGoStmtNode(value.ElseIf, context, rethrowName)
+			if nestedErr != nil || len(nested) != 1 {
+				if nestedErr != nil {
+					return nil, nestedErr
+				}
+				return nil, fmt.Errorf("unsupported else-if")
+			}
+			result.Else = nested[0]
+		}
+		return []ast.Stmt{result}, nil
+	case *ForStmt:
+		body, err := lowerExceptionGoBlockNode(value.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		if value.RangeExpr != nil {
+			key := make([]ast.Expr, 0, len(value.RangeKey))
+			for _, item := range value.RangeKey {
+				lowered, itemErr := lowerExceptionExprNode(item, context)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				keyExpr, itemErr := goExprNode(lowered)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				key = append(key, keyExpr)
+			}
+			rangeExpr, err := goExprNode(value.RangeExpr)
+			if err != nil {
+				return nil, err
+			}
+			var keyExpr, valueExpr ast.Expr
+			if len(key) > 0 {
+				keyExpr = key[0]
+			}
+			if len(key) > 1 {
+				valueExpr = key[1]
+			}
+			rangeToken := token.DEFINE
+			if value.RangeOperator == "=" {
+				rangeToken = token.ASSIGN
+			}
+			return []ast.Stmt{&ast.RangeStmt{Key: keyExpr, Value: valueExpr, Tok: rangeToken, X: rangeExpr, Body: body}}, nil
+		}
+		result := &ast.ForStmt{Body: body}
+		if value.Condition != nil {
+			result.Cond, err = goExprNode(value.Condition)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Init != nil {
+			result.Init, err = goSimpleStmt(value.Init, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Post != nil {
+			result.Post, err = goSimpleStmt(value.Post, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return []ast.Stmt{result}, nil
+	case *SwitchStmt:
+		if value.Select {
+			selectStmt, selectErr := goSelectStmtFromBlock(value.Body, func(block *BlockStmt) (*ast.BlockStmt, error) {
+				return lowerExceptionGoBlockNode(block, context, rethrowName)
+			})
+			if selectErr != nil {
+				return nil, selectErr
+			}
+			return []ast.Stmt{selectStmt}, nil
+		}
+		if isTypeSwitchAssertion(value.Tag) || isTypeSwitchAssignment(value.Init) {
+			body, err := lowerExceptionGoBlockNode(value.Body, context, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+			var assignment ast.Stmt
+			if value.Init != nil {
+				init, lowerErr := lowerExceptionExprNode(value.Init, context)
+				if lowerErr != nil {
+					return nil, lowerErr
+				}
+				assignment, err = goSimpleStmt(init, rethrowName)
+			} else {
+				tag, lowerErr := lowerExceptionExprNode(value.Tag, context)
+				if lowerErr != nil {
+					return nil, lowerErr
+				}
+				var expression ast.Expr
+				expression, err = goExprNode(tag)
+				if err == nil {
+					assignment = &ast.ExprStmt{X: expression}
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+			return []ast.Stmt{&ast.TypeSwitchStmt{Assign: assignment, Body: body}}, nil
+		}
+		body, err := lowerExceptionGoBlockNode(value.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		result := &ast.SwitchStmt{Body: body}
+		if value.Init != nil {
+			result.Init, err = goSimpleStmt(value.Init, rethrowName)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if value.Tag != nil {
+			result.Tag, err = goExprNode(value.Tag)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return []ast.Stmt{result}, nil
+	case *CaseStmt:
+		body, err := lowerExceptionGoBlockNode(value.Clause.Body, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		var expressions []ast.Expr
+		for _, expression := range value.Clause.Expressions {
+			lowered, expressionErr := goExprNode(expression)
+			if expressionErr != nil {
+				return nil, expressionErr
+			}
+			expressions = append(expressions, lowered)
+		}
+		return []ast.Stmt{&ast.CaseClause{List: expressions, Body: body.List}}, nil
+	case *BlockStmt:
+		body, err := lowerExceptionGoBlockNode(value, context, rethrowName)
+		if err != nil {
+			return nil, err
+		}
+		return []ast.Stmt{body}, nil
+	default:
+		if err := lowerExceptionStmtNodes(statement, context); err != nil {
+			return nil, err
+		}
+		return goExceptionStmtNode(statement, rethrowName)
+	}
+}
+
+func lowerExceptionBlockNodes(block *BlockStmt, context constructorContext) error {
+	if block == nil {
+		return nil
+	}
+	for _, statement := range block.Statements {
+		if err := lowerExceptionStmtNodes(statement, context); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lowerExceptionStmtNodes(statement Stmt, context constructorContext) error {
+	if statement == nil {
+		return nil
+	}
+	lower := func(expression ExprNode) (ExprNode, error) { return lowerExceptionExprNode(expression, context) }
+	switch value := statement.(type) {
+	case *ExpressionStmt:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return err
+	case *DeclarationStmt:
+		for index := range value.Values {
+			lowered, err := lower(value.Values[index])
+			if err != nil {
+				return err
+			}
+			value.Values[index] = lowered
+		}
+		return nil
+	case *AssignmentStmt:
+		for index := range value.Left {
+			lowered, err := lower(value.Left[index])
+			if err != nil {
+				return err
+			}
+			value.Left[index] = lowered
+		}
+		for index := range value.Right {
+			lowered, err := lower(value.Right[index])
+			if err != nil {
+				return err
+			}
+			value.Right[index] = lowered
+		}
+		return nil
+	case *ReturnStmt:
+		for index := range value.Values {
+			lowered, err := lower(value.Values[index])
+			if err != nil {
+				return err
+			}
+			value.Values[index] = lowered
+		}
+		return nil
+	case *ThrowStmt:
+		var err error
+		value.Value, err = lower(value.Value)
+		return err
+	case *DeferStmt:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return err
+	case *GoStmt:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return err
+	case *SendStmt:
+		var err error
+		value.Channel, err = lower(value.Channel)
+		if err != nil {
+			return err
+		}
+		value.Value, err = lower(value.Value)
+		return err
+	case *IncDecStmt:
+		var err error
+		value.Expression, err = lower(value.Expression)
+		return err
+	case *IfStmt:
+		var err error
+		value.Init, err = lower(value.Init)
+		if err != nil {
+			return err
+		}
+		value.Condition, err = lower(value.Condition)
+		if err != nil {
+			return err
+		}
+		if err = lowerExceptionBlockNodes(value.Body, context); err != nil {
+			return err
+		}
+		if err = lowerExceptionBlockNodes(value.Else, context); err != nil {
+			return err
+		}
+		if value.ElseIf != nil {
+			return lowerExceptionStmtNodes(value.ElseIf, context)
+		}
+		return nil
+	case *ForStmt:
+		var err error
+		value.Init, err = lower(value.Init)
+		if err != nil {
+			return err
+		}
+		value.Condition, err = lower(value.Condition)
+		if err != nil {
+			return err
+		}
+		value.Post, err = lower(value.Post)
+		if err != nil {
+			return err
+		}
+		if len(value.RangeKey) == 1 && value.RangeKey[0] != nil {
+			kind := introspectionExpressionKindNode(value.RangeExpr, context.CurrentIntrospectionKinds, context, context.CurrentParameterTypes)
+			enumElement := enumRangeElementTypeNode(value.RangeExpr, context, context.CurrentParameterTypes) != ""
+			if kind == introspectionFields || kind == introspectionMethods || kind == introspectionParents || kind == introspectionParameters || enumElement {
+				value.RangeKey = append([]ExprNode{&NameExpr{Name: "_"}}, value.RangeKey...)
+			}
+		}
+		value.RangeExpr, err = lower(value.RangeExpr)
+		if err != nil {
+			return err
+		}
+		return lowerExceptionBlockNodes(value.Body, context)
+	case *SwitchStmt:
+		var err error
+		value.Init, err = lower(value.Init)
+		if err != nil {
+			return err
+		}
+		value.Tag, err = lower(value.Tag)
+		if err != nil {
+			return err
+		}
+		return lowerExceptionBlockNodes(value.Body, context)
+	case *CaseStmt:
+		for index := range value.Clause.Expressions {
+			lowered, err := lower(value.Clause.Expressions[index])
+			if err != nil {
+				return err
+			}
+			value.Clause.Expressions[index] = lowered
+		}
+		return lowerExceptionBlockNodes(value.Clause.Body, context)
+	case *BlockStmt:
+		return lowerExceptionBlockNodes(value, context)
+	case *TryStmt:
+		if err := lowerExceptionBlockNodes(value.Body, context); err != nil {
+			return err
+		}
+		for _, clause := range value.Catches {
+			if err := lowerExceptionBlockNodes(clause.Body, context); err != nil {
+				return err
+			}
+		}
+		return lowerExceptionBlockNodes(value.Finally, context)
+	default:
+		return nil
+	}
+}
+
+func lowerExceptionExprNode(expression ExprNode, context constructorContext) (ExprNode, error) {
+	if expression == nil {
+		return nil, nil
+	}
+	if callExpression, ok := expression.(*CallExpr); ok {
+		if lowered, handled, err := lowerRecordCallExprNode(callExpression, context); handled {
+			return lowered, err
+		}
+		if lowered, handled, err := constructorExprNode(callExpression, context); handled {
+			return lowered, err
+		}
+		if lowered, handled, err := lowerOverloadCallNode(callExpression, context); handled {
+			if err != nil {
+				return nil, err
+			}
+			return lowerExceptionExprNode(lowered, context)
+		}
+	}
+	switch value := expression.(type) {
+	case *UnaryExpr:
+		lowered, err := lowerExceptionExprNode(value.Operand, context)
+		value.Operand = lowered
+		return value, err
+	case *BinaryExpr:
+		if value.Operator == "??" {
+			return lowerExceptionCoalesceExprNode(value, context)
+		}
+		left, err := lowerExceptionExprNode(value.Left, context)
+		if err != nil {
+			return nil, err
+		}
+		right, err := lowerExceptionExprNode(value.Right, context)
+		value.Left, value.Right = left, right
+		return value, err
+	case *AssignmentExpr:
+		for index := range value.Left {
+			lowered, err := lowerExceptionExprNode(value.Left[index], context)
+			if err != nil {
+				return nil, err
+			}
+			value.Left[index] = lowered
+		}
+		for index := range value.Right {
+			lowered, err := lowerExceptionExprNode(value.Right[index], context)
+			if err != nil {
+				return nil, err
+			}
+			value.Right[index] = lowered
+		}
+		return value, nil
+	case *SelectorExpr:
+		if value.Safe {
+			return lowerSafeAccessExprNode(value, nil, context)
+		}
+		if lowered, handled, err := lowerEnumSelectorNode(value, context); handled {
+			return lowered, err
+		}
+		if lowered, handled, err := lowerIntrospectionClassExprNode(value, context); handled {
+			return lowered, err
+		}
+		lowered, err := lowerExceptionExprNode(value.Receiver, context)
+		if err != nil {
+			return nil, err
+		}
+		value.Receiver = lowered
+		if introspection, handled, err := lowerIntrospectionMetadataSelectorNode(value, context); handled {
+			return introspection, err
+		}
+		return value, err
+	case *IndexExpr:
+		left, err := lowerExceptionExprNode(value.Receiver, context)
+		if err != nil {
+			return nil, err
+		}
+		right, err := lowerExceptionExprNode(value.Index, context)
+		value.Receiver, value.Index = left, right
+		return value, err
+	case *IndexListExpr:
+		lowered, err := lowerExceptionExprNode(value.Receiver, context)
+		if err != nil {
+			return nil, err
+		}
+		value.Receiver = lowered
+		for index := range value.Indices {
+			value.Indices[index], err = lowerExceptionExprNode(value.Indices[index], context)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return value, nil
+	case *CallExpr:
+		if selector, ok := value.Callee.(*SelectorExpr); ok && selector.Safe {
+			return lowerSafeAccessExprNode(selector, value, context)
+		}
+		if lowered, handled := lowerStaticTemplateCallNode(value, context); handled {
+			return lowered, nil
+		}
+		if lowered, handled, err := lowerExceptionExtensionCallNode(value, context); handled {
+			return lowered, err
+		}
+		if lowered, handled, err := lowerCallableCallNode(value, context); handled {
+			if err != nil {
+				return nil, err
+			}
+			return lowerExceptionExprNode(lowered, context)
+		}
+		lowered, err := lowerExceptionExprNode(value.Callee, context)
+		if err != nil {
+			return nil, err
+		}
+		value.Callee = lowered
+		for index := range value.Arguments {
+			if lambda, ok := value.Arguments[index].Value.(*LambdaExpr); ok {
+				value.Arguments[index].Value, err = lowerLambdaExprNode(lambda, context, lambdaFunctionTypesForCall(value, index, context))
+			} else {
+				value.Arguments[index].Value, err = lowerExceptionExprNode(value.Arguments[index].Value, context)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		lowerIntrospectionCallArguments(value, context)
+		return value, nil
+	case *ParenthesizedExpr:
+		lowered, err := lowerExceptionExprNode(value.Inner, context)
+		value.Inner = lowered
+		return value, err
+	case *TypeAssertExpr:
+		lowered, err := lowerExceptionExprNode(value.Expression, context)
+		value.Expression = lowered
+		return value, err
+	case *InterpolatedStringExpr:
+		return lowerInterpolatedStringExprNode(value, context)
+	case *CompositeLiteralExpr:
+		for index := range value.Elements {
+			var err error
+			value.Elements[index].Key, err = lowerExceptionExprNode(value.Elements[index].Key, context)
+			if err != nil {
+				return nil, err
+			}
+			value.Elements[index].Value, err = lowerExceptionExprNode(value.Elements[index].Value, context)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := lowerRecordCollectionTypeNode(value, context); err != nil {
+			return nil, err
+		}
+		return value, nil
+	case *FunctionLiteralExpr:
+		if err := lowerExceptionBlockNodes(value.Body, context); err != nil {
+			return nil, err
+		}
+		return value, nil
+	case *LambdaExpr:
+		return lowerLambdaExprNode(value, context, nil)
+	default:
+		return expression, nil
+	}
+}
+
+// lowerRecordCollectionTypeNode resolves []record and map[K]record directly
+// on the expression AST.  Collection literals are the one record form where
+// the element shape is inferred from their children; leaving the TypeNode as
+// `record` would let direct Go AST emission produce invalid Go source.
+func lowerRecordCollectionTypeNode(literal *CompositeLiteralExpr, context constructorContext) error {
+	if literal == nil || literal.Type == nil || context.Records == nil {
+		return nil
+	}
+	var element *TypeNode
+	switch collection := literal.Type.(type) {
+	case *SliceType:
+		element = &collection.Element
+	case *MapType:
+		element = &collection.Value
+	default:
+		return nil
+	}
+	named, ok := (*element).(*NamedType)
+	if !ok || len(named.Parts) != 1 || named.Parts[0] != "record" {
+		return nil
+	}
+	for _, item := range literal.Elements {
+		candidate := inferRecordExprType(item.Value, context.RecordValueTypes, context)
+		if !strings.HasPrefix(candidate, "__gpp_record_") {
+			continue
+		}
+		if context.Records.recordByGoName(candidate) == nil {
+			continue
+		}
+		*element = &NamedType{Parts: []string{candidate}}
+		return nil
+	}
+	return fmt.Errorf("cannot infer record collection element type")
+}
+
+// lowerRecordCallExprNode lowers the Go++ record(name: value, ...) form to a
+// generated structural composite literal.  Keeping this conversion on the
+// expression AST means direct function/method emission does not need to render
+// the call to source merely to infer the record shape.
+func lowerRecordCallExprNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
+	if call == nil || context.Records == nil {
+		return nil, false, nil
+	}
+	name, ok := call.Callee.(*NameExpr)
+	if !ok || name.Name != "record" {
+		return nil, false, nil
+	}
+	valueTypes := context.RecordValueTypes
+	if valueTypes == nil {
+		valueTypes = context.CurrentParameterTypes
+	}
+	fields := make([]recordFieldType, 0, len(call.Arguments))
+	elements := make([]CompositeElement, 0, len(call.Arguments))
+	seen := map[string]bool{}
+	for index, argument := range call.Arguments {
+		if argument.Name == "" || !isIdentifier(argument.Name) {
+			return nil, true, fmt.Errorf("record literal argument %d must be named", index+1)
+		}
+		if seen[argument.Name] {
+			return nil, true, fmt.Errorf("record literal repeats field %s", argument.Name)
+		}
+		seen[argument.Name] = true
+		var value ExprNode
+		var err error
+		if context.RecordOnlyLowering {
+			value, err = lowerRecordOnlyExpr(argument.Value, context)
+		} else {
+			value, err = lowerExceptionExprNode(argument.Value, context)
+		}
+		if err != nil {
+			return nil, true, err
+		}
+		fieldType := strings.TrimSpace(inferRecordExprType(value, valueTypes, context))
+		if fieldType == "" {
+			return nil, true, fmt.Errorf("cannot infer type of record field %s", argument.Name)
+		}
+		fields = append(fields, recordFieldType{Name: argument.Name, Type: fieldType})
+		elements = append(elements, CompositeElement{
+			Key:   &NameExpr{Name: argument.Name},
+			Value: value,
+		})
+	}
+	shape := context.Records.register(fields)
+	return &CompositeLiteralExpr{
+		Type:     &NamedType{Parts: []string{shape.GoName}},
+		Elements: elements,
+	}, true, nil
+}
+
+// lowerExceptionExtensionCallNode resolves an extension call entirely on the
+// expression tree. In particular, defaults, named arguments, variadics, and
+// explicit type arguments must not be rendered to source and reparsed just to
+// call the generated extension function.
+func lowerExceptionExtensionCallNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
+	receiver, methodName, typeArguments, ok := extensionASTCallParts(call)
+	if !ok || len(context.Extensions) == 0 {
+		return nil, false, nil
+	}
+	actualType := extensionASTStaticType(receiver, context, context.CurrentParameterTypes)
+	candidates := applicableExtensionASTs(methodName, actualType, call.Arguments, typeArguments, context.CurrentParameterTypes, context)
+	if len(candidates) == 0 || realMethodAppliesAST(actualType, methodName, call.Arguments, context) {
+		return nil, false, nil
+	}
+	if len(candidates) > 1 {
+		return nil, true, fmt.Errorf("ambiguous extension method %s for %s", methodName, actualType)
+	}
+	candidate := candidates[0]
+	parameters, err := parameterInfosForMethod(candidate.Method.Method)
+	if err != nil {
+		return nil, true, err
+	}
+	loweredReceiver, err := lowerExceptionExprNode(receiver, context)
+	if err != nil {
+		return nil, true, err
+	}
+	if extensionNeedsAddress(candidate.Method.ReceiverType, actualType) {
+		loweredReceiver = &UnaryExpr{Operator: "&", Operand: loweredReceiver}
+	}
+	arguments := []CallArg{{Value: loweredReceiver}}
+	methodArguments, resolved, resolveErr := lowerExtensionArgumentNodes(call.Arguments, parameters, context)
+	if resolveErr != nil {
+		return nil, true, resolveErr
+	}
+	if !resolved {
+		return nil, false, nil
+	}
+	arguments = append(arguments, methodArguments...)
+
+	callee := ExprNode(&NameExpr{Name: candidate.Method.GoName})
+	if candidate.Method.Qualifier != "" {
+		parts := strings.Split(candidate.Method.Qualifier, ".")
+		callee = &NameExpr{Name: parts[0]}
+		for _, part := range parts[1:] {
+			callee = &SelectorExpr{Receiver: callee, Name: part}
+		}
+		callee = &SelectorExpr{Receiver: callee, Name: candidate.Method.GoName}
+	}
+	if len(typeArguments) == 1 {
+		callee = &IndexExpr{Receiver: callee, Index: &TypeExpr{Type: typeArguments[0]}}
+	} else if len(typeArguments) > 1 {
+		indices := make([]ExprNode, len(typeArguments))
+		for index, typeArgument := range typeArguments {
+			indices[index] = &TypeExpr{Type: typeArgument}
+		}
+		callee = &IndexListExpr{Receiver: callee, Indices: indices}
+	}
+	return &CallExpr{Callee: callee, Arguments: arguments}, true, nil
+}
+
+func lowerExtensionArgumentNodes(args []CallArg, parameters []parameterInfo, context constructorContext) ([]CallArg, bool, error) {
+	if len(parameters) == 0 {
+		return nil, len(args) == 0, nil
+	}
+	variadic := strings.HasPrefix(strings.TrimSpace(parameters[len(parameters)-1].typeText()), "...")
+	fixedCount := len(parameters)
+	if variadic {
+		fixedCount--
+	}
+	hasNamed := false
+	for _, argument := range args {
+		if argument.Name != "" {
+			hasNamed = true
+			break
+		}
+	}
+	if hasNamed {
+		for _, argument := range args {
+			if argument.Name == "" {
+				return nil, true, fmt.Errorf("extension call mixes positional and named arguments")
+			}
+		}
+	}
+
+	values := make([]ExprNode, len(parameters))
+	provided := make([]bool, len(parameters))
+	if hasNamed {
+		for _, argument := range args {
+			index := -1
+			for parameterIndex, parameter := range parameters {
+				if parameter.Name == argument.Name {
+					index = parameterIndex
+					break
+				}
+			}
+			if index < 0 {
+				return nil, true, fmt.Errorf("extension call has unknown named argument %s", argument.Name)
+			}
+			if provided[index] {
+				return nil, true, fmt.Errorf("extension call repeats named argument %s", argument.Name)
+			}
+			provided[index] = true
+			values[index] = argument.Value
+		}
+	} else {
+		if !variadic && len(args) > len(parameters) {
+			return nil, false, nil
+		}
+		if variadic && len(args) < fixedCount {
+			return nil, false, nil
+		}
+		for index, argument := range args {
+			if index < fixedCount || !variadic {
+				values[index] = argument.Value
+				provided[index] = true
+				continue
+			}
+			// Variadic arguments are appended below; keeping them in `args`
+			// avoids pretending the parameter has one fixed value.
+		}
+	}
+	for index := 0; index < fixedCount; index++ {
+		if provided[index] {
+			continue
+		}
+		if !parameters[index].HasDefault || parameters[index].DefaultAST == nil {
+			return nil, false, nil
+		}
+		values[index] = parameters[index].DefaultAST
+	}
+	if !variadic {
+		for index := fixedCount; index < len(parameters); index++ {
+			if provided[index] {
+				continue
+			}
+			if !parameters[index].HasDefault || parameters[index].DefaultAST == nil {
+				return nil, false, nil
+			}
+			values[index] = parameters[index].DefaultAST
+		}
+	}
+
+	result := make([]CallArg, 0, len(args)+len(parameters))
+	lowerValue := func(expression ExprNode) (ExprNode, error) {
+		return lowerExceptionExprNode(expression, context)
+	}
+	for index := 0; index < fixedCount; index++ {
+		lowered, err := lowerValue(values[index])
+		if err != nil {
+			return nil, true, err
+		}
+		result = append(result, CallArg{Value: lowered})
+	}
+	if variadic {
+		start := fixedCount
+		if hasNamed {
+			// A named variadic parameter is one slice argument, not a list of
+			// individual values. It is valid only when supplied explicitly.
+			if provided[fixedCount] {
+				lowered, err := lowerValue(values[fixedCount])
+				if err != nil {
+					return nil, true, err
+				}
+				result = append(result, CallArg{Value: lowered})
+			}
+		} else {
+			for _, argument := range args[start:] {
+				lowered, err := lowerValue(argument.Value)
+				if err != nil {
+					return nil, true, err
+				}
+				result = append(result, CallArg{Value: lowered})
+			}
+		}
+		return result, true, nil
+	}
+	for index := fixedCount; index < len(parameters); index++ {
+		if !provided[index] {
+			continue
+		}
+		lowered, err := lowerValue(values[index])
+		if err != nil {
+			return nil, true, err
+		}
+		result = append(result, CallArg{Value: lowered})
+	}
+	return result, true, nil
+}
+
+func lowerExceptionCoalesceExprNode(expression *BinaryExpr, context constructorContext) (ExprNode, error) {
+	if expression == nil || expression.Operator != "??" {
+		return expression, nil
+	}
+	return lowerCoalesceExpressionNode(expression, context, context.CurrentParameterTypes)
+}
+
+func exceptionDirectSafe(statement *TryStmt, context constructorContext) bool {
+	if statement == nil || !exceptionDirectSafeBlock(statement.Body, context) {
+		return false
+	}
+	for _, clause := range statement.Catches {
+		if !exceptionDirectSafeBlock(clause.Body, context) {
+			return false
+		}
+	}
+	return statement.Finally == nil || exceptionDirectSafeBlock(statement.Finally, context)
+}
+
+func exceptionDirectSafeBlock(block *BlockStmt, context constructorContext) bool {
+	if block == nil {
+		return true
+	}
+	for _, statement := range block.Statements {
+		switch value := statement.(type) {
+		case *ThrowStmt:
+			if !exceptionDirectSafeThrowExpr(value.Value, context) {
+				return false
+			}
+			if validateThrowExpressionNode(value.Value, context) != nil {
+				return false
+			}
+		case *ReturnStmt:
+			for _, expression := range value.Values {
+				if !exceptionDirectSafeExpr(expression, context) {
+					return false
+				}
+			}
+		case *BlockStmt:
+			if !exceptionDirectSafeBlock(value, context) {
+				return false
+			}
+		case *ExpressionStmt:
+			if !exceptionDirectSafeExpr(value.Expression, context) {
+				return false
+			}
+		case *DeclarationStmt:
+			for _, expression := range value.Values {
+				if !exceptionDirectSafeExpr(expression, context) {
+					return false
+				}
+			}
+		case *AssignmentStmt:
+			for _, expression := range append(append([]ExprNode{}, value.Left...), value.Right...) {
+				if !exceptionDirectSafeExpr(expression, context) {
+					return false
+				}
+			}
+		case *DeferStmt:
+			if !exceptionDirectSafeExpr(value.Expression, context) {
+				return false
+			}
+		case *GoStmt:
+			if !exceptionDirectSafeExpr(value.Expression, context) {
+				return false
+			}
+		case *SendStmt:
+			if !exceptionDirectSafeExpr(value.Channel, context) || !exceptionDirectSafeExpr(value.Value, context) {
+				return false
+			}
+		case *IncDecStmt:
+			if !exceptionDirectSafeExpr(value.Expression, context) {
+				return false
+			}
+		case *IfStmt:
+			if !exceptionDirectSafeExpr(value.Init, context) || !exceptionDirectSafeExpr(value.Condition, context) || !exceptionDirectSafeBlock(value.Body, context) || !exceptionDirectSafeBlock(value.Else, context) {
+				return false
+			}
+			if value.ElseIf != nil && !exceptionDirectSafeBlock(&BlockStmt{Statements: []Stmt{value.ElseIf}}, context) {
+				return false
+			}
+		case *ForStmt:
+			if !exceptionDirectSafeExpr(value.Init, context) || !exceptionDirectSafeExpr(value.Condition, context) || !exceptionDirectSafeExpr(value.Post, context) || !exceptionDirectSafeExpr(value.RangeExpr, context) || !exceptionDirectSafeBlock(value.Body, context) {
+				return false
+			}
+		case *SwitchStmt:
+			if !exceptionDirectSafeExpr(value.Init, context) || !exceptionDirectSafeExpr(value.Tag, context) || !exceptionDirectSafeBlock(value.Body, context) {
+				return false
+			}
+		case *CaseStmt:
+			for _, expression := range value.Clause.Expressions {
+				if !exceptionDirectSafeExpr(expression, context) {
+					return false
+				}
+			}
+			if !exceptionDirectSafeBlock(value.Clause.Body, context) {
+				return false
+			}
+		case *TryStmt:
+			if !exceptionDirectSafe(value, context) {
+				return false
+			}
+		case *TypeDeclarationStmt:
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func exceptionDirectSafeExpr(expression ExprNode, context constructorContext) bool {
+	lowered, err := lowerExceptionExprNode(expression, context)
+	return err == nil && directExpressionSafe(lowered, context)
+}
+
+func exceptionDirectSafeThrowExpr(expression ExprNode, context constructorContext) bool {
+	lowered, err := lowerExceptionExprNode(expression, context)
+	if err != nil {
+		return false
+	}
+	if callExpression, ok := lowered.(*CallExpr); ok {
+		if result, found := promotedCallForExpr(callExpression, context, context.CurrentParameterTypes); found && result.trailingError {
+			// A throw expression may be the single error result itself. It must
+			// not be unwrapped before __gppThrow receives it.
+			if len(result.types) != 1 || !isErrorLikeType(result.types[0], context) {
+				return false
+			}
+			if !directExpressionSafe(callExpression.Callee, context) {
+				return false
+			}
+			for _, argument := range callExpression.Arguments {
+				if argument.Name != "" || !directExpressionSafe(argument.Value, context) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return directExpressionSafe(lowered, context)
+}
+
+func validateFinallyControlTransfersBlock(block *BlockStmt) error {
+	var result error
 	var visitBlock func(*BlockStmt)
 	var visitStmt func(Stmt)
 	visitBlock = func(current *BlockStmt) {
-		if current == nil || transferErr != nil {
+		if current == nil || result != nil {
 			return
 		}
 		for _, statement := range current.Statements {
 			visitStmt(statement)
-			if transferErr != nil {
-				return
-			}
 		}
 	}
 	visitStmt = func(statement Stmt) {
-		if statement == nil || transferErr != nil {
+		if statement == nil || result != nil {
 			return
 		}
 		switch value := statement.(type) {
+		case *ReturnStmt:
+			result = fmt.Errorf("control transfer from finally is not allowed: return")
+		case *BranchStmt:
+			if value.Keyword == "break" || value.Keyword == "continue" || value.Keyword == "goto" {
+				result = fmt.Errorf("control transfer from finally is not allowed: %s", value.Keyword)
+			}
 		case *TokenStmt:
-			switch value.Kind {
-			case BodyStmtReturn:
-				transferErr = fmt.Errorf("control transfer from finally is not allowed: return")
-			case BodyStmtBranch:
-				keyword := firstSyntaxText(value.Tokens)
-				if keyword == "break" || keyword == "continue" || keyword == "goto" {
-					transferErr = fmt.Errorf("control transfer from finally is not allowed: %s", keyword)
-				}
+			if value.Kind == BodyStmtReturn {
+				result = fmt.Errorf("control transfer from finally is not allowed: return")
 			}
 			visitBlock(value.Body)
 			for _, child := range value.Children {
 				visitStmt(child)
 			}
-		case *BlockStmt:
-			visitBlock(value)
-		case *ReturnStmt:
-			transferErr = fmt.Errorf("control transfer from finally is not allowed: return")
-		case *BranchStmt:
-			if value.Keyword == "break" || value.Keyword == "continue" || value.Keyword == "goto" {
-				transferErr = fmt.Errorf("control transfer from finally is not allowed: %s", value.Keyword)
-			}
 		case *IfStmt:
 			visitBlock(value.Body)
 			visitBlock(value.Else)
-			if value.ElseIf != nil {
-				visitStmt(value.ElseIf)
-			}
+			visitStmt(value.ElseIf)
 		case *ForStmt:
 			visitBlock(value.Body)
 		case *SwitchStmt:
@@ -540,32 +2519,12 @@ func validateFinallyControlTransfersAST(body string) (error, bool) {
 		}
 	}
 	visitBlock(block)
-	return transferErr, true
+	return result
 }
 
-func lowerTryAST(tryBody string, clauses []catchClause, finallyBody string, context constructorContext) (string, error) {
-	var err error
-	tryBody, err = transformConstructors(tryBody, context)
-	if err != nil {
-		return "", err
-	}
-	tryBlock, err := parseLoweredBlock(tryBody)
-	if err != nil {
-		return "", fmt.Errorf("try body is not valid Go after AST lowering: %w", err)
-	}
-	finallyBlock := &ast.BlockStmt{}
-	if finallyBody != "" {
-		finallyBody, err = transformConstructors(finallyBody, context)
-		if err != nil {
-			return "", err
-		}
-		finallyBlock, err = parseLoweredBlock(finallyBody)
-		if err != nil {
-			return "", fmt.Errorf("finally body is not valid Go after AST lowering: %w", err)
-		}
-	}
+func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBlock *ast.BlockStmt, hasFinally bool) (ast.Stmt, error) {
 	deferBody := []ast.Stmt{}
-	if finallyBody != "" {
+	if hasFinally {
 		deferBody = append(deferBody, &ast.DeferStmt{Call: &ast.CallExpr{
 			Fun: &ast.FuncLit{
 				Type: &ast.FuncType{Params: &ast.FieldList{}},
@@ -624,7 +2583,7 @@ func lowerTryAST(tryBody string, clauses []catchClause, finallyBody string, cont
 	}
 	catchSwitch, err := lowerCatchSwitch(thrownError, handled, clauses)
 	if err != nil {
-		return "", fmt.Errorf("catch body is not valid Go after AST lowering: %w", err)
+		return nil, fmt.Errorf("catch body is not valid Go after AST lowering: %w", err)
 	}
 	catchIf.Body.List = []ast.Stmt{catchSwitch}
 	deferBody = append(deferBody, recoverBody...)
@@ -643,11 +2602,7 @@ func lowerTryAST(tryBody string, clauses []catchClause, finallyBody string, cont
 		Body: &ast.BlockStmt{List: runBody},
 	})}
 
-	var output bytes.Buffer
-	if err := format.Node(&output, token.NewFileSet(), run); err != nil {
-		return "", err
-	}
-	return output.String(), nil
+	return run, nil
 }
 
 func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast.Stmt, error) {
@@ -701,13 +2656,9 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast
 		}
 		caseExprs := make([]ast.Expr, 0, len(clause.typeNodes))
 		for _, typeNode := range clause.typeNodes {
-			typeName, typeErr := typeNodeSource(typeNode)
+			expression, typeErr := goTypeExpr(typeNode)
 			if typeErr != nil {
 				return nil, typeErr
-			}
-			expression, parseErr := parser.ParseExpr(strings.TrimSpace(typeName))
-			if parseErr != nil {
-				return nil, parseErr
 			}
 			caseExprs = append(caseExprs, expression)
 		}
@@ -718,22 +2669,6 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast
 		Assign: assign,
 		Body:   &ast.BlockStmt{List: body},
 	}, nil
-}
-
-func parseLoweredBlock(source string) (*ast.BlockStmt, error) {
-	fileSet := token.NewFileSet()
-	parsed, err := parser.ParseFile(fileSet, "generated.go", "package main\nfunc __gppGenerated() {\n"+source+"\n}\n", 0)
-	if err != nil {
-		return nil, err
-	}
-	if len(parsed.Decls) != 1 {
-		return nil, fmt.Errorf("generated exception body did not parse as one function")
-	}
-	function, ok := parsed.Decls[0].(*ast.FuncDecl)
-	if !ok || function.Body == nil {
-		return nil, fmt.Errorf("generated exception body did not produce a function body")
-	}
-	return function.Body, nil
 }
 
 func identifier(name string) *ast.Ident {
@@ -825,17 +2760,13 @@ func rewriteExceptionReturnsAST(body string) (string, bool, error) {
 	}
 	edits := make([]edit, 0, len(returns))
 	for _, statement := range returns {
-		values := make([]string, 0, len(statement.Values))
-		for _, value := range statement.Values {
-			text, sourceErr := expressionNodeSource(value)
-			if sourceErr != nil {
-				return body, false, nil
-			}
-			values = append(values, text)
+		lowered, lowerErr := goExceptionStmtNode(statement, "")
+		if lowerErr != nil || len(lowered) != 1 {
+			return body, false, nil
 		}
-		replacement := "panic(__gppExceptionReturn{})"
-		if len(values) > 0 {
-			replacement = "panic(__gppExceptionReturn{values: []any{" + strings.Join(values, ", ") + "}})"
+		replacement, formatErr := formatExceptionASTNode(lowered[0])
+		if formatErr != nil {
+			return body, false, nil
 		}
 		span := statement.Span()
 		if span.Start < 0 || span.End > len(body) || span.Start >= span.End {
@@ -926,6 +2857,35 @@ func validateThrowExpression(expression string, context constructorContext) erro
 	return nil
 }
 
+// validateThrowExpressionNode is the AST equivalent used by the direct
+// exception path. Keeping this check on nodes avoids rendering an expression
+// solely to inspect its first token and preserves the original source spans
+// for diagnostics.
+func validateThrowExpressionNode(expression ExprNode, context constructorContext) error {
+	if expression == nil {
+		return nil
+	}
+	switch value := expression.(type) {
+	case *LiteralExpr:
+		if value.Kind == TokenString || value.Kind == TokenRawString || value.Kind == TokenRune {
+			return fmt.Errorf("cannot throw string; thrown value must implement error")
+		}
+	case *NameExpr:
+		if value.Name == "true" || value.Name == "false" {
+			return fmt.Errorf("cannot throw bool; thrown value must implement error")
+		}
+	case *ParenthesizedExpr:
+		return validateThrowExpressionNode(value.Inner, context)
+	case *CallExpr:
+		if name, ok := value.Callee.(*NameExpr); ok {
+			if target, found := context.Targets[name.Name]; found && !classHasErrorMethod(target.Class, context, map[string]bool{}) {
+				return fmt.Errorf("cannot throw %s; thrown value must implement error", name.Name)
+			}
+		}
+	}
+	return nil
+}
+
 func classHasErrorMethod(class *ClassDecl, context constructorContext, visiting map[string]bool) bool {
 	if class == nil || visiting[class.Name] {
 		return false
@@ -953,125 +2913,6 @@ type promotedCall struct {
 func transformImplicitErrorPromotion(src string, context constructorContext) (string, error) {
 	if transformed, handled, err := transformImplicitErrorPromotionAST(src, context); handled {
 		return transformed, err
-	}
-	return src, nil
-}
-
-// transformImplicitErrorPromotionLegacy is retained temporarily as a source
-// compatibility reference while callers use the structured implementation
-// above. It is intentionally not part of the compiler pipeline.
-func transformImplicitErrorPromotionLegacy(src string, context constructorContext) (string, error) {
-	if transformed, handled, err := transformImplicitErrorPromotionAST(src, context); handled {
-		return transformed, err
-	}
-	return src, nil
-	parsed, fileSet, prefixLength, err := parseExceptionSourceLegacy(src, context)
-	if err != nil {
-		return src, nil
-	}
-	parents := map[ast.Node]ast.Node{}
-	var stack []ast.Node
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if node == nil {
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-			}
-			return true
-		}
-		if len(stack) > 0 {
-			parents[node] = stack[len(stack)-1]
-		}
-		stack = append(stack, node)
-		return true
-	})
-
-	type edit struct {
-		start, end int
-		text       string
-	}
-	edits := []edit{}
-	valueTypes := polymorphicValueTypes(parsed, context)
-	var promotionErr error
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if promotionErr != nil {
-			return false
-		}
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		result, ok := promotedCallFor(call, context, valueTypes)
-		if !ok || !result.trailingError || len(result.types) == 0 {
-			return true
-		}
-		parent := parents[call]
-		if _, isGoroutineCall := parent.(*ast.GoStmt); isGoroutineCall {
-			promotionErr = fmt.Errorf("cannot implicitly propagate error from goroutine call; handle the error inside the goroutine")
-			return true
-		}
-		if explicitlyCapturedError(call, parent, len(result.types)) {
-			return true
-		}
-		if returnStatementMatchesFunctionResults(parent, parents, len(result.types)) {
-			return true
-		}
-		replacement := ""
-		discard := false
-		if _, isStatement := parent.(*ast.ExprStmt); isStatement {
-			discard = true
-		} else if len(result.types) > 1 &&
-			!callHasExpectedReducedResults(parent, len(result.types)-1) &&
-			!callRequiresSingleValue(parent) {
-			return true
-		}
-		nonErrorCount := len(result.types) - 1
-		// An error-only result is still a value when it appears in an
-		// expression context (for example, `done <- Save()`). It is omitted
-		// only for a standalone statement.
-		if nonErrorCount == 0 && !discard {
-			return true
-		}
-		if discard {
-			switch nonErrorCount {
-			case 0:
-				replacement = "__gppThrow(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			case 1:
-				replacement = "__gppDiscard(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			case 2:
-				replacement = "__gppDiscard2(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			case 3:
-				replacement = "__gppDiscard3(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			default:
-				replacement = inlineUnwrapCall(sourceNodeText(call, fileSet, prefixLength, src), result.types, true, context)
-			}
-		} else {
-			switch nonErrorCount {
-			case 1:
-				replacement = "__gppUnwrap(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			case 2:
-				replacement = "__gppUnwrap2(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			case 3:
-				replacement = "__gppUnwrap3(" + sourceNodeText(call, fileSet, prefixLength, src) + ")"
-			default:
-				replacement = inlineUnwrapCall(sourceNodeText(call, fileSet, prefixLength, src), result.types, false, context)
-			}
-		}
-		if replacement == "" {
-			return true
-		}
-		start := fileSet.Position(call.Pos()).Offset - prefixLength
-		end := fileSet.Position(call.End()).Offset - prefixLength
-		if start >= 0 && end <= len(src) {
-			edits = append(edits, edit{start: start, end: end, text: replacement})
-		}
-		return true
-	})
-	if promotionErr != nil {
-		return src, promotionErr
-	}
-	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-	for _, edit := range edits {
-		src = src[:edit.start] + edit.text + src[edit.end:]
 	}
 	return src, nil
 }
@@ -1163,11 +3004,14 @@ func transformImplicitErrorPromotionAST(src string, context constructorContext) 
 			if nonErrorCount == 0 && !discard {
 				return
 			}
-			callText, sourceErr := expressionNodeSource(call)
+			replacement, lowered, sourceErr := promotionASTReplacementNode(call, result.types, discard, astContext)
 			if sourceErr != nil {
+				promotionErr = sourceErr
 				return
 			}
-			replacement := promotionASTReplacement(callText, result.types, discard, astContext)
+			if !lowered {
+				return
+			}
 			if replacement == "" {
 				return
 			}
@@ -1199,18 +3043,39 @@ func promotionBlocks(blocks []promotionASTBlock) []*BlockStmt {
 }
 
 func exceptionContextResultCount(context constructorContext) int {
-	if context.CurrentResultAST == nil {
-		return 0
-	}
-	text, err := typeNodeSource(context.CurrentResultAST)
-	if err != nil {
-		return 0
-	}
-	return exceptionResultCountFromText(text)
+	return exceptionResultCountFromTypeNode(context.CurrentResultAST)
 }
 
 func exceptionMethodResultCount(method Method) int {
-	return exceptionResultCountFromText(methodResultSource(method))
+	if len(method.ResultFieldsAST) > 0 {
+		return len(method.ResultFieldsAST)
+	}
+	return exceptionResultCountFromTypeNode(methodResultTypeNode(method))
+}
+
+func exceptionResultCountFromTypeNode(result TypeNode) int {
+	if result == nil {
+		return 0
+	}
+	if tuple, ok := result.(*TupleType); ok {
+		if len(tuple.Elements) == 1 {
+			if _, opaque := tuple.Elements[0].(*TokenType); opaque {
+				text, err := typeNodeSource(result)
+				if err == nil {
+					return exceptionResultCountFromText(text)
+				}
+			}
+		}
+		return len(tuple.Elements)
+	}
+	if _, opaque := result.(*TokenType); opaque {
+		text, err := typeNodeSource(result)
+		if err == nil {
+			return exceptionResultCountFromText(text)
+		}
+		return 0
+	}
+	return 1
 }
 
 func exceptionResultCountFromText(text string) int {
@@ -1320,6 +3185,13 @@ func promotionWalkExpression(expression ExprNode, parent ExprNode, statement Stm
 	case *BinaryExpr:
 		next(value.Left)
 		next(value.Right)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			next(expression)
+		}
+		for _, expression := range value.Right {
+			next(expression)
+		}
 	case *SelectorExpr:
 		next(value.Receiver)
 	case *IndexExpr:
@@ -1430,30 +3302,117 @@ func promotionASTAlreadyWrapped(expression ExprNode) bool {
 	}
 }
 
-func promotionASTReplacement(callText string, resultTypes []string, discard bool, context constructorContext) string {
+// promotionASTReplacementNode handles the ordinary promotion wrappers from
+// typed nodes. The compatibility rewriter still needs a final replacement
+// string, but it no longer serializes the call merely to put it back inside a
+// generated wrapper.
+func promotionASTReplacementNode(call *CallExpr, resultTypes []string, discard bool, context constructorContext) (string, bool, error) {
+	if call == nil {
+		return "", false, nil
+	}
 	nonErrorCount := len(resultTypes) - 1
+	name := ""
 	if discard {
 		switch nonErrorCount {
 		case 0:
-			return "__gppThrow(" + callText + ")"
+			name = "__gppThrow"
 		case 1:
-			return "__gppDiscard(" + callText + ")"
+			name = "__gppDiscard"
 		case 2:
-			return "__gppDiscard2(" + callText + ")"
+			name = "__gppDiscard2"
 		case 3:
-			return "__gppDiscard3(" + callText + ")"
+			name = "__gppDiscard3"
+		}
+	} else {
+		switch nonErrorCount {
+		case 1:
+			name = "__gppUnwrap"
+		case 2:
+			name = "__gppUnwrap2"
+		case 3:
+			name = "__gppUnwrap3"
 		}
 	}
-	switch nonErrorCount {
-	case 1:
-		return "__gppUnwrap(" + callText + ")"
-	case 2:
-		return "__gppUnwrap2(" + callText + ")"
-	case 3:
-		return "__gppUnwrap3(" + callText + ")"
-	default:
-		return inlineUnwrapCall(callText, resultTypes, discard, context)
+	if name == "" {
+		return promotionASTInlineReplacementNode(call, resultTypes, discard, context)
 	}
+	expression, err := goExprNode(call)
+	if err != nil {
+		return "", false, nil
+	}
+	formatted, err := formatNode(&ast.CallExpr{Fun: ast.NewIdent(name), Args: []ast.Expr{expression}})
+	return formatted, true, err
+}
+
+func promotionASTInlineReplacementNode(call *CallExpr, resultTypes []string, discard bool, context constructorContext) (string, bool, error) {
+	if call == nil || len(resultTypes) < 2 {
+		return "", false, nil
+	}
+	callExpression, err := goExprNode(call)
+	if err != nil {
+		return "", false, nil
+	}
+
+	nonErrorCount := len(resultTypes) - 1
+	valueNames := make([]string, nonErrorCount)
+	left := make([]ast.Expr, 0, len(resultTypes))
+	for index := range valueNames {
+		if discard {
+			valueNames[index] = "_"
+		} else {
+			valueNames[index] = fmt.Sprintf("__gppExceptionValue%d", index)
+		}
+		left = append(left, ast.NewIdent(valueNames[index]))
+	}
+	errorName := "__gppExceptionError"
+	left = append(left, ast.NewIdent(errorName))
+
+	body := []ast.Stmt{&ast.AssignStmt{
+		Lhs: left,
+		Tok: token.DEFINE,
+		Rhs: []ast.Expr{callExpression},
+	}}
+	throw := &ast.ExprStmt{X: &ast.CallExpr{
+		Fun:  ast.NewIdent("__gppThrow"),
+		Args: []ast.Expr{ast.NewIdent(errorName)},
+	}}
+	if discard {
+		body = append(body, throw)
+		function := &ast.FuncLit{
+			Type: &ast.FuncType{Params: &ast.FieldList{}},
+			Body: &ast.BlockStmt{List: body},
+		}
+		formatted, formatErr := formatNode(&ast.CallExpr{Fun: function})
+		return formatted, true, formatErr
+	}
+
+	results := make([]*ast.Field, 0, nonErrorCount)
+	for _, resultType := range resultTypes[:nonErrorCount] {
+		resultType = transformPolymorphicType(resultType, context)
+		typeNode := parseTypeText(strings.TrimSpace(resultType))
+		if typeNode == nil {
+			return "", false, nil
+		}
+		typeExpression, typeErr := goTypeExpr(typeNode)
+		if typeErr != nil {
+			return "", false, nil
+		}
+		results = append(results, &ast.Field{Type: typeExpression})
+	}
+	values := make([]ast.Expr, 0, len(valueNames))
+	for _, name := range valueNames {
+		values = append(values, ast.NewIdent(name))
+	}
+	body = append(body, throw, &ast.ReturnStmt{Results: values})
+	function := &ast.FuncLit{
+		Type: &ast.FuncType{
+			Params:  &ast.FieldList{},
+			Results: &ast.FieldList{List: results},
+		},
+		Body: &ast.BlockStmt{List: body},
+	}
+	formatted, formatErr := formatNode(&ast.CallExpr{Fun: function})
+	return formatted, true, formatErr
 }
 
 func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
@@ -1475,7 +3434,7 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 		}
 		for _, extension := range context.Extensions {
 			if extension.GoName == function.Name {
-				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: parseTypeText(strings.TrimSpace(methodResultSource(extension.Method)))})
+				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: methodResultTypeNode(extension.Method)})
 			}
 		}
 	case *SelectorExpr:
@@ -1493,7 +3452,11 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 		}
 		for _, extension := range context.Extensions {
 			if extension.Method.Name == function.Name && extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
-				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: parseTypeText(strings.TrimSpace(methodResultSource(extension.Method)))})
+				// Selector syntax supplies the receiver separately. The generated
+				// function signature includes `this`, but the source call's
+				// argument list does not.
+				parameters := methodCallParameters(extension.Method)
+				candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: methodResultTypeNode(extension.Method)})
 			}
 		}
 		if native, ok := promotedNativePackageCall(function, call, context); ok {
@@ -1559,31 +3522,6 @@ func promotedNativeMethodCall(function *SelectorExpr, call *CallExpr, context co
 	return promotedCallFromNativeSignature(signature)
 }
 
-func inlineUnwrapCall(callText string, resultTypes []string, discard bool, context constructorContext) string {
-	nonErrorCount := len(resultTypes) - 1
-	valueNames := make([]string, nonErrorCount)
-	for index := range valueNames {
-		valueNames[index] = fmt.Sprintf("__gppExceptionValue%d", index)
-	}
-	errorName := "__gppExceptionError"
-	assignmentNames := append([]string{}, valueNames...)
-	if discard {
-		for index := range assignmentNames {
-			assignmentNames[index] = "_"
-		}
-	}
-	assignmentNames = append(assignmentNames, errorName)
-	assignment := strings.Join(assignmentNames, ", ") + " := " + callText
-	if discard {
-		return "func() { " + assignment + "; __gppThrow(" + errorName + ") }()"
-	}
-	resultTypesText := make([]string, nonErrorCount)
-	for index, resultType := range resultTypes[:nonErrorCount] {
-		resultTypesText[index] = transformPolymorphicType(resultType, context)
-	}
-	return "func() (" + strings.Join(resultTypesText, ", ") + ") { " + assignment + "; __gppThrow(" + errorName + "); return " + strings.Join(valueNames, ", ") + " }()"
-}
-
 type exceptionResultField struct {
 	name     string
 	typeNode TypeNode
@@ -1601,6 +3539,9 @@ func exceptionResultFieldType(field exceptionResultField) string {
 }
 
 func transformExceptionABIBoundaries(src string, context constructorContext) (string, error) {
+	if transformed, handled, err := transformExceptionABIBoundariesAST(src, context); handled {
+		return transformed, err
+	}
 	// This is the final ABI boundary for a structured top-level function. The
 	// source has already gone through the Go++ body AST lowerers, so use the
 	// parsed FunctionDecl/Method metadata directly instead of reparsing the
@@ -1633,7 +3574,7 @@ func transformExceptionABIBoundaries(src string, context constructorContext) (st
 		}
 		bodyText := src[bodyStart:bodyEnd]
 		hasExceptionReturn := strings.Contains(bodyText, "__gppExceptionReturn")
-		fields, hasResults := exceptionResultFieldsFromText(methodResultSource(function.Method))
+		fields, hasResults := exceptionResultFieldsForResult(function.Method.ResultAST, function.Method.ResultFieldsAST)
 		if !hasResults || len(fields) == 0 {
 			if !hasExceptionReturn {
 				continue
@@ -1678,6 +3619,80 @@ func transformExceptionABIBoundaries(src string, context constructorContext) (st
 	return src, nil
 }
 
+// transformExceptionABIBoundariesAST keeps the compatibility ABI rewrite on
+// the same typed body path used by direct function/method emission. The source
+// span is only formatted at the final replacement boundary; the wrapper,
+// recover logic, assignments, and returns are all constructed as Go AST.
+func transformExceptionABIBoundariesAST(src string, context constructorContext) (string, bool, error) {
+	functions := parseTopLevelFunctions("exception ABI", "main", src, 0, src, "", 0)
+	if len(functions) == 0 {
+		return src, false, nil
+	}
+	type replacement struct {
+		start int
+		end   int
+		text  string
+	}
+	replacements := []replacement{}
+	for _, function := range functions {
+		if function == nil || function.Method.BodyAST == nil {
+			continue
+		}
+		methodContext := context
+		methodContext.CurrentResultAST = function.Method.ResultAST
+		methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(function.Method.ParameterAST)
+		body, lowerErr := lowerFunctionGoBlockNode(function.Method.BodyAST, methodContext, "")
+		if lowerErr != nil {
+			return src, false, nil
+		}
+		fields, hasResults := exceptionResultFieldsForResult(function.Method.ResultAST, function.Method.ResultFieldsAST)
+		hasExceptionReturn := astContainsExceptionReturn(body)
+		if !hasResults || len(fields) == 0 {
+			if !hasExceptionReturn {
+				continue
+			}
+		} else if !hasExceptionReturn && exceptionResultFieldType(fields[len(fields)-1]) != "error" {
+			continue
+		}
+		boundary, boundaryErr := lowerExceptionABIBoundaryNode(body, function.Method.ResultAST, function.Method.ResultFieldsAST, methodContext)
+		if boundaryErr != nil {
+			return src, false, nil
+		}
+		text, formatErr := formatExceptionASTBody(boundary)
+		if formatErr != nil {
+			return src, false, nil
+		}
+		span := function.Method.BodySpan
+		if span.Start < 0 || span.End < span.Start || span.End > len(src) {
+			return src, false, nil
+		}
+		replacements = append(replacements, replacement{start: span.Start, end: span.End, text: text})
+	}
+	if len(replacements) == 0 {
+		return src, true, nil
+	}
+	sort.Slice(replacements, func(left, right int) bool { return replacements[left].start > replacements[right].start })
+	for _, replacement := range replacements {
+		src = src[:replacement.start] + replacement.text + src[replacement.end:]
+	}
+	return src, true, nil
+}
+
+func formatExceptionASTBody(body *ast.BlockStmt) (string, error) {
+	if body == nil {
+		return "", nil
+	}
+	text, err := formatNode(body)
+	if err != nil {
+		return "", err
+	}
+	text = strings.TrimSpace(text)
+	if len(text) < 2 || text[0] != '{' || text[len(text)-1] != '}' {
+		return "", fmt.Errorf("formatted exception body is not a block")
+	}
+	return strings.TrimSpace(text[1 : len(text)-1]), nil
+}
+
 func exceptionVoidBoundaryBody(body, returnedName string, used map[string]bool) string {
 	recoverName := nextExceptionName(used, "__gppBoundaryRecovered")
 	okName := nextExceptionName(used, "__gppIsReturned")
@@ -1720,11 +3735,14 @@ func exceptionResultFields(results *ast.FieldList) ([]exceptionResultField, bool
 	}
 	fields := []exceptionResultField{}
 	for _, field := range results.List {
-		typeName, err := formatNode(field.Type)
-		if err != nil {
-			return nil, false
+		typeNode, ok := typeNodeFromGoExpr(field.Type)
+		if !ok {
+			typeName, err := formatNode(field.Type)
+			if err != nil {
+				return nil, false
+			}
+			typeNode = parseTypeText(strings.TrimSpace(typeName))
 		}
-		typeNode := parseTypeText(strings.TrimSpace(typeName))
 		if typeNode == nil {
 			return nil, false
 		}
@@ -1737,6 +3755,62 @@ func exceptionResultFields(results *ast.FieldList) ([]exceptionResultField, bool
 		}
 	}
 	return fields, true
+}
+
+// exceptionResultFieldsFromTypeNode keeps the direct exception ABI path on
+// the typed signature tree. TupleType represents multiple results; all other
+// result nodes represent one unnamed result. Synthetic methods that do not
+// carry ResultFieldsAST may still use the narrow opaque compatibility fallback.
+func exceptionResultFieldsFromTypeNode(result TypeNode) ([]exceptionResultField, bool) {
+	if result == nil {
+		return nil, true
+	}
+	if tuple, ok := result.(*TupleType); ok {
+		fields := make([]exceptionResultField, 0, len(tuple.Elements))
+		for _, element := range tuple.Elements {
+			if element == nil {
+				return nil, false
+			}
+			if _, opaque := element.(*TokenType); opaque {
+				// A one-element tuple containing TokenType is the current
+				// representation of a named result such as `(value int)`.
+				// Preserve that narrow compatibility fallback until result
+				// fields have their own structured AST node.
+				text, err := typeNodeSource(result)
+				if err != nil {
+					return nil, false
+				}
+				return exceptionResultFieldsFromText(text)
+			}
+			fields = append(fields, exceptionResultField{typeNode: element})
+		}
+		return fields, true
+	}
+	if _, opaque := result.(*TokenType); opaque {
+		// Named Go result fields are still represented by the token-preserving
+		// type fallback. Keep this compatibility path narrow; unnamed and
+		// ordinary structured results above never round-trip through text.
+		text, err := typeNodeSource(result)
+		if err != nil {
+			return nil, false
+		}
+		return exceptionResultFieldsFromText(text)
+	}
+	return []exceptionResultField{{typeNode: result}}, true
+}
+
+func exceptionResultFieldsForResult(result TypeNode, resultFields []ParameterNode) ([]exceptionResultField, bool) {
+	if len(resultFields) > 0 {
+		fields := make([]exceptionResultField, 0, len(resultFields))
+		for _, field := range resultFields {
+			if field.Type == nil {
+				return nil, false
+			}
+			fields = append(fields, exceptionResultField{name: field.Name, typeNode: field.Type})
+		}
+		return fields, true
+	}
+	return exceptionResultFieldsFromTypeNode(result)
 }
 
 func exceptionResultFieldsFromText(result string) ([]exceptionResultField, bool) {
@@ -1781,6 +3855,9 @@ func resultTypeParts(result string) ([]string, error) {
 }
 
 func wrapExceptionBoundaryBody(body, result string, context constructorContext) (string, bool) {
+	if transformed, handled := wrapExceptionBoundaryBodyAST(body, result, context); handled {
+		return transformed, true
+	}
 	fields, ok := exceptionResultFieldsFromText(result)
 	if !ok {
 		return body, false
@@ -1810,8 +3887,12 @@ func wrapExceptionBoundaryBody(body, result string, context constructorContext) 
 		}
 	}
 	for index := range fields {
-		typeName := transformPolymorphicType(exceptionResultFieldType(fields[index]), context)
-		fields[index].typeNode = parseTypeText(typeName)
+		if transformed, ok := transformPolymorphicTypeNode(fields[index].typeNode, context); ok {
+			fields[index].typeNode = transformed
+		} else {
+			typeName := transformPolymorphicType(exceptionResultFieldType(fields[index]), context)
+			fields[index].typeNode = parseTypeText(typeName)
+		}
 		if fields[index].name == "" || fields[index].name == "_" {
 			fields[index].name = nextExceptionName(used, fmt.Sprintf("__gppBoundaryResult%d", index))
 		}
@@ -1824,6 +3905,51 @@ func wrapExceptionBoundaryBody(body, result string, context constructorContext) 
 		opening = exceptionBoundaryOpening(fields, recoverName, thrownName, okName)
 	}
 	return opening + body + "\nreturn\n}()", true
+}
+
+// wrapExceptionBoundaryBodyAST is the typed first pass for the compatibility
+// emitters that still receive a rendered method body. The body is parsed only
+// at this final compatibility boundary; the recover wrapper and all of its
+// assignments/returns are constructed as Go AST and formatted once. Opaque
+// token-preserved bodies intentionally fall through to wrapExceptionBoundaryBody.
+func wrapExceptionBoundaryBodyAST(body, result string, context constructorContext) (string, bool) {
+	fields, ok := exceptionResultFieldsFromText(result)
+	if !ok {
+		return body, false
+	}
+	tokens, err := LexSource("exception boundary body", body)
+	if err != nil {
+		return body, false
+	}
+	parsed, err := ParseBodyAST(tokens)
+	if err != nil || parsed == nil {
+		return body, false
+	}
+	lowered, err := lowerFunctionGoBlockNode(parsed, context, "")
+	if err != nil {
+		return body, false
+	}
+	hasExceptionReturn := astContainsExceptionReturn(lowered)
+	if len(fields) == 0 {
+		if !hasExceptionReturn {
+			return body, false
+		}
+	} else if !hasExceptionReturn && exceptionResultFieldType(fields[len(fields)-1]) != "error" {
+		return body, false
+	}
+	resultFields := make([]ParameterNode, 0, len(fields))
+	for _, field := range fields {
+		resultFields = append(resultFields, ParameterNode{Name: field.name, Type: field.typeNode})
+	}
+	boundary, err := lowerExceptionABIBoundaryNode(lowered, nil, resultFields, context)
+	if err != nil {
+		return body, false
+	}
+	formatted, err := formatExceptionASTBody(boundary)
+	if err != nil {
+		return body, false
+	}
+	return formatted, true
 }
 
 func nextExceptionName(used map[string]bool, base string) string {
@@ -1931,86 +4057,6 @@ func exceptionReturnBoundaryOpening(fields []exceptionResultField, recoverName, 
 	return out.String()
 }
 
-func parseExceptionSourceLegacy(src string, context constructorContext) (*ast.File, *token.FileSet, int, error) {
-	fileSet := token.NewFileSet()
-	const filePrefix = "package main\n\n"
-	parsed, err := parser.ParseFile(fileSet, "generated.go", filePrefix+src, 0)
-	if err == nil {
-		return parsed, fileSet, len(filePrefix), nil
-	}
-	functionPrefix := filePrefix + "func __gpp_scope()"
-	if result := context.currentResultText(); result != "" {
-		functionPrefix += " " + result
-	}
-	functionPrefix += " {\n"
-	functionSet := token.NewFileSet()
-	parsed, err = parser.ParseFile(functionSet, "generated.go", functionPrefix+src+"\n}", 0)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	return parsed, functionSet, len(functionPrefix), nil
-}
-
-func sourceNodeText(node ast.Node, fileSet *token.FileSet, prefixLength int, src string) string {
-	start := fileSet.Position(node.Pos()).Offset - prefixLength
-	end := fileSet.Position(node.End()).Offset - prefixLength
-	if start < 0 || end > len(src) || start > end {
-		return ""
-	}
-	return src[start:end]
-}
-
-func explicitlyCapturedError(call *ast.CallExpr, parent ast.Node, resultCount int) bool {
-	switch statement := parent.(type) {
-	case *ast.AssignStmt:
-		return len(statement.Rhs) == 1 && len(statement.Lhs) == resultCount
-	case *ast.ValueSpec:
-		return len(statement.Values) == 1 && len(statement.Names) == resultCount
-	case *ast.ReturnStmt:
-		return len(statement.Results) == resultCount
-	default:
-		return false
-	}
-}
-
-func returnStatementMatchesFunctionResults(parent ast.Node, parents map[ast.Node]ast.Node, resultCount int) bool {
-	returnStatement, ok := parent.(*ast.ReturnStmt)
-	if !ok || returnStatement == nil {
-		return false
-	}
-	for node := ast.Node(returnStatement); node != nil; node = parents[node] {
-		if function, ok := node.(*ast.FuncDecl); ok {
-			fields, hasResults := exceptionResultFields(function.Type.Results)
-			return hasResults && len(fields) == resultCount
-		}
-	}
-	return false
-}
-
-func callHasExpectedReducedResults(parent ast.Node, reducedCount int) bool {
-	switch statement := parent.(type) {
-	case *ast.AssignStmt:
-		return len(statement.Rhs) == 1 && len(statement.Lhs) == reducedCount
-	case *ast.ValueSpec:
-		return len(statement.Values) == 1 && len(statement.Names) == reducedCount
-	case *ast.ReturnStmt:
-		return len(statement.Results) == reducedCount
-	default:
-		return false
-	}
-}
-
-func callRequiresSingleValue(parent ast.Node) bool {
-	switch parent.(type) {
-	case *ast.BinaryExpr, *ast.UnaryExpr, *ast.ParenExpr,
-		*ast.SelectorExpr, *ast.IndexExpr, *ast.SliceExpr,
-		*ast.TypeAssertExpr, *ast.KeyValueExpr:
-		return true
-	default:
-		return false
-	}
-}
-
 func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
 	var candidates []callableSignature
 	switch function := call.Fun.(type) {
@@ -2029,7 +4075,7 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 			if extension.GoName == function.Name {
 				candidates = append(candidates, callableSignature{
 					Parameters: extensionCallParameters(extension),
-					ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(extension.Method))),
+					ResultAST:  methodResultTypeNode(extension.Method),
 				})
 			}
 		}
@@ -2050,7 +4096,7 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 					hasQualifiedExtension = true
 					candidates = append(candidates, callableSignature{
 						Parameters: extensionCallParameters(extension),
-						ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(extension.Method))),
+						ResultAST:  methodResultTypeNode(extension.Method),
 					})
 				}
 			}
@@ -2087,7 +4133,14 @@ func mustParameters(source string) []parameterInfo {
 
 func extensionCallParameters(extension extensionMethod) []parameterInfo {
 	parameters := []parameterInfo{{Name: "this", TypeAST: parseTypeText(extension.ReceiverType)}}
-	return append(parameters, mustParameters(methodParametersSource(extension.Method))...)
+	return append(parameters, methodCallParameters(extension.Method)...)
+}
+
+func methodCallParameters(method Method) []parameterInfo {
+	if parameters, err := parameterInfosForMethod(method); err == nil && (method.Owner != nil || len(method.ParameterAST) > 0) {
+		return parameters
+	}
+	return mustParameters(methodParametersSource(method))
 }
 
 func resultTypesFromText(result string) []string {

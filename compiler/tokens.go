@@ -255,45 +255,11 @@ func goDeclTokens(declaration *GoDecl) []Token {
 	return nil
 }
 
-func goDeclSource(declaration *GoDecl) string {
-	if declaration == nil {
-		return ""
-	}
-	if declaration.Owner != nil && declaration.SourceSpan.Start >= 0 && declaration.SourceSpan.End <= len(declaration.Owner.Source) && declaration.SourceSpan.Start <= declaration.SourceSpan.End {
-		return declaration.Owner.Source[declaration.SourceSpan.Start:declaration.SourceSpan.End]
-	}
-	if len(declaration.Declarations) == 0 {
-		return ""
-	}
-	var output bytes.Buffer
-	fileSet := declaration.FileSet
-	if fileSet == nil {
-		fileSet = token.NewFileSet()
-	}
-	for _, node := range declaration.Declarations {
-		if err := format.Node(&output, fileSet, node); err != nil {
-			return ""
-		}
-		output.WriteByte('\n')
-	}
-	return output.String()
-}
-
 func valueDeclTokens(declaration *ValueDecl) []Token {
 	if declaration == nil {
 		return nil
 	}
 	return declaration.Tokens
-}
-
-func valueDeclSource(declaration *ValueDecl) string {
-	if declaration == nil || declaration.Owner == nil {
-		return ""
-	}
-	if declaration.SourceSpan.Start < 0 || declaration.SourceSpan.End > len(declaration.Owner.Source) || declaration.SourceSpan.Start > declaration.SourceSpan.End {
-		return ""
-	}
-	return declaration.Owner.Source[declaration.SourceSpan.Start:declaration.SourceSpan.End]
 }
 
 // valueDeclASTSource renders a Go++ value declaration from its structured
@@ -421,6 +387,19 @@ func methodResultSource(method Method) string {
 		return method.Owner.Source[method.ResultSpan.Start:method.ResultSpan.End]
 	}
 	return ""
+}
+
+// methodResultTypeNode keeps signature consumers on the typed path. The
+// source fallback is only for compatibility Methods assembled by older
+// callers that do not carry ResultAST yet.
+func methodResultTypeNode(method Method) TypeNode {
+	if method.ResultAST != nil {
+		return method.ResultAST
+	}
+	if source := strings.TrimSpace(methodResultSource(method)); source != "" {
+		return parseTypeText(source)
+	}
+	return nil
 }
 
 func methodTypeParamsSource(method Method) string {

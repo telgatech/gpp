@@ -317,7 +317,8 @@ extend []T where T cmp.Ordered {
 	if len(extensionTargetNames(extension)) != 1 || extensionTargetNames(extension)[0] != "[]T" {
 		t.Fatalf("unexpected generic target: %#v", extensionTargetNames(extension))
 	}
-	if extension.TargetConstraints["T"] != "cmp.Ordered" {
+	constraint, constraintErr := typeNodeSource(extension.TargetConstraints["T"])
+	if constraintErr != nil || constraint != "cmp.Ordered" {
 		t.Fatalf("unexpected target constraints: %#v", extension.TargetConstraints)
 	}
 }

@@ -199,6 +199,7 @@ type TemplateDecl struct {
 	// later migration stages. It is not executable Go++ declaration syntax.
 	Body       string
 	BodyTokens []Token
+	BodySpan   Span
 	SpanValue  Span
 	SourceFile string
 	SourceLine int
@@ -269,7 +270,7 @@ type EnumMember struct {
 
 type ExtendDecl struct {
 	TargetAST         []TypeNode
-	TargetConstraints map[string]string
+	TargetConstraints map[string]TypeNode
 	Doc               string
 	SourceFile        string
 	SourceLine        int
@@ -317,6 +318,7 @@ type Method struct {
 	ParameterAnnotations map[string][]AnnotationUse
 	ResultSpan           Span
 	ResultAST            TypeNode
+	ResultFieldsAST      []ParameterNode
 	Owner                *File
 	BodySpan             Span
 	SpanValue            Span

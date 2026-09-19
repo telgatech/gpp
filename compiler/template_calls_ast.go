@@ -2,6 +2,38 @@ package compiler
 
 import "sort"
 
+// lowerStaticTemplateCallNode lowers a template facade call while it is still
+// represented by compiler expression nodes. The source-edit implementation
+// below remains only for compatibility fragments that cannot use direct body
+// emission.
+func lowerStaticTemplateCallNode(call *CallExpr, context constructorContext) (ExprNode, bool) {
+	if call == nil || len(context.Templates) == 0 {
+		return nil, false
+	}
+	selector, ok := call.Callee.(*SelectorExpr)
+	if !ok {
+		return nil, false
+	}
+	receiver, ok := selector.Receiver.(*NameExpr)
+	if !ok || context.Templates[selector.Name] == nil {
+		return nil, false
+	}
+	for alias, importPath := range context.AvailableImports {
+		if alias != receiver.Name {
+			continue
+		}
+		if importPath != "gpp/tpl" && (context.ModulePath == "" || importPath != context.ModulePath+"/gpp/tpl") {
+			continue
+		}
+		return &CallExpr{
+			Callee:    &NameExpr{Name: "__gpp_tpl_" + selector.Name, SpanValue: selector.Span()},
+			Arguments: append([]CallArg(nil), call.Arguments...),
+			SpanValue: call.SpanValue,
+		}, true
+	}
+	return nil, false
+}
+
 func transformStaticTemplateCallsAST(src string, context constructorContext) (string, bool, error) {
 	if len(context.Templates) == 0 {
 		return src, false, nil

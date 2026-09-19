@@ -101,8 +101,8 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 			if kind != introspectionAnnotations || (selector.Name != "Has" && selector.Name != "Get" && selector.Name != "All" && selector.Name != "has" && selector.Name != "get" && selector.Name != "all") {
 				return
 			}
-			name, err := expressionNodeSource(call.Arguments[0].Value)
-			if err != nil {
+			name, ok := annotationNameNode(call.Arguments[0].Value)
+			if !ok {
 				return
 			}
 			declaration := context.Annotations[name]
@@ -192,7 +192,7 @@ func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[str
 					introspectionParents:    introspectionClass,
 					introspectionParameters: introspectionParameter,
 				}[kind])
-				if start >= 0 && len(value.RangeKey) > 0 && value.RangeKey[0].Text != "_" {
+				if start >= 0 && len(value.RangeKey) > 0 && !isBlankRangeExpr(value.RangeKey[0]) {
 					addEdit(start, start, "_, ")
 				}
 			}
@@ -222,22 +222,25 @@ func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[str
 	}
 }
 
-func introspectionRangeValue(tokens []Token) (string, int, bool) {
-	if len(tokens) == 0 {
+func introspectionRangeValue(expressions []ExprNode) (string, int, bool) {
+	if len(expressions) == 0 {
 		return "", 0, false
 	}
-	ids := []Token{}
-	for _, token := range tokens {
-		if token.Kind == TokenIdentifier || token.Kind == TokenKeyword {
-			if token.Text != "_" && token.Text != "range" {
-				ids = append(ids, token)
-			}
+	ids := []*NameExpr{}
+	for _, expression := range expressions {
+		if name, ok := expression.(*NameExpr); ok && name.Name != "_" {
+			ids = append(ids, name)
 		}
 	}
 	if len(ids) == 0 {
 		return "", 0, false
 	}
-	return ids[len(ids)-1].Text, ids[0].Span.Start, true
+	return ids[len(ids)-1].Name, ids[0].Span().Start, true
+}
+
+func isBlankRangeExpr(expression ExprNode) bool {
+	name, ok := expression.(*NameExpr)
+	return ok && name.Name == "_"
 }
 
 func introspectionExpressionKindNode(expression ExprNode, variables map[string]int, context constructorContext, valueTypes map[string]string) introspectionExprKind {
@@ -290,6 +293,9 @@ func introspectionExpressionKindNode(expression ExprNode, variables map[string]i
 				return introspectionClass
 			}
 		}
+		// Imported class descriptors are qualified selectors such as
+		// people.GppPersonClass, so the descriptor-name check must apply to the
+		// selector's final component as well as to a bare NameExpr.
 		if strings.HasPrefix(value.Name, "Gpp") && strings.HasSuffix(value.Name, "Class") {
 			return introspectionClass
 		}
@@ -404,6 +410,13 @@ func walkIntrospectionExpression(expression ExprNode, visit func(ExprNode)) {
 	case *BinaryExpr:
 		walkIntrospectionExpression(value.Left, visit)
 		walkIntrospectionExpression(value.Right, visit)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			walkIntrospectionExpression(expression, visit)
+		}
+		for _, expression := range value.Right {
+			walkIntrospectionExpression(expression, visit)
+		}
 	case *SelectorExpr:
 		walkIntrospectionExpression(value.Receiver, visit)
 	case *IndexExpr:
@@ -477,8 +490,15 @@ func transformIntrospectionClassAST(src string, context constructorContext) (str
 			if !ok || selector.Name != "class" || selector.Receiver == nil {
 				return
 			}
-			receiver, err := expressionNodeSource(selector.Receiver)
+			receiverAST, err := goExprNode(selector.Receiver)
+			if err != nil {
+				return
+			}
+			receiver, err := formatNode(receiverAST)
 			if err != nil || strings.TrimSpace(receiver) == "" {
+				receiver = expressionDisplayName(selector.Receiver)
+			}
+			if strings.TrimSpace(receiver) == "" {
 				return
 			}
 			if target, ok := introspectionStaticTargetNode(selector.Receiver, receiver, context); ok {
@@ -573,6 +593,146 @@ func introspectionStaticTargetNode(receiver ExprNode, source string, context con
 		return target, true
 	}
 	return constructorTarget{}, false
+}
+
+// introspectionStaticTargetExpr is the node-only counterpart to
+// introspectionStaticTargetNode. The source-based helper remains for the
+// compatibility rewriter, but direct emission must not stringify a receiver
+// merely to determine whether it names a Go++ class.
+func introspectionStaticTargetExpr(receiver ExprNode, context constructorContext) (constructorTarget, bool) {
+	path, ok := directSelectorPath(receiver)
+	if !ok {
+		return constructorTarget{}, false
+	}
+	if target, exists := context.Targets[path]; exists && target.Class != nil {
+		return target, true
+	}
+	return constructorTarget{}, false
+}
+
+// lowerIntrospectionClassExprNode lowers the class pseudo-selector without
+// going through the source-span compatibility pass. Static class names become
+// generated descriptors; instance expressions become GppRuntimeClass calls.
+func lowerIntrospectionClassExprNode(selector *SelectorExpr, context constructorContext) (ExprNode, bool, error) {
+	if selector == nil || selector.Name != "class" || context.Introspection == nil || !context.Introspection.Enabled {
+		return nil, false, nil
+	}
+	if target, ok := introspectionStaticTargetExpr(selector.Receiver, context); ok {
+		return qualifiedNameExpr(introspectionDescriptorName(target)), true, nil
+	}
+	receiver, err := lowerExceptionExprNode(selector.Receiver, context)
+	if err != nil {
+		return nil, true, err
+	}
+	valueTypes := context.CurrentParameterTypes
+	if introspectionClassNameNode(receiver, context, valueTypes) == "" {
+		return nil, true, fmt.Errorf("%s.class is only available on Go++ class instances or class names", expressionDisplayName(selector.Receiver))
+	}
+	return &CallExpr{
+		Callee:    &SelectorExpr{Receiver: receiver, Name: "GppRuntimeClass"},
+		SpanValue: selector.Span(),
+	}, true, nil
+}
+
+// lowerIntrospectionMetadataSelectorNode maps the source-level metadata names
+// to the runtime's ordinary Go field/method names. It intentionally handles
+// only selectors whose semantic kind is already known; unknown selectors are
+// left for the compatibility path so native Go selectors are never rewritten.
+func lowerIntrospectionMetadataSelectorNode(selector *SelectorExpr, context constructorContext) (ExprNode, bool, error) {
+	if selector == nil || context.Introspection == nil || !context.Introspection.Enabled {
+		return nil, false, nil
+	}
+	kind := introspectionExpressionKindNode(selector.Receiver, context.CurrentIntrospectionKinds, context, context.CurrentParameterTypes)
+	if replacement, exists := introspectionSelectorNames[selector.Name]; exists && introspectionSelectorValid(kind, selector.Name) {
+		selector.Name = replacement
+		return selector, true, nil
+	}
+	if selector.Name == "type" && introspectionSelectorValid(kind, selector.Name) {
+		selector.Name = "Type"
+		return selector, true, nil
+	}
+	return nil, false, nil
+}
+
+func lowerIntrospectionCallArguments(call *CallExpr, context constructorContext) {
+	if call == nil || context.Introspection == nil || !context.Introspection.Enabled {
+		return
+	}
+	selector, ok := call.Callee.(*SelectorExpr)
+	if !ok {
+		return
+	}
+	kind := introspectionExpressionKindNode(selector.Receiver, context.CurrentIntrospectionKinds, context, context.CurrentParameterTypes)
+	if kind == introspectionAnnotations && (selector.Name == "Has" || selector.Name == "Get" || selector.Name == "All") && len(call.Arguments) > 0 {
+		if name, ok := annotationNameNode(call.Arguments[0].Value); ok {
+			declaration := context.Annotations[name]
+			if declaration == nil {
+				for qualified, candidate := range context.Annotations {
+					suffix := qualified
+					if dot := strings.LastIndex(suffix, "."); dot >= 0 {
+						suffix = suffix[dot+1:]
+					}
+					if suffix == name {
+						declaration = candidate
+						break
+					}
+				}
+			}
+			if declaration != nil {
+				reference := annotationDescriptorReferenceForContext(AnnotationUse{Name: name}, declaration, context)
+				call.Arguments[0].Value = qualifiedNameExpr(reference)
+			}
+		}
+	}
+	if kind != introspectionField || (selector.Name != "Set" && selector.Name != "Addr") || len(call.Arguments) == 0 {
+		return
+	}
+	argument := call.Arguments[0].Value
+	actual := staticExpressionTypeNode(argument, context, context.CurrentParameterTypes)
+	if actual != "" && !strings.HasPrefix(strings.TrimSpace(actual), "*") && introspectionClassNameNode(argument, context, context.CurrentParameterTypes) != "" {
+		call.Arguments[0].Value = &UnaryExpr{Operator: "&", Operand: argument, SpanValue: argument.Span()}
+	}
+}
+
+func annotationNameNode(expression ExprNode) (string, bool) {
+	switch value := expression.(type) {
+	case *NameExpr:
+		if value.Name != "" {
+			return value.Name, true
+		}
+	case *SelectorExpr:
+		left, ok := annotationNameNode(value.Receiver)
+		if ok && value.Name != "" {
+			return left + "." + value.Name, true
+		}
+	}
+	return "", false
+}
+
+func qualifiedNameExpr(source string) ExprNode {
+	parts := strings.Split(strings.TrimSpace(source), ".")
+	var expression ExprNode
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if expression == nil {
+			expression = &NameExpr{Name: part}
+		} else {
+			expression = &SelectorExpr{Receiver: expression, Name: part}
+		}
+	}
+	return expression
+}
+
+func expressionDisplayName(expression ExprNode) string {
+	if expression == nil {
+		return "<expression>"
+	}
+	if source, err := expressionNodeSource(expression); err == nil && strings.TrimSpace(source) != "" {
+		return strings.TrimSpace(source)
+	}
+	return "<expression>"
 }
 
 func introspectionClassNameNode(expression ExprNode, context constructorContext, valueTypes map[string]string) string {

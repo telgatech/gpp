@@ -90,6 +90,28 @@ func TestEmitNamedConstructor(t *testing.T) {
 	}
 }
 
+func TestEmitMixedDeclKeepsOrdinaryGoDeclarationsOnASTPath(t *testing.T) {
+	file := testPersonFile(t)
+	appendMixedSourceDecl(file, `var ordinary = 7
+
+func main() {
+    person := Person("Bob", 42)
+    _ = person
+}`)
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "var ordinary = 7") {
+		t.Fatalf("ordinary Go declaration was not emitted from its AST:\n%s", generated)
+	}
+	if !strings.Contains(generated, `person := Person{Name: "Bob", Age: 42}`) {
+		t.Fatalf("neighboring Go++ function was not lowered:\n%s", generated)
+	}
+}
+
 func TestEmitStaticMethods(t *testing.T) {
 	file, err := ParseFile("static.gpp", `
 import "strings"
@@ -1109,8 +1131,10 @@ func main() {
 	generated := string(code)
 	for _, expected := range []string{
 		"func __gpp_safe[R any]",
-		"name := __gpp_safe(person == nil, func() string { return person.Name })",
-		"greeting := __gpp_safe(person == nil, func() string { return person.Speak() })",
+		"name := __gpp_safe(person == nil, func() string {",
+		"return person.Name",
+		"greeting := __gpp_safe(person == nil, func() string {",
+		"return person.Speak()",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("safe access output missing %q:\n%s", expected, code)
@@ -1397,6 +1421,36 @@ func main() {
 	}
 	if strings.Contains(generated, "let user") {
 		t.Fatalf("let syntax was not lowered:\n%s", code)
+	}
+}
+
+func TestEmitInfersRecordParametersAfterFunctionResultInference(t *testing.T) {
+	file, err := ParseFile("record_parameter_inference.gpp", `
+func getUser() record {
+    return record(Name: "Bob", Age: 42)
+}
+
+func userName(user record) string {
+    return user.Name
+}
+
+func main() {
+    user := getUser()
+    _ = userName(user)
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	generated := string(code)
+	if !strings.Contains(generated, "func userName(user __gpp_record_") {
+		t.Fatalf("record parameter was not inferred after result inference:\n%s", generated)
 	}
 }
 
@@ -1892,10 +1946,10 @@ func main() {
     text := " value "
     _ = text.Empty()
     _ = text.Blank()
-    _, _ = "^[a-z]+$".CompileRegex()
-    _ = "^[a-z]+$".CompileRegex().MatchString("go")
+	_, _ = "^[a-z]+$".CompileRegex()
+	_ = "^[a-z]+$".CompileRegex().MatchString("go")
 
-    options := map[string]string{"mode": "test"}
+	options := map[string]string{"mode": "test"}
     _ = options.Has("mode")
     _ = options.GetOr("missing", "default")
     _ = options.Keys()

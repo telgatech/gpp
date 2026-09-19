@@ -146,6 +146,77 @@ type safeAccessEdit struct {
 	Text  string
 }
 
+func lowerSafeAccessExprNode(selector *SelectorExpr, call *CallExpr, context constructorContext) (ExprNode, error) {
+	if selector == nil {
+		return nil, fmt.Errorf("safe access selector is nil")
+	}
+	receiver, ok := selector.Receiver.(*NameExpr)
+	if !ok {
+		return nil, fmt.Errorf("safe access receiver must be an identifier")
+	}
+	typeName := context.CurrentParameterTypes[receiver.Name]
+	if typeName == "" && receiver.Name == "this" {
+		typeName = context.CurrentClass
+	}
+	target, ok := safeTargetForType(typeName, context)
+	if !ok {
+		return nil, fmt.Errorf("safe access receiver %s has no known class type", receiver.Name)
+	}
+	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[string]bool{})
+	if err != nil {
+		return nil, err
+	}
+	if memberType == nil {
+		return nil, fmt.Errorf("class %s has no member %s", target.Class.Name, selector.Name)
+	}
+	if !safeReceiverCanBeNil(typeName, target) {
+		return nil, fmt.Errorf("safe access receiver %s must be a pointer or interface", receiver.Name)
+	}
+	if isMethod != (call != nil) {
+		if isMethod {
+			return nil, fmt.Errorf("safe method access %s?.%s requires a call", receiver.Name, selector.Name)
+		}
+		return nil, fmt.Errorf("safe field access %s?.%s is not callable", receiver.Name, selector.Name)
+	}
+	access := &SelectorExpr{Receiver: receiver, Name: selector.Name}
+	if call != nil {
+		arguments := make([]CallArg, 0, len(call.Arguments))
+		for _, argument := range call.Arguments {
+			if argument.Name != "" {
+				return nil, fmt.Errorf("safe method access does not support named arguments in direct AST lowering")
+			}
+			lowered, lowerErr := lowerExceptionExprNode(argument.Value, context)
+			if lowerErr != nil {
+				return nil, lowerErr
+			}
+			arguments = append(arguments, CallArg{Value: lowered})
+		}
+		access = &SelectorExpr{Receiver: receiver, Name: selector.Name}
+		accessCall := &CallExpr{Callee: access, Arguments: arguments}
+		return safeAccessWrapperExpr(receiver, memberType, accessCall)
+	}
+	return safeAccessWrapperExpr(receiver, memberType, access)
+}
+
+func safeAccessWrapperExpr(receiver *NameExpr, result TypeNode, access ExprNode) (ExprNode, error) {
+	if result == nil {
+		return nil, fmt.Errorf("safe access member %s has unsupported result type", receiver.Name)
+	}
+	function := &FunctionLiteralExpr{
+		Type: &FunctionType{Results: []TypeNode{result}},
+		Body: &BlockStmt{Statements: []Stmt{
+			&ReturnStmt{Values: []ExprNode{access}},
+		}},
+	}
+	return &CallExpr{
+		Callee: &NameExpr{Name: "__gpp_safe"},
+		Arguments: []CallArg{
+			{Value: &BinaryExpr{Left: receiver, Operator: "==", Right: &LiteralExpr{Text: "nil", Kind: TokenKeyword}}},
+			{Value: function},
+		},
+	}, nil
+}
+
 func collectSafeAccessEdits(block *BlockStmt, src string, context constructorContext, types map[string]string, edits *[]safeAccessEdit) error {
 	if block == nil {
 		return nil
@@ -310,6 +381,18 @@ func collectSafeExprEdits(expression ExprNode, src string, context constructorCo
 				return err
 			}
 			return visit(value.Right)
+		case *AssignmentExpr:
+			for _, expression := range value.Left {
+				if err := visit(expression); err != nil {
+					return err
+				}
+			}
+			for _, expression := range value.Right {
+				if err := visit(expression); err != nil {
+					return err
+				}
+			}
+			return nil
 		case *IndexExpr:
 			if err := visit(value.Receiver); err != nil {
 				return err
@@ -599,23 +682,42 @@ func safeReceiverCanBeNil(typeName string, target constructorTarget) bool {
 }
 
 func safeMemberType(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[string]bool) (string, bool, error) {
+	memberType, isMethod, err := safeMemberTypeNode(class, classes, name, visiting)
+	if err != nil || memberType == nil {
+		return "", isMethod, err
+	}
+	typeName, typeErr := typeNodeSource(memberType)
+	if typeErr != nil {
+		return "", isMethod, typeErr
+	}
+	return strings.TrimSpace(typeName), isMethod, nil
+}
+
+// safeMemberTypeNode is the typed counterpart used by direct AST lowering.
+// The source-returning safeMemberType above remains for the compatibility
+// rewriter, which still edits source spans in an already-rendered function.
+func safeMemberTypeNode(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[string]bool) (TypeNode, bool, error) {
+	if class == nil {
+		return nil, false, nil
+	}
 	if visiting[class.Name] {
-		return "", false, nil
+		return nil, false, nil
 	}
 	visiting[class.Name] = true
 	defer delete(visiting, class.Name)
 
 	for _, field := range class.Fields {
 		if field.Name == name {
-			return fieldTypeSource(field), false, nil
+			return field.TypeAST, false, nil
 		}
 	}
 	for _, method := range class.Methods {
 		if method.Name == name {
-			if strings.TrimSpace(methodResultSource(method)) == "" {
-				return "", true, fmt.Errorf("safe method %s must return a value", name)
+			result := methodResultTypeNode(method)
+			if result == nil {
+				return nil, true, fmt.Errorf("safe method %s must return a value", name)
 			}
-			return strings.TrimSpace(methodResultSource(method)), true, nil
+			return result, true, nil
 		}
 	}
 	for _, parentName := range classParentNames(class) {
@@ -623,10 +725,10 @@ func safeMemberType(class *ClassDecl, classes map[string]*ClassDecl, name string
 		if !ok {
 			continue
 		}
-		memberType, isMethod, err := safeMemberType(parent, classes, name, visiting)
-		if err != nil || memberType != "" {
+		memberType, isMethod, err := safeMemberTypeNode(parent, classes, name, visiting)
+		if err != nil || memberType != nil {
 			return memberType, isMethod, err
 		}
 	}
-	return "", false, nil
+	return nil, false, nil
 }

@@ -203,15 +203,25 @@ type workspaceState struct {
 	diagnostics map[string][]Diagnostic
 	docIndex    *compiler.DocIndex
 	symbols     []symbolInfo
+	official    []*compiler.File
 	logger      *log.Logger
 }
 
 func newWorkspace(logger *log.Logger) *workspaceState {
-	return &workspaceState{
+	workspace := &workspaceState{
 		files:       map[string]*fileState{},
 		diagnostics: map[string][]Diagnostic{},
 		logger:      logger,
 	}
+	// Official packages are immutable compiler inputs. Parse them once per
+	// LSP session instead of rebuilding their ASTs on every editor keystroke.
+	for _, packagePath := range compiler.OfficialStdlibPackages() {
+		files, err := compiler.LoadOfficialPackage(packagePath)
+		if err == nil {
+			workspace.official = append(workspace.official, files...)
+		}
+	}
+	return workspace
 }
 
 func (w *workspaceState) setRoots(roots []string) {
@@ -297,15 +307,9 @@ func (w *workspaceState) analyze() {
 		w.diagnostics[state.URI] = nil
 	}
 
-	// Include compiler-owned packages so imported annotations/classes and
-	// standard extensions are represented consistently in editor features.
-	officialFiles := []*compiler.File{}
-	for _, packagePath := range compiler.OfficialStdlibPackages() {
-		files, err := compiler.LoadOfficialPackage(packagePath)
-		if err == nil {
-			officialFiles = append(officialFiles, files...)
-		}
-	}
+	// Include the immutable compiler-owned ASTs so imported annotations/classes
+	// and standard extensions are represented consistently in editor features.
+	officialFiles := w.official
 	for _, files := range byDirectory {
 		allFiles := append([]*compiler.File{}, files...)
 		allFiles = append(allFiles, officialFiles...)
@@ -804,6 +808,15 @@ func (s *server) symbolsAt(uri string, position Position) (string, Range) {
 		return "", Range{}
 	}
 	offset := offsetAt(state.Source, position)
+	if state.File != nil {
+		if token, ok := identifierTokenAt(state.File.Tokens, offset); ok {
+			return token.Text, rangeForOffsets(state.Source, token.Span.Start, token.Span.End)
+		}
+		// A successfully parsed buffer has authoritative token boundaries. Do
+		// not fall back to substring matching inside comments, strings, or raw
+		// template content.
+		return "", Range{}
+	}
 	start := offset
 	for start > 0 && isIdentifierByte(state.Source[start-1]) {
 		start--
@@ -886,7 +899,7 @@ func (s *server) references(uri string, position Position) []Location {
 		if !isGoPlusFile(state.Path) {
 			continue
 		}
-		for _, span := range identifierSpans(state.Source, name) {
+		for _, span := range identifierSpans(state.File, state.Source, name) {
 			result = append(result, Location{URI: state.URI, Range: span})
 		}
 	}
@@ -906,7 +919,7 @@ func (s *server) rename(uri string, position Position, newName string) (workspac
 		if !isGoPlusFile(state.Path) {
 			continue
 		}
-		for _, span := range identifierSpans(state.Source, name) {
+		for _, span := range identifierSpans(state.File, state.Source, name) {
 			changes[state.URI] = append(changes[state.URI], TextEdit{Range: span, NewText: newName})
 		}
 	}
@@ -1030,8 +1043,109 @@ func (s *server) symbolLocation(info symbolInfo) (Location, bool) {
 	if state == nil {
 		return Location{}, false
 	}
+	if state.File != nil {
+		if span, ok := astSymbolNameSpan(state.File, info.Symbol); ok {
+			return Location{URI: state.URI, Range: rangeForOffsets(state.Source, span.Start, span.End)}, true
+		}
+	}
 	line, start, end := findDeclaration(state.Source, info.Symbol)
 	return Location{URI: state.URI, Range: Range{Start: Position{Line: line, Character: start}, End: Position{Line: line, Character: end}}}, true
+}
+
+func astSymbolNameSpan(file *compiler.File, symbol compiler.DocSymbol) (compiler.Span, bool) {
+	if file == nil || symbol.Name == "" {
+		return compiler.Span{}, false
+	}
+	for _, declaration := range file.Decls {
+		if span, ok := astSymbolNameSpanInDecl(file, declaration, symbol); ok {
+			return span, true
+		}
+	}
+	return compiler.Span{}, false
+}
+
+func astSymbolNameSpanInDecl(file *compiler.File, declaration compiler.Decl, symbol compiler.DocSymbol) (compiler.Span, bool) {
+	if declaration == nil {
+		return compiler.Span{}, false
+	}
+	declSpan := declaration.Span()
+	switch value := declaration.(type) {
+	case *compiler.ClassDecl:
+		if symbol.Kind == compiler.DocClass && value.Name == symbol.Name {
+			return identifierSpanWithin(file, declSpan, value.Name)
+		}
+		if symbol.Parent != value.Name {
+			return compiler.Span{}, false
+		}
+		for _, field := range value.Fields {
+			if symbol.Kind == compiler.DocField && field.Name == symbol.Name {
+				return identifierSpanWithin(file, field.Span(), field.Name)
+			}
+		}
+		for _, method := range value.Methods {
+			if symbol.Name == method.Name && (symbol.Kind == compiler.DocMethod || symbol.Kind == compiler.DocExtension) {
+				return method.NameSpan, method.NameSpan.End > method.NameSpan.Start
+			}
+		}
+	case *compiler.ExtendDecl:
+		if symbol.Kind != compiler.DocExtension {
+			return compiler.Span{}, false
+		}
+		for _, method := range value.Methods {
+			if method.Name == symbol.Name {
+				return method.NameSpan, method.NameSpan.End > method.NameSpan.Start
+			}
+		}
+	case *compiler.FunctionDecl:
+		if symbol.Kind == compiler.DocFunction && value.Name == symbol.Name {
+			return value.Method.NameSpan, value.Method.NameSpan.End > value.Method.NameSpan.Start
+		}
+	case *compiler.ValueDecl:
+		if symbol.Kind == compiler.DocValue {
+			return identifierSpanWithin(file, declSpan, symbol.Name)
+		}
+	case *compiler.AnnotationDecl:
+		if symbol.Kind == compiler.DocAnnotation && value.Name == symbol.Name {
+			return identifierSpanWithin(file, declSpan, value.Name)
+		}
+	case *compiler.TemplateDecl:
+		if symbol.Kind == compiler.DocTemplate && value.Name == symbol.Name {
+			return identifierSpanWithin(file, declSpan, value.Name)
+		}
+	case *compiler.EnumDecl:
+		if symbol.Kind == compiler.DocEnum && value.Name == symbol.Name {
+			return identifierSpanWithin(file, declSpan, value.Name)
+		}
+		if symbol.Kind == compiler.DocValue && symbol.Parent == value.Name {
+			return identifierSpanWithin(file, declSpan, symbol.Name)
+		}
+	case *compiler.GoDecl:
+		if symbol.Kind == compiler.DocFunction || symbol.Kind == compiler.DocValue {
+			return identifierSpanWithin(file, declSpan, symbol.Name)
+		}
+	case *compiler.MixedDecl:
+		for _, function := range value.Functions {
+			if function != nil && symbol.Kind == compiler.DocFunction && function.Name == symbol.Name {
+				return function.Method.NameSpan, function.Method.NameSpan.End > function.Method.NameSpan.Start
+			}
+		}
+	}
+	return compiler.Span{}, false
+}
+
+func identifierSpanWithin(file *compiler.File, bounds compiler.Span, name string) (compiler.Span, bool) {
+	if file == nil || name == "" {
+		return compiler.Span{}, false
+	}
+	for _, token := range file.Tokens {
+		if token.Kind != compiler.TokenIdentifier || token.Text != name {
+			continue
+		}
+		if token.Span.Start >= bounds.Start && token.Span.End <= bounds.End {
+			return token.Span, true
+		}
+	}
+	return compiler.Span{}, false
 }
 
 func deprecated(symbol compiler.DocSymbol) bool {
@@ -1162,9 +1276,18 @@ func identifierAtLineStart(line, name string) bool {
 	return strings.HasPrefix(line, name+" ") || strings.HasPrefix(line, name+"\t") || line == name
 }
 
-func identifierSpans(source, name string) []Range {
+func identifierSpans(file *compiler.File, source, name string) []Range {
 	if name == "" {
 		return nil
+	}
+	if file != nil && len(file.Tokens) > 0 {
+		result := []Range{}
+		for _, token := range file.Tokens {
+			if token.Kind == compiler.TokenIdentifier && token.Text == name {
+				result = append(result, rangeForOffsets(source, token.Span.Start, token.Span.End))
+			}
+		}
+		return result
 	}
 	result := []Range{}
 	for offset := 0; offset < len(source); {
@@ -1182,6 +1305,19 @@ func identifierSpans(source, name string) []Range {
 		offset = end
 	}
 	return result
+}
+
+func identifierTokenAt(tokens []compiler.Token, offset int) (compiler.Token, bool) {
+	index := sort.Search(len(tokens), func(index int) bool {
+		return tokens[index].Span.Start > offset
+	}) - 1
+	if index >= 0 {
+		token := tokens[index]
+		if token.Kind == compiler.TokenIdentifier && token.Span.Start <= offset && offset <= token.Span.End {
+			return token, true
+		}
+	}
+	return compiler.Token{}, false
 }
 
 func validIdentifier(value string) bool {

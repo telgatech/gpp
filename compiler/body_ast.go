@@ -1,6 +1,9 @@
 package compiler
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // BodyStmtKind classifies a parsed statement without losing its original
 // tokens. It is deliberately syntax-level; name and type resolution happen in
@@ -196,10 +199,15 @@ type ForStmt struct {
 	Init      ExprNode
 	Condition ExprNode
 	Post      ExprNode
-	RangeKey  []Token
-	RangeExpr ExprNode
-	Body      *BlockStmt
-	SpanValue Span
+	// RangeKey contains the one or two binding expressions before `range`.
+	// RangeOperator is `:=` or `=` when the source explicitly provides one.
+	// Keeping the bindings as expressions prevents assignment punctuation from
+	// being mistaken for an identifier during Go AST lowering.
+	RangeKey      []ExprNode
+	RangeOperator string
+	RangeExpr     ExprNode
+	Body          *BlockStmt
+	SpanValue     Span
 }
 
 func (*ForStmt) node()                {}
@@ -309,7 +317,7 @@ func (statement *statementDraft) Span() Span {
 // statement family does not require every pass to duplicate the same
 // recursive traversal.
 func walkStmtExpressions(statement Stmt, visit func(ExprNode)) {
-	if statement == nil || visit == nil {
+	if statement == nil || visit == nil || isNilStmt(statement) {
 		return
 	}
 	switch value := statement.(type) {
@@ -383,6 +391,11 @@ func walkStmtExpressions(statement Stmt, visit func(ExprNode)) {
 	}
 }
 
+func isNilStmt(statement Stmt) bool {
+	value := reflect.ValueOf(statement)
+	return value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) && value.IsNil()
+}
+
 func walkBlockExpressions(block *BlockStmt, visit func(ExprNode)) {
 	if block == nil {
 		return
@@ -453,6 +466,9 @@ func appendBodyStatement(statements []Stmt, statement *statementDraft) []Stmt {
 		return statements
 	}
 	if structured := structuredStatement(statement); structured != nil {
+		return append(statements, structured)
+	}
+	if structured := goStatementFromDraft(statement); structured != nil {
 		return append(statements, structured)
 	}
 	return append(statements, tokenStmtFromDraft(statement))
@@ -850,7 +866,10 @@ func structuredStatement(statement *statementDraft) Stmt {
 			SpanValue: statement.SpanValue,
 		}
 	case BodyStmtTypeDeclaration:
-		return typeDeclarationStatement(statement.Header, statement.SpanValue)
+		if result := typeDeclarationStatement(statement.Header, statement.SpanValue); result != nil {
+			return result
+		}
+		return goStatementFromDraft(statement)
 	case BodyStmtReturn:
 		return &ReturnStmt{Values: statement.Exprs, SpanValue: statement.SpanValue}
 	case BodyStmtThrow:
@@ -886,12 +905,20 @@ func structuredStatement(statement *statementDraft) Stmt {
 			}
 			return &ExpressionStmt{Expression: statement.Exprs[0], SpanValue: statement.SpanValue}
 		}
+		if fallback := goStatementFromDraft(statement); fallback != nil {
+			return fallback
+		}
 	case BodyStmtLabel:
 		return labelStatement(statement.Header, statement.SpanValue)
 	case BodyStmtBlock:
 		return statement.Body
 	case BodyStmtIf:
 		init, condition := statementConditionParts(statement.Header)
+		if condition == nil && len(significantSyntaxTokens(statement.Header)) > 1 {
+			if fallback := goStatementFromDraft(statement); fallback != nil {
+				return fallback
+			}
+		}
 		var elseBody *BlockStmt
 		var elseIf *IfStmt
 		if len(statement.Children) > 0 {
@@ -914,7 +941,14 @@ func structuredStatement(statement *statementDraft) Stmt {
 		}
 		return result
 	case BodyStmtFor:
-		return structuredForStatement(statement)
+		result := structuredForStatement(statement)
+		clean := significantSyntaxTokens(statement.Header)
+		if len(clean) > 1 && result.Init == nil && result.Condition == nil && result.Post == nil && result.RangeExpr == nil {
+			if fallback := goStatementFromDraft(statement); fallback != nil {
+				return fallback
+			}
+		}
+		return result
 	case BodyStmtSwitch:
 		clean := significantSyntaxTokens(statement.Header)
 		selectStatement := len(clean) > 0 && clean[0].Text == "select"
@@ -926,12 +960,25 @@ func structuredStatement(statement *statementDraft) Stmt {
 				init, _ = ParseExpressionTokens(parts[0])
 				tag, _ = ParseExpressionTokens(parts[1])
 			} else {
-				tag, _ = ParseExpressionTokens(clean[1:])
+				tag, _ = parseSimpleStatementTokens(clean[1:])
 			}
+		}
+		if len(clean) > 1 && !selectStatement && tag == nil {
+			if fallback := goStatementFromDraft(statement); fallback != nil {
+				return fallback
+			}
+		}
+		if assignment, ok := tag.(*AssignmentExpr); ok && isTypeSwitchAssignment(assignment) {
+			return &SwitchStmt{Init: assignment, Body: statement.Body, SpanValue: statement.SpanValue}
 		}
 		return &SwitchStmt{Select: selectStatement, Init: init, Tag: tag, Body: statement.Body, SpanValue: statement.SpanValue}
 	}
 	return nil
+}
+
+func isTypeSwitchAssertion(expression ExprNode) bool {
+	assertion, ok := expression.(*TypeAssertExpr)
+	return ok && assertion.TypeSwitch
 }
 
 func sendStatement(tokens []Token, span Span) *SendStmt {
@@ -1081,7 +1128,7 @@ func statementConditionParts(tokens []Token) (ExprNode, ExprNode) {
 	}
 	parts := splitStatementSeparators(clean[start:], ";")
 	if len(parts) > 1 {
-		init, _ := ParseExpressionTokens(parts[0])
+		init, _ := parseSimpleStatementTokens(parts[0])
 		condition, _ := ParseExpressionTokens(parts[1])
 		return init, condition
 	}
@@ -1097,7 +1144,16 @@ func structuredForStatement(statement *statementDraft) *ForStmt {
 	}
 	clean = clean[1:]
 	if rangeIndex := topLevelToken(clean, "range"); rangeIndex >= 0 {
-		result.RangeKey = clean[:rangeIndex]
+		bindingTokens := clean[:rangeIndex]
+		if assignment := topLevelAssignment(bindingTokens); assignment >= 0 {
+			result.RangeOperator = bindingTokens[assignment].Text
+			bindingTokens = bindingTokens[:assignment]
+		}
+		for _, part := range splitStatementSeparators(bindingTokens, ",") {
+			if expression, err := ParseExpressionTokens(part); err == nil && expression != nil {
+				result.RangeKey = append(result.RangeKey, expression)
+			}
+		}
 		if rangeIndex+1 < len(clean) {
 			result.RangeExpr, _ = ParseExpressionTokens(clean[rangeIndex+1:])
 		}
@@ -1109,7 +1165,7 @@ func structuredForStatement(statement *statementDraft) *ForStmt {
 		return result
 	}
 	if len(parts) > 0 {
-		result.Init, _ = ParseExpressionTokens(parts[0])
+		result.Init, _ = parseSimpleStatementTokens(parts[0])
 	}
 	if len(parts) > 1 {
 		result.Condition, _ = ParseExpressionTokens(parts[1])
@@ -1118,6 +1174,35 @@ func structuredForStatement(statement *statementDraft) *ForStmt {
 		result.Post, _ = ParseExpressionTokens(parts[2])
 	}
 	return result
+}
+
+func parseSimpleStatementTokens(tokens []Token) (ExprNode, error) {
+	clean := significantSyntaxTokens(tokens)
+	if assignment := topLevelAssignment(clean); assignment >= 0 {
+		leftParts := splitStatementSeparators(clean[:assignment], ",")
+		rightParts := splitStatementSeparators(clean[assignment+1:], ",")
+		if len(leftParts) == 0 || len(rightParts) == 0 {
+			return nil, fmt.Errorf("invalid assignment statement")
+		}
+		left := make([]ExprNode, 0, len(leftParts))
+		for _, part := range leftParts {
+			expression, err := ParseExpressionTokens(part)
+			if err != nil || expression == nil {
+				return nil, fmt.Errorf("invalid assignment target")
+			}
+			left = append(left, expression)
+		}
+		right := make([]ExprNode, 0, len(rightParts))
+		for _, part := range rightParts {
+			expression, err := ParseExpressionTokens(part)
+			if err != nil || expression == nil {
+				return nil, fmt.Errorf("invalid assignment value")
+			}
+			right = append(right, expression)
+		}
+		return &AssignmentExpr{Left: left, Operator: clean[assignment].Text, Right: right, SpanValue: tokenSpan(clean)}, nil
+	}
+	return ParseExpressionTokens(clean)
 }
 
 func splitStatementSeparators(tokens []Token, separator string) [][]Token {
@@ -1254,7 +1339,13 @@ func parseStatementExpressions(kind BodyStmtKind, header []Token) []ExprNode {
 		expression, err := ParseExpressionTokens(part)
 		if err != nil || expression == nil {
 			// The token stream remains the authoritative representation until
-			// this syntax gets a dedicated expression parser.
+			// this syntax gets a dedicated expression parser. Do not silently
+			// drop an expression: a missing value can make a Go++ return or call
+			// appear valid to a later AST emitter.
+			preserved := significantSyntaxTokens(part)
+			if len(preserved) > 0 {
+				result = append(result, &TokenExpr{Tokens: preserved, SpanValue: tokenSpan(preserved)})
+			}
 			continue
 		}
 		result = append(result, expression)
@@ -1400,7 +1491,7 @@ func syntaxStmtKind(keyword string) BodyStmtKind {
 		return BodyStmtDefer
 	case "go":
 		return BodyStmtGo
-	case "break", "continue", "goto":
+	case "break", "continue", "fallthrough", "goto":
 		return BodyStmtBranch
 	default:
 		return BodyStmtExpression

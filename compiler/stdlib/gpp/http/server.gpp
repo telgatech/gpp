@@ -71,6 +71,21 @@ func gppWriteMinimalError(ctx *Context) {
 	_, _ = ctx.Response.Write([]byte("500 Internal Server Error"))
 }
 
+func gppErrorTemplate(app any) string {
+	if app == nil {
+		return gppDefaultErrorTemplate
+	}
+	handler := reflect.ValueOf(app).MethodByName("ErrorTemplate")
+	if !handler.IsValid() || handler.Type().NumIn() != 0 || handler.Type().NumOut() != 1 || handler.Type().Out(0).Kind() != reflect.String {
+		return gppDefaultErrorTemplate
+	}
+	result := handler.Call(nil)
+	if len(result) == 1 && result[0].IsValid() {
+		return result[0].String()
+	}
+	return gppDefaultErrorTemplate
+}
+
 func gppCallError(app any, ctx *Context, code int, cause error) {
 	handler := reflect.ValueOf(app).MethodByName("Error")
 	if !handler.IsValid() || handler.Type().NumIn() != 3 {
@@ -389,7 +404,11 @@ class Server {
 			Message: stdhttp.StatusText(code),
 			Path: ctx.Request.URL.Path,
 		}
-		if err := ctx.renderTemplate(code, this.ErrorTemplate(), data); err != nil {
+		app := any(this)
+		if this.GppDynamicObject != nil {
+			app = this.GppDynamicObject
+		}
+		if err := ctx.renderTemplate(code, gppErrorTemplate(app), data); err != nil {
 			gppWriteMinimalError(ctx)
 			return err
 		}

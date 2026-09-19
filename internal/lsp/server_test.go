@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/telgatech/gpp/compiler"
 )
 
 func TestRunServesInitializeCompletionAndShutdown(t *testing.T) {
@@ -74,6 +76,36 @@ func TestRunServesInitializeCompletionAndShutdown(t *testing.T) {
 	if !sawCompletion || !sawShutdown {
 		t.Fatalf("missing responses: completion=%v shutdown=%v", sawCompletion, sawShutdown)
 	}
+}
+
+func TestLSPUsesASTTokensForIdentifiers(t *testing.T) {
+	source := "func main() {\n" +
+		"\tname := \"name\" // name\n" +
+		"\tprintln(name)\n" +
+		"}\n"
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spans := identifierSpans(file, source, "name")
+	if len(spans) != 2 {
+		t.Fatalf("expected only declaration and use identifiers, got %d: %#v", len(spans), spans)
+	}
+	for _, span := range spans {
+		if got := source[offsetForTestPosition(source, span.Start):offsetForTestPosition(source, span.End)]; got != "name" {
+			t.Fatalf("unexpected identifier span %q", got)
+		}
+	}
+
+	state := &fileState{Source: source, File: file}
+	server := &server{workspace: &workspaceState{files: map[string]*fileState{"/main.gpp": state}}}
+	if name, _ := server.symbolsAt("file:///main.gpp", Position{Line: 1, Character: 11}); name != "" {
+		t.Fatalf("string contents were treated as an identifier: %q", name)
+	}
+}
+
+func offsetForTestPosition(source string, position Position) int {
+	return offsetAt(source, position)
 }
 
 func writeTestMessage(output *bytes.Buffer, value any) {

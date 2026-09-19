@@ -50,8 +50,7 @@ func transformPolymorphicDeclarationsAST(src string, context constructorContext)
 		if expression == nil {
 			return
 		}
-		text, err := expressionNodeSource(expression)
-		if err != nil || strings.HasPrefix(strings.TrimSpace(text), "&") {
+		if unary, ok := expression.(*UnaryExpr); ok && unary.Operator == "&" {
 			return
 		}
 		span := expression.Span()
@@ -346,6 +345,13 @@ func collectPolymorphismExpressions(expression ExprNode, visit func(ExprNode)) {
 	case *BinaryExpr:
 		collectPolymorphismExpressions(value.Left, visit)
 		collectPolymorphismExpressions(value.Right, visit)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectPolymorphismExpressions(expression, visit)
+		}
+		for _, expression := range value.Right {
+			collectPolymorphismExpressions(expression, visit)
+		}
 	case *SelectorExpr:
 		collectPolymorphismExpressions(value.Receiver, visit)
 	case *IndexExpr:
@@ -539,6 +545,9 @@ func polymorphismExpressionType(expression ExprNode, context constructorContext,
 			}
 		}
 	case *CallExpr:
+		if constructorName, _, isConstructor := constructorTargetForCallee(value.Callee, context); isConstructor {
+			return constructorName
+		}
 		return polymorphismCallResultType(value, context, valueTypes)
 	}
 	return ""
@@ -656,6 +665,160 @@ func polymorphismCompatibleDerived(name string, base constructorTarget, context 
 		return false
 	}
 	return derived.Class == base.Class || classInherits(derived.Class, base.Class, derived.Classes, map[string]bool{})
+}
+
+// lowerPolymorphismBlockNode applies the dispatch adjustments that were
+// historically performed by source edits. It mutates a fresh body tree owned
+// by a lowering pass: interface-typed locals are rewritten to their generated
+// dispatch interface, derived values are address-taken where required, and
+// polymorphic call arguments receive the same coercion.
+func lowerPolymorphismBlockNode(block *BlockStmt, context constructorContext) error {
+	if block == nil || len(context.Targets) == 0 {
+		return nil
+	}
+	valueTypes := polymorphismValueTypesAST(block, context)
+	resultText := ""
+	if context.CurrentResultAST != nil {
+		resultText, _ = typeNodeSource(context.CurrentResultAST)
+	}
+	resultText = strings.TrimSpace(resultText)
+	resultBase, dispatchResult := dispatchTargetForTypeNode(context.CurrentResultAST, context)
+	pointerResult := transformPolymorphicResultType(resultText, context)
+	resultNeedsPointer := pointerResult != resultText || dispatchResult
+
+	var lowerStatement func(Stmt) error
+	var lowerBlock func(*BlockStmt) error
+	lowerExpression := func(expression ExprNode) {
+		collectPolymorphismExpressions(expression, func(candidate ExprNode) {
+			call, ok := candidate.(*CallExpr)
+			if !ok {
+				return
+			}
+			parameterTypes := polymorphismCallParameterTypes(call, context, valueTypes)
+			for index := range call.Arguments {
+				if index >= len(parameterTypes) || !polymorphismShouldPointerCoerce(parameterTypes[index], call.Arguments[index].Value, context, valueTypes) {
+					continue
+				}
+				call.Arguments[index].Value = polymorphismAddressOf(call.Arguments[index].Value)
+			}
+		})
+	}
+	lowerDeclaration := func(statement *DeclarationStmt) {
+		if statement == nil || len(statement.Names) != 1 || len(statement.Values) != 1 || statement.Type == nil {
+			return
+		}
+		base, ok := dispatchTargetForTypeNode(statement.Type, context)
+		if !ok {
+			return
+		}
+		derived := polymorphismExpressionClassName(statement.Values[0], context, valueTypes)
+		if !polymorphismCompatibleDerived(derived, base, context) {
+			return
+		}
+		if interfaceName := dispatchInterfaceType(base); interfaceName != "" {
+			statement.Type = &NamedType{Parts: strings.Split(interfaceName, ".")}
+			// Keep the local type environment in sync with the declaration
+			// rewrite. Subsequent calls must see `person` as the dispatch
+			// interface, not as the original class value; otherwise the call
+			// lowering incorrectly emits `&person` (a pointer to an interface).
+			valueTypes[statement.Names[0].Text] = interfaceName
+		}
+		statement.Values[0] = polymorphismAddressOf(statement.Values[0])
+	}
+	lowerReturns := func(statement Stmt) {
+		returnStatement, ok := statement.(*ReturnStmt)
+		if !ok || !resultNeedsPointer || len(returnStatement.Values) != 1 {
+			return
+		}
+		value := returnStatement.Values[0]
+		derived := polymorphismExpressionClassName(value, context, valueTypes)
+		if derived == "" {
+			return
+		}
+		if dispatchResult && !polymorphismCompatibleDerived(derived, resultBase, context) {
+			return
+		}
+		returnStatement.Values[0] = polymorphismAddressOf(value)
+	}
+	lowerStatement = func(statement Stmt) error {
+		if statement == nil || isNilStmt(statement) {
+			return nil
+		}
+		walkStmtExpressions(statement, lowerExpression)
+		lowerReturns(statement)
+		switch value := statement.(type) {
+		case *DeclarationStmt:
+			lowerDeclaration(value)
+		case *TokenStmt:
+			if err := lowerBlock(value.Body); err != nil {
+				return err
+			}
+			for _, child := range value.Children {
+				if err := lowerStatement(child); err != nil {
+					return err
+				}
+			}
+		case *IfStmt:
+			if err := lowerBlock(value.Body); err != nil {
+				return err
+			}
+			if err := lowerBlock(value.Else); err != nil {
+				return err
+			}
+			if err := lowerStatement(value.ElseIf); err != nil {
+				return err
+			}
+		case *ForStmt:
+			if err := lowerBlock(value.Body); err != nil {
+				return err
+			}
+		case *SwitchStmt:
+			if err := lowerBlock(value.Body); err != nil {
+				return err
+			}
+		case *CaseStmt:
+			if err := lowerBlock(value.Clause.Body); err != nil {
+				return err
+			}
+		case *TryStmt:
+			if err := lowerBlock(value.Body); err != nil {
+				return err
+			}
+			for _, clause := range value.Catches {
+				if err := lowerBlock(clause.Body); err != nil {
+					return err
+				}
+			}
+			if err := lowerBlock(value.Finally); err != nil {
+				return err
+			}
+		case *BlockStmt:
+			return lowerBlock(value)
+		}
+		return nil
+	}
+	lowerBlock = func(current *BlockStmt) error {
+		if current == nil {
+			return nil
+		}
+		for _, statement := range current.Statements {
+			if err := lowerStatement(statement); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return lowerBlock(block)
+}
+
+func polymorphismAddressOf(expression ExprNode) ExprNode {
+	if expression == nil {
+		return nil
+	}
+	if unary, ok := expression.(*UnaryExpr); ok && unary.Operator == "&" {
+		return expression
+	}
+	return &UnaryExpr{Operator: "&", Operand: expression, SpanValue: expression.Span()}
 }
 
 func collectPolymorphismReturns(block *BlockStmt, visit func(*ReturnStmt)) {

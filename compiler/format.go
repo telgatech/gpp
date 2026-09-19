@@ -9,12 +9,20 @@ import (
 // indentation and line endings without attempting to reprint opaque template,
 // string, or comment contents.
 func FormatSource(source string) string {
+	return formatSourceWithFile(nil, source)
+}
+
+// formatSourceWithFile formats a source buffer using the already parsed AST
+// when one is available. The line printer remains deliberately conservative,
+// but declaration-specific opaque regions (currently template bodies) now
+// come from parser spans rather than a second source scan.
+func formatSourceWithFile(file *File, source string) string {
 	source = strings.ReplaceAll(source, "\r\n", "\n")
 	source = strings.ReplaceAll(source, "\r", "\n")
 	lines := strings.Split(source, "\n")
 	indent := 0
 	state := formatScanState{}
-	templateLines, templateEnds := templateBodyLines(source, lines)
+	templateLines, templateEnds := templateBodyLinesForFile(file, source, lines)
 
 	for index, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -103,6 +111,38 @@ func templateBodyLines(source string, lines []string) (map[int]bool, map[int]boo
 			bodyEnds[closeLine] = true
 		}
 		index = end
+	}
+	return bodyLines, bodyEnds
+}
+
+func templateBodyLinesForFile(file *File, source string, lines []string) (map[int]bool, map[int]bool) {
+	if file == nil {
+		return templateBodyLines(source, lines)
+	}
+	bodyLines := map[int]bool{}
+	bodyEnds := map[int]bool{}
+	lineForOffset := func(target int) int {
+		if target < 0 {
+			target = 0
+		}
+		if target > len(source) {
+			target = len(source)
+		}
+		return strings.Count(source[:target], "\n")
+	}
+	for _, declaration := range file.Decls {
+		template, ok := declaration.(*TemplateDecl)
+		if !ok || template.BodySpan.Start < 0 || template.BodySpan.End < template.BodySpan.Start {
+			continue
+		}
+		openLine := lineForOffset(template.SpanValue.Start)
+		closeLine := lineForOffset(template.BodySpan.End)
+		for line := openLine + 1; line <= closeLine && line < len(lines); line++ {
+			bodyLines[line] = true
+		}
+		if closeLine > openLine {
+			bodyEnds[closeLine] = true
+		}
 	}
 	return bodyLines, bodyEnds
 }
@@ -226,10 +266,11 @@ func isBlockBracePrefix(prefix string) bool {
 // entry point so malformed input is reported without partially rewriting the
 // file. FormatSource remains useful to the LSP for buffer formatting.
 func FormatSourceFile(filename string, source []byte) ([]byte, error) {
-	if _, err := ParseFile(filename, string(source)); err != nil {
+	file, err := ParseFile(filename, string(source))
+	if err != nil {
 		return nil, err
 	}
-	return []byte(FormatSource(string(source))), nil
+	return []byte(formatSourceWithFile(file, string(source))), nil
 }
 
 type formatScanState struct {

@@ -113,13 +113,36 @@ func parameterTypeMap(params string) map[string]string {
 	return result
 }
 
+func parameterTypeMapFromNodes(parameters []ParameterNode) map[string]string {
+	result := map[string]string{}
+	for _, parameter := range parameters {
+		if parameter.Name == "" || parameter.Type == nil {
+			continue
+		}
+		if typeName, err := typeNodeSource(parameter.Type); err == nil {
+			result[parameter.Name] = strings.Join(strings.Fields(typeName), " ")
+		}
+	}
+	return result
+}
+
+func parameterTypeNodeMapFromNodes(parameters []ParameterNode) map[string]TypeNode {
+	result := map[string]TypeNode{}
+	for _, parameter := range parameters {
+		if parameter.Name != "" && parameter.Type != nil {
+			result[parameter.Name] = parameter.Type
+		}
+	}
+	return result
+}
+
 func astParameterSignatureKey(functionType *ast.FuncType) string {
 	if functionType == nil || functionType.Params == nil {
 		return ""
 	}
 	parts := []string{}
 	for _, field := range functionType.Params.List {
-		typeName, err := formatNode(field.Type)
+		typeName, err := astTypeSignatureKeyWithFallback(field.Type)
 		if err != nil {
 			continue
 		}
@@ -155,7 +178,7 @@ func astExpressionTypeKeyWithEnv(expr ast.Expr, types map[string]string) string 
 		if name != "" {
 			return name
 		}
-		if typeName, err := formatNode(value.Type); err == nil {
+		if typeName, err := astTypeSignatureKeyWithFallback(value.Type); err == nil {
 			return typeName
 		}
 	case *ast.UnaryExpr:
@@ -185,12 +208,12 @@ func astExpressionTypeKeyWithEnv(expr ast.Expr, types map[string]string) string 
 }
 
 func astFunctionTypeKey(function *ast.FuncType) string {
-	if function == nil || function.Params == nil {
+	if function == nil {
 		return ""
 	}
 	parameters := []string{}
 	for _, field := range function.Params.List {
-		typeName, err := formatNode(field.Type)
+		typeName, err := astTypeSignatureKeyWithFallback(field.Type)
 		if err != nil {
 			return ""
 		}
@@ -206,7 +229,7 @@ func astFunctionTypeKey(function *ast.FuncType) string {
 	if function.Results != nil {
 		parts := []string{}
 		for _, field := range function.Results.List {
-			typeName, err := formatNode(field.Type)
+			typeName, err := astTypeSignatureKeyWithFallback(field.Type)
 			if err != nil {
 				return ""
 			}
@@ -225,6 +248,23 @@ func astFunctionTypeKey(function *ast.FuncType) string {
 		}
 	}
 	return "func(" + strings.Join(parameters, ", ") + ")" + funcResultSuffix(result)
+}
+
+func astTypeSignatureKeyWithFallback(expression ast.Expr) (string, error) {
+	if expression == nil {
+		return "", nil
+	}
+	if typeNode, ok := typeNodeFromGoExpr(expression); ok {
+		return typeNodeSignatureKey(typeNode), nil
+	}
+	// Keep a narrow interoperability fallback for Go type syntax not yet
+	// represented by TypeNode. This spelling is metadata only; it is never
+	// reparsed into compiler syntax.
+	text, err := formatNode(expression)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(strings.Fields(text), " "), nil
 }
 
 func funcResultSuffix(result string) string {
@@ -261,7 +301,7 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 		result[method.Name] = append(result[method.Name], callableSignature{
 			Name:       method.Name,
 			Parameters: parameters,
-			ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(method))),
+			ResultAST:  methodResultTypeNode(method),
 		})
 	}
 	for _, parentName := range classParentNames(class) {
@@ -298,7 +338,7 @@ func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassD
 			Name:       method.Name,
 			GoName:     staticMethodGoName(class, method),
 			Parameters: parameters,
-			ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(method))),
+			ResultAST:  methodResultTypeNode(method),
 		})
 	}
 	for _, parentName := range classParentNames(class) {
@@ -397,7 +437,7 @@ func functionDeclSignature(function *FunctionDecl) (callableSignature, error) {
 	return callableSignature{
 		Name:       function.Name,
 		Parameters: parameters,
-		ResultAST:  parseTypeText(strings.TrimSpace(methodResultSource(function.Method))),
+		ResultAST:  methodResultTypeNode(function.Method),
 	}, nil
 }
 
@@ -407,8 +447,15 @@ func goCallableSignature(function *ast.FuncDecl) callableSignature {
 		return signature
 	}
 	for _, field := range function.Type.Params.List {
-		typeName, err := formatNode(field.Type)
-		if err != nil {
+		typeNode, ok := typeNodeFromGoExpr(field.Type)
+		if !ok {
+			typeName, err := formatNode(field.Type)
+			if err != nil {
+				continue
+			}
+			typeNode = parseTypeText(typeName)
+		}
+		if typeNode == nil {
 			continue
 		}
 		count := len(field.Names)
@@ -420,21 +467,40 @@ func goCallableSignature(function *ast.FuncDecl) callableSignature {
 			if len(field.Names) > index {
 				name = field.Names[index].Name
 			}
-			signature.Parameters = append(signature.Parameters, parameterInfo{Name: name, TypeAST: parseTypeText(typeName)})
+			signature.Parameters = append(signature.Parameters, parameterInfo{Name: name, TypeAST: typeNode})
 		}
 	}
 	if function.Type.Results != nil {
-		parts := []string{}
 		for _, field := range function.Type.Results.List {
-			typeName, err := formatNode(field.Type)
-			if err == nil {
-				parts = append(parts, typeName)
+			typeNode, ok := typeNodeFromGoExpr(field.Type)
+			if !ok {
+				typeName, err := formatNode(field.Type)
+				if err != nil {
+					continue
+				}
+				typeNode = parseTypeText(typeName)
 			}
-		}
-		if len(parts) == 1 {
-			signature.ResultAST = parseTypeText(parts[0])
-		} else if len(parts) > 1 {
-			signature.ResultAST = parseTypeText("(" + strings.Join(parts, ", ") + ")")
+			if typeNode == nil {
+				continue
+			}
+			for range field.Names {
+				if signature.ResultAST == nil {
+					signature.ResultAST = typeNode
+				} else if tuple, ok := signature.ResultAST.(*TupleType); ok {
+					tuple.Elements = append(tuple.Elements, typeNode)
+				} else {
+					signature.ResultAST = &TupleType{Elements: []TypeNode{signature.ResultAST, typeNode}}
+				}
+			}
+			if len(field.Names) == 0 {
+				if signature.ResultAST == nil {
+					signature.ResultAST = typeNode
+				} else if tuple, ok := signature.ResultAST.(*TupleType); ok {
+					tuple.Elements = append(tuple.Elements, typeNode)
+				} else {
+					signature.ResultAST = &TupleType{Elements: []TypeNode{signature.ResultAST, typeNode}}
+				}
+			}
 		}
 	}
 	return signature
@@ -900,6 +966,267 @@ func resolveCallableCall(name string, args []string, signatures []callableSignat
 	return args, false, fmt.Errorf("no matching %s signature for named arguments", name)
 }
 
+func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
+	if call == nil || call.Callee == nil {
+		return nil, false, nil
+	}
+	var signatures []callableSignature
+	staticCall := false
+	switch function := call.Callee.(type) {
+	case *NameExpr:
+		signatures = append(signatures, context.FunctionSignatures[function.Name]...)
+		if len(signatures) == 0 && context.CurrentClass != "" {
+			signatures = append(signatures, context.MethodSignatures[function.Name]...)
+			if len(signatures) == 0 {
+				signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][function.Name]...)
+			}
+		}
+	case *SelectorExpr:
+		if receiver, ok := function.Receiver.(*NameExpr); ok && receiver.Name == "this" {
+			signatures = append(signatures, context.MethodSignatures[function.Name]...)
+			if len(signatures) == 0 {
+				signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][function.Name]...)
+			}
+		} else {
+			// Imported static calls use a qualified receiver such as
+			// `model.User`, which is represented by a SelectorExpr. Resolve
+			// the complete receiver structurally instead of leaving it as a
+			// native Go selector.
+			receiverKey := staticMethodReceiverKey(function.Receiver, function.Name, context)
+			staticCall = receiverKey != ""
+			signatures = append(signatures, context.StaticMethodSignatures[receiverKey][function.Name]...)
+		}
+	case *IndexExpr:
+		selector, ok := function.Receiver.(*SelectorExpr)
+		if !ok {
+			return nil, false, nil
+		}
+		clone := *call
+		clone.Callee = selector
+		lowered, handled, err := lowerCallableCallNode(&clone, context)
+		if err != nil || !handled {
+			return lowered, handled, err
+		}
+		loweredCall, ok := lowered.(*CallExpr)
+		if !ok {
+			return lowered, true, nil
+		}
+		return &CallExpr{
+			Callee:    &IndexExpr{Receiver: loweredCall.Callee, Index: function.Index, SpanValue: function.SpanValue},
+			Arguments: loweredCall.Arguments,
+			SpanValue: call.SpanValue,
+		}, true, nil
+	case *IndexListExpr:
+		selector, ok := function.Receiver.(*SelectorExpr)
+		if !ok {
+			return nil, false, nil
+		}
+		clone := *call
+		clone.Callee = selector
+		lowered, handled, err := lowerCallableCallNode(&clone, context)
+		if err != nil || !handled {
+			return lowered, handled, err
+		}
+		loweredCall, ok := lowered.(*CallExpr)
+		if !ok {
+			return lowered, true, nil
+		}
+		return &CallExpr{
+			Callee:    &IndexListExpr{Receiver: loweredCall.Callee, Indices: function.Indices, SpanValue: function.SpanValue},
+			Arguments: loweredCall.Arguments,
+			SpanValue: call.SpanValue,
+		}, true, nil
+	default:
+		return nil, false, nil
+	}
+	if len(signatures) != 1 {
+		return nil, false, nil
+	}
+	signature := signatures[0]
+	if function, ok := call.Callee.(*NameExpr); ok && !staticCall && context.CurrentClass != "" &&
+		len(context.FunctionSignatures[function.Name]) == 0 && len(context.ClassMethodSignatures[context.CurrentClass][function.Name]) == 1 {
+		call.Callee = &SelectorExpr{Receiver: &NameExpr{Name: "this"}, Name: function.Name, SpanValue: function.Span()}
+		return call, true, nil
+	}
+	named := false
+	for _, argument := range call.Arguments {
+		if argument.Name != "" {
+			named = true
+			break
+		}
+	}
+	if !named && len(call.Arguments) == len(signature.Parameters) {
+		if !staticCall || signature.GoName == "" {
+			return call, false, nil
+		}
+		return &CallExpr{
+			Callee:    staticCallCallee(call.Callee, signature.GoName),
+			Arguments: append([]CallArg(nil), call.Arguments...),
+			SpanValue: call.SpanValue,
+		}, true, nil
+	}
+	if !named && len(call.Arguments) > len(signature.Parameters) {
+		return nil, false, nil
+	}
+	if !named && len(call.Arguments) < requiredParameterCount(signature) {
+		return nil, false, nil
+	}
+	values := make([]ExprNode, len(signature.Parameters))
+	if named {
+		provided := make([]bool, len(signature.Parameters))
+		for _, argument := range call.Arguments {
+			if argument.Name == "" {
+				return nil, true, fmt.Errorf("%s call mixes positional and named arguments", callableName(call))
+			}
+			index := -1
+			for parameterIndex, parameter := range signature.Parameters {
+				if parameter.Name == argument.Name {
+					index = parameterIndex
+					break
+				}
+			}
+			if index < 0 {
+				return nil, true, fmt.Errorf("%s call has unknown named argument %s", callableName(call), argument.Name)
+			}
+			if provided[index] {
+				return nil, true, fmt.Errorf("%s call repeats named argument %s", callableName(call), argument.Name)
+			}
+			provided[index] = true
+			values[index] = argument.Value
+		}
+		for index, parameter := range signature.Parameters {
+			if provided[index] {
+				continue
+			}
+			if !parameter.HasDefault || parameter.DefaultAST == nil {
+				return nil, false, nil
+			}
+			values[index] = parameter.DefaultAST
+		}
+	} else {
+		for index, argument := range call.Arguments {
+			if argument.Name != "" || argument.Value == nil {
+				return nil, false, nil
+			}
+			values[index] = argument.Value
+		}
+		for index := len(call.Arguments); index < len(signature.Parameters); index++ {
+			if !signature.Parameters[index].HasDefault || signature.Parameters[index].DefaultAST == nil {
+				return nil, false, nil
+			}
+			values[index] = signature.Parameters[index].DefaultAST
+		}
+	}
+	arguments := make([]CallArg, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			return nil, false, nil
+		}
+		arguments = append(arguments, CallArg{Value: value})
+	}
+	callee := call.Callee
+	if staticCall && signature.GoName != "" {
+		callee = staticCallCallee(call.Callee, signature.GoName)
+	}
+	return &CallExpr{Callee: callee, Arguments: arguments, SpanValue: call.SpanValue}, true, nil
+}
+
+func staticCallCallee(original ExprNode, goName string) ExprNode {
+	selector, ok := original.(*SelectorExpr)
+	if !ok || goName == "" {
+		return &NameExpr{Name: goName}
+	}
+	receiverPath, ok := directSelectorPath(selector.Receiver)
+	if !ok {
+		return &NameExpr{Name: goName, SpanValue: original.Span()}
+	}
+	qualifier := ""
+	if dot := strings.LastIndex(receiverPath, "."); dot >= 0 {
+		qualifier = receiverPath[:dot]
+	}
+	if qualifier == "" {
+		return &NameExpr{Name: goName, SpanValue: original.Span()}
+	}
+	parts := strings.Split(qualifier, ".")
+	result := ExprNode(&NameExpr{Name: parts[0], SpanValue: original.Span()})
+	for _, part := range parts[1:] {
+		result = &SelectorExpr{Receiver: result, Name: part, SpanValue: original.Span()}
+	}
+	return &SelectorExpr{Receiver: result, Name: goName, SpanValue: original.Span()}
+}
+
+func staticMethodReceiverKey(receiver ExprNode, methodName string, context constructorContext) string {
+	if receiver == nil {
+		return ""
+	}
+	if name, ok := receiver.(*NameExpr); ok {
+		if len(context.StaticMethodSignatures[name.Name][methodName]) > 0 {
+			return name.Name
+		}
+	}
+	qualified, ok := directSelectorPath(receiver)
+	if !ok {
+		return ""
+	}
+	if len(context.StaticMethodSignatures[qualified][methodName]) > 0 {
+		return qualified
+	}
+	return ""
+}
+
+// lowerOverloadCallNode applies the semantic Go name chosen for an overloaded
+// call without using a source-span edit. The overload resolver already works
+// from typed call arguments and local type information; this adapter only
+// replaces the callee node and leaves argument lowering to the normal AST walk.
+func lowerOverloadCallNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
+	if call == nil || call.Callee == nil {
+		return nil, false, nil
+	}
+	name, found, err := overloadCallName(call, context.CurrentParameterTypes, context.Overloads)
+	if err != nil {
+		return nil, true, err
+	}
+	if !found || name == "" {
+		return nil, false, nil
+	}
+	switch callee := call.Callee.(type) {
+	case *NameExpr:
+		if callee.Name == name {
+			return call, false, nil
+		}
+		return &CallExpr{
+			Callee:    &NameExpr{Name: name, SpanValue: callee.SpanValue},
+			Arguments: append([]CallArg(nil), call.Arguments...),
+			SpanValue: call.SpanValue,
+		}, true, nil
+	case *SelectorExpr:
+		if callee.Name == name {
+			return call, false, nil
+		}
+		return &CallExpr{
+			Callee: &SelectorExpr{
+				Receiver:  callee.Receiver,
+				Name:      name,
+				SpanValue: callee.SpanValue,
+			},
+			Arguments: append([]CallArg(nil), call.Arguments...),
+			SpanValue: call.SpanValue,
+		}, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+func callableName(call *CallExpr) string {
+	if call == nil {
+		return "call"
+	}
+	if name, ok := directSelectorPath(call.Callee); ok && strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+	return "call"
+}
+
 func requiredParameterCount(signature callableSignature) int {
 	count := 0
 	for _, parameter := range signature.Parameters {
@@ -1028,6 +1355,13 @@ func collectCallableCallRewrites(expression ExprNode, src string, context constr
 	case *BinaryExpr:
 		collectCallableCallRewrites(value.Left, src, context, result)
 		collectCallableCallRewrites(value.Right, src, context, result)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectCallableCallRewrites(expression, src, context, result)
+		}
+		for _, expression := range value.Right {
+			collectCallableCallRewrites(expression, src, context, result)
+		}
 	case *SelectorExpr:
 		collectCallableCallRewrites(value.Receiver, src, context, result)
 	case *IndexExpr:
@@ -1412,12 +1746,12 @@ func staticExpressionTypeNode(expression ExprNode, context constructorContext, v
 			return staticExpressionTypeNode(value.Left, context, valueTypes)
 		}
 	case *SelectorExpr:
-		if qualified, err := expressionNodeSource(value); err == nil {
+		if qualified, ok := directSelectorPath(value); ok {
 			if target, ok := context.Targets[qualified]; ok && target.Class != nil {
-				return target.Class.Name
+				return qualified
 			}
 		}
-		if key, enum, ok := enumReferenceNode(value.Receiver, context); ok {
+		if key, enum, ok := enumReferenceExpr(value.Receiver, context); ok {
 			if _, exists := enumMember(enum, value.Name); exists {
 				return enumReferenceType(key, enum)
 			}
@@ -1469,23 +1803,22 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 			}
 		}
 	case *SelectorExpr:
-		if qualified, err := expressionNodeSource(callee); err == nil {
+		if qualified, ok := directSelectorPath(callee); ok {
 			if target, ok := context.Targets[qualified]; ok && target.Class != nil {
-				return target.Class.Name
+				return qualified
+			}
+		}
+		if receiverKey := staticMethodReceiverKey(callee.Receiver, callee.Name, context); receiverKey != "" {
+			for _, signature := range context.StaticMethodSignatures[receiverKey][callee.Name] {
+				if result := strings.TrimSpace(signature.resultText()); result != "" {
+					return result
+				}
 			}
 		}
 		if receiver, ok := callee.Receiver.(*NameExpr); ok {
-			if _, isClass := context.Targets[receiver.Name]; isClass {
-				for _, signature := range context.StaticMethodSignatures[receiver.Name][callee.Name] {
-					if result := strings.TrimSpace(signature.resultText()); result != "" {
-						return result
-					}
-				}
-			} else {
-				for _, signature := range context.ClassMethodSignatures[strings.TrimPrefix(valueTypes[receiver.Name], "*")][callee.Name] {
-					if result := strings.TrimSpace(signature.resultText()); result != "" {
-						return result
-					}
+			for _, signature := range context.ClassMethodSignatures[strings.TrimPrefix(valueTypes[receiver.Name], "*")][callee.Name] {
+				if result := strings.TrimSpace(signature.resultText()); result != "" {
+					return result
 				}
 			}
 			if importPath := context.AvailableImports[receiver.Name]; importPath != "" {

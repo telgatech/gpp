@@ -981,17 +981,44 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		if qualifier != "" {
 			importedTypes := map[string]map[string]bool{qualifier: pkg.Types}
 			for index := range importedExtensions {
-				parameters := methodParametersSource(importedExtensions[index].Method)
-				result := methodResultSource(importedExtensions[index].Method)
 				// These are copied into the importing package and then qualified;
-				// detach the source-backed spans before replacing their text.
+				// detach source-backed spans before replacing their typed nodes.
+				method := &importedExtensions[index].Method
+				structured := len(method.ParameterAST) > 0 || method.ResultAST != nil
+				parameters := ""
+				result := ""
+				if !structured {
+					parameters = methodParametersSource(*method)
+					result = methodResultSource(*method)
+				}
+				if structured {
+					parameters := append([]ParameterNode(nil), method.ParameterAST...)
+					for parameterIndex := range parameters {
+						parameters[parameterIndex].Type = qualifyImportedTypeNode(parameters[parameterIndex].Type, qualifier+"._", pkg.Classes, importedTypes)
+					}
+					method.ParameterAST = parameters
+					method.ResultAST = qualifyImportedTypeNode(method.ResultAST, qualifier+"._", pkg.Classes, importedTypes)
+					resultFields := append([]ParameterNode(nil), method.ResultFieldsAST...)
+					for resultIndex := range resultFields {
+						resultFields[resultIndex].Type = qualifyImportedTypeNode(resultFields[resultIndex].Type, qualifier+"._", pkg.Classes, importedTypes)
+					}
+					method.ResultFieldsAST = resultFields
+					typeParameters := append([]TypeParameterNode(nil), method.TypeParamsAST...)
+					for typeParameterIndex := range typeParameters {
+						typeParameters[typeParameterIndex].Constraint = qualifyImportedTypeNode(typeParameters[typeParameterIndex].Constraint, qualifier+"._", pkg.Classes, importedTypes)
+					}
+					method.TypeParamsAST = typeParameters
+				}
+				// Detach source-backed spans after replacing their typed nodes.
 				importedExtensions[index].Method.Owner = nil
 				importedExtensions[index].Method.ParametersSpan = Span{}
 				importedExtensions[index].Method.ResultSpan = Span{}
-				qualifiedParameters := qualifyImportedTypeNames(parameters, qualifier+"._", pkg.Classes, importedTypes)
-				qualifiedResult := qualifyImportedTypeNames(result, qualifier+"._", pkg.Classes, importedTypes)
-				importedExtensions[index].Method.ParameterAST = parseParameterNodes(qualifiedParameters)
-				importedExtensions[index].Method.ResultAST = parseTypeText(qualifiedResult)
+				if !structured {
+					qualifiedParameters := qualifyImportedTypeNames(parameters, qualifier+"._", pkg.Classes, importedTypes)
+					qualifiedResult := qualifyImportedTypeNames(result, qualifier+"._", pkg.Classes, importedTypes)
+					importedExtensions[index].Method.ParameterAST = parseParameterNodes(qualifiedParameters)
+					importedExtensions[index].Method.ResultAST = parseTypeText(qualifiedResult)
+				}
 			}
 			for index := range importedExtensions {
 				baseTarget := strings.TrimPrefix(importedExtensions[index].Target, "*")
@@ -1110,8 +1137,8 @@ func goImports(file *File) ([]*ast.ImportSpec, error) {
 			continue
 		}
 		// Ordinary Go declarations, including imports, are represented by their
-		// Go AST. Other raw declarations must not force us to concatenate and
-		// reparse executable source just to discover imports.
+		// Go AST. Other compatibility declarations must not force us to
+		// concatenate and reparse executable source just to discover imports.
 		for _, declaration := range raw.GoASTDecls {
 			if group, ok := declaration.(*ast.GenDecl); ok && group.Tok == token.IMPORT {
 				for _, spec := range group.Specs {

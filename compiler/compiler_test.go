@@ -816,7 +816,7 @@ func main() {
 		"/accepted 202 false true false",
 		"/view 200 false false true",
 		"/missing 404 false false true false true false",
-		"/broken 500 false false true false true false",
+		"/broken 500 false false true false false true",
 		"<p>hello</p>",
 		`{"ok":true}`,
 	} {

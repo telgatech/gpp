@@ -173,6 +173,23 @@ class User {
 	}
 }
 
+func TestMethodResultFieldsAreStructured(t *testing.T) {
+	file, err := ParseFile("named-results.gpp", `func named() (value int, err error) { return 0, nil }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function, ok := file.Decls[0].(*FunctionDecl)
+	if !ok {
+		t.Fatalf("expected function declaration, got %T", file.Decls[0])
+	}
+	if len(function.Method.ResultFieldsAST) != 2 || function.Method.ResultFieldsAST[0].Name != "value" || function.Method.ResultFieldsAST[1].Name != "err" {
+		t.Fatalf("named result fields were not structured: %#v", function.Method.ResultFieldsAST)
+	}
+	if _, ok := function.Method.ResultFieldsAST[0].Type.(*NamedType); !ok {
+		t.Fatalf("expected structured first result type, got %T", function.Method.ResultFieldsAST[0].Type)
+	}
+}
+
 func TestAnnotationArgumentsExposeExpressionAST(t *testing.T) {
 	file, err := ParseFile("annotation-expression.gpp", `
 @{route("/users", method: "GET")}

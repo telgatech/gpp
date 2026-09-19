@@ -67,6 +67,20 @@ func (*BinaryExpr) node()                 {}
 func (*BinaryExpr) expr()                 {}
 func (expression *BinaryExpr) Span() Span { return expression.SpanValue }
 
+// AssignmentExpr represents an assignment in a grammar position that accepts
+// a simple statement, such as a for-loop initializer or an if initializer.
+// Ordinary standalone assignments remain AssignmentStmt nodes.
+type AssignmentExpr struct {
+	Left      []ExprNode
+	Operator  string
+	Right     []ExprNode
+	SpanValue Span
+}
+
+func (*AssignmentExpr) node()                 {}
+func (*AssignmentExpr) expr()                 {}
+func (expression *AssignmentExpr) Span() Span { return expression.SpanValue }
+
 type SelectorExpr struct {
 	Receiver  ExprNode
 	Name      string
@@ -225,8 +239,8 @@ func (*LambdaExpr) expr()                 {}
 func (expression *LambdaExpr) Span() Span { return expression.SpanValue }
 
 // TokenExpr is a lossless syntax fallback for an expression that has not yet
-// been given a dedicated Go++ node. It is still structured token data, never a
-// raw executable string, and is intended to disappear as expression coverage
+// been given a dedicated Go++ node. It is still structured token data, never
+// executable source text, and is intended to disappear as expression coverage
 // expands.
 type TokenExpr struct {
 	Tokens    []Token
@@ -265,6 +279,7 @@ func ParseExpressionTokens(tokens []Token) (ExprNode, error) {
 		bodyTokens := filtered[arrow+1:]
 		if len(bodyTokens) >= 2 && bodyTokens[0].Text == "{" && bodyTokens[len(bodyTokens)-1].Text == "}" {
 			bodySourceTokens := tokensBetweenSpans(tokens, bodyTokens[0].Span.Start, bodyTokens[len(bodyTokens)-1].Span.End)
+			bodySourceTokens = restoreLambdaBodySeparators(bodySourceTokens)
 			body, bodyErr := ParseBodyAST(bodySourceTokens[1 : len(bodySourceTokens)-1])
 			if bodyErr == nil {
 				body.Open = bodyTokens[0].Span
@@ -293,7 +308,7 @@ func ParseExpressionTokens(tokens []Token) (ExprNode, error) {
 			return composite, nil
 		}
 	}
-	parser := expressionParser{tokens: filtered}
+	parser := expressionParser{tokens: filtered, sourceTokens: tokens}
 	expression, err := parser.parse(0)
 	if err != nil {
 		return nil, err
@@ -303,9 +318,60 @@ func ParseExpressionTokens(tokens []Token) (ExprNode, error) {
 		if len(preserved) == 0 {
 			preserved = filtered
 		}
+		if expression, ok := parseGoExpressionTokens(preserved); ok {
+			return expression, nil
+		}
 		return &TokenExpr{Tokens: preserved, SpanValue: tokenSpan(filtered)}, nil
 	}
 	return expression, nil
+}
+
+// ParseExpressionTokens normally discards newlines because they are not
+// meaningful inside an expression. A block-bodied lambda is the exception:
+// its body contains statements, and callers often pass a token slice that
+// has already lost newline tokens. Restore the statement boundaries that are
+// unambiguous from source line spans before handing the body to bodyParser.
+func restoreLambdaBodySeparators(tokens []Token) []Token {
+	if len(tokens) < 3 {
+		return tokens
+	}
+	result := make([]Token, 0, len(tokens)+2)
+	for index, token := range tokens {
+		if index > 0 && token.Span.Line > tokens[index-1].Span.Line &&
+			isLambdaStatementStart(token.Text) &&
+			isLambdaStatementEnd(tokens[index-1].Text) {
+			result = append(result, Token{
+				Kind: TokenNewline,
+				Span: Span{Start: token.Span.Start, End: token.Span.Start, Line: token.Span.Line, Column: token.Span.Column},
+			})
+		}
+		result = append(result, token)
+	}
+	return result
+}
+
+func isLambdaStatementStart(text string) bool {
+	switch text {
+	case "break", "continue", "defer", "fallthrough", "for", "go", "if", "return", "select", "switch", "throw", "try":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLambdaStatementEnd(text string) bool {
+	if text == ")" || text == "]" || text == "}" || text == "++" || text == "--" {
+		return true
+	}
+	if text == "true" || text == "false" || text == "nil" {
+		return true
+	}
+	if text == "" {
+		return false
+	}
+	first := text[0]
+	return (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') ||
+		(first >= '0' && first <= '9') || first == '_' || first == '"' || first == '`' || first == '\''
 }
 
 func parseFunctionLiteral(tokens, sourceTokens []Token) (ExprNode, bool, error) {
@@ -348,22 +414,33 @@ func tokensBetweenSpans(tokens []Token, start, end int) []Token {
 
 func parseCompositeLiteral(tokens, sourceTokens []Token) (ExprNode, bool, error) {
 	open := compositeLiteralOpen(tokens)
-	if open < 1 || len(tokens) < 2 || tokens[len(tokens)-1].Text != "}" {
+	implicit := len(tokens) >= 2 && tokens[0].Text == "{"
+	if (!implicit && open < 1) || len(tokens) < 2 || tokens[len(tokens)-1].Text != "}" {
 		return nil, false, nil
 	}
-	typeTokens := tokens[:open]
+	var typeTokens []Token
+	if !implicit {
+		typeTokens = tokens[:open]
+	}
 	if len(typeTokens) > 0 && len(sourceTokens) > 0 {
 		preserved := tokensBetweenSpans(sourceTokens, typeTokens[0].Span.Start, typeTokens[len(typeTokens)-1].Span.End)
 		if len(preserved) > 0 {
 			typeTokens = preserved
 		}
 	}
-	typeNode, err := ParseTypeTokens(typeTokens)
-	if err != nil {
-		return nil, false, err
+	var typeNode TypeNode
+	if !implicit {
+		var err error
+		typeNode, err = ParseTypeTokens(typeTokens)
+		if err != nil {
+			return nil, false, err
+		}
+		if typeNode == nil {
+			return nil, false, nil
+		}
 	}
-	if typeNode == nil {
-		return nil, false, nil
+	if implicit {
+		open = 0
 	}
 	close := matchingBrace(tokens, open)
 	if close != len(tokens)-1 {
@@ -405,10 +482,25 @@ func compositeLiteralOpen(tokens []Token) int {
 	if comma >= 0 && (openBrace < 0 || comma < openBrace) {
 		return -1
 	}
-	if tokens[0].Text != "struct" && tokens[0].Text != "interface" {
-		return openBrace
-	}
 	typeOpen := openBrace
+	// Anonymous struct/interface types can be nested inside a collection or
+	// map type (`[]struct{...}{...}`).  In that form the first brace belongs to
+	// the type, not the literal; find the literal brace after the type closes.
+	if tokens[0].Text != "struct" && tokens[0].Text != "interface" {
+		foundAnonymousType := false
+		for index := 0; index+1 < len(tokens); index++ {
+			if (tokens[index].Text == "struct" || tokens[index].Text == "interface") && tokens[index+1].Text == "{" {
+				typeOpen = index + 1
+				foundAnonymousType = true
+				break
+			}
+		}
+		if !foundAnonymousType {
+			return openBrace
+		}
+	} else if openBrace < 0 {
+		return -1
+	}
 	if typeOpen < 0 {
 		return -1
 	}
@@ -472,8 +564,9 @@ func matchingBrace(tokens []Token, open int) int {
 }
 
 type expressionParser struct {
-	tokens []Token
-	index  int
+	tokens       []Token
+	sourceTokens []Token
+	index        int
 }
 
 func (parser *expressionParser) parse(minPrecedence int) (ExprNode, error) {
@@ -523,10 +616,17 @@ func (parser *expressionParser) parsePrefix() (ExprNode, error) {
 			var literal ExprNode
 			var ok bool
 			var err error
+			candidateSource := parser.sourceTokens
+			if len(candidateSource) > 0 {
+				preserved := tokensBetweenSpans(candidateSource, candidate[0].Span.Start, candidate[len(candidate)-1].Span.End)
+				if len(preserved) > 0 {
+					candidateSource = preserved
+				}
+			}
 			if candidate[0].Text == "func" {
-				literal, ok, err = parseFunctionLiteral(candidate, candidate)
+				literal, ok, err = parseFunctionLiteral(candidate, candidateSource)
 			} else if !isUnaryOperator(candidate[0].Text) {
-				literal, ok, err = parseCompositeLiteral(candidate, candidate)
+				literal, ok, err = parseCompositeLiteral(candidate, candidateSource)
 			}
 			if err != nil {
 				return nil, err
@@ -535,6 +635,19 @@ func (parser *expressionParser) parsePrefix() (ExprNode, error) {
 				parser.index += close + 1
 				return literal, nil
 			}
+		}
+	}
+	// A conversion whose type starts with a non-identifier token (for
+	// example []byte(value) or *Problem(value)) is lexically ambiguous with
+	// indexing/unary syntax. Recognize the type prefix before the ordinary
+	// prefix parser so the call remains a typed AST node instead of being
+	// dropped as an unparseable argument.
+	if open := conversionCallOpen(remaining); open > 0 {
+		typeNode, typeErr := ParseTypeTokens(remaining[:open])
+		if typeErr == nil && typeNode != nil {
+			start := remaining[0].Span
+			parser.index += open
+			return &TypeExpr{Type: typeNode, SpanValue: start}, nil
 		}
 	}
 	token := parser.tokens[parser.index]
@@ -578,6 +691,32 @@ func (parser *expressionParser) parsePrefix() (ExprNode, error) {
 		return &LiteralExpr{Text: token.Text, Kind: token.Kind, SpanValue: token.Span}, nil
 	}
 	return &TokenExpr{Tokens: []Token{token}, SpanValue: token.Span}, nil
+}
+
+func conversionCallOpen(tokens []Token) int {
+	if len(tokens) < 3 {
+		return -1
+	}
+	first := tokens[0].Text
+	if first != "[" && first != "*" && first != "chan" && first != "<-" && first != "map" && first != "interface" && first != "struct" && first != "func" {
+		return -1
+	}
+	bracketDepth := 0
+	for index, token := range tokens {
+		switch token.Text {
+		case "[":
+			bracketDepth++
+		case "]":
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case "(":
+			if bracketDepth == 0 && index > 0 {
+				return index
+			}
+		}
+	}
+	return -1
 }
 
 func parseInterpolatedString(token Token) (ExprNode, error) {
@@ -677,6 +816,24 @@ func expressionNodeSource(expression ExprNode) (string, error) {
 		}
 		right, err := expressionNodeSource(value.Right)
 		return left + " " + value.Operator + " " + right, err
+	case *AssignmentExpr:
+		left := make([]string, 0, len(value.Left))
+		for _, expression := range value.Left {
+			text, err := expressionNodeSource(expression)
+			if err != nil {
+				return "", err
+			}
+			left = append(left, text)
+		}
+		right := make([]string, 0, len(value.Right))
+		for _, expression := range value.Right {
+			text, err := expressionNodeSource(expression)
+			if err != nil {
+				return "", err
+			}
+			right = append(right, text)
+		}
+		return strings.Join(left, ", ") + " " + value.Operator + " " + strings.Join(right, ", "), nil
 	case *SelectorExpr:
 		receiver, err := expressionNodeSource(value.Receiver)
 		if err != nil {
@@ -774,9 +931,13 @@ func expressionNodeSource(expression ExprNode) (string, error) {
 		inner, err := expressionNodeSource(value.Inner)
 		return "(" + inner + ")", err
 	case *CompositeLiteralExpr:
-		typeText, err := typeNodeSource(value.Type)
-		if err != nil {
-			return "", err
+		typeText := ""
+		if value.Type != nil {
+			var err error
+			typeText, err = typeNodeSource(value.Type)
+			if err != nil {
+				return "", err
+			}
 		}
 		elements := make([]string, 0, len(value.Elements))
 		for _, element := range value.Elements {

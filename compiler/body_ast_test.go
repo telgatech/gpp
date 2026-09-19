@@ -88,6 +88,44 @@ class User {
 	}
 }
 
+func TestParseTypeSwitchUsesStructuredSwitchAST(t *testing.T) {
+	file, err := ParseFile("type-switch-body-ast.gpp", `
+func Describe(value any) string {
+    switch typed := value.(type) {
+    case string:
+        return typed
+    default:
+        return "unknown"
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := file.Decls[0].(*FunctionDecl)
+	switchStatement, ok := function.Method.BodyAST.Statements[0].(*SwitchStmt)
+	if !ok {
+		t.Fatalf("expected structured switch statement, got %T", function.Method.BodyAST.Statements[0])
+	}
+	assignment, ok := switchStatement.Init.(*AssignmentExpr)
+	if !ok || len(assignment.Right) != 1 || !isTypeSwitchAssertion(assignment.Right[0]) {
+		t.Fatalf("expected typed switch assignment, got %#v", switchStatement.Init)
+	}
+	if len(switchStatement.Body.Statements) != 2 {
+		t.Fatalf("expected two type switch clauses, got %#v", switchStatement.Body.Statements)
+	}
+	if _, ok := switchStatement.Body.Statements[0].(*CaseStmt); !ok {
+		t.Fatalf("expected typed type-switch case, got %T", switchStatement.Body.Statements[0])
+	}
+	output, handled, err := directFunctionSource(function, constructorContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || !strings.Contains(output, "switch typed := value.(type)") {
+		t.Fatalf("type switch did not lower through Go AST: handled=%v output=%s", handled, output)
+	}
+}
+
 func TestBodyASTStructuresElseIf(t *testing.T) {
 	file, err := ParseFile("else-if-body-ast.gpp", `
 class User {

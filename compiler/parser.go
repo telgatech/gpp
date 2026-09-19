@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -270,6 +271,10 @@ func ParseFile(name, src string) (*File, error) {
 						sourceLine(src, start),
 					)
 				}
+				if len(placements) == 0 && len(goASTDecls) > 0 && appendStructuredMixedParts(file, functions, goASTDecls, goASTFileSet, start, next) {
+					pos = next
+					continue
+				}
 				line, column := sourcePosition(src, start)
 				file.Decls = append(file.Decls, &MixedDecl{
 					GoASTDecls:           goASTDecls,
@@ -289,6 +294,97 @@ func ParseFile(name, src string) (*File, error) {
 	}
 
 	return file, nil
+}
+
+// appendStructuredMixedParts splits an otherwise ordinary mixed top-level
+// chunk into the AST declarations that the Go parser already recognized. The
+// parser historically kept such chunks in MixedDecl so source rewriters could
+// preserve ordering; that container is unnecessary when there are no
+// annotation placements or opaque remainder. Function bodies retain their
+// Go++ AST, while ordinary Go declarations retain their go/ast nodes.
+func appendStructuredMixedParts(file *File, functions []*FunctionDecl, goDeclarations []ast.Decl, fileSet *token.FileSet, chunkStart, chunkEnd int) bool {
+	if file == nil || fileSet == nil || chunkStart < 0 || chunkEnd < chunkStart || len(goDeclarations) == 0 {
+		return false
+	}
+	prefixLength := len("package " + goPackageName(file.Package) + "\n")
+	type item struct {
+		start    int
+		end      int
+		order    int
+		function *FunctionDecl
+		goDecl   ast.Decl
+	}
+	items := make([]item, 0, len(functions)+len(goDeclarations))
+	order := 0
+	for _, function := range functions {
+		if function == nil || function.SourceSpan.Start < chunkStart || function.SourceSpan.End > chunkEnd {
+			return false
+		}
+		items = append(items, item{start: function.SourceSpan.Start, end: function.SourceSpan.End, order: order, function: function})
+		order++
+	}
+	for _, declaration := range goDeclarations {
+		if declaration == nil {
+			continue
+		}
+		if _, function := declaration.(*ast.FuncDecl); function {
+			continue
+		}
+		startPosition := fileSet.Position(declaration.Pos())
+		endPosition := fileSet.Position(declaration.End())
+		if !startPosition.IsValid() || !endPosition.IsValid() {
+			return false
+		}
+		start := chunkStart + startPosition.Offset - prefixLength
+		end := chunkStart + endPosition.Offset - prefixLength
+		if start < chunkStart || end < start || end > chunkEnd {
+			return false
+		}
+		items = append(items, item{start: start, end: end, order: order, goDecl: declaration})
+		order++
+	}
+	if len(items) == 0 {
+		return false
+	}
+	sort.SliceStable(items, func(left, right int) bool {
+		if items[left].start != items[right].start {
+			return items[left].start < items[right].start
+		}
+		return items[left].order < items[right].order
+	})
+	for _, current := range items {
+		if current.function != nil {
+			file.Decls = append(file.Decls, current.function)
+			continue
+		}
+		line, column := sourcePosition(file.Source, current.start)
+		file.Decls = append(file.Decls, &GoDecl{
+			Declarations: []ast.Decl{current.goDecl},
+			FileSet:      fileSet,
+			Tokens:       tokensWithinSpan(file.Tokens, current.start, current.end),
+			Owner:        file,
+			SourceSpan:   Span{Start: current.start, End: current.end, Line: line, Column: column},
+			SourceFile:   file.Name,
+			SourceLine:   line,
+		})
+	}
+	return true
+}
+
+func tokensWithinSpan(tokens []Token, start, end int) []Token {
+	if len(tokens) == 0 || start < 0 || end < start {
+		return nil
+	}
+	result := make([]Token, 0)
+	for _, current := range tokens {
+		if current.Kind == TokenEOF {
+			continue
+		}
+		if current.Span.Start >= start && current.Span.End <= end {
+			result = append(result, current)
+		}
+	}
+	return result
 }
 
 func funcDeclAST(declaration ast.Decl) *ast.FuncDecl {
@@ -765,6 +861,7 @@ func parseTemplate(src string, start int) (*TemplateDecl, int, error) {
 		Annotations:  annotations,
 		Body:         body,
 		BodyTokens:   bodyTokens,
+		BodySpan:     sourceSpan(src, pos+1, closeBody),
 	}, closeBody + 1, nil
 }
 
@@ -1541,7 +1638,7 @@ func parseExtend(src string, start int) (*ExtendDecl, int, error) {
 	return &ExtendDecl{TargetAST: targetAST, TargetConstraints: constraints, Methods: container.Methods}, close + 1, nil
 }
 
-func splitExtensionTargetConstraints(src string) (string, map[string]string, error) {
+func splitExtensionTargetConstraints(src string) (string, map[string]TypeNode, error) {
 	src = strings.TrimSpace(src)
 	where := strings.Index(src, " where ")
 	if where < 0 {
@@ -1552,7 +1649,7 @@ func splitExtensionTargetConstraints(src string) (string, map[string]string, err
 	if targets == "" || constraintText == "" {
 		return "", nil, fmt.Errorf("extension target constraints require a target and constraint")
 	}
-	constraints := map[string]string{}
+	constraints := map[string]TypeNode{}
 	parts, err := splitTopLevel(constraintText, ',')
 	if err != nil {
 		return "", nil, err
@@ -1565,7 +1662,11 @@ func splitExtensionTargetConstraints(src string) (string, map[string]string, err
 		if !isTypeParameterName(fields[0]) {
 			return "", nil, fmt.Errorf("invalid extension target parameter %q", fields[0])
 		}
-		constraints[fields[0]] = strings.Join(fields[1:], " ")
+		constraint := parseTypeText(strings.Join(fields[1:], " "))
+		if constraint == nil {
+			return "", nil, fmt.Errorf("invalid extension target constraint %q", strings.TrimSpace(part))
+		}
+		constraints[fields[0]] = constraint
 	}
 	return targets, constraints, nil
 }
@@ -1707,6 +1808,7 @@ func parseMethod(src string, start, sourceBase int, fullSource string) (Method, 
 		ParameterAST:         parseParameterNodes(params),
 		ResultSpan:           resultSpan,
 		ResultAST:            parseTypeText(result),
+		ResultFieldsAST:      parseResultFieldNodes(result),
 		ParameterAnnotations: parameterAnnotations,
 		Annotations:          annotations,
 		BodySpan:             Span{Start: bodyStart, End: bodyEnd, Line: bodyLine, Column: bodyColumn},

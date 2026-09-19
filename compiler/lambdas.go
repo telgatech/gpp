@@ -25,6 +25,346 @@ type lambdaFunctionType struct {
 	ResultAST  TypeNode
 }
 
+func lambdaFunctionTypesForCall(call *CallExpr, index int, context constructorContext) []*FunctionType {
+	if call == nil || index < 0 || index >= len(call.Arguments) {
+		return nil
+	}
+	candidates := []callableSignature{}
+	switch function := call.Callee.(type) {
+	case *NameExpr:
+		candidates = append(candidates, context.FunctionSignatures[function.Name]...)
+	case *SelectorExpr:
+		actualType := staticExpressionTypeNode(function.Receiver, context, context.CurrentParameterTypes)
+		className := strings.TrimPrefix(strings.TrimSpace(actualType), "*")
+		if receiver, ok := function.Receiver.(*NameExpr); ok && receiver.Name == "this" && context.CurrentClass != "" {
+			className = context.CurrentClass
+		}
+		candidates = append(candidates, context.ClassMethodSignatures[className][function.Name]...)
+		for _, extension := range append(append([]extensionMethod(nil), context.Extensions...), context.PreludeExtensions...) {
+			if extension.Method.Name != function.Name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
+				continue
+			}
+			parameters, err := parameterInfosForMethod(extension.Method)
+			if err != nil {
+				continue
+			}
+			candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: extension.Method.ResultAST})
+		}
+	}
+	result := make([]*FunctionType, 0, len(candidates))
+	for _, candidate := range candidates {
+		if index >= len(candidate.Parameters) {
+			continue
+		}
+		functionType, ok := candidate.Parameters[index].TypeAST.(*FunctionType)
+		if !ok {
+			continue
+		}
+		result = append(result, functionType)
+	}
+	return result
+}
+
+func lowerLambdaExprNode(lambda *LambdaExpr, context constructorContext, expected []*FunctionType) (ExprNode, error) {
+	if lambda == nil {
+		return nil, fmt.Errorf("lambda is nil")
+	}
+	parameters, err := lambdaParametersFromTokens(lambda.Parameters)
+	if err != nil {
+		return nil, err
+	}
+	selected := (*FunctionType)(nil)
+	for _, candidate := range expected {
+		if candidate == nil || len(candidate.Parameters) != len(parameters) {
+			continue
+		}
+		compatible := true
+		parameterTypes := map[string]string{}
+		for index := range parameters {
+			if parameters[index].Type != nil {
+				left, _ := typeNodeSource(parameters[index].Type)
+				right, _ := typeNodeSource(candidate.Parameters[index].Type)
+				if strings.TrimSpace(left) != strings.TrimSpace(right) {
+					compatible = false
+					break
+				}
+			} else {
+				parameters[index].Type = candidate.Parameters[index].Type
+			}
+			typeName, _ := typeNodeSource(parameters[index].Type)
+			parameterTypes[parameters[index].Name] = strings.TrimSpace(typeName)
+		}
+		if !compatible {
+			continue
+		}
+		parameterTypeNodes := lambdaParameterTypeNodes(parameters)
+		actualResultNode := lambdaResultTypeNodeAST(lambda, parameterTypeNodes, context)
+		actualResult, _ := typeNodeSource(actualResultNode)
+		if lambda.BlockBody != nil && len(candidate.Results) > 0 && !blockHasValueReturn(lambda.BlockBody) {
+			continue
+		}
+		if lambdaResultMatches(actualResult, functionTypeResultText(candidate), context) {
+			if selected != nil {
+				return nil, fmt.Errorf("ambiguous lambda: it matches multiple function types")
+			}
+			selected = candidate
+		}
+	}
+	if selected != nil {
+		for index := range parameters {
+			if parameters[index].Type == nil {
+				parameters[index].Type = selected.Parameters[index].Type
+			}
+		}
+	}
+	if selected == nil {
+		if len(expected) > 0 {
+			span := lambda.Span()
+			return nil, fmt.Errorf("lambda does not match any expected function type at %d:%d", span.Line, span.Column)
+		}
+		for _, parameter := range parameters {
+			if parameter.Type == nil {
+				return nil, fmt.Errorf("cannot infer type of lambda parameter `%s`; provide an explicit type or use the lambda in a typed context", parameter.Name)
+			}
+		}
+	}
+	parameterTypes := map[string]string{}
+	for _, parameter := range parameters {
+		typeName, _ := typeNodeSource(parameter.Type)
+		parameterTypes[parameter.Name] = strings.TrimSpace(typeName)
+	}
+	var resultNode TypeNode
+	if selected != nil {
+		if len(selected.Results) == 1 {
+			resultNode = selected.Results[0]
+		} else if len(selected.Results) > 1 {
+			resultNode = &TupleType{Elements: append([]TypeNode(nil), selected.Results...)}
+		}
+	} else {
+		resultNode = lambdaResultTypeNodeAST(lambda, lambdaParameterTypeNodes(parameters), context)
+	}
+	functionType := &FunctionType{Parameters: parameters}
+	if resultNode != nil {
+		if tuple, ok := resultNode.(*TupleType); ok {
+			functionType.Results = append(functionType.Results, tuple.Elements...)
+		} else {
+			functionType.Results = []TypeNode{resultNode}
+		}
+	}
+	lambdaContext := context
+	lambdaContext.CurrentParameterTypes = cloneStringMap(context.CurrentParameterTypes)
+	if lambdaContext.CurrentParameterTypes == nil {
+		lambdaContext.CurrentParameterTypes = map[string]string{}
+	}
+	for name, typeName := range parameterTypes {
+		lambdaContext.CurrentParameterTypes[name] = typeName
+	}
+	var body *BlockStmt
+	if lambda.BlockBody != nil {
+		body = lambda.BlockBody
+	} else {
+		body = &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{lambda.Body}}}}
+	}
+	if err := lowerExceptionBlockNodes(body, lambdaContext); err != nil {
+		return nil, err
+	}
+	return &FunctionLiteralExpr{Type: functionType, Body: body, SpanValue: lambda.Span()}, nil
+}
+
+func lambdaParameterTypeNodes(parameters []ParameterNode) map[string]TypeNode {
+	result := make(map[string]TypeNode, len(parameters))
+	for _, parameter := range parameters {
+		if parameter.Name != "" && parameter.Type != nil {
+			result[parameter.Name] = parameter.Type
+		}
+	}
+	return result
+}
+
+// lambdaResultTypeNodeAST keeps direct lambda lowering typed. The older
+// lambdaResultTypeAST helper remains for the source compatibility rewriter,
+// whose overload candidates are still represented as rendered type text.
+func lambdaResultTypeNodeAST(lambda *LambdaExpr, parameters map[string]TypeNode, context constructorContext) TypeNode {
+	if lambda == nil {
+		return nil
+	}
+	if lambda.BlockBody != nil {
+		var result TypeNode
+		visitLambdaReturns(lambda.BlockBody, func(statement *ReturnStmt) {
+			if result == nil && len(statement.Values) > 0 {
+				result = lambdaExpressionTypeAST(statement.Values[0], parameters, context)
+			}
+		})
+		return result
+	}
+	return lambdaExpressionTypeAST(lambda.Body, parameters, context)
+}
+
+func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode, context constructorContext) TypeNode {
+	if expression == nil {
+		return nil
+	}
+	if name, ok := expression.(*NameExpr); ok {
+		if name.Name == "true" || name.Name == "false" {
+			return lambdaNamedType("bool")
+		}
+		return parameters[name.Name]
+	}
+	if literal, ok := expression.(*LiteralExpr); ok {
+		switch literal.Kind {
+		case TokenString, TokenRawString:
+			return lambdaNamedType("string")
+		case TokenNumber:
+			if strings.ContainsAny(literal.Text, ".eEpP") {
+				return lambdaNamedType("float64")
+			}
+			return lambdaNamedType("int")
+		case TokenRune:
+			return lambdaNamedType("rune")
+		}
+	}
+	if call, ok := expression.(*CallExpr); ok {
+		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "len" {
+			return lambdaNamedType("int")
+		}
+	}
+	if index, ok := expression.(*IndexExpr); ok {
+		return lambdaIndexResultType(index.Receiver, parameters, context)
+	}
+	if indexList, ok := expression.(*IndexListExpr); ok {
+		return lambdaExpressionTypeAST(indexList.Receiver, parameters, context)
+	}
+	if slice, ok := expression.(*SliceExpr); ok {
+		base := lambdaExpressionTypeAST(slice.Receiver, parameters, context)
+		if named, ok := base.(*NamedType); ok && len(named.Parts) == 1 && named.Parts[0] == "string" {
+			return base
+		}
+		if _, ok := base.(*SliceType); ok {
+			return base
+		}
+	}
+	if assertion, ok := expression.(*TypeAssertExpr); ok && !assertion.TypeSwitch {
+		return assertion.Type
+	}
+	if spread, ok := expression.(*SpreadExpr); ok {
+		return lambdaExpressionTypeAST(spread.Expression, parameters, context)
+	}
+	if typeExpression, ok := expression.(*TypeExpr); ok {
+		return typeExpression.Type
+	}
+	if send, ok := expression.(*SendExpr); ok {
+		return lambdaExpressionTypeAST(send.Value, parameters, context)
+	}
+	if parenthesized, ok := expression.(*ParenthesizedExpr); ok {
+		return lambdaExpressionTypeAST(parenthesized.Inner, parameters, context)
+	}
+	if nested, ok := expression.(*LambdaExpr); ok {
+		nestedParameters, err := lambdaParametersFromTokens(nested.Parameters)
+		if err != nil {
+			return nil
+		}
+		function := &FunctionType{}
+		for _, parameter := range nestedParameters {
+			if parameter.Type == nil {
+				return nil
+			}
+			function.Parameters = append(function.Parameters, ParameterNode{Name: parameter.Name, Type: parameter.Type})
+		}
+		if result := lambdaResultTypeNodeAST(nested, lambdaParameterTypeNodes(function.Parameters), context); result != nil {
+			if tuple, ok := result.(*TupleType); ok {
+				function.Results = append(function.Results, tuple.Elements...)
+			} else {
+				function.Results = []TypeNode{result}
+			}
+		}
+		return function
+	}
+	// Some call/type-resolution cases still expose only the legacy textual
+	// inference API. Keep this fallback narrow; unsupported expressions return
+	// nil and are routed through the source compatibility path by the caller.
+	parameterText := make(map[string]string, len(parameters))
+	for name, typeNode := range parameters {
+		if text, err := typeNodeSource(typeNode); err == nil {
+			parameterText[name] = text
+		}
+	}
+	if inferred := lambdaExpressionTypeNode(expression, parameterText, context); strings.TrimSpace(inferred) != "" {
+		return parseTypeText(strings.TrimSpace(inferred))
+	}
+	return nil
+}
+
+func lambdaNamedType(name string) TypeNode {
+	return &NamedType{Parts: []string{name}}
+}
+
+func lambdaIndexResultType(receiver ExprNode, parameters map[string]TypeNode, context constructorContext) TypeNode {
+	base := lambdaExpressionTypeAST(receiver, parameters, context)
+	switch value := base.(type) {
+	case *SliceType:
+		return value.Element
+	case *ArrayType:
+		return value.Element
+	case *MapType:
+		return value.Value
+	}
+	return nil
+}
+
+func lambdaParametersFromTokens(tokens []Token) ([]ParameterNode, error) {
+	parts := splitExpressionTokens(tokens)
+	result := make([]ParameterNode, 0, len(parts))
+	for _, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+		if len(part) == 1 && (part[0].Kind == TokenIdentifier || part[0].Kind == TokenKeyword) {
+			result = append(result, ParameterNode{Name: part[0].Text})
+			continue
+		}
+		if len(part) < 2 || (part[0].Kind != TokenIdentifier && part[0].Kind != TokenKeyword) {
+			return nil, fmt.Errorf("invalid lambda parameter")
+		}
+		typeNode, err := ParseTypeTokens(part[1:])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, ParameterNode{Name: part[0].Text, Type: typeNode})
+	}
+	return result, nil
+}
+
+func lambdaResultTypeAST(lambda *LambdaExpr, parameters map[string]string, context constructorContext) string {
+	if lambda == nil {
+		return ""
+	}
+	if lambda.BlockBody != nil {
+		result := ""
+		visitLambdaReturns(lambda.BlockBody, func(statement *ReturnStmt) {
+			if result == "" && len(statement.Values) > 0 {
+				result = lambdaExpressionTypeNode(statement.Values[0], parameters, context)
+			}
+		})
+		return result
+	}
+	return lambdaExpressionTypeNode(lambda.Body, parameters, context)
+}
+
+func functionTypeResultText(function *FunctionType) string {
+	if function == nil || len(function.Results) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(function.Results))
+	for _, result := range function.Results {
+		text, _ := typeNodeSource(result)
+		parts = append(parts, text)
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
 func (function lambdaFunctionType) resultText() string {
 	if function.ResultAST == nil {
 		return ""
@@ -169,7 +509,8 @@ func lowerLambdaASTSpans(src string, spans []lambdaASTSpan, blocks []*BlockStmt,
 	for _, span := range ordered {
 		lambda, err := lambdaSourceFromAST(span.Lambda)
 		if err != nil {
-			return "", err
+			spanValue := span.Lambda.Span()
+			return "", fmt.Errorf("%w at %d:%d", err, spanValue.Line, spanValue.Column)
 		}
 		lambda.Placeholder = span.Name
 		lambda.Captured = lambdaCapturedTypes(span, spans, parameterTypesBySpan)
@@ -186,7 +527,8 @@ func lowerLambdaASTSpans(src string, spans []lambdaASTSpan, blocks []*BlockStmt,
 			rendered, err = renderContextualLambda(lambda, candidates, context)
 		}
 		if err != nil {
-			return "", err
+			spanValue := span.Lambda.Span()
+			return "", fmt.Errorf("%w at %d:%d", err, spanValue.Line, spanValue.Column)
 		}
 		renderedBySpan[lambdaASTKey{Start: span.Start, End: span.End}] = rendered
 	}
@@ -421,6 +763,13 @@ func collectLambdaExpressions(expression ExprNode, result *[]*LambdaExpr) {
 	case *BinaryExpr:
 		collectLambdaExpressions(value.Left, result)
 		collectLambdaExpressions(value.Right, result)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectLambdaExpressions(expression, result)
+		}
+		for _, expression := range value.Right {
+			collectLambdaExpressions(expression, result)
+		}
 	case *SelectorExpr:
 		collectLambdaExpressions(value.Receiver, result)
 	case *IndexExpr:
@@ -731,7 +1080,7 @@ func lambdaExpectedTypesForCallAST(call *CallExpr, index int, context constructo
 				result = append(result, signature.Parameters[index].typeText())
 			}
 		}
-		for _, extension := range context.Extensions {
+		for _, extension := range append(append([]extensionMethod(nil), context.Extensions...), context.PreludeExtensions...) {
 			if extension.Method.Name != function.Name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 				continue
 			}
@@ -916,7 +1265,7 @@ func renderContextualLambda(lambda lambdaSource, candidates []string, context co
 			continue
 		}
 		actualResult := lambdaReturnType(lambda, paramTypes, context)
-		if lambda.BlockBody != nil && function.resultText() != "" && !lambdaHasValueReturn(lambda) {
+		if lambda.BlockBody != nil && lambda.BodyExpr == nil && function.resultText() != "" && !lambdaHasValueReturn(lambda) {
 			valid = false
 			continue
 		}
@@ -971,6 +1320,9 @@ func parseLambdaFunctionType(source string) (lambdaFunctionType, error) {
 
 func renderLambdaWithResult(lambda lambdaSource, parameters []string, result string) string {
 	body := expressionTokensSource(lambda.BodyTokens)
+	if lambda.BlockBody != nil {
+		body = blockTokensSource(lambda.BodyTokens)
+	}
 	var out strings.Builder
 	out.WriteString("func(")
 	out.WriteString(strings.Join(parameters, ", "))

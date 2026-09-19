@@ -173,7 +173,7 @@ func TestFunctionSourceCanRenderStructuredGoAST(t *testing.T) {
 }
 
 func TestParsedCompatibilityDeclDoesNotDuplicateExecutableSource(t *testing.T) {
-	file, err := ParseFile("raw-source.gpp", `package main
+	file, err := ParseFile("structured-value.gpp", `package main
 
 var fallback = value ?? "unknown"
 `)
@@ -190,8 +190,8 @@ var fallback = value ?? "unknown"
 	if len(value.Values) != 1 || value.Keyword != "var" {
 		t.Fatalf("value declaration was not structured: %#v", value)
 	}
-	if got := valueDeclSource(value); got != "var fallback = value ?? \"unknown\"\n" {
-		t.Fatalf("source span did not reproduce declaration, got %q", got)
+	if value.SourceSpan.Start < 0 || value.SourceSpan.End <= value.SourceSpan.Start {
+		t.Fatalf("structured declaration lost its source span: %#v", value.SourceSpan)
 	}
 }
 

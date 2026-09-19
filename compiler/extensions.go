@@ -13,7 +13,7 @@ import (
 
 type extensionMethod struct {
 	Target            string
-	TargetConstraints map[string]string
+	TargetConstraints map[string]TypeNode
 	ReceiverType      string
 	Qualifier         string
 	GoName            string
@@ -31,7 +31,7 @@ func extensionMethodsForDeclarations(declarations []*ExtendDecl, qualifier strin
 			for _, method := range declaration.Methods {
 				methods = append(methods, extensionMethod{
 					Target:            target,
-					TargetConstraints: cloneStringMap(declaration.TargetConstraints),
+					TargetConstraints: cloneTypeNodeMap(declaration.TargetConstraints),
 					ReceiverType:      extensionReceiverType(target, nil),
 					Qualifier:         qualifier,
 					GoName:            extensionGoName(target, method),
@@ -99,6 +99,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return result
 }
 
+func cloneTypeNodeMap(values map[string]TypeNode) map[string]TypeNode {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]TypeNode, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
 func sanitizeExtensionName(name string) string {
 	var output strings.Builder
 	for _, r := range name {
@@ -122,6 +133,9 @@ func transformExtensions(src string, context constructorContext) (string, error)
 func transformExtensionsWithTypes(src string, context constructorContext, inheritedTypes map[string]string) (string, error) {
 	if len(context.Extensions) == 0 {
 		return src, nil
+	}
+	if inheritedTypes == nil {
+		inheritedTypes = context.CurrentParameterTypes
 	}
 	if transformed, handled, err := transformExtensionsAST(src, context, inheritedTypes); handled {
 		return transformed, err
@@ -476,6 +490,13 @@ func collectExtensionASTExpression(expression ExprNode, visit func(*CallExpr) bo
 	case *BinaryExpr:
 		collectExtensionASTExpression(value.Left, visit)
 		collectExtensionASTExpression(value.Right, visit)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectExtensionASTExpression(expression, visit)
+		}
+		for _, expression := range value.Right {
+			collectExtensionASTExpression(expression, visit)
+		}
 	case *SelectorExpr:
 		collectExtensionASTExpression(value.Receiver, visit)
 	case *IndexExpr:
@@ -545,6 +566,24 @@ func extensionASTTypeArgument(expression ExprNode) TypeNode {
 }
 
 func renderExtensionASTCall(call *CallExpr, context constructorContext, valueTypes map[string]string) (string, bool, error) {
+	// Prefer the structural extension lowerer even in this compatibility
+	// source-rewrite pass. The final result still has to be formatted into the
+	// original source span, but the call and its arguments remain AST nodes.
+	structuralContext := context
+	structuralContext.CurrentParameterTypes = cloneStringMap(valueTypes)
+	if lowered, handled, err := lowerExceptionExtensionCallNode(call, structuralContext); handled {
+		if err != nil {
+			return "", true, err
+		}
+		if lowered != nil {
+			goExpression, goErr := goExprNode(lowered)
+			if goErr != nil {
+				return "", false, nil
+			}
+			formatted, formatErr := formatNode(goExpression)
+			return formatted, true, formatErr
+		}
+	}
 	receiver, methodName, typeArguments, ok := extensionASTCallParts(call)
 	if ok {
 		actualType := extensionASTStaticType(receiver, context, valueTypes)
@@ -1194,7 +1233,7 @@ func extensionTypeParameters(typeParams string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func extensionTargetTypeParameters(target string, constraints map[string]string) string {
+func extensionTargetTypeParameters(target string, constraints map[string]TypeNode) string {
 	names := extensionTargetTypeParameterNames(target)
 	if len(names) == 0 {
 		return ""
@@ -1206,7 +1245,11 @@ func extensionTargetTypeParameters(target string, constraints map[string]string)
 	sort.Strings(ordered)
 	parts := make([]string, len(ordered))
 	for index, name := range ordered {
-		constraint := strings.TrimSpace(constraints[name])
+		constraint := ""
+		if constraintNode := constraints[name]; constraintNode != nil {
+			constraint, _ = typeNodeSource(constraintNode)
+			constraint = strings.TrimSpace(constraint)
+		}
 		if constraint == "" {
 			if name == extensionMapKeyParameter(target) {
 				constraint = "comparable"
@@ -1256,7 +1299,7 @@ func emitExtension(out *strings.Builder, file *File, declaration *ExtendDecl, co
 		for _, method := range declaration.Methods {
 			extension := extensionMethod{
 				Target:            target,
-				TargetConstraints: cloneStringMap(declaration.TargetConstraints),
+				TargetConstraints: cloneTypeNodeMap(declaration.TargetConstraints),
 				ReceiverType:      extensionReceiverType(target, context.Introspection.Classes),
 				GoName:            extensionGoName(target, method),
 				SourceFile:        sourcePath,
@@ -1272,6 +1315,15 @@ func emitExtension(out *strings.Builder, file *File, declaration *ExtendDecl, co
 }
 
 func emitExtensionMethod(out *strings.Builder, extension extensionMethod, context constructorContext, interpolationName string) error {
+	if direct, handled, err := directExtensionMethodSource(extension, context); handled {
+		if err != nil {
+			return err
+		}
+		emitSourceDirective(out, extension.SourceFile, extension.SourceLine)
+		out.WriteString(direct)
+		out.WriteByte('\n')
+		return nil
+	}
 	parameters, err := stripParameterDefaults(methodParametersSource(extension.Method))
 	if err != nil {
 		return err
@@ -1315,9 +1367,16 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if err != nil {
 		return err
 	}
-	body, err = transformExceptions(body, methodContext)
-	if err != nil {
-		return err
+	if transformed, handled, exceptionErr := transformExceptionMethodBodyAST(body, &extension.Method, methodContext); handled {
+		if exceptionErr != nil {
+			return exceptionErr
+		}
+		body = transformed
+	} else {
+		body, err = transformExceptions(body, methodContext)
+		if err != nil {
+			return err
+		}
 	}
 	body, err = transformLambdas(body, methodContext)
 	if err != nil {
@@ -1390,6 +1449,29 @@ func transformExtensionParameterList(params string, context constructorContext) 
 			parts = append(parts, typeName)
 		} else {
 			parts = append(parts, parameter.Name+" "+typeName)
+		}
+	}
+	return strings.Join(parts, ", "), nil
+}
+
+func transformExtensionParameterNodes(parameters []ParameterNode, context constructorContext) (string, error) {
+	parts := make([]string, 0, len(parameters))
+	for _, parameter := range parameters {
+		typeName, err := directTypeText(parameter.Type)
+		if err != nil {
+			return "", err
+		}
+		transformed := transformPolymorphicType(typeName, context)
+		if transformed == typeName {
+			name := strings.TrimSpace(typeName)
+			if target, ok := context.Targets[name]; ok && target.Qualifier == "" && target.Class != nil {
+				transformed = "Gpp" + target.Class.Name
+			}
+		}
+		if parameter.Name == "" {
+			parts = append(parts, transformed)
+		} else {
+			parts = append(parts, parameter.Name+" "+transformed)
 		}
 	}
 	return strings.Join(parts, ", "), nil

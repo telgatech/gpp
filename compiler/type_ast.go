@@ -5,9 +5,10 @@ import (
 	"strings"
 )
 
-// TypeNode is the syntax-level representation of a Go++ type. The legacy
-// string fields on declarations remain during migration, but new compiler
-// phases can consume this structure without reparsing type text.
+// TypeNode is the syntax-level representation of a Go++ type. Identifier
+// spellings and source metadata remain strings because they are lexical data;
+// the type grammar itself is represented by these nodes and can be consumed
+// without reparsing type text.
 type TypeNode interface {
 	Node
 	typeNode()
@@ -188,7 +189,7 @@ func ParseTypeTokens(tokens []Token) (TypeNode, error) {
 	// Struct and interface members use newlines as declaration separators.
 	// Keep those separators while parsing the aggregate itself; the ordinary
 	// compact type path intentionally removes them for names and type lists.
-	if filtered[0].Text == "struct" || filtered[0].Text == "interface" {
+	if filtered[0].Text == "struct" || filtered[0].Text == "interface" || containsAggregateType(filtered) {
 		structural := make([]Token, 0, len(tokens))
 		for _, token := range tokens {
 			if token.Kind != TokenComment && token.Kind != TokenEOF {
@@ -198,10 +199,16 @@ func ParseTypeTokens(tokens []Token) (TypeNode, error) {
 		parser := typeParser{tokens: structural}
 		typeNode, err := parser.parse()
 		if err != nil {
+			if fallback, ok := parseGoTypeTokens(filtered); ok {
+				return fallback, nil
+			}
 			return nil, err
 		}
 		if parser.index == len(parser.tokens) || allTypeTrivia(parser.tokens[parser.index:]) {
 			return typeNode, nil
+		}
+		if fallback, ok := parseGoTypeTokens(filtered); ok {
+			return fallback, nil
 		}
 		return &TokenType{Tokens: filtered, SpanValue: tokenSpan(filtered)}, nil
 	}
@@ -226,12 +233,27 @@ func ParseTypeTokens(tokens []Token) (TypeNode, error) {
 	parser := typeParser{tokens: filtered}
 	typeNode, err := parser.parse()
 	if err != nil {
+		if fallback, ok := parseGoTypeTokens(filtered); ok {
+			return fallback, nil
+		}
 		return nil, err
 	}
 	if parser.index != len(parser.tokens) {
+		if fallback, ok := parseGoTypeTokens(filtered); ok {
+			return fallback, nil
+		}
 		return &TokenType{Tokens: filtered, SpanValue: tokenSpan(filtered)}, nil
 	}
 	return typeNode, nil
+}
+
+func containsAggregateType(tokens []Token) bool {
+	for index := 0; index+1 < len(tokens); index++ {
+		if (tokens[index].Text == "struct" || tokens[index].Text == "interface") && tokens[index+1].Text == "{" {
+			return true
+		}
+	}
+	return false
 }
 
 func allTypeTrivia(tokens []Token) bool {
@@ -747,6 +769,19 @@ func parseParameterNodes(text string) []ParameterNode {
 	return result
 }
 
+func parseResultFieldNodes(text string) []ParameterNode {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	if strings.HasPrefix(text, "(") {
+		if close, err := findMatchingParen(text, 0); err == nil && close == len(text)-1 {
+			text = strings.TrimSpace(text[1:close])
+		}
+	}
+	return parseParameterNodes(text)
+}
+
 func parseTypeParameterNodes(text string) []TypeParameterNode {
 	text = strings.TrimSpace(text)
 	if len(text) < 2 || text[0] != '[' || text[len(text)-1] != ']' {
@@ -939,6 +974,78 @@ func typeNodeSource(typeNode TypeNode) (string, error) {
 		return tokenExpressionSource(value.Tokens), nil
 	default:
 		return "", fmt.Errorf("unsupported type AST node %T", typeNode)
+	}
+}
+
+// typeNodeSignatureKey is the canonical, source-independent spelling used for
+// overload and method-dispatch identity. It intentionally mirrors the compact
+// spelling of typeNodeSource, but walks the typed tree directly so hot-path
+// signature comparisons do not render a type and then feed that text back
+// through parseParameterInfos.
+func typeNodeSignatureKey(typeNode TypeNode) string {
+	switch value := typeNode.(type) {
+	case nil:
+		return ""
+	case *NamedType:
+		name := strings.Join(value.Parts, ".")
+		if len(value.Arguments) == 0 {
+			return name
+		}
+		arguments := make([]string, 0, len(value.Arguments))
+		for _, argument := range value.Arguments {
+			arguments = append(arguments, typeNodeSignatureKey(argument))
+		}
+		return name + "[" + strings.Join(arguments, ", ") + "]"
+	case *PointerType:
+		return "*" + typeNodeSignatureKey(value.Element)
+	case *SliceType:
+		return "[]" + typeNodeSignatureKey(value.Element)
+	case *ArrayType:
+		length := ""
+		if value.Ellipsis {
+			length = "..."
+		} else if value.Length != nil {
+			length, _ = expressionNodeSource(value.Length)
+		}
+		return "[" + length + "]" + typeNodeSignatureKey(value.Element)
+	case *MapType:
+		return "map[" + typeNodeSignatureKey(value.Key) + "]" + typeNodeSignatureKey(value.Value)
+	case *ChannelType:
+		element := typeNodeSignatureKey(value.Element)
+		switch value.Direction {
+		case "receive":
+			return "<-chan " + element
+		case "send":
+			return "chan<- " + element
+		default:
+			return "chan " + element
+		}
+	case *VariadicType:
+		return "..." + typeNodeSignatureKey(value.Element)
+	case *FunctionType:
+		parameters := make([]string, 0, len(value.Parameters))
+		for _, parameter := range value.Parameters {
+			parameters = append(parameters, typeNodeSignatureKey(parameter.Type))
+		}
+		results := make([]string, 0, len(value.Results))
+		for _, result := range value.Results {
+			results = append(results, typeNodeSignatureKey(result))
+		}
+		result := ""
+		if len(results) == 1 {
+			result = " " + results[0]
+		} else if len(results) > 1 {
+			result = " (" + strings.Join(results, ", ") + ")"
+		}
+		return "func(" + strings.Join(parameters, ", ") + ")" + result
+	case *StructType, *InterfaceType, *TupleType, *UnderlyingType, *UnionType, *TokenType:
+		// These less common signature forms still have a canonical source
+		// spelling, but they do not require parsing. This is the final rendering
+		// boundary for an opaque type node, not a source-to-AST round trip.
+		text, _ := typeNodeSource(typeNode)
+		return text
+	default:
+		return ""
 	}
 }
 

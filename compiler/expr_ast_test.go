@@ -178,6 +178,38 @@ func TestUnsupportedExpressionRemainsTokenStructured(t *testing.T) {
 	}
 }
 
+func TestGoExpressionFallbackBuildsTypedNodes(t *testing.T) {
+	expression, err := ParseExpressionTokens(expressionTokens(t, `&struct { Name string }{Name: "Ada"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unary, ok := expression.(*UnaryExpr)
+	if !ok || unary.Operator != "&" {
+		t.Fatalf("expected typed unary expression, got %#v", expression)
+	}
+	literal, ok := unary.Operand.(*CompositeLiteralExpr)
+	if !ok || len(literal.Elements) != 1 {
+		t.Fatalf("expected typed composite literal, got %#v", unary.Operand)
+	}
+	if _, ok := literal.Type.(*StructType); !ok {
+		t.Fatalf("expected anonymous struct type, got %#v", literal.Type)
+	}
+}
+
+func TestParseExpressionBuildsSliceTypeConversion(t *testing.T) {
+	expression, err := ParseExpressionTokens(expressionTokens(t, `[]byte(value)`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, ok := expression.(*CallExpr)
+	if !ok {
+		t.Fatalf("expected conversion call, got %T", expression)
+	}
+	if _, ok := call.Callee.(*TypeExpr); !ok {
+		t.Fatalf("expected typed conversion callee, got %T", call.Callee)
+	}
+}
+
 func TestParseExpressionBuildsLambdaAndCompositeLiteral(t *testing.T) {
 	lambda, err := ParseExpressionTokens(expressionTokens(t, `x => x + 1`))
 	if err != nil {
@@ -382,6 +414,37 @@ func TestParseExpressionKeepsFunctionLiteralAfterEarlierCallArgument(t *testing.
 	}
 	if _, ok := call.Arguments[1].Value.(*FunctionLiteralExpr); !ok {
 		t.Fatalf("expected the second argument to remain a function literal, got %T", call.Arguments[1].Value)
+	}
+}
+
+func TestParseExpressionPreservesMultilineNestedFunctionLiteralBodies(t *testing.T) {
+	expression, err := ParseExpressionTokens(expressionTokens(t, `register(func(ctx *Context) error {
+	if err := run(ctx); err != nil {
+		log.Printf("failed: %v", err)
+		if hookErr := recoverHook(ctx, err); hookErr != nil { err = hookErr }
+	}
+	return nil
+})`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, ok := expression.(*CallExpr)
+	if !ok || len(call.Arguments) != 1 {
+		t.Fatalf("expected callback call, got %#v", expression)
+	}
+	literal, ok := call.Arguments[0].Value.(*FunctionLiteralExpr)
+	if !ok {
+		t.Fatalf("expected function literal callback, got %T", call.Arguments[0].Value)
+	}
+	if len(literal.Body.Statements) != 2 {
+		t.Fatalf("expected outer if and return statements, got %d", len(literal.Body.Statements))
+	}
+	conditional, ok := literal.Body.Statements[0].(*IfStmt)
+	if !ok || len(conditional.Body.Statements) != 2 {
+		t.Fatalf("expected structured callback if body, got %#v", literal.Body.Statements[0])
+	}
+	if _, ok := conditional.Body.Statements[1].(*IfStmt); !ok {
+		t.Fatalf("expected nested if statement, got %T", conditional.Body.Statements[1])
 	}
 }
 

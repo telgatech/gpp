@@ -65,18 +65,20 @@ func expandSerializableClass(class *ClassDecl, qualifier string) error {
 		callPrefix = qualifier + "."
 	}
 	methods := []struct {
-		name       string
-		static     bool
-		parameters string
-		result     string
-		body       string
+		name          string
+		static        bool
+		parameters    string
+		result        string
+		parametersAST []ParameterNode
+		resultAST     TypeNode
+		body          func() ExprNode
 	}{
-		{name: "ToJSON", result: "([]byte, error)", body: "return " + callPrefix + "ToJSON(this)"},
-		{name: "ToYAML", result: "([]byte, error)", body: "return " + callPrefix + "ToYAML(this)"},
-		{name: "FromJSON", static: true, parameters: "data []byte", result: "(" + class.Name + ", error)", body: "return " + callPrefix + "FromJSON[" + class.Name + "](data)"},
-		{name: "FromYAML", static: true, parameters: "data []byte", result: "(" + class.Name + ", error)", body: "return " + callPrefix + "FromYAML[" + class.Name + "](data)"},
-		{name: "ToGOB", result: "([]byte, error)", body: "return " + callPrefix + "ToGOB(this)"},
-		{name: "FromGOB", static: true, parameters: "data []byte", result: "(" + class.Name + ", error)", body: "return " + callPrefix + "FromGOB[" + class.Name + "](data)"},
+		{name: "ToJSON", result: "([]byte, error)", resultAST: serializationBytesErrorType(), body: func() ExprNode { return serializationCall(callPrefix+"ToJSON", &NameExpr{Name: "this"}) }},
+		{name: "ToYAML", result: "([]byte, error)", resultAST: serializationBytesErrorType(), body: func() ExprNode { return serializationCall(callPrefix+"ToYAML", &NameExpr{Name: "this"}) }},
+		{name: "FromJSON", static: true, parameters: "data []byte", parametersAST: serializationDataParameter(), result: "(" + class.Name + ", error)", resultAST: serializationValueErrorType(class.Name), body: func() ExprNode { return serializationGenericCall(callPrefix+"FromJSON", class.Name) }},
+		{name: "FromYAML", static: true, parameters: "data []byte", parametersAST: serializationDataParameter(), result: "(" + class.Name + ", error)", resultAST: serializationValueErrorType(class.Name), body: func() ExprNode { return serializationGenericCall(callPrefix+"FromYAML", class.Name) }},
+		{name: "ToGOB", result: "([]byte, error)", resultAST: serializationBytesErrorType(), body: func() ExprNode { return serializationCall(callPrefix+"ToGOB", &NameExpr{Name: "this"}) }},
+		{name: "FromGOB", static: true, parameters: "data []byte", parametersAST: serializationDataParameter(), result: "(" + class.Name + ", error)", resultAST: serializationValueErrorType(class.Name), body: func() ExprNode { return serializationGenericCall(callPrefix+"FromGOB", class.Name) }},
 	}
 
 	for _, generated := range methods {
@@ -104,31 +106,58 @@ func expandSerializableClass(class *ClassDecl, qualifier string) error {
 		if found {
 			continue
 		}
-		owner, bodyTokens, bodyAST := generatedMethodBody(generated.body)
+		bodyExpression := generated.body()
+		bodyAST := &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{bodyExpression}}}}
 		class.Methods = append(class.Methods, Method{
 			Name:         generated.name,
 			IsStatic:     generated.static,
 			Generated:    true,
-			ParameterAST: parseParameterNodes(generated.parameters),
-			ResultAST:    parseTypeText(generated.result),
-			Owner:        owner,
-			BodyTokens:   bodyTokens,
+			ParameterAST: generated.parametersAST,
+			ResultAST:    generated.resultAST,
 			BodyAST:      bodyAST,
-			BodySpan:     Span{Start: 0, End: len(generated.body), Line: 1, Column: 1},
 		})
 	}
 	return nil
 }
 
-func generatedMethodBody(source string) (*File, []Token, *BlockStmt) {
-	owner := &File{Name: "<generated method>", Source: source}
-	tokens, _ := LexSource(owner.Name, source)
-	body, _ := ParseBodyAST(tokens)
-	if body == nil {
-		return owner, tokens, nil
+func serializationNamed(name string) TypeNode {
+	parts := strings.Split(name, ".")
+	return &NamedType{Parts: parts}
+}
+
+func serializationBytesErrorType() TypeNode {
+	return &TupleType{Elements: []TypeNode{
+		&SliceType{Element: serializationNamed("byte")},
+		serializationNamed("error"),
+	}}
+}
+
+func serializationValueErrorType(name string) TypeNode {
+	return &TupleType{Elements: []TypeNode{serializationNamed(name), serializationNamed("error")}}
+}
+
+func serializationDataParameter() []ParameterNode {
+	return []ParameterNode{{Name: "data", Type: &SliceType{Element: serializationNamed("byte")}}}
+}
+
+func serializationQualifiedName(name string) ExprNode {
+	parts := strings.Split(name, ".")
+	var expression ExprNode = &NameExpr{Name: parts[0]}
+	for _, part := range parts[1:] {
+		expression = &SelectorExpr{Receiver: expression, Name: part}
 	}
-	body.SpanValue = Span{Start: 0, End: len(source), Line: 1, Column: 1}
-	return owner, tokens, body
+	return expression
+}
+
+func serializationCall(name string, argument ExprNode) ExprNode {
+	return &CallExpr{Callee: serializationQualifiedName(name), Arguments: []CallArg{{Value: argument}}}
+}
+
+func serializationGenericCall(name, typeName string) ExprNode {
+	return &CallExpr{
+		Callee:    &IndexExpr{Receiver: serializationQualifiedName(name), Index: &TypeExpr{Type: serializationNamed(typeName)}},
+		Arguments: []CallArg{{Value: &NameExpr{Name: "data"}}},
+	}
 }
 
 func sameGeneratedParameters(actual, expected string) bool {

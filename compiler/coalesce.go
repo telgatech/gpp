@@ -157,10 +157,9 @@ func lowerCoalesceExpression(expression ExprNode, context constructorContext, va
 	if leftType == "error" {
 		return "", fmt.Errorf("?? requires a value-producing left operand")
 	}
-	// The operands become return expressions inside generated closures. Run
-	// implicit error promotion on those structured fragments before emitting
-	// the closures, otherwise a multi-result call such as ParsePort() would
-	// escape into a single-value `func() T { return ... }` context.
+	// This is the compatibility adapter for source fragments that cannot use
+	// direct AST emission. Native package calls may still require the existing
+	// importer-backed promotion resolver here.
 	left, err = promoteCoalesceOperand(left, leftType, context)
 	if err != nil {
 		return "", err
@@ -173,6 +172,62 @@ func lowerCoalesceExpression(expression ExprNode, context constructorContext, va
 		"__gppCoalesce[%s](func() %s { return %s }, func() %s { return %s })",
 		leftType, leftType, left, leftType, right,
 	), nil
+}
+
+// lowerCoalesceExpressionNode is shared by direct body emission and the
+// compatibility source-edit boundary. The latter still needs a replacement
+// string because it edits a larger source buffer, but the replacement itself
+// is now produced from typed expression nodes rather than concatenated source
+// fragments.
+func lowerCoalesceExpressionNode(expression ExprNode, context constructorContext, valueTypes map[string]string) (ExprNode, error) {
+	binary, ok := expression.(*BinaryExpr)
+	if !ok || binary.Operator != "??" {
+		return lowerExceptionExprNode(expression, context)
+	}
+	left, err := lowerCoalesceExpressionNode(binary.Left, context, valueTypes)
+	if err != nil {
+		return nil, err
+	}
+	right, err := lowerCoalesceExpressionNode(binary.Right, context, valueTypes)
+	if err != nil {
+		return nil, err
+	}
+	leftType := coalesceExpressionTypeAST(left, context, valueTypes)
+	rightType := coalesceExpressionTypeAST(right, context, valueTypes)
+	if leftType == nil || rightType == nil {
+		return nil, fmt.Errorf("could not infer the value type for ??")
+	}
+	if isErrorTypeNode(leftType) {
+		return nil, fmt.Errorf("?? requires a value-producing left operand")
+	}
+	left, err = lowerCoalesceOperandNode(left, context, valueTypes)
+	if err != nil {
+		return nil, err
+	}
+	right, err = lowerCoalesceOperandNode(right, context, valueTypes)
+	if err != nil {
+		return nil, err
+	}
+	functionType := &FunctionType{Results: []TypeNode{leftType}}
+	callee := &IndexExpr{
+		Receiver: &NameExpr{Name: "__gppCoalesce"},
+		Index:    &TypeExpr{Type: leftType},
+	}
+	leftFunction := &FunctionLiteralExpr{
+		Type: functionType,
+		Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{left}}}},
+	}
+	rightFunction := &FunctionLiteralExpr{
+		Type: functionType,
+		Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{right}}}},
+	}
+	return &CallExpr{
+		Callee: callee,
+		Arguments: []CallArg{
+			{Value: leftFunction},
+			{Value: rightFunction},
+		},
+	}, nil
 }
 
 func promoteCoalesceOperand(source, resultType string, context constructorContext) (string, error) {
@@ -190,6 +245,83 @@ func promoteCoalesceOperand(source, resultType string, context constructorContex
 		return strings.TrimSpace(strings.TrimPrefix(transformed, "return ")), nil
 	}
 	return transformed, nil
+}
+
+func lowerCoalesceOperandNode(expression ExprNode, context constructorContext, valueTypes map[string]string) (ExprNode, error) {
+	if expression == nil {
+		return nil, nil
+	}
+	lower := func(value ExprNode) (ExprNode, error) {
+		return lowerCoalesceOperandNode(value, context, valueTypes)
+	}
+	switch value := expression.(type) {
+	case *BinaryExpr:
+		var err error
+		value.Left, err = lower(value.Left)
+		if err != nil {
+			return nil, err
+		}
+		value.Right, err = lower(value.Right)
+		return value, err
+	case *UnaryExpr:
+		lowered, err := lower(value.Operand)
+		value.Operand = lowered
+		return value, err
+	case *ParenthesizedExpr:
+		lowered, err := lower(value.Inner)
+		value.Inner = lowered
+		return value, err
+	case *SelectorExpr:
+		lowered, err := lower(value.Receiver)
+		value.Receiver = lowered
+		return value, err
+	case *IndexExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Index, err = lower(value.Index)
+		return value, err
+	case *IndexListExpr:
+		lowered, err := lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Receiver = lowered
+		for index := range value.Indices {
+			value.Indices[index], err = lower(value.Indices[index])
+			if err != nil {
+				return nil, err
+			}
+		}
+		return value, nil
+	case *SliceExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Low, err = lower(value.Low)
+		if err != nil {
+			return nil, err
+		}
+		value.High, err = lower(value.High)
+		if err != nil {
+			return nil, err
+		}
+		value.Max, err = lower(value.Max)
+		return value, err
+	case *CallExpr:
+		if result, found := promotedCallForExpr(value, context, valueTypes); found && result.trailingError {
+			nonErrorCount := len(result.types) - 1
+			if nonErrorCount == 1 {
+				return &CallExpr{Callee: &NameExpr{Name: "__gppUnwrap"}, Arguments: []CallArg{{Value: value}}}, nil
+			}
+			return nil, fmt.Errorf("direct exception coalescing does not support %d-result error promotion", len(result.types))
+		}
+	}
+	return expression, nil
 }
 
 func coalesceValueTypes(block *BlockStmt, context constructorContext) map[string]string {
@@ -359,6 +491,189 @@ func coalesceExpressionTypeNode(expression ExprNode, context constructorContext,
 	return firstCoalesceResultType(typeName)
 }
 
+// coalesceExpressionTypeAST is used by direct exception lowering. It keeps
+// the type of common ?? operands as a TypeNode instead of rendering the type
+// and parsing that text back into a node. The older string resolver above is
+// retained for source-rewrite compatibility and for semantic environments
+// that still expose value types as strings.
+func coalesceExpressionTypeAST(expression ExprNode, context constructorContext, valueTypes map[string]string) TypeNode {
+	if expression == nil {
+		return nil
+	}
+	switch value := expression.(type) {
+	case *LiteralExpr:
+		switch value.Kind {
+		case TokenString, TokenRawString:
+			return &NamedType{Parts: []string{"string"}}
+		case TokenNumber:
+			if strings.ContainsAny(value.Text, ".eE") {
+				return &NamedType{Parts: []string{"float64"}}
+			}
+			return &NamedType{Parts: []string{"int"}}
+		case TokenRune:
+			return &NamedType{Parts: []string{"rune"}}
+		default:
+			if value.Text == "true" || value.Text == "false" {
+				return &NamedType{Parts: []string{"bool"}}
+			}
+		}
+	case *NameExpr:
+		if typeNode := context.CurrentParameterAST[value.Name]; typeNode != nil {
+			return typeNode
+		}
+		if typeText := strings.TrimSpace(valueTypes[value.Name]); typeText != "" {
+			return parseTypeText(typeText)
+		}
+		if value.Name == "true" || value.Name == "false" {
+			return &NamedType{Parts: []string{"bool"}}
+		}
+	case *InterpolatedStringExpr:
+		return &NamedType{Parts: []string{"string"}}
+	case *ParenthesizedExpr:
+		return coalesceExpressionTypeAST(value.Inner, context, valueTypes)
+	case *SliceExpr:
+		base := coalesceExpressionTypeAST(value.Receiver, context, valueTypes)
+		if named, ok := base.(*NamedType); ok && len(named.Parts) == 1 && named.Parts[0] == "string" {
+			return base
+		}
+		if slice, ok := base.(*SliceType); ok {
+			return slice.Element
+		}
+	case *IndexExpr:
+		base := coalesceExpressionTypeAST(value.Receiver, context, valueTypes)
+		switch typed := base.(type) {
+		case *SliceType:
+			return typed.Element
+		case *ArrayType:
+			return typed.Element
+		case *MapType:
+			return typed.Value
+		}
+	case *TypeAssertExpr:
+		if !value.TypeSwitch {
+			return value.Type
+		}
+	case *PostfixExpr:
+		return coalesceExpressionTypeAST(value.Expression, context, valueTypes)
+	case *SpreadExpr:
+		return coalesceExpressionTypeAST(value.Expression, context, valueTypes)
+	case *TypeExpr:
+		return value.Type
+	case *SendExpr:
+		return coalesceExpressionTypeAST(value.Value, context, valueTypes)
+	case *FunctionLiteralExpr:
+		return value.Type
+	case *UnaryExpr:
+		if value.Operator == "!" {
+			return &NamedType{Parts: []string{"bool"}}
+		}
+		operand := coalesceExpressionTypeAST(value.Operand, context, valueTypes)
+		if value.Operator == "&" && operand != nil {
+			if _, pointer := operand.(*PointerType); !pointer {
+				return &PointerType{Element: operand}
+			}
+		}
+		return operand
+	case *BinaryExpr:
+		switch value.Operator {
+		case "??":
+			return coalesceExpressionTypeAST(value.Left, context, valueTypes)
+		case "&&", "||", "==", "!=", "<", "<=", ">", ">=":
+			return &NamedType{Parts: []string{"bool"}}
+		default:
+			return coalesceExpressionTypeAST(value.Left, context, valueTypes)
+		}
+	case *CompositeLiteralExpr:
+		return value.Type
+	case *SelectorExpr:
+		receiverType := coalesceExpressionTypeAST(value.Receiver, context, valueTypes)
+		receiverName := coalesceTypeName(receiverType)
+		if target, ok := context.Targets[receiverName]; ok && target.Class != nil {
+			for _, field := range target.Class.Fields {
+				if field.Name == value.Name {
+					return field.TypeAST
+				}
+			}
+			for _, signature := range context.ClassMethodSignatures[receiverName][value.Name] {
+				if signature.ResultAST != nil {
+					return firstCoalesceResultTypeAST(signature.ResultAST)
+				}
+			}
+		}
+	case *CallExpr:
+		if index, ok := value.Callee.(*IndexExpr); ok {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" {
+				if typeExpression, ok := index.Index.(*TypeExpr); ok {
+					return typeExpression.Type
+				}
+			}
+		}
+		if index, ok := value.Callee.(*IndexListExpr); ok {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" && len(index.Indices) > 0 {
+				if typeExpression, ok := index.Indices[0].(*TypeExpr); ok {
+					return typeExpression.Type
+				}
+			}
+		}
+		return coalesceCallResultTypeAST(value, context, valueTypes)
+	}
+	return nil
+}
+
+func coalesceCallResultTypeAST(call *CallExpr, context constructorContext, valueTypes map[string]string) TypeNode {
+	if call == nil {
+		return nil
+	}
+	var candidates []callableSignature
+	switch callee := call.Callee.(type) {
+	case *NameExpr:
+		candidates = context.FunctionSignatures[callee.Name]
+	case *SelectorExpr:
+		receiverName := coalesceTypeName(coalesceExpressionTypeAST(callee.Receiver, context, valueTypes))
+		if _, isClass := context.Targets[receiverName]; isClass {
+			candidates = context.StaticMethodSignatures[receiverName][callee.Name]
+		} else {
+			candidates = context.ClassMethodSignatures[receiverName][callee.Name]
+		}
+		if len(candidates) == 0 {
+			for _, extension := range context.Extensions {
+				if extension.Method.Name == callee.Name && extensionTargetMatches(extension.Target, extension.ReceiverType, receiverName, context) {
+					return firstCoalesceResultTypeAST(methodResultTypeNode(extension.Method))
+				}
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		if len(call.Arguments) >= requiredParameterCount(candidate) && len(call.Arguments) <= len(candidate.Parameters) {
+			return firstCoalesceResultTypeAST(candidate.ResultAST)
+		}
+	}
+	return nil
+}
+
+func firstCoalesceResultTypeAST(typeNode TypeNode) TypeNode {
+	if tuple, ok := typeNode.(*TupleType); ok {
+		if len(tuple.Elements) == 0 {
+			return nil
+		}
+		return tuple.Elements[0]
+	}
+	return typeNode
+}
+
+func coalesceTypeName(typeNode TypeNode) string {
+	for {
+		switch value := typeNode.(type) {
+		case *PointerType:
+			typeNode = value.Element
+			continue
+		case *NamedType:
+			return strings.Join(value.Parts, ".")
+		}
+		return ""
+	}
+}
+
 func coalesceCallResultType(call *CallExpr, context constructorContext, valueTypes map[string]string) string {
 	if call == nil {
 		return ""
@@ -456,6 +771,13 @@ func collectCoalesceExprs(expression ExprNode, result *[]*BinaryExpr) {
 		}
 		collectCoalesceExprs(value.Left, result)
 		collectCoalesceExprs(value.Right, result)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectCoalesceExprs(expression, result)
+		}
+		for _, expression := range value.Right {
+			collectCoalesceExprs(expression, result)
+		}
 	case *UnaryExpr:
 		collectCoalesceExprs(value.Operand, result)
 	case *SelectorExpr:

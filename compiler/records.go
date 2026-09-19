@@ -186,30 +186,576 @@ func prepareRecordContextForFunction(function *FunctionDecl, context constructor
 	if function == nil || function.Owner == nil || context.Records == nil || context.Records.Prepared {
 		return nil
 	}
-	functions := []string{}
-	for _, declaration := range function.Owner.Decls {
-		candidate, ok := declaration.(*FunctionDecl)
-		if !ok {
+	// The owner already contains every parsed declaration. Reuse the typed
+	// record-preparation pass instead of concatenating sibling functions into a
+	// synthetic source file and reparsing it. This helper remains for callers
+	// that emit one function outside emitFile; normal package emission reaches
+	// prepareRecordContextAST directly during its prepass.
+	return prepareRecordContextAST(function.Owner, context)
+}
+
+// recordASTCallable is the small amount of declaration context needed by the
+// AST preparation pass. It deliberately points at the parsed Method instead
+// of reconstructing a synthetic function declaration from source text.
+type recordASTCallable struct {
+	Name      string
+	ClassName string
+	Method    *Method
+}
+
+// prepareRecordContextAST discovers record shapes and resolves record
+// signatures before declaration emission. The old source-based preparation is
+// retained for compatibility callers, but normal package emission now has the
+// complete typed declaration tree available and must not wrap/reparse a method
+// just to infer its record result.
+func prepareRecordContextAST(file *File, context constructorContext) error {
+	if file == nil || context.Records == nil {
+		return nil
+	}
+	callables := recordASTCallables(file)
+	if len(callables) == 0 {
+		return nil
+	}
+
+	valueTypes := map[*Method]map[string]string{}
+	for _, callable := range callables {
+		if callable.Method == nil || callable.Method.BodyAST == nil {
 			continue
 		}
-		source := functionSource(candidate)
-		if strings.TrimSpace(source) != "" {
-			functions = append(functions, source)
+		callContext := context
+		callContext.CurrentClass = callable.ClassName
+		callContext.CurrentMethod = callable.Name
+		callContext.CurrentParameterTypes = parameterTypeMapFromNodes(callable.Method.ParameterAST)
+		if callable.ClassName != "" {
+			callContext.CurrentParameterTypes["this"] = "*" + callable.ClassName
+		}
+		callContext.RecordValueTypes = cloneStringMap(callContext.CurrentParameterTypes)
+		if callContext.RecordValueTypes == nil {
+			callContext.RecordValueTypes = map[string]string{}
+		}
+		collectRecordValueTypesBlock(callable.Method.BodyAST, callContext.RecordValueTypes, callContext)
+		// Only record syntax is lowered during this preparation pass. Running the
+		// complete semantic lowerer here would resolve enums, overloads,
+		// introspection, lambdas, and safe access before their normal declaration
+		// context is ready.
+		callContext.RecordOnlyLowering = true
+		if err := lowerRecordOnlyBlock(callable.Method.BodyAST, callContext); err != nil {
+			return err
+		}
+		collectRecordValueTypesBlock(callable.Method.BodyAST, callContext.RecordValueTypes, callContext)
+		valueTypes[callable.Method] = callContext.RecordValueTypes
+	}
+
+	// Result inference may depend on a function called by another function.
+	// Iterate until the generated record names stop changing, matching the
+	// fixed-point behavior of the former source compatibility pass.
+	for pass := 0; pass <= len(callables); pass++ {
+		changed := false
+		for _, callable := range callables {
+			if callable.Method == nil || callable.Method.BodyAST == nil {
+				continue
+			}
+			kind, ok := recordResultKindAST(callable.Method.ResultAST)
+			if !ok {
+				continue
+			}
+			callContext := context
+			callContext.CurrentClass = callable.ClassName
+			callContext.CurrentMethod = callable.Name
+			callContext.RecordValueTypes = valueTypes[callable.Method]
+			goType, err := inferRecordFunctionResultAST(callable.Method.BodyAST, kind, callContext.RecordValueTypes, callContext, callable.Name)
+			if err != nil {
+				return err
+			}
+			if goType == "" {
+				continue
+			}
+			if replaceRecordTypeNode(&callable.Method.ResultAST, kind, goType) {
+				changed = true
+			}
+			if callable.ClassName != "" {
+				if context.Records.MethodResults[callable.ClassName] == nil {
+					context.Records.MethodResults[callable.ClassName] = map[string]string{}
+				}
+				context.Records.MethodResults[callable.ClassName][callable.Name] = goType
+			} else {
+				context.Records.FunctionResults[callable.Name] = goType
+			}
+		}
+		if !changed {
+			break
 		}
 	}
-	if len(functions) < 2 {
-		return nil
+
+	// Result inference above can make calls in another function concrete. For
+	// example, once getUser() is known to return a generated record shape, the
+	// `user` local in main can acquire that shape and become usable as an
+	// argument to userName(record). Rebuild each callable's value environment
+	// after the result fixed point instead of retaining the pre-inference maps.
+	// Without this refresh, AST-only inference sees the call but cannot infer
+	// the record argument's shape.
+	for _, callable := range callables {
+		if callable.Method == nil || callable.Method.BodyAST == nil {
+			continue
+		}
+		callContext := context
+		callContext.CurrentClass = callable.ClassName
+		callContext.CurrentMethod = callable.Name
+		callContext.CurrentParameterTypes = parameterTypeMapFromNodes(callable.Method.ParameterAST)
+		if callable.ClassName != "" {
+			callContext.CurrentParameterTypes["this"] = "*" + callable.ClassName
+		}
+		refreshed := cloneStringMap(callContext.CurrentParameterTypes)
+		if refreshed == nil {
+			refreshed = map[string]string{}
+		}
+		collectRecordValueTypesBlock(callable.Method.BodyAST, refreshed, callContext)
+		valueTypes[callable.Method] = refreshed
 	}
-	combined := strings.Join(functions, "\n\n")
-	if !strings.Contains(combined, "record") && !strings.Contains(combined, "let") {
-		context.Records.Prepared = true
-		return nil
+
+	// Resolve record parameters from typed call sites after all record calls
+	// have been lowered. This mirrors the language's existing inference rule:
+	// a `record` parameter is valid only when its call sites agree on one shape.
+	for _, callable := range callables {
+		if callable.Method == nil {
+			continue
+		}
+		for parameterIndex := range callable.Method.ParameterAST {
+			kind, ok := recordResultKindAST(callable.Method.ParameterAST[parameterIndex].Type)
+			if !ok {
+				continue
+			}
+			provided := ""
+			for _, caller := range callables {
+				callerTypes := valueTypes[caller.Method]
+				collectRecordCallsInBlock(caller.Method.BodyAST, func(call *CallExpr) {
+					matches := false
+					switch callee := call.Callee.(type) {
+					case *NameExpr:
+						matches = callable.ClassName == "" && callee.Name == callable.Name
+					case *SelectorExpr:
+						if receiver, receiverOK := callee.Receiver.(*NameExpr); receiverOK {
+							matches = receiver.Name == "this" && callable.ClassName != "" && callee.Name == callable.Name
+						}
+					}
+					if !matches || parameterIndex >= len(call.Arguments) {
+						return
+					}
+					actual := inferRecordExprType(call.Arguments[parameterIndex].Value, callerTypes, context)
+					if !recordTypeMatchesKind(actual, kind) {
+						return
+					}
+					if provided == "" {
+						provided = actual
+					}
+				})
+			}
+			if provided != "" {
+				replaceRecordTypeNode(&callable.Method.ParameterAST[parameterIndex].Type, kind, provided)
+				if context.Records.FunctionParams[callable.Name] == nil {
+					context.Records.FunctionParams[callable.Name] = map[int]string{}
+				}
+				context.Records.FunctionParams[callable.Name][parameterIndex] = provided
+			}
+		}
 	}
-	if _, err := transformRecords(combined, context); err != nil {
-		return err
-	}
+	// Normal package emission has now completed the record inference pass from
+	// the typed declaration tree. Mark it prepared so a later compatibility
+	// fallback does not reconstruct the same declarations as source merely to
+	// repeat record discovery.
 	context.Records.Prepared = true
 	return nil
+}
+
+// lowerRecordOnlyBlock is deliberately narrower than lowerExceptionBlockNodes.
+// Record inference runs before the ordinary per-declaration semantic context is
+// complete, so this pass may rewrite record calls and collection element types,
+// but must leave every other Go++ construct untouched.
+func lowerRecordOnlyBlock(block *BlockStmt, context constructorContext) error {
+	if block == nil {
+		return nil
+	}
+	for _, statement := range block.Statements {
+		if err := lowerRecordOnlyStatement(statement, context); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lowerRecordOnlyStatement(statement Stmt, context constructorContext) error {
+	if statement == nil {
+		return nil
+	}
+	lower := func(expression ExprNode) (ExprNode, error) {
+		return lowerRecordOnlyExpr(expression, context)
+	}
+	switch value := statement.(type) {
+	case *TokenStmt:
+		for index := range value.Exprs {
+			lowered, err := lower(value.Exprs[index])
+			if err != nil {
+				return err
+			}
+			value.Exprs[index] = lowered
+		}
+		if err := lowerRecordOnlyBlock(value.Body, context); err != nil {
+			return err
+		}
+		for _, child := range value.Children {
+			if err := lowerRecordOnlyStatement(child, context); err != nil {
+				return err
+			}
+		}
+	case *ExpressionStmt:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return err
+	case *DeclarationStmt:
+		for index := range value.Values {
+			lowered, err := lower(value.Values[index])
+			if err != nil {
+				return err
+			}
+			value.Values[index] = lowered
+		}
+	case *AssignmentStmt:
+		for index := range value.Left {
+			lowered, err := lower(value.Left[index])
+			if err != nil {
+				return err
+			}
+			value.Left[index] = lowered
+		}
+		for index := range value.Right {
+			lowered, err := lower(value.Right[index])
+			if err != nil {
+				return err
+			}
+			value.Right[index] = lowered
+		}
+	case *ReturnStmt:
+		for index := range value.Values {
+			lowered, err := lower(value.Values[index])
+			if err != nil {
+				return err
+			}
+			value.Values[index] = lowered
+		}
+	case *ThrowStmt:
+		lowered, err := lower(value.Value)
+		value.Value = lowered
+		return err
+	case *DeferStmt:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return err
+	case *GoStmt:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return err
+	case *SendStmt:
+		var err error
+		value.Channel, err = lower(value.Channel)
+		if err != nil {
+			return err
+		}
+		value.Value, err = lower(value.Value)
+		return err
+	case *IncDecStmt:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return err
+	case *IfStmt:
+		var err error
+		value.Init, err = lower(value.Init)
+		if err != nil {
+			return err
+		}
+		value.Condition, err = lower(value.Condition)
+		if err != nil {
+			return err
+		}
+		if err := lowerRecordOnlyBlock(value.Body, context); err != nil {
+			return err
+		}
+		if err := lowerRecordOnlyBlock(value.Else, context); err != nil {
+			return err
+		}
+		if value.ElseIf != nil {
+			return lowerRecordOnlyStatement(value.ElseIf, context)
+		}
+	case *ForStmt:
+		var err error
+		value.Init, err = lower(value.Init)
+		if err != nil {
+			return err
+		}
+		value.Condition, err = lower(value.Condition)
+		if err != nil {
+			return err
+		}
+		value.Post, err = lower(value.Post)
+		if err != nil {
+			return err
+		}
+		for index := range value.RangeKey {
+			value.RangeKey[index], err = lower(value.RangeKey[index])
+			if err != nil {
+				return err
+			}
+		}
+		value.RangeExpr, err = lower(value.RangeExpr)
+		if err != nil {
+			return err
+		}
+		return lowerRecordOnlyBlock(value.Body, context)
+	case *SwitchStmt:
+		var err error
+		value.Init, err = lower(value.Init)
+		if err != nil {
+			return err
+		}
+		value.Tag, err = lower(value.Tag)
+		if err != nil {
+			return err
+		}
+		return lowerRecordOnlyBlock(value.Body, context)
+	case *CaseStmt:
+		for index := range value.Clause.Expressions {
+			lowered, err := lower(value.Clause.Expressions[index])
+			if err != nil {
+				return err
+			}
+			value.Clause.Expressions[index] = lowered
+		}
+		return lowerRecordOnlyBlock(value.Clause.Body, context)
+	case *TryStmt:
+		if err := lowerRecordOnlyBlock(value.Body, context); err != nil {
+			return err
+		}
+		for _, clause := range value.Catches {
+			if err := lowerRecordOnlyBlock(clause.Body, context); err != nil {
+				return err
+			}
+		}
+		return lowerRecordOnlyBlock(value.Finally, context)
+	case *BlockStmt:
+		return lowerRecordOnlyBlock(value, context)
+	}
+	return nil
+}
+
+func lowerRecordOnlyExpr(expression ExprNode, context constructorContext) (ExprNode, error) {
+	if expression == nil {
+		return nil, nil
+	}
+	if call, ok := expression.(*CallExpr); ok {
+		if lowered, handled, err := lowerRecordCallExprNode(call, context); handled {
+			return lowered, err
+		}
+	}
+	lower := func(value ExprNode) (ExprNode, error) {
+		return lowerRecordOnlyExpr(value, context)
+	}
+	switch value := expression.(type) {
+	case *UnaryExpr:
+		lowered, err := lower(value.Operand)
+		value.Operand = lowered
+		return value, err
+	case *BinaryExpr:
+		var err error
+		value.Left, err = lower(value.Left)
+		if err != nil {
+			return nil, err
+		}
+		value.Right, err = lower(value.Right)
+		return value, err
+	case *AssignmentExpr:
+		for index := range value.Left {
+			lowered, err := lower(value.Left[index])
+			if err != nil {
+				return nil, err
+			}
+			value.Left[index] = lowered
+		}
+		for index := range value.Right {
+			lowered, err := lower(value.Right[index])
+			if err != nil {
+				return nil, err
+			}
+			value.Right[index] = lowered
+		}
+	case *SelectorExpr:
+		lowered, err := lower(value.Receiver)
+		value.Receiver = lowered
+		return value, err
+	case *IndexExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Index, err = lower(value.Index)
+		return value, err
+	case *IndexListExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		for index := range value.Indices {
+			value.Indices[index], err = lower(value.Indices[index])
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *SliceExpr:
+		var err error
+		value.Receiver, err = lower(value.Receiver)
+		if err != nil {
+			return nil, err
+		}
+		value.Low, err = lower(value.Low)
+		if err != nil {
+			return nil, err
+		}
+		value.High, err = lower(value.High)
+		if err != nil {
+			return nil, err
+		}
+		value.Max, err = lower(value.Max)
+		if err != nil {
+			return nil, err
+		}
+	case *TypeAssertExpr:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return value, err
+	case *PostfixExpr:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return value, err
+	case *SpreadExpr:
+		lowered, err := lower(value.Expression)
+		value.Expression = lowered
+		return value, err
+	case *SendExpr:
+		var err error
+		value.Channel, err = lower(value.Channel)
+		if err != nil {
+			return nil, err
+		}
+		value.Value, err = lower(value.Value)
+		return value, err
+	case *CallExpr:
+		var err error
+		value.Callee, err = lower(value.Callee)
+		if err != nil {
+			return nil, err
+		}
+		for index := range value.Arguments {
+			value.Arguments[index].Value, err = lower(value.Arguments[index].Value)
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *ParenthesizedExpr:
+		lowered, err := lower(value.Inner)
+		value.Inner = lowered
+		return value, err
+	case *CompositeLiteralExpr:
+		for index := range value.Elements {
+			var err error
+			value.Elements[index].Key, err = lower(value.Elements[index].Key)
+			if err != nil {
+				return nil, err
+			}
+			value.Elements[index].Value, err = lower(value.Elements[index].Value)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := lowerRecordCollectionTypeNode(value, context); err != nil {
+			return nil, err
+		}
+	case *InterpolatedStringExpr:
+		for index := range value.Segments {
+			var err error
+			value.Segments[index].Expression, err = lower(value.Segments[index].Expression)
+			if err != nil {
+				return nil, err
+			}
+		}
+	case *LambdaExpr:
+		var err error
+		value.Body, err = lower(value.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := lowerRecordOnlyBlock(value.BlockBody, context); err != nil {
+			return nil, err
+		}
+	case *FunctionLiteralExpr:
+		if err := lowerRecordOnlyBlock(value.Body, context); err != nil {
+			return nil, err
+		}
+	}
+	return expression, nil
+}
+
+func recordASTCallables(file *File) []recordASTCallable {
+	result := []recordASTCallable{}
+	for _, declaration := range file.Decls {
+		switch value := declaration.(type) {
+		case *FunctionDecl:
+			result = append(result, recordASTCallable{Name: value.Name, Method: &value.Method})
+		case *ClassDecl:
+			for index := range value.Methods {
+				result = append(result, recordASTCallable{Name: value.Methods[index].Name, ClassName: value.Name, Method: &value.Methods[index]})
+			}
+		case *ExtendDecl:
+			for index := range value.Methods {
+				result = append(result, recordASTCallable{Name: value.Methods[index].Name, Method: &value.Methods[index]})
+			}
+		}
+	}
+	return result
+}
+
+func replaceRecordTypeNode(target *TypeNode, kind, goType string) bool {
+	if target == nil || *target == nil || goType == "" {
+		return false
+	}
+	name := &NamedType{Parts: strings.Split(goType, ".")}
+	switch value := (*target).(type) {
+	case *NamedType:
+		if kind != "record" || len(value.Parts) != 1 || value.Parts[0] != "record" {
+			return false
+		}
+		*target = name
+		return true
+	case *SliceType:
+		if kind != "slice" {
+			return false
+		}
+		if named, ok := value.Element.(*NamedType); !ok || len(named.Parts) != 1 || named.Parts[0] != "record" {
+			return false
+		}
+		value.Element = name
+		return true
+	case *MapType:
+		if kind != "map" {
+			return false
+		}
+		if named, ok := value.Value.(*NamedType); !ok || len(named.Parts) != 1 || named.Parts[0] != "record" {
+			return false
+		}
+		value.Value = name
+		return true
+	default:
+		return false
+	}
 }
 
 func rewriteLetSyntax(src string) string {
@@ -465,6 +1011,13 @@ func collectRecordCalls(expression ExprNode, result *[]recordCallNode) {
 	case *BinaryExpr:
 		collectRecordCalls(value.Left, result)
 		collectRecordCalls(value.Right, result)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectRecordCalls(expression, result)
+		}
+		for _, expression := range value.Right {
+			collectRecordCalls(expression, result)
+		}
 	case *SelectorExpr:
 		collectRecordCalls(value.Receiver, result)
 	case *IndexExpr:
@@ -726,6 +1279,13 @@ func collectRecordCompositeExpression(expression ExprNode, visit func(*Composite
 	case *BinaryExpr:
 		collectRecordCompositeExpression(value.Left, visit)
 		collectRecordCompositeExpression(value.Right, visit)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectRecordCompositeExpression(expression, visit)
+		}
+		for _, expression := range value.Right {
+			collectRecordCompositeExpression(expression, visit)
+		}
 	case *SelectorExpr:
 		collectRecordCompositeExpression(value.Receiver, visit)
 	case *IndexExpr:
@@ -1407,6 +1967,13 @@ func collectRecordCallsInExpression(expression ExprNode, visit func(*CallExpr)) 
 	case *BinaryExpr:
 		collectRecordCallsInExpression(value.Left, visit)
 		collectRecordCallsInExpression(value.Right, visit)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectRecordCallsInExpression(expression, visit)
+		}
+		for _, expression := range value.Right {
+			collectRecordCallsInExpression(expression, visit)
+		}
 	case *SelectorExpr:
 		collectRecordCallsInExpression(value.Receiver, visit)
 	case *IndexExpr:

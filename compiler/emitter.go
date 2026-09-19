@@ -1,10 +1,10 @@
 package compiler
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
-	"go/parser"
 	"go/token"
 	"go/types"
 	htmltemplate "html/template"
@@ -130,6 +130,11 @@ type constructorContext struct {
 	CurrentResultAST           TypeNode
 	CurrentExtensionReceiver   string
 	CurrentParameterTypes      map[string]string
+	CurrentParameterAST        map[string]TypeNode
+	CurrentIntrospectionKinds  map[string]int
+	RecordValueTypes           map[string]string
+	RecordOnlyLowering         bool
+	InterpolationName          string
 }
 
 func (context constructorContext) currentResultText() string {
@@ -220,6 +225,12 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	interpolationName, needsFmtImport, err := interpolationImport(file)
 	if err != nil {
 		return nil, err
+	}
+	context.InterpolationName = interpolationName
+	if tokenSequence(file.Tokens, "record") || tokenSequence(file.Tokens, "let") {
+		if err := prepareRecordContextAST(file, context); err != nil {
+			return nil, err
+		}
 	}
 
 	body, err := emitDecls(file, context, interpolationName)
@@ -615,53 +626,6 @@ func transformStaticTemplateCalls(src string, context constructorContext) (strin
 		return transformed, err
 	}
 	return src, nil
-	/*
-		aliases := map[string]bool{}
-		for alias, importPath := range context.AvailableImports {
-			if importPath == "gpp/tpl" || (context.ModulePath != "" && importPath == context.ModulePath+"/gpp/tpl") {
-				aliases[alias] = true
-			}
-		}
-		if len(aliases) == 0 {
-			return src, nil
-		}
-		const prefix = "package main\n\n"
-		fileSet := token.NewFileSet()
-		parsed, err := parser.ParseFile(fileSet, "template_calls.go", prefix+src, 0)
-		if err != nil {
-			return src, nil
-		}
-		type edit struct {
-			start, end int
-			text       string
-		}
-		var edits []edit
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			receiver, ok := selector.X.(*ast.Ident)
-			if !ok || !aliases[receiver.Name] || context.Templates[selector.Sel.Name] == nil {
-				return true
-			}
-			start := fileSet.Position(selector.Pos()).Offset - len(prefix)
-			end := fileSet.Position(selector.End()).Offset - len(prefix)
-			if start >= 0 && end <= len(src) {
-				edits = append(edits, edit{start: start, end: end, text: "__gpp_tpl_" + selector.Sel.Name})
-			}
-			return true
-		})
-		sort.Slice(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
-		for _, edit := range edits {
-			src = src[:edit.start] + edit.text + src[edit.end:]
-		}
-		return src, nil
-	*/
 }
 
 type generatedImport struct {
@@ -927,47 +891,6 @@ func sourceDirectivePath(file *File) string {
 	return filepath.ToSlash(sourcePath)
 }
 
-// addRawSourceDirective places the directive immediately before the first
-// user declaration rather than before imports. This is important because the
-// emitter inserts generated runtime declarations after imports; placing the
-// directive before an import would make those synthetic declarations inherit
-// the user's source location.
-func addRawSourceDirective(code string, file *File, declaration *MixedDecl) string {
-	if declaration == nil || declaration.SourceLine <= 0 {
-		return code
-	}
-	sourcePath := sourceDirectivePath(file)
-	if sourcePath == "" {
-		sourcePath = declaration.SourceFile
-	}
-	if sourcePath == "" {
-		return code
-	}
-
-	_, lastImportEnd, ok := generatedImports(code)
-	if ok {
-		tokens, lexErr := LexSource("generated Go", code)
-		if lexErr == nil {
-			offset := nextSignificantToken(tokens, 0)
-			if lastImportEnd >= 0 {
-				for offset < len(tokens) && tokens[offset].Span.Start < lastImportEnd {
-					offset++
-				}
-				offset = nextSignificantToken(tokens, offset)
-			}
-			if offset < len(tokens) && tokens[offset].Kind != TokenEOF {
-				position := tokens[offset].Span.Start
-				line := declaration.SourceLine + strings.Count(code[:position], "\n")
-				return code[:position] + fmt.Sprintf("//line %s:%d\n", filepath.ToSlash(sourcePath), line) + code[position:]
-			}
-		}
-	}
-
-	// Go++ syntax may not be parseable until all lowerings have run. The
-	// declaration start is still a useful fallback in that case.
-	return fmt.Sprintf("//line %s:%d\n%s", filepath.ToSlash(sourcePath), declaration.SourceLine, code)
-}
-
 func emitDecls(file *File, context constructorContext, interpolationName string) (string, error) {
 	var out strings.Builder
 	enumErrorAlias, _ := enumErrorImport(file)
@@ -1014,6 +937,17 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			out.WriteString(structured)
 
 		case *ValueDecl:
+			if direct, handled, err := directValueDeclSource(d, context); handled {
+				if err != nil {
+					return "", err
+				}
+				emitSourceDirective(&out, sourceDirectivePath(file), d.SourceLine)
+				out.WriteString(direct)
+				if !strings.HasSuffix(direct, "\n") {
+					out.WriteByte('\n')
+				}
+				continue
+			}
 			source, err := valueDeclASTSource(d)
 			if err != nil {
 				return "", err
@@ -1064,9 +998,13 @@ func emitStructuredGoDecls(file *File, declaration *GoDecl, context constructorC
 		if err := format.Node(&source, fileSet, node); err != nil {
 			return "", err
 		}
-		code, err := transformGoDeclSource(source.String(), context, interpolationName)
-		if err != nil {
-			return "", err
+		code := source.String()
+		if goDeclNeedsLowering(declaration, node, context) {
+			transformed, err := transformGoDeclSource(code, context, interpolationName)
+			if err != nil {
+				return "", err
+			}
+			code = transformed
 		}
 		line := declaration.SourceLine
 		if position := fileSet.Position(node.Pos()); position.IsValid() && position.Line > 1 {
@@ -1102,9 +1040,13 @@ func emitStructuredMixedGoDecls(file *File, declaration *MixedDecl, context cons
 		if err := format.Node(&source, fileSet, node); err != nil {
 			return "", false, err
 		}
-		code, err := transformGoDeclSource(source.String(), context, interpolationName)
-		if err != nil {
-			return "", false, err
+		code := source.String()
+		if goASTNodeNeedsLowering(node, declaration.AnnotationPlacements, context) {
+			transformed, err := transformGoDeclSource(code, context, interpolationName)
+			if err != nil {
+				return "", false, err
+			}
+			code = transformed
 		}
 		emitSourceDirective(&output, sourceDirectivePath(file), declaration.SourceLine)
 		output.WriteString(code)
@@ -1113,6 +1055,76 @@ func emitStructuredMixedGoDecls(file *File, declaration *MixedDecl, context cons
 		}
 	}
 	return output.String(), true, nil
+}
+
+// goDeclNeedsLowering keeps ordinary Go declarations on their existing Go AST
+// all the way to the formatting boundary. A GoDecl can still contain
+// Go++-compatible syntax that Go's parser accepts as ordinary identifiers or
+// calls, so only those concrete markers opt it into the compatibility passes.
+func goDeclNeedsLowering(declaration *GoDecl, node ast.Decl, context constructorContext) bool {
+	if declaration != nil && len(declaration.AnnotationPlacements) > 0 {
+		return true
+	}
+	if declaration != nil {
+		for _, token := range declaration.Tokens {
+			switch token.Text {
+			case "record", "let", "try", "throw", "??", "?.", "=>":
+				return true
+			}
+		}
+		if tokensNeedInterpolationLowering(declaration.Tokens) {
+			return true
+		}
+	}
+	needs := false
+	ast.Inspect(node, func(current ast.Node) bool {
+		call, ok := current.(*ast.CallExpr)
+		if !ok {
+			return !needs
+		}
+		identifier, ok := call.Fun.(*ast.Ident)
+		if ok && context.Targets[identifier.Name].Class != nil {
+			needs = true
+			return false
+		}
+		return !needs
+	})
+	return needs
+}
+
+// goASTNodeNeedsLowering applies the narrow feature check directly to a single
+// Go AST declaration inside a MixedDecl. MixedDecl.Tokens cover the whole
+// chunk and may include Go++ syntax from a neighboring function; using them
+// here would needlessly route otherwise ordinary Go declarations through every
+// source compatibility pass. Walking the AST also avoids formatting the node
+// merely to lex it again.
+func goASTNodeNeedsLowering(node ast.Decl, placements []AnnotationPlacement, context constructorContext) bool {
+	if node == nil {
+		return false
+	}
+	if len(placements) > 0 {
+		return true
+	}
+	needs := false
+	ast.Inspect(node, func(current ast.Node) bool {
+		if needs {
+			return false
+		}
+		switch value := current.(type) {
+		case *ast.BasicLit:
+			if value.Kind == token.STRING && len(value.Value) >= 2 {
+				content := value.Value[1 : len(value.Value)-1]
+				needs = interpolationLiteralHasExpression(content) || strings.Contains(content, "{{{{") || strings.Contains(content, "}}}}")
+			}
+		case *ast.CallExpr:
+			identifier, ok := value.Fun.(*ast.Ident)
+			if ok && context.Targets[identifier.Name].Class != nil {
+				needs = true
+			}
+		}
+		return !needs
+	})
+	return needs
 }
 
 // emitStructuredMixedFunctions keeps compatibility declarations from sending
@@ -1124,6 +1136,88 @@ func emitStructuredMixedFunctions(file *File, declaration *MixedDecl, context co
 	if file == nil || declaration == nil || declaration.Owner != file || len(declaration.Functions) == 0 {
 		return "", false, nil
 	}
+	// parseGoDeclarations succeeds only when the complete mixed chunk is valid
+	// ordinary Go after annotation syntax is masked. In that case every
+	// non-function declaration already has a real go/ast node, so do not recover
+	// it from File.Source. This is especially important for a Go++ function next
+	// to Go variables/imports: the function body is lowered structurally while
+	// the surrounding Go declarations stay structurally owned by go/ast.
+	if len(declaration.GoASTDecls) > 0 && declaration.GoASTFileSet != nil {
+		type item struct {
+			line     int
+			order    int
+			function *FunctionDecl
+			goDecl   ast.Decl
+		}
+		items := make([]item, 0, len(declaration.Functions)+len(declaration.GoASTDecls))
+		order := 0
+		for _, function := range declaration.Functions {
+			if function == nil {
+				continue
+			}
+			items = append(items, item{line: function.SourceLine, order: order, function: function})
+			order++
+		}
+		for _, node := range declaration.GoASTDecls {
+			if node == nil {
+				continue
+			}
+			if _, isFunction := node.(*ast.FuncDecl); isFunction {
+				continue
+			}
+			line := declaration.SourceLine
+			if position := declaration.GoASTFileSet.Position(node.Pos()); position.IsValid() && position.Line > 1 {
+				line += position.Line - 2
+			}
+			items = append(items, item{line: line, order: order, goDecl: node})
+			order++
+		}
+		if len(items) > 0 {
+			sort.SliceStable(items, func(left, right int) bool {
+				if items[left].line != items[right].line {
+					return items[left].line < items[right].line
+				}
+				return items[left].order < items[right].order
+			})
+			var output strings.Builder
+			for _, current := range items {
+				if current.function != nil {
+					code, err := transformTopLevelDeclSource(current.function, context, interpolationName)
+					if err != nil {
+						return "", false, err
+					}
+					emitSourceDirective(&output, sourceDirectivePath(file), current.function.SourceLine)
+					output.WriteString(code)
+					if !strings.HasSuffix(code, "\n") {
+						output.WriteByte('\n')
+					}
+					continue
+				}
+				var source strings.Builder
+				if err := format.Node(&source, declaration.GoASTFileSet, current.goDecl); err != nil {
+					return "", false, err
+				}
+				code := source.String()
+				if goASTNodeNeedsLowering(current.goDecl, declaration.AnnotationPlacements, context) {
+					transformed, err := transformGoDeclSource(code, context, interpolationName)
+					if err != nil {
+						return "", false, err
+					}
+					code = transformed
+				}
+				emitSourceDirective(&output, sourceDirectivePath(file), current.line)
+				output.WriteString(code)
+				if !strings.HasSuffix(code, "\n") {
+					output.WriteByte('\n')
+				}
+			}
+			return output.String(), true, nil
+		}
+	}
+
+	// If the Go parser could not represent the complete mixed chunk, retain the
+	// lossless source-span fallback for the unsupported remainder. This branch
+	// is compatibility behavior, not the normal AST emission path.
 	start := declaration.SourceSpan.Start
 	end := declaration.SourceSpan.End
 	if start < 0 || end < start || end > len(file.Source) {
@@ -1249,6 +1343,9 @@ func transformGoDeclSource(source string, context constructorContext, interpolat
 // source-rewrite stages can be replaced by AST lowering without reintroducing
 // MixedDecl storage.
 func transformTopLevelDeclSource(function *FunctionDecl, context constructorContext, interpolationName string) (string, error) {
+	if direct, handled, err := directFunctionSource(function, context); handled {
+		return direct, err
+	}
 	source := functionSource(function)
 	if err := prepareRecordContextForFunction(function, context); err != nil {
 		return "", err
@@ -1270,9 +1367,16 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	if err != nil {
 		return "", err
 	}
-	code, err = transformExceptions(code, context)
-	if err != nil {
-		return "", err
+	if transformed, handled, exceptionErr := transformExceptionMethodBodyAST(code, &function.Method, context); handled {
+		if exceptionErr != nil {
+			return "", exceptionErr
+		}
+		code = transformed
+	} else {
+		code, err = transformExceptions(code, context)
+		if err != nil {
+			return "", err
+		}
 	}
 	code, err = transformLambdas(code, context)
 	if err != nil {
@@ -1387,6 +1491,15 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		}
 		emitSourceDirective(out, sourcePath, class.SourceLine)
 		methodName := methodOutputName(method)
+		exceptionContext := contextForMethod(context, class, method.Name)
+		if direct, handled, err := directMethodSource(class, method, exceptionContext); handled {
+			if err != nil {
+				return err
+			}
+			out.WriteString(direct)
+			out.WriteByte('\n')
+			continue
+		}
 		body, err := transformMethodInterpolation(method, interpolationName)
 		if err != nil {
 			return err
@@ -1399,9 +1512,16 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		if err != nil {
 			return err
 		}
-		body, err = transformExceptions(body, context)
-		if err != nil {
-			return err
+		if transformed, handled, exceptionErr := transformExceptionMethodBodyAST(body, &method, exceptionContext); handled {
+			if exceptionErr != nil {
+				return exceptionErr
+			}
+			body = transformed
+		} else {
+			body, err = transformExceptions(body, context)
+			if err != nil {
+				return err
+			}
 		}
 		methodResult, body, err := transformRecordMethodResult(methodResultSource(method), body, contextForMethod(context, class, method.Name))
 		if err != nil {
@@ -1429,9 +1549,9 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		methodContext := context
 		methodContext.CurrentClass = class.Name
 		methodContext.CurrentMethod = method.Name
-		methodContext.CurrentResultAST = parseTypeText(strings.TrimSpace(methodResultSource(method)))
+		methodContext.CurrentResultAST = methodResultTypeNode(method)
 		methodContext.MethodSignatures = context.ClassMethodSignatures[class.Name]
-		methodContext.CurrentParameterTypes = parameterTypeMap(methodParametersSource(method))
+		methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
 		methodContext.CurrentParameterTypes["this"] = "*" + class.Name
 		body, err = transformLambdas(body, methodContext)
 		if err != nil {
@@ -1485,7 +1605,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 			map[string]bool{},
 		)
 		methodContext.Overloads.CurrentClass = class.Name
-		methodContext.Overloads.LocalTypes = parameterTypeMap(methodParametersSource(method))
+		methodContext.Overloads.LocalTypes = parameterTypeMapFromNodes(method.ParameterAST)
 		body, err = transformOverloads(body, methodContext.Overloads)
 		if err != nil {
 			return err
@@ -1593,6 +1713,15 @@ func classDeclaresMethod(class *ClassDecl, method Method) bool {
 }
 
 func methodSignatureKey(method Method) string {
+	if method.Owner != nil {
+		parts := make([]string, 0, len(method.ParameterAST))
+		for _, parameter := range method.ParameterAST {
+			parts = append(parts, strings.Join(strings.Fields(typeNodeSignatureKey(parameter.Type)), " "))
+		}
+		return method.Name + "/" + strings.Join(parts, ",")
+	}
+	// Compatibility callers may still construct a Method without an owner.
+	// Parsed methods always take the typed branch above.
 	return method.Name + "/" + parameterSignatureKeyFromSource(methodParametersSource(method))
 }
 
@@ -1665,6 +1794,86 @@ func qualifyImportedTypeNames(typeName, parentName string, classes map[string]*C
 		typeName = qualifyImportedTypeIdentifier(typeName, name, qualifier+"."+name)
 	}
 	return typeName
+}
+
+func qualifyImportedTypeNode(typeNode TypeNode, parentName string, classes map[string]*ClassDecl, importedTypes map[string]map[string]bool) TypeNode {
+	if typeNode == nil {
+		return nil
+	}
+	dot := strings.Index(parentName, ".")
+	if dot <= 0 {
+		return typeNode
+	}
+	qualifier := parentName[:dot]
+	qualifyName := func(name *NamedType) *NamedType {
+		if name == nil {
+			return nil
+		}
+		parts := append([]string(nil), name.Parts...)
+		if len(parts) == 1 {
+			_, local := classes[parts[0]]
+			_, imported := importedTypes[qualifier][parts[0]]
+			if local || imported {
+				parts = []string{qualifier, parts[0]}
+			}
+		}
+		arguments := make([]TypeNode, len(name.Arguments))
+		for index, argument := range name.Arguments {
+			arguments[index] = qualifyImportedTypeNode(argument, parentName, classes, importedTypes)
+		}
+		return &NamedType{Parts: parts, Arguments: arguments, SpanValue: name.SpanValue}
+	}
+	qualifyList := func(values []TypeNode) []TypeNode {
+		result := make([]TypeNode, len(values))
+		for index, value := range values {
+			result[index] = qualifyImportedTypeNode(value, parentName, classes, importedTypes)
+		}
+		return result
+	}
+	switch value := typeNode.(type) {
+	case *NamedType:
+		return qualifyName(value)
+	case *PointerType:
+		return &PointerType{Element: qualifyImportedTypeNode(value.Element, parentName, classes, importedTypes), SpanValue: value.SpanValue}
+	case *SliceType:
+		return &SliceType{Element: qualifyImportedTypeNode(value.Element, parentName, classes, importedTypes), SpanValue: value.SpanValue}
+	case *ArrayType:
+		return &ArrayType{Length: value.Length, Element: qualifyImportedTypeNode(value.Element, parentName, classes, importedTypes), Ellipsis: value.Ellipsis, SpanValue: value.SpanValue}
+	case *MapType:
+		return &MapType{Key: qualifyImportedTypeNode(value.Key, parentName, classes, importedTypes), Value: qualifyImportedTypeNode(value.Value, parentName, classes, importedTypes), SpanValue: value.SpanValue}
+	case *ChannelType:
+		return &ChannelType{Direction: value.Direction, Element: qualifyImportedTypeNode(value.Element, parentName, classes, importedTypes), SpanValue: value.SpanValue}
+	case *VariadicType:
+		return &VariadicType{Element: qualifyImportedTypeNode(value.Element, parentName, classes, importedTypes), SpanValue: value.SpanValue}
+	case *FunctionType:
+		parameters := append([]ParameterNode(nil), value.Parameters...)
+		for index := range parameters {
+			parameters[index].Type = qualifyImportedTypeNode(parameters[index].Type, parentName, classes, importedTypes)
+		}
+		return &FunctionType{Parameters: parameters, Results: qualifyList(value.Results), SpanValue: value.SpanValue}
+	case *StructType:
+		fields := append([]StructFieldNode(nil), value.Fields...)
+		for index := range fields {
+			fields[index].Type = qualifyImportedTypeNode(fields[index].Type, parentName, classes, importedTypes)
+		}
+		return &StructType{Fields: fields, SpanValue: value.SpanValue}
+	case *InterfaceType:
+		interfaceNode := &InterfaceType{Embeds: qualifyList(value.Embeds), Methods: append([]InterfaceMethodNode(nil), value.Methods...), SpanValue: value.SpanValue}
+		for index := range interfaceNode.Methods {
+			interfaceNode.Methods[index].Signature = qualifyImportedTypeNode(interfaceNode.Methods[index].Signature, parentName, classes, importedTypes)
+		}
+		return interfaceNode
+	case *TupleType:
+		return &TupleType{Elements: qualifyList(value.Elements), SpanValue: value.SpanValue}
+	case *UnderlyingType:
+		return &UnderlyingType{Element: qualifyImportedTypeNode(value.Element, parentName, classes, importedTypes), SpanValue: value.SpanValue}
+	case *UnionType:
+		return &UnionType{Terms: qualifyList(value.Terms), SpanValue: value.SpanValue}
+	default:
+		// TokenType is intentionally opaque. The source compatibility path
+		// remains responsible for qualifying syntax not represented yet.
+		return typeNode
+	}
 }
 
 func qualifyImportedTypeIdentifier(source, name, replacement string) string {
@@ -1783,6 +1992,15 @@ func isExportedGoPlusName(name string) bool {
 }
 
 func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
+	if direct, handled, err := directStaticMethodSource(class, method, context); handled {
+		if err != nil {
+			return err
+		}
+		emitSourceDirective(out, sourcePath, class.SourceLine)
+		out.WriteString(direct)
+		out.WriteByte('\n')
+		return nil
+	}
 	body, err := transformMethodInterpolation(method, interpolationName)
 	if err != nil {
 		return err
@@ -1795,9 +2013,16 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 	if err != nil {
 		return err
 	}
-	body, err = transformExceptions(body, context)
-	if err != nil {
-		return err
+	if transformed, handled, exceptionErr := transformExceptionMethodBodyAST(body, &method, context); handled {
+		if exceptionErr != nil {
+			return exceptionErr
+		}
+		body = transformed
+	} else {
+		body, err = transformExceptions(body, context)
+		if err != nil {
+			return err
+		}
 	}
 	methodResult, body, err := transformRecordMethodResult(
 		methodResultSource(method),
@@ -1826,9 +2051,9 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 	methodContext := context
 	methodContext.CurrentClass = ""
 	methodContext.CurrentMethod = method.Name
-	methodContext.CurrentResultAST = parseTypeText(strings.TrimSpace(methodResult))
+	methodContext.CurrentResultAST = methodResultTypeNode(method)
 	methodContext.MethodSignatures = nil
-	methodContext.CurrentParameterTypes = parameterTypeMap(methodParametersSource(method))
+	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
 	body, err = transformLambdas(body, methodContext)
 	if err != nil {
 		return err
@@ -1885,6 +2110,9 @@ func contextForMethod(context constructorContext, class *ClassDecl, methodName s
 	methodContext.CurrentMethod = methodName
 	methodContext.CurrentResultAST = nil
 	methodContext.MethodSignatures = context.ClassMethodSignatures[class.Name]
+	methodContext.Overloads.Methods = methodOverloadsForClass(class, classesForClass(context, class), map[string]bool{})
+	methodContext.Overloads.MethodTypes = methodOverloadTypesForClass(class, classesForClass(context, class), map[string]bool{})
+	methodContext.Overloads.CurrentClass = class.Name
 	return methodContext
 }
 
@@ -2005,162 +2233,6 @@ func transformPolymorphicDeclarations(src string, context constructorContext) (s
 	return src, nil
 }
 
-// transformPolymorphicDeclarationsLegacy is kept outside the active lowering
-// pipeline until the remaining generated-Go compatibility code is removed.
-func transformPolymorphicDeclarationsLegacy(src string, context constructorContext) (string, error) {
-	if len(context.Targets) == 0 {
-		return src, nil
-	}
-	if transformed, handled, err := transformPolymorphicDeclarationsAST(src, context); handled {
-		return transformed, err
-	}
-	return src, nil
-
-	const filePrefix = "package main\n\n"
-	fileSet := token.NewFileSet()
-	parsed, err := parser.ParseFile(fileSet, "", filePrefix+src, 0)
-	prefixLength := len(filePrefix)
-	if err != nil {
-		functionPrefix := "package main\n\nfunc __gpp_scope()"
-		if result := context.currentResultText(); result != "" {
-			functionPrefix += " " + result
-		}
-		functionPrefix += " {\n"
-		functionSet := token.NewFileSet()
-		parsed, err = parser.ParseFile(
-			functionSet,
-			"",
-			functionPrefix+src+"\n}",
-			0,
-		)
-		if err != nil {
-			return src, nil
-		}
-		fileSet = functionSet
-		prefixLength = len(functionPrefix)
-	}
-
-	type edit struct {
-		start int
-		end   int
-		text  string
-	}
-	edits := []edit{}
-	addTypeEdit := func(expr ast.Expr, replacement string) {
-		start := fileSet.Position(expr.Pos()).Offset - prefixLength
-		end := fileSet.Position(expr.End()).Offset - prefixLength
-		if start >= 0 && end <= len(src) && start <= end {
-			edits = append(edits, edit{start: start, end: end, text: replacement})
-		}
-	}
-	addPointerEdit := func(expr ast.Expr) {
-		start := fileSet.Position(expr.Pos()).Offset - prefixLength
-		if start >= 0 && start <= len(src) {
-			edits = append(edits, edit{start: start, end: start, text: "&"})
-		}
-	}
-
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		switch declaration := node.(type) {
-		case *ast.ValueSpec:
-			if declaration.Type == nil || len(declaration.Names) != 1 || len(declaration.Values) != 1 {
-				return true
-			}
-
-			base, ok := dispatchTargetForType(declaration.Type, context)
-			if !ok {
-				return true
-			}
-			derivedName := expressionClassName(declaration.Values[0], context, polymorphicValueTypes(parsed, context))
-			if derivedName == "" {
-				return true
-			}
-			derived, ok := context.Targets[derivedName]
-			if !ok || !sameConstructorPackage(base, derived) ||
-				(derived.Class != base.Class &&
-					!classInherits(derived.Class, base.Class, derived.Classes, map[string]bool{})) {
-				return true
-			}
-
-			addTypeEdit(declaration.Type, dispatchInterfaceType(base))
-			addPointerEdit(declaration.Values[0])
-
-		case *ast.FuncDecl:
-			if declaration.Type.Params != nil {
-				for _, field := range declaration.Type.Params.List {
-					if base, ok := dispatchTargetForType(field.Type, context); ok {
-						addTypeEdit(field.Type, dispatchInterfaceType(base))
-					}
-				}
-			}
-			if declaration.Type.Results == nil || len(declaration.Type.Results.List) != 1 || declaration.Body == nil {
-				return true
-			}
-
-			resultType, resultErr := formatNode(declaration.Type.Results.List[0].Type)
-			if resultErr != nil {
-				return true
-			}
-			base, isDispatchResult := dispatchTargetForType(declaration.Type.Results.List[0].Type, context)
-			if isDispatchResult {
-				addTypeEdit(declaration.Type.Results.List[0].Type, dispatchInterfaceType(base))
-			} else if pointerResult := transformPolymorphicResultType(resultType, context); pointerResult != resultType {
-				addTypeEdit(declaration.Type.Results.List[0].Type, pointerResult)
-			} else {
-				return true
-			}
-
-			valueTypes := polymorphicValueTypes(parsed, context)
-			pointerResult := transformPolymorphicResultType(resultType, context)
-
-			ast.Inspect(declaration.Body, func(child ast.Node) bool {
-				returnStmt, ok := child.(*ast.ReturnStmt)
-				if !ok || len(returnStmt.Results) != 1 {
-					return true
-				}
-
-				derivedName := expressionClassName(returnStmt.Results[0], context, valueTypes)
-				if derivedName == "" {
-					return true
-				}
-				derived, ok := context.Targets[derivedName]
-				if isDispatchResult && (!ok || !sameConstructorPackage(base, derived) ||
-					(derived.Class != base.Class && !classInherits(derived.Class, base.Class, derived.Classes, map[string]bool{}))) {
-					return true
-				}
-
-				if isDispatchResult || pointerResult != resultType {
-					if !strings.HasPrefix(strings.TrimSpace(expressionStaticType(returnStmt.Results[0], context, valueTypes)), "*") {
-						addPointerEdit(returnStmt.Results[0])
-					}
-				}
-				return true
-			})
-
-		case *ast.CallExpr:
-			parameterTypes := callParameterTypes(declaration, context, polymorphicValueTypes(parsed, context))
-			for index, argument := range declaration.Args {
-				if index >= len(parameterTypes) {
-					break
-				}
-				if shouldPointerCoerce(parameterTypes[index], argument, context) {
-					addPointerEdit(argument)
-				}
-			}
-		}
-		return true
-	})
-
-	sort.Slice(edits, func(i, j int) bool {
-		return edits[i].start > edits[j].start
-	})
-	for _, change := range edits {
-		src = src[:change.start] + change.text + src[change.end:]
-	}
-
-	return src, nil
-}
-
 func callParameterTypes(call *ast.CallExpr, context constructorContext, valueTypes map[string]string) []string {
 	var candidates []callableSignature
 	switch function := call.Fun.(type) {
@@ -2208,7 +2280,7 @@ func polymorphicValueTypes(root ast.Node, context constructorContext) map[string
 		case *ast.FuncDecl:
 			if declaration.Type.Params != nil {
 				for _, field := range declaration.Type.Params.List {
-					typeName, err := formatNode(field.Type)
+					typeName, err := astTypeSignatureKeyWithFallback(field.Type)
 					if err != nil {
 						continue
 					}
@@ -2292,7 +2364,7 @@ func polymorphicValueTypes(root ast.Node, context constructorContext) map[string
 func expressionStaticType(expr ast.Expr, context constructorContext, valueTypes map[string]string) string {
 	switch value := expr.(type) {
 	case *ast.TypeAssertExpr:
-		if typeName, err := formatNode(value.Type); err == nil {
+		if typeName, err := astTypeSignatureKeyWithFallback(value.Type); err == nil {
 			return strings.TrimSpace(typeName)
 		}
 	case *ast.UnaryExpr:
@@ -2953,6 +3025,13 @@ func collectOverloadCalls(expression ExprNode, visit func(*CallExpr)) {
 	case *BinaryExpr:
 		collectOverloadCalls(value.Left, visit)
 		collectOverloadCalls(value.Right, visit)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectOverloadCalls(expression, visit)
+		}
+		for _, expression := range value.Right {
+			collectOverloadCalls(expression, visit)
+		}
 	case *SelectorExpr:
 		collectOverloadCalls(value.Receiver, visit)
 	case *IndexExpr:
@@ -3163,184 +3242,6 @@ func overloadCallCalleeSpan(call *CallExpr) Span {
 	return call.Callee.Span()
 }
 
-// transformOverloadsGoASTLegacy is retained only as historical migration
-// code. The active overload lowering is transformOverloadsAST.
-func transformOverloadsGoASTLegacy(src string, overloads overloadContext) (string, error) {
-	if len(overloads.Functions) == 0 && len(overloads.FunctionTypes) == 0 &&
-		len(overloads.Methods) == 0 && len(overloads.MethodTypes) == 0 &&
-		len(overloads.ClassMethods) == 0 {
-		return src, nil
-	}
-
-	const filePrefix = "package main\n\n"
-	fileSet := token.NewFileSet()
-	parsed, err := parser.ParseFile(fileSet, "", filePrefix+src, 0)
-	prefixLength := len(filePrefix)
-	if err != nil {
-		const functionPrefix = "package main\n\nfunc __gpp_scope() {\n"
-		functionSet := token.NewFileSet()
-		parsed, err = parser.ParseFile(functionSet, "", functionPrefix+src+"\n}", 0)
-		if err != nil {
-			return src, nil
-		}
-		fileSet = functionSet
-		prefixLength = len(functionPrefix)
-	}
-
-	type edit struct {
-		start int
-		end   int
-		text  string
-	}
-	edits := []edit{}
-	addEdit := func(node ast.Node, text string) {
-		start := fileSet.Position(node.Pos()).Offset - prefixLength
-		end := fileSet.Position(node.End()).Offset - prefixLength
-		if start >= 0 && end <= len(src) && start <= end {
-			edits = append(edits, edit{start: start, end: end, text: text})
-		}
-	}
-
-	receiverTypes := map[string]string{}
-	valueTypes := map[string]string{}
-	var resolutionErr error
-	for name, typeName := range overloads.LocalTypes {
-		valueTypes[name] = typeName
-	}
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		switch declaration := node.(type) {
-		case *ast.FuncDecl:
-			if declaration.Type.Params != nil {
-				for _, field := range declaration.Type.Params.List {
-					typeName, err := formatNode(field.Type)
-					if err != nil {
-						continue
-					}
-					for _, name := range field.Names {
-						valueTypes[name.Name] = strings.Join(strings.Fields(typeName), " ")
-					}
-				}
-			}
-		case *ast.ValueSpec:
-			declaredType, _ := astTypeName(declaration.Type)
-			if declaredType == "" && declaration.Type != nil {
-				declaredType, _ = formatNode(declaration.Type)
-			}
-			for index, name := range declaration.Names {
-				typeName := declaredType
-				if typeName == "" && index < len(declaration.Values) {
-					typeName = astExpressionTypeKeyWithEnv(declaration.Values[index], valueTypes)
-				}
-				if typeName != "" {
-					receiverTypes[name.Name] = typeName
-					valueTypes[name.Name] = typeName
-				}
-			}
-		case *ast.AssignStmt:
-			if declaration.Tok != token.DEFINE && declaration.Tok != token.ASSIGN {
-				return true
-			}
-			for index, left := range declaration.Lhs {
-				name, ok := left.(*ast.Ident)
-				if !ok || index >= len(declaration.Rhs) {
-					continue
-				}
-				if typeName := constructorTypeName(declaration.Rhs[index]); typeName != "" {
-					receiverTypes[name.Name] = typeName
-					valueTypes[name.Name] = typeName
-				} else if typeName := astExpressionTypeKeyWithEnv(declaration.Rhs[index], valueTypes); typeName != "" {
-					valueTypes[name.Name] = typeName
-				}
-			}
-		}
-		return true
-	})
-
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		if resolutionErr != nil {
-			return false
-		}
-		switch value := node.(type) {
-		case *ast.FuncDecl:
-			arity, err := astParameterCount(value.Type)
-			if err != nil {
-				return true
-			}
-			renamed, ok := overloads.FunctionTypes[value.Name.Name][astParameterSignatureKey(value.Type)]
-			if !ok {
-				renamed, ok = overloads.Functions[value.Name.Name][arity]
-			}
-			if ok {
-				addEdit(value.Name, renamed)
-			}
-
-		case *ast.CallExpr:
-			arity := len(value.Args)
-			switch function := value.Fun.(type) {
-			case *ast.Ident:
-				typeKey := astArgumentSignatureKey(value, valueTypes)
-				typeSet := overloads.FunctionTypes[function.Name]
-				renamed, ok := typeSet[typeKey]
-				if !ok {
-					renamed, ok = overloads.Functions[function.Name][arity]
-				}
-				if !ok && len(typeSet) > 0 {
-					resolutionErr = fmt.Errorf("cannot resolve overloaded function %s with argument types %s", function.Name, typeKey)
-					return false
-				}
-				if ok {
-					addEdit(function, renamed)
-				}
-			case *ast.SelectorExpr:
-				methodSet := overloads.Methods
-				methodTypeSet := overloads.MethodTypes
-				receiverKnown := false
-				if receiver, ok := function.X.(*ast.Ident); ok && receiver.Name != "this" {
-					typeName := receiverTypes[receiver.Name]
-					if typeName == "" {
-						typeName = valueTypes[receiver.Name]
-					}
-					typeName = strings.TrimPrefix(typeName, "*")
-					if typeName != "" {
-						receiverKnown = true
-						methodSet = overloads.ClassMethods[typeName]
-						methodTypeSet = overloads.ClassMethodTypes[typeName]
-					}
-				}
-				if _, ok := function.X.(*ast.Ident); !ok || (!receiverKnown && function.X.(*ast.Ident).Name != "this") {
-					return true
-				}
-				typeKey := astArgumentSignatureKey(value, valueTypes)
-				typeSet := methodTypeSet[function.Sel.Name]
-				renamed, ok := typeSet[typeKey]
-				if !ok {
-					renamed, ok = methodSet[function.Sel.Name][arity]
-				}
-				if !ok && len(typeSet) > 0 {
-					resolutionErr = fmt.Errorf("cannot resolve overloaded method %s with argument types %s", function.Sel.Name, typeKey)
-					return false
-				}
-				if ok {
-					addEdit(function.Sel, renamed)
-				}
-			}
-		}
-		return true
-	})
-	if resolutionErr != nil {
-		return src, resolutionErr
-	}
-
-	sort.Slice(edits, func(i, j int) bool {
-		return edits[i].start > edits[j].start
-	})
-	for _, change := range edits {
-		src = src[:change.start] + change.text + src[change.end:]
-	}
-
-	return src, nil
-}
-
 func constructorTypeName(expr ast.Expr) string {
 	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op == token.AND {
 		return constructorTypeName(unary.X)
@@ -3393,6 +3294,11 @@ func interpolationImport(file *File) (string, bool, error) {
 	if !fileHasInterpolation(file) {
 		return "fmt", false, nil
 	}
+	if !fileHasInterpolationExpression(file) {
+		// Escaped template braces still need the interpolation pass to turn
+		// `{{{{`/`}}}}` into literal `{{`/`}}`, but they do not require fmt.
+		return "fmt", false, nil
+	}
 
 	if imports, err := goImports(file); err == nil {
 		for _, spec := range imports {
@@ -3425,36 +3331,88 @@ func fileHasInterpolation(file *File) bool {
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *MixedDecl:
-			if tokensHaveInterpolation(mixedDeclTokens(d)) {
+			if tokensNeedInterpolationLowering(mixedDeclTokens(d)) {
 				return true
 			}
 		case *FunctionDecl:
-			if tokensHaveInterpolation(methodBodyTokens(d.Method)) {
+			if tokensNeedInterpolationLowering(methodBodyTokens(d.Method)) {
 				return true
 			}
 		case *GoDecl:
-			if tokensHaveInterpolation(goDeclTokens(d)) {
+			if tokensNeedInterpolationLowering(goDeclTokens(d)) {
 				return true
 			}
 		case *ValueDecl:
-			if tokensHaveInterpolation(valueDeclTokens(d)) {
+			if tokensNeedInterpolationLowering(valueDeclTokens(d)) {
 				return true
 			}
 		case *ClassDecl:
 			for _, method := range d.Methods {
-				if tokensHaveInterpolation(methodBodyTokens(method)) {
+				if tokensNeedInterpolationLowering(methodBodyTokens(method)) {
 					return true
 				}
 			}
 		case *ExtendDecl:
 			for _, method := range d.Methods {
-				if tokensHaveInterpolation(methodBodyTokens(method)) {
+				if tokensNeedInterpolationLowering(methodBodyTokens(method)) {
 					return true
 				}
 			}
 		}
 	}
 
+	return false
+}
+
+func fileHasInterpolationExpression(file *File) bool {
+	for _, declaration := range file.Decls {
+		var tokens []Token
+		switch value := declaration.(type) {
+		case *MixedDecl:
+			tokens = mixedDeclTokens(value)
+		case *FunctionDecl:
+			tokens = methodBodyTokens(value.Method)
+		case *GoDecl:
+			tokens = goDeclTokens(value)
+		case *ValueDecl:
+			tokens = valueDeclTokens(value)
+		case *ClassDecl:
+			for _, method := range value.Methods {
+				if tokensHaveInterpolation(methodBodyTokens(method)) {
+					return true
+				}
+			}
+			continue
+		case *ExtendDecl:
+			for _, method := range value.Methods {
+				if tokensHaveInterpolation(methodBodyTokens(method)) {
+					return true
+				}
+			}
+			continue
+		default:
+			continue
+		}
+		if tokensHaveInterpolation(tokens) {
+			return true
+		}
+	}
+	return false
+}
+
+func tokensNeedInterpolationLowering(tokens []Token) bool {
+	if tokensHaveInterpolation(tokens) {
+		return true
+	}
+	for _, token := range tokens {
+		if token.Kind != TokenString && token.Kind != TokenRawString {
+			continue
+		}
+		content := token.Text[1 : len(token.Text)-1]
+		if strings.Contains(content, "{{{{") || strings.Contains(content, "}}}}") {
+			return true
+		}
+	}
 	return false
 }
 
@@ -3592,9 +3550,9 @@ func transformConstructorsAST(src string, context constructorContext) (string, b
 		return src, false, nil
 	}
 
-	// Lower only outermost constructor calls. emitConstructor recursively
-	// lowers constructor expressions in argument values, avoiding overlapping
-	// edits for nested calls.
+	// Lower only outermost constructor calls. The structured expression
+	// lowerer handles nested constructor expressions while this pass avoids
+	// overlapping source edits.
 	outermost := make([]constructorCallNode, 0, len(calls))
 	for index, candidate := range calls {
 		nested := false
@@ -3623,23 +3581,22 @@ func transformConstructorsAST(src string, context constructorContext) (string, b
 	}
 	edits := make([]edit, 0, len(outermost))
 	for _, candidate := range outermost {
-		args := make([]string, 0, len(candidate.call.Arguments))
-		for _, argument := range candidate.call.Arguments {
-			value, valueErr := expressionNodeSource(argument.Value)
-			if valueErr != nil {
-				return "", true, valueErr
-			}
-			if argument.Name != "" {
-				args = append(args, argument.Name+": "+value)
-			} else {
-				args = append(args, value)
-			}
+		lowered, loweredHandled, lowerErr := constructorExprNode(candidate.call, context)
+		if lowerErr != nil {
+			return "", true, lowerErr
 		}
-		literal, emitErr := emitConstructor(candidate.name, candidate.target, context, strings.Join(args, ", "))
+		if !loweredHandled {
+			return src, false, nil
+		}
+		literal, emitErr := goExprNode(lowered)
 		if emitErr != nil {
-			return "", true, emitErr
+			return src, false, nil
 		}
-		edits = append(edits, edit{start: candidate.start, end: candidate.end, text: literal})
+		literalSource, formatErr := formatNode(literal)
+		if formatErr != nil {
+			return "", true, formatErr
+		}
+		edits = append(edits, edit{start: candidate.start, end: candidate.end, text: literalSource})
 	}
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	for _, edit := range edits {
@@ -3701,6 +3658,13 @@ func collectConstructorCalls(expression ExprNode, context constructorContext, re
 	case *BinaryExpr:
 		collectConstructorCalls(value.Left, context, result)
 		collectConstructorCalls(value.Right, context, result)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectConstructorCalls(expression, context, result)
+		}
+		for _, expression := range value.Right {
+			collectConstructorCalls(expression, context, result)
+		}
 	case *SelectorExpr:
 		collectConstructorCalls(value.Receiver, context, result)
 	case *IndexExpr:
@@ -3809,8 +3773,8 @@ func matchingTokenParen(tokens []Token, open int) int {
 }
 
 func constructorTargetForCallee(callee ExprNode, context constructorContext) (string, constructorTarget, bool) {
-	name, err := expressionNodeSource(callee)
-	if err != nil {
+	name, ok := directSelectorPath(callee)
+	if !ok {
 		return "", constructorTarget{}, false
 	}
 	name = strings.TrimSpace(name)
@@ -3824,115 +3788,6 @@ type constructorField struct {
 	Path        []string
 	Owner       string
 	Annotations []AnnotationUse
-}
-
-type constructorLiteral struct {
-	Values   map[string]string
-	Children map[string]*constructorLiteral
-}
-
-func emitConstructor(name string, target constructorTarget, context constructorContext, argsSource string) (string, error) {
-	class := target.Class
-	classes := classesForClass(context, class)
-	args, err := splitTopLevel(argsSource, ',')
-	if err != nil {
-		return "", fmt.Errorf("%s constructor: %w", name, err)
-	}
-
-	for len(args) > 0 && strings.TrimSpace(args[len(args)-1]) == "" {
-		args = args[:len(args)-1]
-	}
-
-	if len(args) == 0 {
-		args = nil
-	}
-
-	if len(args) == 0 {
-		return emitConstructorLiteral(name, class, &constructorLiteral{
-			Values:   map[string]string{},
-			Children: map[string]*constructorLiteral{},
-		}, classes, target.Qualifier, context.Introspection != nil && context.Introspection.Enabled), nil
-	}
-
-	fields, err := constructorFields(class, classes, nil, map[string]bool{})
-	if err != nil {
-		return "", err
-	}
-
-	named := strings.Contains(args[0], ":")
-	if !named && len(args) != len(fields) {
-		return "", fmt.Errorf(
-			"%s constructor expects %d arguments, got %d",
-			name,
-			len(fields),
-			len(args),
-		)
-	}
-
-	root := &constructorLiteral{
-		Values:   map[string]string{},
-		Children: map[string]*constructorLiteral{},
-	}
-
-	if named {
-		seen := map[string]bool{}
-
-		for index, arg := range args {
-			colon := topLevelColon(arg)
-			if colon < 0 {
-				return "", fmt.Errorf(
-					"%s constructor mixes positional and named arguments at argument %d",
-					name,
-					index+1,
-				)
-			}
-
-			fieldName := strings.TrimSpace(arg[:colon])
-			value := strings.TrimSpace(arg[colon+1:])
-			if value == "" {
-				return "", fmt.Errorf(
-					"%s constructor argument %s is missing a value",
-					name,
-					fieldName,
-				)
-			}
-
-			ref, err := resolveConstructorField(fields, fieldName)
-			if err != nil {
-				return "", fmt.Errorf("%s constructor: %w", name, err)
-			}
-
-			key := strings.Join(append(ref.Path, ref.Name), ".")
-			if seen[key] {
-				return "", fmt.Errorf(
-					"%s constructor repeats named argument %s",
-					name,
-					fieldName,
-				)
-			}
-
-			value, err = transformConstructors(value, context)
-			if err != nil {
-				return "", err
-			}
-			value = transformPolymorphicValue(value, ref.Type, context)
-
-			seen[key] = true
-			setConstructorValue(root, ref.Path, ref.Name, value)
-		}
-	} else {
-		for index, arg := range args {
-			value, err := transformConstructors(strings.TrimSpace(arg), context)
-			if err != nil {
-				return "", err
-			}
-			value = transformPolymorphicValue(value, fields[index].Type, context)
-
-			setConstructorValue(root, fields[index].Path, fields[index].Name, value)
-		}
-	}
-
-	return emitConstructorLiteral(name, class, root, classes, target.Qualifier, context.Introspection != nil && context.Introspection.Enabled), nil
 }
 
 func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix []string, visiting map[string]bool) ([]constructorField, error) {
@@ -3984,39 +3839,6 @@ func classParentFieldName(parentName string) string {
 		return parentName[dot+1:]
 	}
 	return parentName
-}
-
-func transformPolymorphicValue(value, fieldType string, context constructorContext) string {
-	base, ok := dispatchTargetForTypeName(fieldType, context)
-	if !ok {
-		return value
-	}
-
-	tokens, err := LexSource("constructor value", strings.TrimSpace(value))
-	if err != nil {
-		return value
-	}
-
-	parsed, err := ParseExpressionTokens(tokens)
-	if err != nil {
-		return value
-	}
-	concreteName, ok := expressionTypeName(parsed)
-	if !ok {
-		return value
-	}
-	concrete, ok := context.Targets[concreteName]
-	if !ok || !sameConstructorPackage(base, concrete) ||
-		(concrete.Class != base.Class &&
-			!classInherits(concrete.Class, base.Class, concrete.Classes, map[string]bool{})) {
-		return value
-	}
-
-	trimmed := strings.TrimSpace(value)
-	if strings.HasPrefix(trimmed, "&") {
-		return value
-	}
-	return "&" + value
 }
 
 func expressionTypeName(expression ExprNode) (string, bool) {
@@ -4136,74 +3958,6 @@ func resolveConstructorField(fields []constructorField, name string) (constructo
 	}
 
 	return constructorField{}, fmt.Errorf("unknown field %s", name)
-}
-
-func setConstructorValue(root *constructorLiteral, path []string, fieldName, value string) {
-	node := root
-	for _, segment := range path {
-		child, ok := node.Children[segment]
-		if !ok {
-			child = &constructorLiteral{
-				Values:   map[string]string{},
-				Children: map[string]*constructorLiteral{},
-			}
-			node.Children[segment] = child
-		}
-		node = child
-	}
-	node.Values[fieldName] = value
-}
-
-func emitConstructorLiteral(name string, class *ClassDecl, literal *constructorLiteral, classes map[string]*ClassDecl, qualifier string, withDynamicClass bool) string {
-	var out strings.Builder
-	fmt.Fprintf(&out, "%s{", name)
-	writeConstructorMembers(&out, class, literal, classes, qualifier, descriptorName(qualifier, class.Name), withDynamicClass)
-	out.WriteByte('}')
-	return out.String()
-}
-
-func writeConstructorMembers(out *strings.Builder, class *ClassDecl, literal *constructorLiteral, classes map[string]*ClassDecl, qualifier, dynamicDescriptor string, withDynamicClass bool) {
-	first := true
-	writeMember := func(name, value string) {
-		if !first {
-			out.WriteString(", ")
-		}
-		first = false
-		fmt.Fprintf(out, "%s: %s", name, value)
-	}
-
-	for _, parentName := range classParentNames(class) {
-		child, ok := literal.Children[parentName]
-		parentFieldName := classParentFieldName(parentName)
-		if !ok {
-			child, ok = literal.Children[parentFieldName]
-		}
-		if !ok && !withDynamicClass {
-			continue
-		}
-		if !ok {
-			child = &constructorLiteral{
-				Values:   map[string]string{},
-				Children: map[string]*constructorLiteral{},
-			}
-		}
-
-		parent := classes[parentName]
-		var nested strings.Builder
-		fmt.Fprintf(&nested, "%s{", qualifyTypeName(parentName, qualifier))
-		writeConstructorMembers(&nested, parent, child, classes, qualifier, dynamicDescriptor, withDynamicClass)
-		nested.WriteByte('}')
-		writeMember(parentFieldName, nested.String())
-	}
-
-	for _, field := range class.Fields {
-		if value, ok := literal.Values[field.Name]; ok {
-			writeMember(field.Name, value)
-		}
-	}
-	if withDynamicClass {
-		writeMember("GppDynamicClass", dynamicDescriptor)
-	}
 }
 
 func descriptorName(qualifier, className string) string {
@@ -4394,8 +4148,23 @@ func transformInterpolationWithNameChecked(src, fmtName string) (string, error) 
 // Structured methods must not silently fall back to scanning executable source.
 func transformMethodInterpolation(method Method, fmtName string) (string, error) {
 	source := methodBodySource(method)
-	if method.BodyAST == nil || method.Owner == nil {
+	if method.BodyAST == nil {
 		return source, fmt.Errorf("method %s has no structured body AST for interpolation lowering", method.Name)
+	}
+	if method.Owner == nil {
+		body, err := goBlockNode(method.BodyAST, "")
+		if err != nil {
+			return source, fmt.Errorf("method %s cannot be emitted from its structured body AST: %w", method.Name, err)
+		}
+		var output bytes.Buffer
+		if err := format.Node(&output, token.NewFileSet(), body); err != nil {
+			return source, err
+		}
+		rendered := strings.TrimSpace(output.String())
+		if len(rendered) >= 2 && strings.HasPrefix(rendered, "{") && strings.HasSuffix(rendered, "}") {
+			return strings.TrimSpace(rendered[1 : len(rendered)-1]), nil
+		}
+		return rendered, nil
 	}
 	transformed, handled, err := transformInterpolationAST(source, method.BodyAST, method.BodySpan.Start, fmtName)
 	if err != nil {
@@ -4427,7 +4196,18 @@ func transformInterpolationInFunctionSource(source string, function *FunctionDec
 		return transformInterpolationWithNameChecked(body, fmtName)
 	}
 	if transformed == body {
-		return source, err
+		transformed, err = transformEscapedInterpolationChecked(transformed)
+		if err != nil {
+			return source, err
+		}
+		if transformed == body {
+			return source, nil
+		}
+	} else {
+		transformed, err = transformEscapedInterpolationChecked(transformed)
+		if err != nil {
+			return source, err
+		}
 	}
 	start := method.BodySpan.Start - function.SourceSpan.Start
 	end := method.BodySpan.End - function.SourceSpan.Start
@@ -4435,6 +4215,63 @@ func transformInterpolationInFunctionSource(source string, function *FunctionDec
 		return source, fmt.Errorf("invalid function body source span [%d,%d)", start, end)
 	}
 	return source[:start] + transformed + source[end:], nil
+}
+
+// transformEscapedInterpolationChecked handles escaped template braces that
+// contain no Go++ expression. A body may already have had ordinary
+// interpolations lowered by the AST pass; this narrow follow-up is safe because
+// it only rewrites tokens that still contain doubled braces.
+func transformEscapedInterpolationChecked(src string) (string, error) {
+	tokens, err := LexSource("escaped interpolation", src)
+	if err != nil {
+		return src, err
+	}
+	type replacement struct {
+		start int
+		end   int
+		text  string
+	}
+	replacements := []replacement{}
+	for _, token := range tokens {
+		if token.Kind != TokenString && token.Kind != TokenRawString || len(token.Text) < 2 {
+			continue
+		}
+		content := token.Text[1 : len(token.Text)-1]
+		if !strings.Contains(content, "{{{{") && !strings.Contains(content, "}}}}") {
+			continue
+		}
+		expression, parseErr := parseInterpolatedString(token)
+		if parseErr != nil {
+			return src, parseErr
+		}
+		interpolated, ok := expression.(*InterpolatedStringExpr)
+		if !ok {
+			continue
+		}
+		containsExpression := false
+		for _, segment := range interpolated.Segments {
+			if segment.Expression != nil {
+				containsExpression = true
+				break
+			}
+		}
+		if containsExpression {
+			continue
+		}
+		text, renderErr := renderInterpolatedStringExpr(interpolated, "fmt.Sprintf")
+		if renderErr != nil {
+			return src, renderErr
+		}
+		replacements = append(replacements, replacement{start: token.Span.Start, end: token.Span.End, text: text})
+	}
+	for index := len(replacements) - 1; index >= 0; index-- {
+		change := replacements[index]
+		if change.start < 0 || change.end > len(src) || change.start > change.end {
+			return src, fmt.Errorf("invalid escaped interpolation source span [%d,%d)", change.start, change.end)
+		}
+		src = src[:change.start] + change.text + src[change.end:]
+	}
+	return src, nil
 }
 
 func transformInterpolationAST(source string, block *BlockStmt, sourceBase int, fmtName string) (string, bool, error) {
@@ -4539,6 +4376,13 @@ func collectInterpolatedExprs(expression ExprNode, result *[]*InterpolatedString
 	case *BinaryExpr:
 		collectInterpolatedExprs(value.Left, result)
 		collectInterpolatedExprs(value.Right, result)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectInterpolatedExprs(expression, result)
+		}
+		for _, expression := range value.Right {
+			collectInterpolatedExprs(expression, result)
+		}
 	case *SelectorExpr:
 		collectInterpolatedExprs(value.Receiver, result)
 	case *IndexExpr:

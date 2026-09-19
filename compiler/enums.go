@@ -285,10 +285,19 @@ func configureEnumSignatures(context *constructorContext) {
 		if strings.Contains(name, ".") {
 			continue
 		}
+		backingType := enum.BackingTypeAST
+		if backingType == nil {
+			// Synthetic enums created by older callers may not carry the
+			// structured backing type yet; preserve that compatibility path.
+			backingType = parseTypeText(enumBackingType(enum))
+		}
 		context.FunctionSignatures[enumFromName(enum)] = []callableSignature{{
 			Name:       enumFromName(enum),
-			Parameters: []parameterInfo{{Name: "value", TypeAST: parseTypeText(enumBackingType(enum))}},
-			ResultAST:  parseTypeText("(" + enum.Name + ", error)"),
+			Parameters: []parameterInfo{{Name: "value", TypeAST: backingType}},
+			ResultAST: &TupleType{Elements: []TypeNode{
+				&NamedType{Parts: []string{enum.Name}},
+				&NamedType{Parts: []string{"error"}},
+			}},
 		}}
 	}
 }
@@ -669,6 +678,13 @@ func collectEnumEdits(expression ExprNode, context constructorContext, valueType
 	case *BinaryExpr:
 		collectEnumEdits(value.Left, context, valueTypes, src, edits)
 		collectEnumEdits(value.Right, context, valueTypes, src, edits)
+	case *AssignmentExpr:
+		for _, expression := range value.Left {
+			collectEnumEdits(expression, context, valueTypes, src, edits)
+		}
+		for _, expression := range value.Right {
+			collectEnumEdits(expression, context, valueTypes, src, edits)
+		}
 	case *IndexExpr:
 		collectEnumEdits(value.Receiver, context, valueTypes, src, edits)
 		collectEnumEdits(value.Index, context, valueTypes, src, edits)
@@ -773,16 +789,12 @@ func enumValueTypesAST(blocks []*BlockStmt, context constructorContext) map[stri
 		case *ForStmt:
 			if len(value.RangeKey) > 0 && value.RangeExpr != nil {
 				if elementType := enumRangeElementTypeNode(value.RangeExpr, context, result); elementType != "" {
-					if assignment := topLevelAssignment(value.RangeKey); assignment >= 0 {
-						left := significantSyntaxTokens(value.RangeKey[:assignment])
-						parts := splitStatementSeparators(left, ",")
-						// A two-variable range binds the second name to the
-						// collection element. A one-variable range follows Go's
-						// index-only semantics and must not be typed as the element.
-						if len(parts) > 1 {
-							if name := singleSyntaxIdentifier(parts[1]); name != "" && name != "_" {
-								result[name] = elementType
-							}
+					// A two-variable range binds the second name to the
+					// collection element. A one-variable range follows Go's
+					// index-only semantics and must not be typed as the element.
+					if len(value.RangeKey) > 1 {
+						if name, ok := value.RangeKey[1].(*NameExpr); ok && name.Name != "_" {
+							result[name.Name] = elementType
 						}
 					}
 				}
@@ -818,13 +830,9 @@ func singleSyntaxIdentifier(tokens []Token) string {
 
 func enumRangeElementTypeNode(expression ExprNode, context constructorContext, valueTypes map[string]string) string {
 	if selector, ok := expression.(*SelectorExpr); ok && selector.Name == "values" {
-		if key, enum, found := enumReferenceNode(selector.Receiver, context); found {
+		if key, enum, found := enumReferenceExpr(selector.Receiver, context); found {
 			return enumReferencePrefix(key) + enumMetaTypeName(enum)
 		}
-	}
-	typeName := strings.TrimSpace(staticExpressionTypeNode(expression, context, valueTypes))
-	if strings.HasPrefix(typeName, "[]") {
-		return strings.TrimPrefix(typeName, "[]")
 	}
 	return ""
 }
@@ -924,4 +932,80 @@ func enumReferenceNode(expression ExprNode, context constructorContext) (string,
 	key := strings.TrimSpace(source)
 	enum, ok := context.Enums[key]
 	return key, enum, ok
+}
+
+// enumReferenceExpr is the node-only counterpart to enumReferenceNode. Enum
+// lowering must not stringify a selector just to look it up: direct function
+// emission should be able to lower enum expressions from the owned AST.
+func enumReferenceExpr(expression ExprNode, context constructorContext) (string, *EnumDecl, bool) {
+	key, ok := directSelectorPath(expression)
+	if !ok || context.Enums == nil {
+		return "", nil, false
+	}
+	enum, exists := context.Enums[key]
+	return key, enum, exists
+}
+
+// lowerEnumSelectorNode lowers Go++ enum selectors into the generated Go
+// identifiers and helpers. The source-edit enum pass remains available for
+// compatibility fragments, but ordinary enum expressions no longer need a
+// source round-trip before Go AST emission.
+func lowerEnumSelectorNode(selector *SelectorExpr, context constructorContext) (ExprNode, bool, error) {
+	if selector == nil || context.Enums == nil {
+		return nil, false, nil
+	}
+	valueTypes := context.CurrentParameterTypes
+	if memberSelector, ok := selector.Receiver.(*SelectorExpr); ok {
+		if key, enum, found := enumReferenceExpr(memberSelector.Receiver, context); found {
+			if member, exists := enumMember(enum, memberSelector.Name); exists && (selector.Name == "name" || selector.Name == "value") {
+				field := "Name"
+				if selector.Name == "value" {
+					field = "Value"
+				}
+				return qualifiedNameExpr(enumGeneratedMeta(key, enum, member.Name) + "." + field), true, nil
+			}
+		}
+	}
+	if key, enum, found := enumReferenceExpr(selector.Receiver, context); found {
+		switch selector.Name {
+		case "From":
+			return qualifiedNameExpr(enumReferencePrefix(key) + enumFromName(enum)), true, nil
+		case "values":
+			return qualifiedNameExpr(enumReferencePrefix(key) + enumValuesName(enum)), true, nil
+		default:
+			if member, exists := enumMember(enum, selector.Name); exists {
+				return qualifiedNameExpr(enumGeneratedMember(key, enum, member.Name)), true, nil
+			}
+		}
+	}
+	if name, ok := selector.Receiver.(*NameExpr); ok {
+		typeName := strings.TrimSpace(valueTypes[name.Name])
+		for key, enum := range context.Enums {
+			if typeName == enumReferencePrefix(key)+enumMetaTypeName(enum) {
+				if selector.Name == "name" || selector.Name == "value" {
+					field := "Name"
+					if selector.Name == "value" {
+						field = "Value"
+					}
+					return &SelectorExpr{Receiver: name, Name: field, SpanValue: selector.Span()}, true, nil
+				}
+			}
+		}
+		if typeName = strings.TrimPrefix(typeName, "*"); typeName != "" {
+			if enum, exists := context.Enums[typeName]; exists && (selector.Name == "name" || selector.Name == "value") {
+				helper := enumReferencePrefix(typeName) + "GppEnum_" + enum.Name
+				if selector.Name == "name" {
+					helper += "Name"
+				} else {
+					helper += "Value"
+				}
+				return &CallExpr{
+					Callee:    qualifiedNameExpr(helper),
+					Arguments: []CallArg{{Value: name}},
+					SpanValue: selector.Span(),
+				}, true, nil
+			}
+		}
+	}
+	return nil, false, nil
 }
