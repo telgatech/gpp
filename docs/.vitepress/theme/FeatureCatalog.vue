@@ -18,7 +18,8 @@ const sections = [
     description: 'Small language features compose with normal Go types and functions.',
     features: [
       { title: 'Packages and Go compatibility', description: 'Keep Go imports, functions, and types. A missing package declaration defaults to main, and source folders need not mirror package names.', code: `package demo.people\n\nimport "fmt"\n\nfunc Hello(name string) {\n    fmt.Println("Hello", name)\n}`, link: '/features/packages', linkText: 'Explore Go compatibility' },
-      { title: 'Compact construction', description: 'Create values positionally or name fields, with compile-time field and arity checks.', code: `positional := Person("Ada", 36)\nnamed := Person(Name: "Ada", Age: 36)`, link: '/features/construction', linkText: 'Explore construction' },
+      { title: 'Compact construction', description: 'Create values positionally or name fields, with compile-time field and arity checks.', code: `positional := Person("Ada", 36)\nnamed := Person(Name: "Ada", Age: 36)`, link: '/features/classes#construct-values', linkText: 'Explore construction' },
+      { title: 'Class constructor hook', description: 'Planned init() lifecycle hook to normalize or validate a class after constructor fields are assigned.', code: `class Person {\n    Name string\n\n    func init() {\n        this.Name = strings.TrimSpace(this.Name)\n    }\n}\n\nperson := Person(" Ada ")`, tag: 'Planned', link: '/features/classes#constructor-hook-init-planned', linkText: 'Explore planned constructors' },
       { title: 'Static methods and factories', description: 'Put class-qualified constructors and helpers next to the type they create.', code: `class User {\n    Name string\n\n    static func Guest() User {\n        return User(Name: "Guest")\n    }\n}\n\nguest := User.Guest()`, link: '/features/static-methods', linkText: 'Explore static methods' },
       { title: 'Named arguments and defaults', description: 'Make calls self-documenting and keep common options at their declaration.', code: `func Greet(name string, punctuation string = "!") string {\n    return name + punctuation\n}\n\nGreet(name: "Ada")\nGreet(punctuation: "...", name: "Ada")`, link: '/features/named-arguments', linkText: 'Explore named calls' },
       { title: 'Structural records', description: 'Use inferred, anonymous data shapes without declaring another named class.', code: `user := record(\n    Name: "Ada",\n    Active: true,\n    Profile: record(Role: "admin"),\n)\n\nfmt.Println(user.Profile.Role)`, link: '/features/records', linkText: 'Explore records' },
@@ -69,7 +70,10 @@ const sections = [
       <div class="feature-grid">
         <article v-for="feature in section.features" :key="feature.title" class="feature-card">
           <div class="feature-copy">
-            <h4>{{ feature.title }}</h4>
+            <div class="feature-title-row">
+              <h4>{{ feature.title }}</h4>
+              <span v-if="feature.tag" class="feature-status">{{ feature.tag }}</span>
+            </div>
             <p>{{ feature.description }}</p>
           </div>
           <pre><code>{{ feature.code }}</code></pre>
@@ -99,7 +103,9 @@ const sections = [
 .feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .feature-card { display: flex; min-width: 0; flex-direction: column; padding: 24px; border: 1px solid var(--vp-c-divider); border-radius: 14px; background: var(--vp-c-bg); transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
 .feature-card:hover { transform: translateY(-2px); border-color: var(--vp-c-brand-1); box-shadow: 0 10px 28px rgb(20 36 72 / 8%); }
+.feature-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .feature-copy h4 { margin: 0; color: var(--vp-c-text-1); font-size: 1.13rem; font-weight: 650; letter-spacing: -0.01em; }
+.feature-status { flex: 0 0 auto; padding: 3px 8px; border: 1px solid var(--vp-c-brand-soft); border-radius: 999px; background: var(--vp-c-bg-soft); color: var(--vp-c-brand-1); font-size: 0.72rem; font-weight: 650; line-height: 1.2; }
 .feature-copy p { min-height: 3.2em; margin: 9px 0 18px; font-size: 0.94rem; }
 .feature-card pre { flex: 1; overflow-x: auto; margin: 0 0 16px; padding: 16px; border: 1px solid var(--vp-c-divider); border-radius: 9px; background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); font-size: 0.82rem; line-height: 1.6; tab-size: 4; }
 .feature-card code { font-family: var(--vp-font-family-mono); }

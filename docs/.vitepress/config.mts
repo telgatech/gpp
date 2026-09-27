@@ -35,7 +35,6 @@ export default defineConfig({
             { text: 'Exception handling', link: '/features/exceptions' },
             { text: 'Extension methods', link: '/features/extensions' },
             { text: 'Serialization', link: '/features/serialization' },
-            { text: 'Class construction', link: '/features/construction' },
             { text: 'Static methods', link: '/features/static-methods' },
             { text: 'Named arguments and defaults', link: '/features/named-arguments' },
             { text: 'Structural records', link: '/features/records' },
@@ -69,6 +68,35 @@ export default defineConfig({
             { text: 'Formatter', link: '/features/formatter' },
             { text: 'Source documentation', link: '/features/source-docs' },
             { text: 'Language server', link: '/features/language-server' }
+          ]
+        }
+      ],
+      '/guide/standard-library': [
+        {
+          text: 'Built-in standard library',
+          items: [
+            { text: 'Overview', link: '/guide/standard-library' },
+            { text: 'Prelude (implicit)', link: '/guide/standard-library/prelude' },
+            { text: 'gpp/orm', link: '/guide/standard-library/orm' },
+            {
+              text: 'gpp/http',
+              items: [
+                { text: 'Server, routes, and context', link: '/guide/standard-library/http' },
+                { text: 'OpenAPI and Swagger UI', link: '/guide/standard-library/http#openapi-and-swagger-ui' },
+                { text: 'OAuth and OIDC', link: '/guide/standard-library/http#oauth-and-oidc' }
+              ]
+            },
+            {
+              text: 'gpp/encoding',
+              items: [
+                { text: 'Overview', link: '/guide/standard-library/encoding/' },
+                { text: 'JSON', link: '/guide/standard-library/encoding/json' },
+                { text: 'YAML', link: '/guide/standard-library/encoding/yaml' },
+                { text: 'GOB', link: '/guide/standard-library/encoding/gob' }
+              ]
+            },
+            { text: 'gpp/tpl', link: '/guide/standard-library/templates' },
+            { text: 'gpp/test', link: '/guide/standard-library/testing' }
           ]
         }
       ],

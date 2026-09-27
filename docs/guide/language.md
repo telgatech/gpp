@@ -30,10 +30,12 @@ These forms have deliberately different roles:
   arguments can be supplied in any order, but positional and named arguments
   cannot be mixed.
 - `Person{...}` is an ordinary Go composite literal and remains available
-  unchanged. It does not call a user-defined `ctor` or `initialize` method.
+  unchanged and does not run class construction hooks.
 
-Go++ currently has no instance initialization hook. Use a normal method or a
-static factory when object creation needs validation or other work:
+The constructor specification reserves a class `init()` method for setup and
+validation after constructor fields are assigned. The current compiler does
+not yet invoke this hook; use a static factory when construction needs extra
+work today:
 
 ```go
 class User {

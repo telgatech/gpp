@@ -68,15 +68,108 @@ fmt.Println(first.Greeting())
 fmt.Println(second.Greeting())
 ```
 
-Ordinary Go composite literals remain available when you want Go syntax. Named
-construction is checked by the compiler, so unknown fields and invalid
-argument combinations are caught before the program runs.
+Go++ checks the class fields and constructor argument count while compiling.
+Named fields can appear in any order; positional construction follows field
+order. A call cannot mix positional and named arguments. Ordinary Go composite
+literals remain available for interoperability and produce ordinary Go
+values:
+
+```go
+user := User{
+    Name: "Ada",
+    Age: 36,
+}
+```
+
+Named construction can set inherited fields too. If multiple parents expose a
+field with the same name, qualify it with the parent name:
+
+```go
+class Named { Name string }
+class Audited { CreatedAt time.Time }
+
+class User : Named, Audited {
+    Email string
+}
+
+user := User(
+    Named.Name: "Ada",
+    CreatedAt: time.Now(),
+    Email: "ada@example.com",
+)
+```
+
+## Constructor hook: `init()` (Planned)
+
+The constructor specification reserves an instance method named `init()` for
+setup after constructor fields are assigned. Use it to normalize values or
+check invariants:
+
+```go
+class Person {
+    Name string
+
+    func init() {
+        this.Name = strings.TrimSpace(this.Name)
+    }
+}
+
+person := Person(" Ada ") // the planned constructor path runs init()
+```
+
+An `init()` method may return an `error` when the values are invalid. The
+constructor then returns the object and error using Go++'s ordinary
+error-handling rules:
+
+```go
+class Person {
+    Name string
+
+    func init() error {
+        if this.Name == "" {
+            return errors.New("name is required")
+        }
+        return nil
+    }
+}
+
+person, err := Person(inputName)
+```
+
+The hook applies to Go++ constructor-style calls such as `Person(...)`.
+Ordinary Go composite literals such as `Person{Name: inputName}` remain
+unchanged and bypass it.
+
+> **Status: Planned.** The [constructor specification](/reference/specifications/constructors)
+> describes `init()` as the class-construction hook, but the current compiler
+> does not yet invoke it.
+
+## When a builder pattern helps
+
+An initializer fits work every instance should share. A builder solves a
+different problem: it lets callers assemble a more complicated value in
+stages, particularly when it has many optional fields or dependent options.
+
+A Go++ builder API might look like this:
+
+```go
+request := NewRequestBuilder().
+    URL(target).
+    Header("Accept", "application/json").
+    Timeout(5 * time.Second).
+    Build()
+```
+
+`Build()` can validate combinations of options and return an error. An
+`init()` hook could still protect class invariants across construction paths;
+a builder is useful on its own when incremental setup is the main need. This
+example shows the familiar builder pattern, not a built-in Go++ API. It can
+already be implemented using ordinary classes and methods.
 
 ## Put creation rules beside the type
 
-Use a static factory when construction needs a meaningful name or validation.
-This keeps creation policy next to the class without introducing a separate
-builder framework:
+For named alternate creation paths, a static factory keeps creation policy
+next to the class without introducing a separate builder framework:
 
 ```go
 class User {
@@ -94,9 +187,9 @@ guest := User.Guest()
 
 Use a class when behavior and state form one concept or when you want to extend
 that concept through inheritance and polymorphism. For simple data transfer,
-Go++ also supports anonymous [records](/reference/specifications/records), and
-ordinary Go structs remain fully usable.
+Go++ also supports anonymous [records](/features/records), and ordinary Go
+structs remain fully usable.
 
 Continue with [polymorphism](/features/polymorphism),
 [multiple inheritance](/features/multiple-inheritance), and the exact
-[class and constructor rules](/reference/specifications/base).
+[class and constructor rules](/reference/specifications/constructors).

@@ -13,7 +13,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Exception handling](./exceptions)
 - [Extension methods](./extensions)
 - [Serialization](./serialization)
-- [Class construction](./construction)
+- [Constructor hook: class `init()` (Planned)](./classes#constructor-hook-init-planned)
 - [Static methods and factories](./static-methods)
 - [Named arguments and defaults](./named-arguments)
 - [Structural records](./records)
