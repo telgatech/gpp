@@ -1,0 +1,21 @@
+import { ssrRenderAttrs, ssrRenderStyle } from "vue/server-renderer";
+import { useSSRContext } from "vue";
+import { _ as _export_sfc } from "./plugin-vue_export-helper.1tPrXgE0.js";
+const __pageData = JSON.parse('{"title":"Language server and diagnostics","description":"","frontmatter":{},"headers":[],"relativePath":"features/language-server.md","filePath":"features/language-server.md","lastUpdated":null}');
+const _sfc_main = { name: "features/language-server.md" };
+function _sfc_ssrRender(_ctx, _push, _parent, _attrs, $props, $setup, $data, $options) {
+  _push(`<div${ssrRenderAttrs(_attrs)}><h1 id="language-server-and-diagnostics" tabindex="-1">Language server and diagnostics <a class="header-anchor" href="#language-server-and-diagnostics" aria-label="Permalink to &quot;Language server and diagnostics&quot;">​</a></h1><p>The Go++ language server gives editors source-aware feedback while you work in <code>.gpp</code> files. It reports errors at their source location and offers completion, hover, navigation, references, rename, formatting, symbols, and signature help.</p><h2 id="get-feedback-on-go-source" tabindex="-1">Get feedback on Go++ source <a class="header-anchor" href="#get-feedback-on-go-source" aria-label="Permalink to &quot;Get feedback on Go++ source&quot;">​</a></h2><p>The server analyzes open Go++ documents directly. It keeps unsaved buffers in memory, so editor feedback does not require a backend Go build on every edit:</p><div class="vp-code-group vp-adaptive-theme"><div class="tabs"><input type="radio" name="group-phbzO" id="tab-ruw32Po" checked><label data-title="Editor workflow" for="tab-ruw32Po">Editor workflow</label><input type="radio" name="group-phbzO" id="tab-2PFhbqX"><label data-title="Start the server" for="tab-2PFhbqX">Start the server</label></div><div class="blocks"><div class="language-text vp-adaptive-theme active"><button title="Copy Code" class="copy"></button><span class="lang">text</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>Open app.gpp</span></span>
+<span class="line"><span>Edit a declaration</span></span>
+<span class="line"><span>See Go++ diagnostics and completion in that file</span></span></code></pre></div><div class="language-sh vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">sh</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="${ssrRenderStyle({ "--shiki-light": "#6F42C1", "--shiki-dark": "#B392F0" })}">gpp</span><span style="${ssrRenderStyle({ "--shiki-light": "#032F62", "--shiki-dark": "#9ECBFF" })}"> lsp</span></span></code></pre></div></div></div><p>When an error comes from generated Go, the compiler maps it back to the closest available Go++ location.</p><h2 id="connect-an-editor" tabindex="-1">Connect an editor <a class="header-anchor" href="#connect-an-editor" aria-label="Permalink to &quot;Connect an editor&quot;">​</a></h2><p>Configure the editor&#39;s language client to launch <code>gpp lsp</code> over standard input and output. For troubleshooting, send logs to a file:</p><div class="language-sh vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">sh</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="${ssrRenderStyle({ "--shiki-light": "#6F42C1", "--shiki-dark": "#B392F0" })}">gpp</span><span style="${ssrRenderStyle({ "--shiki-light": "#032F62", "--shiki-dark": "#9ECBFF" })}"> lsp</span><span style="${ssrRenderStyle({ "--shiki-light": "#005CC5", "--shiki-dark": "#79B8FF" })}"> --log=/tmp/gpp-lsp.log</span></span></code></pre></div><p>See the <a href="/guide/tooling#language-server">tooling guide</a> and <a href="/reference/specifications/compiler.lsp">language server specification</a>.</p></div>`);
+}
+const _sfc_setup = _sfc_main.setup;
+_sfc_main.setup = (props, ctx) => {
+  const ssrContext = useSSRContext();
+  (ssrContext.modules || (ssrContext.modules = /* @__PURE__ */ new Set())).add("features/language-server.md");
+  return _sfc_setup ? _sfc_setup(props, ctx) : void 0;
+};
+const languageServer = /* @__PURE__ */ _export_sfc(_sfc_main, [["ssrRender", _sfc_ssrRender]]);
+export {
+  __pageData,
+  languageServer as default
+};

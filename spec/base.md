@@ -84,6 +84,9 @@ Construction / initialization
 - Named arguments may initialize inherited fields; if multiple parents expose
   the same field name, qualify it with the parent name, such as `A.Name`.
 - Constructor syntax should reduce repetitive Go initialization ceremony.
+- The proposed pointer-returning constructor and instance `init` semantics are
+  specified in `spec/constructors.md`. Until that proposal is implemented,
+  this section describes the historical value-literal lowering.
 
 String interpolation
 - Support simple interpolation:
