@@ -37,6 +37,28 @@ The target rule prevents applying `Column` to a class, and the string argument
 is checked against the declared parameter type. Annotations can be declared
 once in a package and reused from other packages with qualification.
 
+## Keep annotations beside their declaration
+
+Go++ writes annotations on the declaration they describe, rather than on a
+separate preceding line. For example, `@{Table("employees")}` stays with the
+class header, and `@{Column("email")}` stays with its field. This makes the
+relationship clear when reading code and keeps an annotation from being left
+behind, commented out, or accidentally attached to a different declaration
+when code is edited or copied.
+
+When a declaration needs several annotations, put them together in a block
+beside that declaration:
+
+```go
+import http "gpp/http"
+
+class App @{
+    http.IP("127.0.0.1"),
+    http.Port(8080),
+    http.Swagger,
+} {}
+```
+
 ## Declare and apply annotations
 
 An annotation can have no arguments, one argument, or several typed arguments.

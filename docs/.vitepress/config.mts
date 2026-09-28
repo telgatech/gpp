@@ -45,7 +45,7 @@ export default defineConfig({
             { text: 'Regular expressions', link: '/features/regular-expressions' },
             { text: 'Safe access', link: '/features/safe-access' },
             { text: 'Lazy error fallback', link: '/features/error-fallback' },
-            { text: 'Annotations and introspection', link: '/features/metadata' }
+            { text: 'Annotations and introspection', link: '/features/annotations' }
           ]
         },
         {

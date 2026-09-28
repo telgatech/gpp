@@ -23,7 +23,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Regular expressions](./regular-expressions)
 - [Safe access](./safe-access)
 - [Lazy error fallback](./error-fallback)
-- [Annotations and introspection](./metadata)
+- [Annotations and introspection](./annotations)
 
 ## Application features
 
