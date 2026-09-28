@@ -38,6 +38,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 ## Go workflow and tools
 
 - [Go compatibility](./packages)
+- [Go assignment operators](/guide/language#go-compatible-assignment-operators)
 - [Mixed Go and Go++ builds](./mixed-go)
 - [Project CLI](./project-cli)
 - [Formatter](./formatter)

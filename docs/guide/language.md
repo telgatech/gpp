@@ -84,6 +84,22 @@ Format("value")
 Resolution happens at compile time. An ambiguous call is a diagnostic; it is
 not deferred to runtime reflection.
 
+## Go-compatible assignment operators
+
+Go++ keeps Go's compound assignment operators and increment/decrement
+statements:
+
+```go
+count := 0
+count += 2
+count++
+count--
+```
+
+Compound forms such as `+=`, `-=`, `*=`, `/=`, `%=` and the bitwise and shift
+assignments update a value in place. `++` and `--` are standalone statements,
+as they are in Go.
+
 ## Records and enums
 
 Records are concise anonymous data values:
