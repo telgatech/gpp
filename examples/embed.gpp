@@ -9,8 +9,11 @@ embed (
 )
 
 func main() {
-    index, err := fs.ReadFile(StaticFiles, "index.html")
-    if err != nil { panic(err) }
-    fmt.Println(string(index))
-    fmt.Println(string(Schema))
+    try {
+        index := fs.ReadFile(StaticFiles, "index.html")
+        fmt.Println(string(index))
+        fmt.Println(string(Schema))
+    } catch err {
+        fmt.Println("embed example:", err)
+    }
 }

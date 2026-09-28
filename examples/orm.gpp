@@ -20,13 +20,11 @@ class Employee : orm.Model @{orm.Table("employees")} {
 
 	func RecordEvent(exec orm.SQLExecutor, action string) error {
 		event := Event(this.Id, action)
-		if database, ok := exec.(*sql.DB); ok {
-			return database.Insert(&event)
-		}
-		if transaction, ok := exec.(*sql.Tx); ok {
-			return transaction.Insert(&event)
-		}
-		return fmt.Errorf("unsupported ORM executor %T", exec)
+		_, err := exec.Exec(
+			"INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)",
+			event.EmployeeId, event.Action,
+		)
+		return err
 	}
 
 	func Validate(exec orm.SQLExecutor) error {
@@ -70,15 +68,11 @@ class Employee : orm.Model @{orm.Table("employees")} {
 }
 
 func main() {
-	var db *sql.DB
-	var err error
-	db, err = sql.Open("sqlite", ":memory:")
-	if err != nil {
-		panic(err)
-	}
-	defer db.Close()
+	try {
+		db := sql.Open("sqlite", ":memory:")
+		defer db.Close()
 
-	_, err = db.Exec(`
+		db.Exec(`
 		CREATE TABLE employees (
 			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -90,67 +84,34 @@ func main() {
 			event TEXT NOT NULL
 		)
 	`)
-	if err != nil {
-		panic(err)
-	}
 
-	invalid := Employee(2, "", "invalid@example.com")
-	if err := db.Insert(&invalid); err != nil {
-		fmt.Println("validation:", err)
-	}
+		employee := Employee(1, "Ada Lovelace", "ada@example.com")
+		db.Insert(&employee)
 
-	employee := Employee(1, "Ada Lovelace", "ada@example.com")
-	if err := db.Insert(&employee); err != nil {
-		panic(err)
-	}
+		second := Employee(2, "Grace Hopper", "grace@example.com")
+		tx := db.Begin()
+		defer tx.Rollback()
+		tx.Insert(&second)
+		employee.Email = " ADA@ANALYTICAL.EXAMPLE "
+		tx.Update(&employee)
+		employees := []Employee{}
+		tx.Select(&employees, "email LIKE $1", "%example.com")
+		target := Employee()
+		tx.Get(&target, "name = $1", "Ada Lovelace")
+		tx.Commit()
+		fmt.Println("transaction:", len(employees), "selected, get:", target.Name)
 
-	second := Employee(2, "Grace Hopper", "grace@example.com")
-	var tx *sql.Tx
-	tx, err = db.Begin()
-	if err != nil {
-		panic(err)
-	}
-	if err := tx.Insert(&second); err != nil {
-		tx.Rollback()
-		panic(err)
-	}
-	employee.Email = " ADA@ANALYTICAL.EXAMPLE "
-	if err := tx.Update(&employee); err != nil {
-		tx.Rollback()
-		panic(err)
-	}
-	employees := []Employee{}
-	if err := tx.Select(&employees, "email LIKE $1", "%example.com"); err != nil {
-		tx.Rollback()
-		panic(err)
-	}
-	target := Employee()
-	if err := tx.Get(&target, "name = $1", "Ada Lovelace"); err != nil {
-		tx.Rollback()
-		panic(err)
-	}
-	if err := tx.Commit(); err != nil {
-		panic(err)
-	}
-	fmt.Println("transaction:", len(employees), "selected, get:", target.Name)
+		loaded := Employee()
+		db.Get(&loaded, "id = $1", employee.Id)
+		tx = db.Begin()
+		defer tx.Rollback()
+		tx.Delete(&loaded)
+		tx.Commit()
+		deleted := db.Get(&loaded, "id = $1", employee.Id) == sql.ErrNoRows
 
-	loaded := Employee()
-	if err := db.Get(&loaded, "id = $1", employee.Id); err != nil {
-		panic(err)
+		fmt.Println("loaded after update:", loaded.Name, loaded.Email)
+		fmt.Println("deleted:", deleted)
+	} catch err {
+		fmt.Println("ORM example:", err)
 	}
-	tx, err = db.Begin()
-	if err != nil {
-		panic(err)
-	}
-	if err := tx.Delete(&loaded); err != nil {
-		tx.Rollback()
-		panic(err)
-	}
-	if err := tx.Commit(); err != nil {
-		panic(err)
-	}
-	deleted := db.Get(&loaded, "id = $1", employee.Id) == sql.ErrNoRows
-
-	fmt.Println("loaded after update:", loaded.Name, loaded.Email)
-	fmt.Println("deleted:", deleted)
 }

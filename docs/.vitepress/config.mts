@@ -17,6 +17,7 @@ export default defineConfig({
     nav: [
       { text: 'Features', link: '/features/' },
       { text: 'Guide', link: '/guide/getting-started' },
+      { text: 'Examples', link: '/examples/' },
       { text: 'Language', link: '/guide/language' },
       { text: 'Standard library', link: '/guide/standard-library' },
       { text: 'Tooling', link: '/guide/tooling' },

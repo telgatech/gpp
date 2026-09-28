@@ -24,7 +24,7 @@ import "fmt"
 
 func main() {
     name := "Go++"
-    fmt.Println("Hello &#123;&#123;name&#125;&#125;")
+    fmt.Println("Hello {{name}}")
 }
 ```
 

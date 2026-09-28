@@ -35,6 +35,8 @@ The examples cover:
 - `extension_methods.gpp` — extensions on strings and Go++ classes.
 - `multi_extension.gpp` — one extension block shared by strings and slices,
   including a generic extension method.
+- `enums.gpp` — typed enums, enum blocks, explicit values, lookup, iteration,
+  and JSON encoding.
 - `annotations.gpp` — declared annotations, target restrictions, field/method
   usage, and annotation introspection.
 - `annotation_inheritance.gpp` — direct class annotations, inherited field and

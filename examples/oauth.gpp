@@ -20,8 +20,10 @@ class App : http.Server @{http.IP("127.0.0.1"), http.OAuth(http.OAuthProvider.Go
 }
 
 func main() {
-	app := App()
-	if err := app.Listen(); err != nil {
-		panic(err)
+	try {
+		app := App()
+		app.Listen()
+	} catch err {
+		fmt.Println("OAuth example:", err)
 	}
 }
