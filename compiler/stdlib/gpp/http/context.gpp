@@ -68,6 +68,10 @@ class Context {
 		return this.renderTemplate(200, key, args...)
 	}
 
+	func Template(data any) error {
+		return this.renderTemplate(200, this.Request.URL.Path, data)
+	}
+
 	func Template(status int, key string, args ...any) error {
 		return this.renderTemplate(status, key, args...)
 	}

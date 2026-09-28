@@ -124,21 +124,22 @@ template PostPage(post Post) @{tpl.Path("/posts/{id}")} {
 }
 ```
 
-The HTTP handler can pass the request path to `ctx.Template`. The helper looks
-up the matching path annotation, supplies the matched path parameters to the
-template, and writes the result as an HTML response:
+`ctx.Template(post)` automatically uses the current request path to find the
+matching `tpl.Path` annotation, supplies the matched path parameters, and
+writes the rendered template as an HTML response. The handler does not need to
+pass `ctx.Request.URL.Path` itself:
 
 ```go
 class App : http.Server {
 	func ShowPost(ctx *http.Context) error @{http.GET("/posts/{id}")} {
 		post := LoadPost(ctx.Param("id"))
-		return ctx.Template(ctx.Request.URL.Path, post)
+		return ctx.Template(post)
 	}
 }
 ```
 
-`ctx.Template` also looks up a template by its declared name. Use that form
-when the handler already knows which page it wants to render:
+When the handler already knows which template it wants, pass its declared name
+as the first argument:
 
 ```go
 return ctx.Template("PostPage", post)

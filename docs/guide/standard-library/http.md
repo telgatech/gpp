@@ -237,7 +237,7 @@ class App : http.Server {
 }
 ```
 
-`ctx.Template(key, args...)` renders a named template such as `ctx.Template("ProfilePage", user)`. It can also look up a template by URL path when that template declares a `tpl.Path` annotation; pass `ctx.Request.URL.Path` as the key to select it from the current request. The helper writes an HTML response with status 200 by default, or accepts an explicit status first, as in `ctx.Template(404, "NotFound", data)`. `ErrorTemplate()` selects the template used for server-generated error pages. For URL-bound templates and the generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
+`ctx.Template(data)` uses the current request path to find a template declared with a matching `tpl.Path` annotation, so the handler can render it without passing the URL again. For example, `return ctx.Template(user)` uses the current request path and supplies `user` as the template data. To select a template by name explicitly, use `ctx.Template("ProfilePage", user)`. The helper writes an HTML response with status 200 by default; its keyed form accepts an explicit status first, as in `ctx.Template(404, "NotFound", data)`. `ErrorTemplate()` selects the template used for server-generated error pages. For URL-bound templates and the generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
 
 ## HTTPS and deployment boundaries
 

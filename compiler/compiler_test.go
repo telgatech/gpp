@@ -716,10 +716,19 @@ import (
     "strings"
     "time"
     http "gpp/http"
+    "gpp/tpl"
 )
 
 template Page(value string) {
     <p>{{.}}</p>
+}
+
+class Post {
+    Title string
+}
+
+template PathPage(post Post) @{tpl.Path("/path-view/{id}")} {
+    <h1>{{.Title}}</h1>
 }
 
 template ErrorPage(data any) {
@@ -741,6 +750,10 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 
     func View(ctx *http.Context) error @{http.GET("/view")} {
         return ctx.Template("Page", "hello")
+    }
+
+    func PathView(ctx *http.Context) error @{http.GET("/path-view/{id}")} {
+        return ctx.Template(Post(Title: "selected by request path"))
     }
 
     func Broken(ctx *http.Context) error @{http.GET("/broken")} {
@@ -767,6 +780,7 @@ func request(base string, path string) {
 }
 
 func main() {
+    if err := tpl.Execute(io.Discard, "Page", "hello"); err != nil { panic(err) }
     app := App()
     done := make(chan error, 1)
     go func() { done <- app.Listen() }()
@@ -782,6 +796,7 @@ func main() {
     request(base, "/created")
     request(base, "/accepted")
     request(base, "/view")
+    request(base, "/path-view/42")
     request(base, "/missing")
     request(base, "/broken")
     if err := app.Shutdown(context.Background()); err != nil { panic(err) }
@@ -815,9 +830,11 @@ func main() {
 		"/created 201 true false false",
 		"/accepted 202 false true false",
 		"/view 200 false false true",
+		"/path-view/42 200 false false true",
 		"/missing 404 false false true false true false",
 		"/broken 500 false false true false false true",
 		"<p>hello</p>",
+		"<h1>selected by request path</h1>",
 		`{"ok":true}`,
 	} {
 		if !strings.Contains(result, expected) {

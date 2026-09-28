@@ -625,6 +625,10 @@ func Template(
 ) error
 
 func Template(
+    data any,
+) error
+
+func Template(
     status int,
     key string,
     args ...any,
@@ -663,12 +667,12 @@ ctx.Template(
 Path-based execution:
 
 ```gpp
-ctx.Template(
-    200,
-    ctx.Request.URL.Path,
-    post,
-)
+ctx.Template(post)
 ```
+
+The data-only overload looks up a template using the current request URL path.
+The template must declare a matching `tpl.Path` annotation. Captured path
+parameters are made available through the template's `param` helper.
 
 Inline source:
 
@@ -695,6 +699,14 @@ behavior.
 Conceptually:
 
 ```gpp
+func Template(data any) error {
+    return this.renderTemplate(
+        200,
+        this.Request.URL.Path,
+        data,
+    )
+}
+
 func Template(
     status int,
     key string,
