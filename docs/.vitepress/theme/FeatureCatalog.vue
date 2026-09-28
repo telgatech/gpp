@@ -83,10 +83,6 @@ const sections = [
       </div>
     </section>
 
-    <footer class="catalog-footer">
-      <p>Go++ source becomes ordinary Go. Keep your existing packages, tools, and deployment flow.</p>
-      <a href="/guide/getting-started">Build your first Go++ project <span aria-hidden="true">→</span></a>
-    </footer>
   </main>
 </template>
 
@@ -110,10 +106,8 @@ const sections = [
 .feature-copy p { min-height: 3.2em; margin: 9px 0 18px; font-size: 0.94rem; }
 .feature-card pre { flex: 1; overflow-x: auto; margin: 0 0 16px; padding: 16px; border: 1px solid var(--vp-c-divider); border-radius: 9px; background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); font-size: 0.82rem; line-height: 1.6; tab-size: 4; }
 .feature-card code { font-family: var(--vp-font-family-mono); }
-.feature-card a, .catalog-footer a { align-self: flex-start; color: var(--vp-c-brand-1); font-size: 0.92rem; font-weight: 600; text-decoration: none; }
-.feature-card a:hover, .catalog-footer a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.catalog-footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 72px; padding: 26px 30px; border: 1px solid var(--vp-c-divider); border-radius: 14px; background: var(--vp-c-bg-soft); }
-.catalog-footer p { margin: 0; font-weight: 500; }
+.feature-card a { align-self: flex-start; color: var(--vp-c-brand-1); font-size: 0.92rem; font-weight: 600; text-decoration: none; }
+.feature-card a:hover { text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 760px) {
   .feature-catalog { padding: 40px 20px 56px; }
   .catalog-heading { margin-bottom: 48px; text-align: left; }
@@ -121,7 +115,6 @@ const sections = [
   .section-heading p { margin-top: 8px; }
   .feature-grid { grid-template-columns: 1fr; gap: 14px; }
   .feature-copy p { min-height: 0; }
-  .catalog-footer { align-items: flex-start; flex-direction: column; gap: 12px; margin-top: 48px; padding: 22px; }
 }
 @media (prefers-reduced-motion: reduce) { .feature-card { transition: none; } }
 </style>

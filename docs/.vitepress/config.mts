@@ -130,8 +130,8 @@ export default defineConfig({
       provider: 'local'
     },
     footer: {
-      message: 'Built with Go++ and VitePress.',
-      copyright: 'Copyright © 2026 Telga Technologies'
+      message: 'Built with <a href="https://vitepress.dev/">VitePress</a>',
+      copyright: 'Copyright © 2026 <a href="https://telga.in">Telga Technologies</a>'
     }
   }
 })
