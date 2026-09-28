@@ -11,16 +11,7 @@ A package-level helper works in Go and remains a good choice. An extension
 lets the same operation read like a method on the value:
 
 ::: code-group
-
-```go [Go helper]
-func IsBlank(value string) bool {
-    return strings.TrimSpace(value) == ""
-}
-
-if IsBlank(userInput) { /* ... */ }
-```
-
-```go [Go++ extension]
+```go [Go++]
 extend string {
     func IsBlank() bool {
         return this.TrimSpace() == ""
@@ -30,6 +21,13 @@ extend string {
 if userInput.IsBlank() { /* ... */ }
 ```
 
+```go [Go]
+func IsBlank(value string) bool {
+    return strings.TrimSpace(value) == ""
+}
+
+if IsBlank(userInput) { /* ... */ }
+```
 :::
 
 ## Extend an existing type

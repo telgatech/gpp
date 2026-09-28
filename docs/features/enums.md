@@ -25,19 +25,7 @@ validation, and the compiler cannot infer the intended list from the
 constants:
 
 ::: code-group
-
-```go [Go constants]
-type Status string
-
-const (
-    Draft     Status = "draft"
-    Published Status = "published"
-)
-
-status := Status("archived") // a value outside the declared choices
-```
-
-```go [Go++ enum]
+```go [Go++]
 enum Status string {
     Draft
     Published
@@ -47,6 +35,16 @@ status := Status.Published
 // Status.From("archived") reports an invalid enum value.
 ```
 
+```go [Go]
+type Status string
+
+const (
+    Draft     Status = "draft"
+    Published Status = "published"
+)
+
+status := Status("archived") // a value outside the declared choices
+```
 :::
 
 With constants, teams often add a `Valid` method or a map/switch of allowed
@@ -147,15 +145,11 @@ External input must be checked before it becomes an enum. Each enum provides
 role := Role.From("admin") // Role.Admin
 ```
 
-An unknown value returns an error. In an error-propagating function, Go++ can
-promote that error normally; callers that need explicit handling can capture
-it:
+An unknown value returns an error, which Go++ propagates automatically unless
+the caller explicitly captures it:
 
 ```go
-role, err := Role.From(request.Role)
-if err != nil {
-    return err
-}
+role := Role.From(request.Role)
 ```
 
 The enum also exposes its declared values in declaration order, which is

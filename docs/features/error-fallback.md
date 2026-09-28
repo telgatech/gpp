@@ -9,18 +9,16 @@ needs a fallback, which keeps defaults close to the operation that needs them.
 For a simple default, `??` can replace a small error branch:
 
 ::: code-group
+```go [Go++]
+port := strconv.Atoi(rawPort) ?? 8080
+```
 
-```go [Go explicit handling]
+```go [Go]
 port, err := strconv.Atoi(rawPort)
 if err != nil {
     port = 8080
 }
 ```
-
-```go [Go++ fallback]
-port := strconv.Atoi(rawPort) ?? 8080
-```
-
 :::
 
 The operator is best when the fallback is a straightforward default. If the

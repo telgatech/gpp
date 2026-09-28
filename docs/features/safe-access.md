@@ -10,19 +10,17 @@ When a nil receiver should produce the member's zero value, `?.` says that
 directly:
 
 ::: code-group
+```go [Go++]
+var user *User
+name := user?.Name
+```
 
-```go [Go nil check]
+```go [Go]
 var name string
 if user != nil {
     name = user.Name
 }
 ```
-
-```go [Go++ safe access]
-var user *User
-name := user?.Name
-```
-
 :::
 
 The safe expression returns the field's zero value when the receiver is nil.

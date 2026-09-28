@@ -10,17 +10,7 @@ A Go test function is a good fit for one focused case. A suite groups related
 checks and common setup:
 
 ::: code-group
-
-```go [Go test]
-func TestUserName(t *testing.T) {
-    user := User{Name: "Ada"}
-    if user.Name != "Ada" {
-        t.Fatalf("got %q", user.Name)
-    }
-}
-```
-
-```go [Go++ suite]
+```go [Go++]
 class UserTest : test.Suite {
     func NameIsPreserved() {
         user := User(Name: "Ada")
@@ -29,6 +19,14 @@ class UserTest : test.Suite {
 }
 ```
 
+```go [Go]
+func TestUserName(t *testing.T) {
+    user := User{Name: "Ada"}
+    if user.Name != "Ada" {
+        t.Fatalf("got %q", user.Name)
+    }
+}
+```
 :::
 
 ## Organize and select suites

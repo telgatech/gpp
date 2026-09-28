@@ -2,6 +2,10 @@
 
 The prelude is Go++'s implicit standard library: its common helpers are available without an import. It adds useful operations to familiar Go values through extension methods, keeping call sites readable while leaving the underlying slices, strings, maps, errors, and readers as ordinary Go values.
 
+Many helpers retain their Go error results. At a Go++ call site, an uncaptured
+error propagates automatically; capture it explicitly only when the code needs
+to inspect it or recover locally.
+
 ## Why it exists
 
 Small everyday operations often become repeated loops or helper functions. A prelude gives common transformations a consistent home without introducing wrapper collection types or changing Go's data model. The methods are still explicit calls, so their behavior is visible where they are used.
@@ -10,7 +14,14 @@ Small everyday operations often become repeated loops or helper functions. A pre
 
 In Go, filtering is usually written as a loop:
 
-```go
+::: code-group
+```go [Go++]
+adultSummaries := people
+	.Filter(person => person.Age >= 18)
+	.Map(person => record(name: person.Name, age: person.Age))
+```
+
+```go [Go]
 var adults []Person
 for _, person := range people {
 	if person.Age >= 18 {
@@ -18,12 +29,7 @@ for _, person := range people {
 	}
 }
 ```
-
-With the prelude:
-
-```go
-adults := people.Filter(person => person.Age >= 18)
-```
+:::
 
 The lambda keeps the predicate next to the operation. The input and output are still `[]Person`; `Filter` simply packages the common loop.
 
@@ -220,7 +226,7 @@ highest, hasScores := scores.Max()
 Compiles the string as a regular expression and returns `(*regexp.Regexp, error)`. Invalid patterns are reported through the error result.
 
 ```go
-pattern, err := "^user-[0-9]+$".CompileRegex()
+pattern := "^user-[0-9]+$".CompileRegex()
 ```
 
 #### `Trim(cutset string) string`
@@ -490,7 +496,7 @@ var pathErr *os.PathError = err.As[*os.PathError]()
 Reads an `io.Reader` completely and returns its bytes and any read error. It follows `io.ReadAll` behavior.
 
 ```go
-body, err := response.Body.ReadAll()
+body := response.Body.ReadAll()
 ```
 
 #### `WriteString(value string) (int, error)`
@@ -498,7 +504,7 @@ body, err := response.Body.ReadAll()
 Writes the string to an `io.Writer`, returning the number of bytes written and any write error.
 
 ```go
-count, err := writer.WriteString("hello")
+count := writer.WriteString("hello")
 ```
 
 ## Further reading

@@ -11,6 +11,13 @@ A Go++ file can import and call a Go package directly. Its functions and values
 remain Go values:
 
 ::: code-group
+```go [Go++]
+import "fmt"
+
+func main() {
+    fmt.Println("Hello, Go++")
+}
+```
 
 ```go [Go]
 package main
@@ -21,15 +28,6 @@ func main() {
     fmt.Println("Hello, Go")
 }
 ```
-
-```go [Go++]
-import "fmt"
-
-func main() {
-    fmt.Println("Hello, Go++")
-}
-```
-
 :::
 
 Go++ also works with existing handwritten Go files in the same project:

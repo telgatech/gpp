@@ -138,10 +138,11 @@ try {
 }
 ```
 
-Trailing `error` results can be promoted inside `try`. `throw` raises a Go++
-error value, catch clauses may name one type, several types, or a catch-all,
-and `finally` runs during normal completion and unwinding. At Go boundaries,
-the compiler still emits ordinary error values and Go-compatible code.
+Uncaptured trailing `error` results propagate automatically as exceptions.
+`try`/`catch` adds local recovery, `throw` raises a Go++ error value, catch
+clauses may name one type, several types, or a catch-all, and `finally` runs
+during normal completion and unwinding. At Go boundaries, the compiler still
+emits ordinary error values and Go-compatible code.
 
 ## Annotations and metadata
 

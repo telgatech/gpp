@@ -18,14 +18,7 @@ Go commonly stores metadata in string tags. Go++ annotations are named,
 parameterized declarations whose arguments and permitted targets are checked:
 
 ::: code-group
-
-```go [Go struct tag]
-type Employee struct {
-    Name string `json:"name" db:"employee_name"`
-}
-```
-
-```go [Go++ annotation]
+```go [Go++]
 annotation Column(name string) on field
 
 class Employee {
@@ -33,6 +26,11 @@ class Employee {
 }
 ```
 
+```go [Go]
+type Employee struct {
+    Name string `json:"name" db:"employee_name"`
+}
+```
 :::
 
 The target rule prevents applying `Column` to a class, and the string argument

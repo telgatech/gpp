@@ -11,17 +11,6 @@ Go uses separate declarations for a struct and its methods. Go++ puts those
 methods in the class declaration and makes the receiver available as `this`:
 
 ::: code-group
-
-```go [Go]
-type User struct {
-    Name string
-}
-
-func (user *User) Greeting() string {
-    return "Hello, " + user.Name
-}
-```
-
 ```go [Go++]
 class User {
     Name string
@@ -32,6 +21,15 @@ class User {
 }
 ```
 
+```go [Go]
+type User struct {
+    Name string
+}
+
+func (user *User) Greeting() string {
+    return "Hello, " + user.Name
+}
+```
 :::
 
 ## Define a class
@@ -117,9 +115,8 @@ class Person {
 person := Person(" Ada ") // the planned constructor path runs init()
 ```
 
-An `init()` method may return an `error` when the values are invalid. The
-constructor then returns the object and error using Go++'s ordinary
-error-handling rules:
+An `init()` method may return an `error` when the values are invalid. If the
+caller does not explicitly capture that error, Go++ propagates it automatically:
 
 ```go
 class Person {
@@ -133,7 +130,7 @@ class Person {
     }
 }
 
-person, err := Person(inputName)
+person := Person(inputName)
 ```
 
 The hook applies to Go++ constructor-style calls such as `Person(...)`.

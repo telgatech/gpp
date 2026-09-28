@@ -10,21 +10,19 @@ Go usually introduces an anonymous shape with an anonymous struct type. A
 Go++ record gives fields names directly in the value expression:
 
 ::: code-group
-
-```go [Go anonymous struct]
-user := struct {
-    Name   string
-    Active bool
-}{Name: "Ada", Active: true}
-```
-
-```go [Go++ record]
+```go [Go++]
 user := record(
     Name: "Ada",
     Active: true,
 )
 ```
 
+```go [Go]
+user := struct {
+    Name   string
+    Active bool
+}{Name: "Ada", Active: true}
+```
 :::
 
 The compiler derives a deterministic Go struct shape from the record fields.

@@ -16,8 +16,8 @@ is useful when repeated propagation makes the main path hard to read.
 
 An exception is an error that interrupts the usual line-by-line flow and
 jumps to a matching handler. Go++ uses the same Go `error` values you already
-know: when a call inside `try` omits its trailing error result, a non-nil
-error is promoted into that handler flow.
+know: when a call leaves its trailing error result uncaptured, a non-nil error
+propagates automatically. An enclosing `try` can catch it and recover.
 
 First, a function can keep an ordinary Go signature and return an error in the
 usual way:
@@ -80,8 +80,20 @@ second, the call inside `try` omits the trailing error result, so Go++ sends a
 non-nil error to the matching `catch` clause.
 
 ::: code-group
+```go [Go++]
+func ShowProfile(path string) {
+    try {
+        profile := LoadProfile(path)
+        Render(profile)
+    } catch *os.PathError e {
+        fmt.Printf("could not read %s: %v\n", e.Path, e)
+    } catch e {
+        fmt.Printf("could not load profile: %v\n", e)
+    }
+}
+```
 
-```go [Traditional Go]
+```go [Go]
 func ShowProfile(path string) {
     profile, err := LoadProfile(path)
     if err != nil {
@@ -98,20 +110,6 @@ func ShowProfile(path string) {
     Render(profile)
 }
 ```
-
-```go [Go++ with exceptions]
-func ShowProfile(path string) {
-    try {
-        profile := LoadProfile(path)
-        Render(profile)
-    } catch *os.PathError e {
-        fmt.Printf("could not read %s: %v\n", e.Path, e)
-    } catch e {
-        fmt.Printf("could not load profile: %v\n", e)
-    }
-}
-```
-
 :::
 
 The traditional form makes error propagation explicit at each call site. The

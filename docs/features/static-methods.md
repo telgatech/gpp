@@ -10,18 +10,7 @@ A free function is already a natural Go option. A static method keeps the
 operation discoverable beside the class it creates:
 
 ::: code-group
-
-```go [Go helper]
-type User struct{ Name string }
-
-func GuestUser() User {
-    return User{Name: "Guest"}
-}
-
-guest := GuestUser()
-```
-
-```go [Go++ static method]
+```go [Go++]
 class User {
     Name string
 
@@ -33,6 +22,15 @@ class User {
 guest := User.Guest()
 ```
 
+```go [Go]
+type User struct{ Name string }
+
+func GuestUser() User {
+    return User{Name: "Guest"}
+}
+
+guest := GuestUser()
+```
 :::
 
 ## Add named creation paths

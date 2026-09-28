@@ -10,12 +10,6 @@ In Go, related operations with different input types usually need separate
 names or a type switch. Go++ can keep one name and select from static types:
 
 ::: code-group
-
-```go [Go]
-func FormatInt(value int) string { return strconv.Itoa(value) }
-func FormatString(value string) string { return value }
-```
-
 ```go [Go++]
 func Format(value int) string { return strconv.Itoa(value) }
 func Format(value string) string { return value }
@@ -24,6 +18,10 @@ Format(42)
 Format("42")
 ```
 
+```go [Go]
+func FormatInt(value int) string { return strconv.Itoa(value) }
+func FormatString(value string) string { return value }
+```
 :::
 
 ## Select by static type

@@ -9,19 +9,17 @@ Go functions normally require arguments in declaration order. Go++ can name
 arguments, so a call with several similar values is easier to review:
 
 ::: code-group
-
-```go [Go positional call]
-func Resize(width int, height int) {}
-
-Resize(640, 480)
-```
-
-```go [Go++ named call]
+```go [Go++]
 func Resize(width int, height int) {}
 
 Resize(height: 480, width: 640)
 ```
 
+```go [Go]
+func Resize(width int, height int) {}
+
+Resize(640, 480)
+```
 :::
 
 The compiler checks names and types. Named arguments can be supplied in a

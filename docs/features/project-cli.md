@@ -10,20 +10,18 @@ Go projects usually use Go commands directly. A Go++ project adds `gpp` for
 steps that understand `.gpp` files:
 
 ::: code-group
-
-```sh [Go project]
-go mod init example.com/hello
-go run .
-go build -o ./hello .
-```
-
-```sh [Go++ project]
+```sh [Go++]
 gpp init hello
 cd hello
 gpp run .
 gpp build -o ./hello .
 ```
 
+```sh [Go]
+go mod init example.com/hello
+go run .
+go build -o ./hello .
+```
 :::
 
 ## Keep generated files out of the way

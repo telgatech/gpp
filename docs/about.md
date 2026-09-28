@@ -17,7 +17,7 @@ import DonationButton from './.vitepress/theme/DonationButton.vue'
     <h2>Sunder Rajan</h2>
     <p>Creator of Go++ · Telga Technologies</p>
     <a href="https://in.linkedin.com/in/sunder-rajan-1a4154171" target="_blank" rel="noreferrer">
-      LinkedIn · See my other projects <span aria-hidden="true">→</span>
+      Connect on LinkedIn <span aria-hidden="true">→</span>
     </a>
   </div>
 </div>

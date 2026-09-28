@@ -11,18 +11,7 @@ Go interfaces are an excellent way to define behavior. Go++ also lets a base
 class provide shared implementation while derived classes specialize methods:
 
 ::: code-group
-
-```go [Go interface]
-type Notifier interface {
-    Send(message string) string
-}
-
-func Deliver(notifier Notifier, message string) string {
-    return notifier.Send(message)
-}
-```
-
-```go [Go++ base class]
+```go [Go++]
 class Notifier {
     func Send(message string) string {
         return "default: " + message
@@ -34,6 +23,15 @@ func Deliver(notifier Notifier, message string) string {
 }
 ```
 
+```go [Go]
+type Notifier interface {
+    Send(message string) string
+}
+
+func Deliver(notifier Notifier, message string) string {
+    return notifier.Send(message)
+}
+```
 :::
 
 ## Define a shared contract

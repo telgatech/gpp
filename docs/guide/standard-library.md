@@ -2,6 +2,8 @@
 
 Go++ ships with a small set of packages that build on Go's runtime and ecosystem. The implicit prelude supplies common collection, string, map, error, and I/O helpers; explicit packages cover HTTP services, SQL persistence, encoding, templates, and tests.
 
+> **Evolution notice:** These packages are still evolving rapidly. APIs, behavior, and examples may change as Go++ develops, so expect updates and check the latest documentation before relying on them.
+
 Each entry now has its own guide with an introduction, the problem it addresses, a Go comparison, and examples you can adapt. Start with the package that matches the work at hand:
 
 | Entry | What it helps with |

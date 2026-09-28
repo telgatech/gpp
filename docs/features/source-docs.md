@@ -10,15 +10,13 @@ Go developers commonly use `go doc` for exported APIs. Go++ provides a
 parallel command that understands `.gpp` declarations:
 
 ::: code-group
-
-```sh [Go]
-go doc net/http.Server
-```
-
 ```sh [Go++]
 gpp doc gpp/http.Server
 ```
 
+```sh [Go]
+go doc net/http.Server
+```
 :::
 
 Search by name or topic when you do not know the declaration path:

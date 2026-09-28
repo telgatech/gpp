@@ -11,14 +11,7 @@ Without generated docs, route behavior and API schemas need parallel updates.
 Go++ can enable OpenAPI and Swagger on the server class:
 
 ::: code-group
-
-```go [Separate setup]
-// Register routes in the HTTP server.
-// Maintain an OpenAPI document separately.
-// Host Swagger UI that loads that document.
-```
-
-```go [Go++ server annotations]
+```go [Go++]
 class App : http.Server @{
     http.Prefix("/api"),
     http.OpenAPI,
@@ -26,6 +19,11 @@ class App : http.Server @{
 } {}
 ```
 
+```go [Go]
+// Register routes in the HTTP server.
+// Maintain an OpenAPI document separately.
+// Host Swagger UI that loads that document.
+```
 :::
 
 Route annotations provide the input for the generated document:

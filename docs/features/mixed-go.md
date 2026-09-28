@@ -10,16 +10,7 @@ Keep native code in an ordinary `.go` file and call its functions from `.gpp`
 source:
 
 ::: code-group
-
-```go [native.go]
-package main
-
-func greeting(name string) string {
-    return "Hello, " + name
-}
-```
-
-```go [main.gpp]
+```go [Go++]
 import "fmt"
 
 func main() {
@@ -27,6 +18,13 @@ func main() {
 }
 ```
 
+```go [Go]
+package main
+
+func greeting(name string) string {
+    return "Hello, " + name
+}
+```
 :::
 
 Run both through the Go++ project command:

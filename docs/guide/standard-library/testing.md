@@ -8,20 +8,11 @@ Go++ tests can use Go's `testing` package directly. A suite is useful when relat
 
 ## Side by side: a focused test
 
-A Go test function commonly looks like this:
+A Go test function commonly looks like this, while a Go++ suite can put setup and related test cases together:
 
-```go
-func TestUserName(t *testing.T) {
-	user := User{Name: "Ada"}
-	if user.Name != "Ada" {
-		t.Fatalf("got %q, want Ada", user.Name)
-	}
-}
-```
+::: code-group
 
-In a Go++ suite, setup and related test cases can live together:
-
-```go
+```go [Go++]
 import "gpp/test"
 
 class UserTest : test.Suite @{test.Tag("users")} {
@@ -37,6 +28,17 @@ class UserTest : test.Suite @{test.Tag("users")} {
 	}
 }
 ```
+
+```go [Go]
+func TestUserName(t *testing.T) {
+	user := User{Name: "Ada"}
+	if user.Name != "Ada" {
+		t.Fatalf("got %q, want Ada", user.Name)
+	}
+}
+```
+
+:::
 
 ## More examples
 

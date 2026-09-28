@@ -9,17 +9,15 @@ direct while still compiling to ordinary Go function literals.
 For a one-use predicate, a lambda can keep the operation close to the call:
 
 ::: code-group
+```go [Go++]
+activeUsers := users.Filter(user => user.Active)
+```
 
-```go [Go function literal]
+```go [Go]
 activeUsers := Filter(users, func(user User) bool {
     return user.Active
 })
 ```
-
-```go [Go++ lambda]
-activeUsers := users.Filter(user => user.Active)
-```
-
 :::
 
 The surrounding method supplies the context needed to infer the lambda

@@ -12,22 +12,8 @@ The goal is to make the routine shape of a service easy to see and maintain. A r
 
 A conventional Go service composes its mux, handler middleware, server, and shutdown path explicitly:
 
-```go
-mux := http.NewServeMux()
-mux.Handle("GET /users/{id}", logging(authenticate(
-	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(loadUser(r.PathValue("id")))
-	}),
-)))
-
-server := &http.Server{Addr: ":8080", Handler: mux}
-go waitForSignalAndShutdown(server)
-return server.ListenAndServe()
-```
-
-The Go++ class keeps route and service configuration together:
-
-```go
+::: code-group
+```go [Go++]
 import http "gpp/http"
 
 class App : http.Server @{
@@ -50,11 +36,23 @@ class App : http.Server @{
 
 func main() {
 	app := App()
-	if err := app.Listen(); err != nil {
-		panic(err)
-	}
+	app.Listen()
 }
 ```
+
+```go [Go]
+mux := http.NewServeMux()
+mux.Handle("GET /users/{id}", logging(authenticate(
+	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(loadUser(r.PathValue("id")))
+	}),
+)))
+
+server := &http.Server{Addr: ":8080", Handler: mux}
+go waitForSignalAndShutdown(server)
+return server.ListenAndServe()
+```
+:::
 
 `Listen()` creates the listener from the class configuration and runs the server. The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
 
@@ -120,22 +118,15 @@ import (
 	http "gpp/http"
 )
 
-class CreateUserRequest {
+class CreateUserRequest @{encoding.Serializable} {
 	Name string `json:"name"`
 	Email string `json:"email"`
 }
 
 class App : http.Server {
 	func CreateUser(ctx *http.Context) error @{http.POST("/users")} {
-		body, err := ctx.Request.Body.ReadAll()
-		if err != nil {
-			return ctx.Text(400, "could not read request body")
-		}
-
-		input, err := encoding.FromJSON[CreateUserRequest](body)
-		if err != nil {
-			return ctx.JSON(400, record(message: err.Error()))
-		}
+		body := ctx.Request.Body.ReadAll()
+		input := CreateUserRequest.FromJSON(body)
 		if input.Name.Blank() {
 			return ctx.JSON(400, record(message: "name is required"))
 		}
@@ -145,7 +136,7 @@ class App : http.Server {
 }
 ```
 
-This is the same basic flow as `json.NewDecoder(r.Body).Decode(&input)` in Go, with the request shape named as a Go++ class and decoding expressed as a typed function call. Binding is explicit today: handlers receive `*http.Context`, and `gpp/http` currently declares no `Body`, `Query`, or `Path` argument annotation and does not inject extra method parameters. The OpenAPI generator can inspect extra method parameters as documentation metadata, but that does not bind them at runtime; keep route handlers to the context parameter until the dispatcher supports binding. Apply a request-size limit before reading bodies from untrusted clients, and validate the decoded value before using it.
+This is the same basic flow as `json.NewDecoder(r.Body).Decode(&input)` in Go, with the request shape named as a Go++ class and decoding expressed as a typed function call. Read and decode errors propagate automatically; application validation remains explicit. Binding is explicit today: handlers receive `*http.Context`, and `gpp/http` currently declares no `Body`, `Query`, or `Path` argument annotation and does not inject extra method parameters. The OpenAPI generator can inspect extra method parameters as documentation metadata, but that does not bind them at runtime; keep route handlers to the context parameter until the dispatcher supports binding. Apply a request-size limit before reading bodies from untrusted clients, and validate the decoded value before using it.
 
 ## Shared request behavior and middleware
 
@@ -246,24 +237,20 @@ class App : http.Server {
 }
 ```
 
-`ErrorTemplate()` selects the template used for server-generated error pages, and `ctx.Template(status, name, data)` can render an application-specific response. When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
+`ctx.Template(key, args...)` renders a named template such as `ctx.Template("ProfilePage", user)`. It can also look up a template by URL path when that template declares a `tpl.Path` annotation; pass `ctx.Request.URL.Path` as the key to select it from the current request. The helper writes an HTML response with status 200 by default, or accepts an explicit status first, as in `ctx.Template(404, "NotFound", data)`. `ErrorTemplate()` selects the template used for server-generated error pages. For URL-bound templates and the generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
 
 ## HTTPS and deployment boundaries
 
 The `IP` and `Port` annotations configure a plain TCP listener; `gpp/http` does not currently provide a certificate or TLS annotation. Deployments commonly terminate TLS at a reverse proxy or load balancer. If the Go++ process must serve TLS itself, pass a TLS listener to `Serve`:
 
 ```go
-cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
-if err != nil { panic(err) }
-listener, err := net.Listen("tcp", ":8443")
-if err != nil { panic(err) }
+cert := tls.LoadX509KeyPair("server.crt", "server.key")
+listener := net.Listen("tcp", ":8443")
 
 secureListener := tls.NewListener(listener, &tls.Config{
 	Certificates: []tls.Certificate{cert},
 })
-if err := App().Serve(secureListener); err != nil {
-	panic(err)
-}
+App().Serve(secureListener)
 ```
 
 This keeps certificate provisioning and rotation explicit while still letting the Go++ server assemble routes, middleware, templates, and lifecycle behavior on that listener.

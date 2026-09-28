@@ -4,18 +4,34 @@ Go++ template declarations keep HTML templates near the application code that
 uses them. They compile into typed execution functions and use Go's
 `html/template` behavior for escaping and rendering.
 
+## Declare intent with the `template` keyword
+
+`template` is a recognized Go++ keyword for a package-level declaration. The
+function-like signature states which values the page expects, and a generated
+renderer makes that template available through `tpl`:
+
+```go
+template Welcome(name string) {
+    <h1>Hello, {{.}}</h1>
+}
+
+tpl.Welcome(&output, "Ada")
+```
+
+This makes the boundary between application data and presentation visible in
+the source. Go++ checks direct calls to the generated renderer against the
+declared argument count and types. The compiler also parses the body using
+`html/template`, but it does not yet verify that body expressions such as
+`.Title` exist on the declared data type. Those data-access errors are found
+when the template runs; checking them statically is planned.
+
 ## Compare string assembly with templates
 
 Templates separate presentation from concatenation and escape dynamic HTML
 values:
 
 ::: code-group
-
-```go [Manual string assembly]
-html := "<h1>" + html.EscapeString(title) + "</h1>"
-```
-
-```go [Go++ template]
+```go [Go++]
 template Page(title string) {
     <h1>{{.}}</h1>
 }
@@ -23,6 +39,9 @@ template Page(title string) {
 tpl.Page(&output, title)
 ```
 
+```go [Go]
+html := "<h1>" + html.EscapeString(title) + "</h1>"
+```
 :::
 
 ## Compose a layout

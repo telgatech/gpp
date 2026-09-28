@@ -2,37 +2,34 @@
 
 The regex extension gives strings convenient compile and match operations
 while keeping Go's `regexp` package as the engine. Pattern compilation remains
-explicit, so invalid patterns continue to produce normal errors.
+explicit, and invalid patterns propagate automatically when their error is
+not captured.
 
 ## Go package calls and method-style calls
 
 Both forms use the same Go regexp implementation:
 
 ::: code-group
+```go [Go++]
+re := "^[a-z]+$".CompileRegex()
+matched := re.MatchString(username)
+```
 
-```go [Go regexp package]
+```go [Go]
 re, err := regexp.Compile("^[a-z]+$")
 if err != nil {
     return err
 }
 matched := re.MatchString(username)
 ```
-
-```go [Go++ regex extension]
-re := "^[a-z]+$".CompileRegex()
-matched := re.MatchString(username)
-```
-
 :::
 
-If the pattern is dynamic, handle the returned error as usual:
+Dynamic patterns use the same extension. An invalid pattern automatically
+propagates its error; no explicit error check is needed:
 
 ```go
 pattern := config.UsernamePattern
-re, err := pattern.CompileRegex()
-if err != nil {
-    return fmt.Errorf("invalid username pattern: %w", err)
-}
+re := pattern.CompileRegex()
 if !re.MatchString(username) {
     return errors.New("username has an invalid format")
 }

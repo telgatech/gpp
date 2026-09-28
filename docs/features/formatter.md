@@ -9,15 +9,13 @@ syntax is introduced.
 `gofmt` remains the formatter for Go files. Use `gpp fmt` for `.gpp` files:
 
 ::: code-group
-
-```sh [Go source]
-gofmt -w ./...
-```
-
-```sh [Go++ source]
+```sh [Go++]
 gpp fmt ./...
 ```
 
+```sh [Go]
+gofmt -w ./...
+```
 :::
 
 ## Use check mode and standard output

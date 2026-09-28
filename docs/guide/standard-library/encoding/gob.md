@@ -4,23 +4,41 @@ GOB is Go's binary encoding format for exchanging Go values. It is a good fit fo
 
 ## Side by side: encode and decode
 
-Using Go's `encoding/gob` directly requires creating an encoder or decoder around an I/O stream. The Go++ helpers handle the in-memory buffer and let the destination type be explicit:
+Using Go's `encoding/gob` directly requires creating an encoder or decoder around an I/O stream. Go++ can declare the message as a serializable class and infer the decoded type; unhandled errors propagate automatically:
 
-```go
-data, err := encoding.ToGOB(message)
-if err != nil { return err }
+::: code-group
 
-decoded, err := encoding.FromGOB[Message](data)
-if err != nil { return err }
+```go [Go++]
+class Message @{encoding.Serializable} {
+	ID int
+	Text string
+}
+
+func RoundTrip(message Message) Message {
+	data := message.ToGOB()
+	return Message.FromGOB(data)
+}
 ```
+
+```go [Go]
+var data bytes.Buffer
+if err := gob.NewEncoder(&data).Encode(message); err != nil {
+	return err
+}
+
+var decoded Message
+if err := gob.NewDecoder(&data).Decode(&decoded); err != nil {
+	return err
+}
+```
+
+:::
 
 When you already have a destination value, decode into it directly:
 
 ```go
 var decoded Message
-if err := encoding.DecodeGOB(data, &decoded); err != nil {
-	return err
-}
+encoding.DecodeGOB(data, &decoded)
 ```
 
 ## Use GOB for internal snapshots
@@ -29,16 +47,14 @@ The same helpers work for slices and nested values, provided both ends agree on 
 
 ```go
 snapshot := []Message{first, second}
-data, err := encoding.ToGOB(snapshot)
-if err != nil { return err }
+data := encoding.ToGOB(snapshot)
 
-restored, err := encoding.FromGOB[[]Message](data)
-if err != nil { return err }
+restored := encoding.FromGOB[[]Message](data)
 fmt.Println("restored", len(restored), "messages")
 ```
 
 For a stream or an existing destination, use the standard `encoding/gob` package directly or call `DecodeGOB` with the destination pointer. The helper API is aimed at convenient in-memory byte slices.
 
-The GOB helpers return encoder and decoder errors unchanged. Prefer JSON or YAML when data needs to be inspected manually or consumed by non-Go systems.
+The GOB helpers preserve encoder and decoder errors, which Go++ propagates automatically unless you capture them. Prefer JSON or YAML when data needs to be inspected manually or consumed by non-Go systems.
 
 See the [GOB specification](/reference/specifications/serialization.gob) for supported values and details.

@@ -10,16 +10,7 @@ A Go HTTP server registers handlers with a mux. Go++ lets a method declare its
 route with an annotation:
 
 ::: code-group
-
-```go [Go net/http]
-mux := http.NewServeMux()
-mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
-    _, _ = w.Write([]byte(`{"ok":true}`))
-})
-```
-
-```go [Go++ server]
+```go [Go++]
 class App : http.Server {
     func Health(ctx *http.Context) error
         @{http.GET("/health")} {
@@ -31,6 +22,13 @@ app := App()
 app.Listen()
 ```
 
+```go [Go]
+mux := http.NewServeMux()
+mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    _, _ = w.Write([]byte(`{"ok":true}`))
+})
+```
 :::
 
 ## Use request context and lifecycle hooks

@@ -10,16 +10,7 @@ Handwritten SQL gives direct control. The ORM reduces repeated column mapping
 for routine operations:
 
 ::: code-group
-
-```go [database/sql]
-row := db.QueryRow("SELECT name FROM employees WHERE id = ?", id)
-var name string
-if err := row.Scan(&name); err != nil {
-    return err
-}
-```
-
-```go [Go++ ORM]
+```go [Go++]
 class Employee : orm.Model @{orm.Table("employees")} {
     Name string @{orm.Column("name")}
 }
@@ -28,6 +19,13 @@ var employee Employee
 db.Get(&employee, "id = $1", id)
 ```
 
+```go [Go]
+row := db.QueryRow("SELECT name FROM employees WHERE id = ?", id)
+var name string
+if err := row.Scan(&name); err != nil {
+    return err
+}
+```
 :::
 
 ## Use transactions and lifecycle hooks
@@ -39,15 +37,10 @@ transaction executor:
 employee := Employee(Name: "Ada")
 db.Insert(&employee)
 
-tx, err := db.Begin()
-if err != nil {
-    return err
-}
-if err := tx.Insert(&employee); err != nil {
-    tx.Rollback()
-    return err
-}
-return tx.Commit()
+tx := db.Begin()
+defer tx.Rollback()
+tx.Insert(&employee)
+tx.Commit()
 ```
 
 Model hooks such as validation and before/after create or update keep

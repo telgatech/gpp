@@ -13,24 +13,6 @@ familiar model and adds class inheritance, including class-level
 polymorphism:
 
 ::: code-group
-
-```go [Go embedding]
-type Identified struct {
-    ID int
-}
-
-type AuditTrail struct {
-    CreatedAt time.Time
-    UpdatedAt time.Time
-}
-
-type Invoice struct {
-    Identified
-    AuditTrail
-    Number string
-}
-```
-
 ```go [Go++]
 class Identified {
     ID int
@@ -46,6 +28,22 @@ class Invoice : Identified, AuditTrail {
 }
 ```
 
+```go [Go]
+type Identified struct {
+    ID int
+}
+
+type AuditTrail struct {
+    CreatedAt time.Time
+    UpdatedAt time.Time
+}
+
+type Invoice struct {
+    Identified
+    AuditTrail
+    Number string
+}
+```
 :::
 
 The Go form is concise for composing data. Go++ lets the child class reuse

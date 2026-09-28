@@ -10,8 +10,12 @@ Go's encoders remain available for any value. The annotation adds convenient,
 typed methods to the classes that opt in:
 
 ::: code-group
+```go [Go++]
+data := user.ToJSON()
+restored := User.FromJSON(data)
+```
 
-```go [Go encoding/json]
+```go [Go]
 data, err := json.Marshal(user)
 if err != nil {
     return err
@@ -22,19 +26,6 @@ if err := json.Unmarshal(data, &restored); err != nil {
     return err
 }
 ```
-
-```go [Go++ generated methods]
-data, err := user.ToJSON()
-if err != nil {
-    return err
-}
-
-restored, err := User.FromJSON(data)
-if err != nil {
-    return err
-}
-```
-
 :::
 
 ## Opt a class in
@@ -58,15 +49,8 @@ formats:
 ```go
 user := User(Id: 7, Name: "Ada", Email: "ada@example.com")
 
-jsonData, err := user.ToJSON()
-if err != nil {
-    return err
-}
-
-restored, err := User.FromJSON(jsonData)
-if err != nil {
-    return err
-}
+jsonData := user.ToJSON()
+restored := User.FromJSON(jsonData)
 fmt.Println(restored.Name)
 ```
 
@@ -85,8 +69,9 @@ API changes for consumers of the encoded form.
 
 ## Interoperate with Go encoders
 
-The generated methods use Go's established encoder packages and return their
-usual `([]byte, error)` results. You can continue to use standard Go encoding
+The generated methods use Go's established encoder packages. Their underlying
+Go methods return the usual `([]byte, error)` results; Go++ propagates an
+uncaptured error automatically. You can continue to use standard Go encoding
 functions directly when you need lower-level control. Serialization is opt-in;
 classes without the annotation do not gain generated methods.
 

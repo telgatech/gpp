@@ -8,9 +8,23 @@ Writing the same column lists, scan destinations, and insert argument lists for 
 
 ## Side by side: insert and load a model
 
-With `database/sql`, each operation repeats the table and column mapping:
+The Go++ version declares the mapping once on a class and uses ORM methods for insert and load. Select the Go tab to compare the equivalent manual SQL:
 
-```go
+::: code-group
+
+```go [Go++]
+class Employee : orm.Model @{orm.Table("employees")} {
+	ID int @{orm.Column("id"), orm.PK}
+	Name string @{orm.Column("name")}
+	Email string @{orm.Column("email")}
+}
+
+employee := Employee(ID: 42, Name: "Ada", Email: "ada@example.com")
+db.Insert(&employee)
+db.Get(&employee, "id = $1", employee.ID)
+```
+
+```go [Go]
 _, err := db.Exec(
 	"INSERT INTO employees (name, email) VALUES ($1, $2)",
 	employee.Name, employee.Email,
@@ -21,81 +35,39 @@ row := db.QueryRow("SELECT id, name, email FROM employees WHERE id = $1", id)
 err = row.Scan(&employee.ID, &employee.Name, &employee.Email)
 ```
 
-With annotated model metadata:
-
-```go
-class Employee : orm.Model @{orm.Table("employees")} {
-	ID int @{orm.Column("id"), orm.PK}
-	Name string @{orm.Column("name")}
-	Email string @{orm.Column("email")}
-}
-
-func LoadEmployee(db *sql.DB, id int) Employee {
-	var employee Employee
-	try {
-		db.Get(&employee, "id = $1", id)
-	} catch e {
-		throw fmt.Errorf("load employee %d: %w", id, e)
-	}
-	return employee
-}
-
-employee := Employee(ID: 42, Name: "Ada", Email: "ada@example.com")
-db.Insert(&employee) // a non-nil trailing error is thrown automatically
-loaded := LoadEmployee(db, employee.ID)
-```
+:::
 
 Only fields marked with `orm.Column` participate in persistence. The primary-key field also carries `orm.PK`, as shown above.
 
-The Go++ call omits the trailing `error`, so a database failure enters the nearest `catch`. Catch errors where the code can add context or recover; otherwise, let them propagate to a higher-level handler.
+The Go++ calls omit the trailing `error` result. A database failure propagates through Go++'s exception behavior; add a `try`/`catch` at a boundary when you need to recover or add context, and otherwise let it reach a higher-level handler.
 
 ## More examples
 
 ```go
 func ActiveEmployees(db *sql.DB) []Employee {
 	var employees []Employee
-	try {
-		db.Select(&employees, "active = $1 ORDER BY name", true)
-	} catch e {
-		throw fmt.Errorf("load active employees: %w", e)
-	}
+	db.Select(&employees, "active = $1 ORDER BY name", true)
 	return employees
 }
 
 func SaveEmployee(db *sql.DB, employee *Employee) {
-	try {
-		db.Update(employee)
-	} catch e {
-		throw fmt.Errorf("update employee %d: %w", employee.ID, e)
-	}
+	db.Update(employee)
 }
 
 func RemoveEmployee(db *sql.DB, employee *Employee) {
-	try {
-		db.Delete(employee)
-	} catch e {
-		throw fmt.Errorf("delete employee %d: %w", employee.ID, e)
-	}
+	db.Delete(employee)
 }
 ```
 
 The query condition is passed as a SQL fragment and values remain parameterized. For multi-step changes, a transaction can be used anywhere a database handle is accepted:
 
 ```go
-func SaveChanges(db *sql.DB, employee *Employee, account *Account) error {
-	var tx *sql.Tx
-	try {
-		tx = db.Begin()
-		tx.Insert(employee)
-		tx.Update(account)
-		tx.Commit()
-	} catch e {
-		if tx != nil {
-			_ = tx.Rollback()
-		}
-		return fmt.Errorf("save changes: %w", e)
-	}
-	return nil
+func SaveChanges(db *sql.DB, employee *Employee, account *Account) {
+	tx := db.Begin()
+	defer tx.Rollback()
+	tx.Insert(employee)
+	tx.Update(account)
+	tx.Commit()
 }
 ```
 
