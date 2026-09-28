@@ -30,7 +30,7 @@ class App : http.Server @{
 	}
 
 	func CreateUser(ctx *http.Context) error @{http.POST("/users")} {
-		return ctx.JSON(201, record(ok: true))
+		return ctx.JSON(201, record(OK: true))
 	}
 }
 
@@ -93,11 +93,13 @@ Do not rely on `Auth`, `NoAuth`, or `Role` to protect a route yet. Use implement
 
 Go++ builds on `http.ServeMux` and uses standard method-and-path behavior. Path parameters are declared in the route and read by name. The context also exposes query values and the underlying Go request and response writer:
 
+When returning a record through `ctx.JSON`, capitalize fields that should appear in the response. Go records preserve Go's export rules, and `encoding/json` omits lowercase, unexported fields.
+
 ```go
 class App : http.Server @{http.Prefix("/api")} {
 	func Search(ctx *http.Context) error @{http.GET("/search")} {
 		term := ctx.Query("q")
-		return ctx.JSON(record(term: term, results: search(term)))
+		return ctx.JSON(record(Term: term, Results: search(term)))
 	}
 
 	func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
@@ -128,10 +130,10 @@ class App : http.Server {
 		body := ctx.Request.Body.ReadAll()
 		input := CreateUserRequest.FromJSON(body)
 		if input.Name.Blank() {
-			return ctx.JSON(400, record(message: "name is required"))
+			return ctx.JSON(400, record(Message: "name is required"))
 		}
 
-		return ctx.JSON(201, record(name: input.Name, email: input.Email))
+		return ctx.JSON(201, record(Name: input.Name, Email: input.Email))
 	}
 }
 ```
@@ -289,7 +291,7 @@ class App : http.Server @{
 	http.Swagger
 } {
 	func Health(ctx *http.Context) error @{http.GET("/health")} {
-		return ctx.JSON(record(ok: true))
+		return ctx.JSON(record(OK: true))
 	}
 }
 ```

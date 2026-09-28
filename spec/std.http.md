@@ -724,7 +724,7 @@ class App : http.Server @{
         http.GET("/health")
     } {
         return ctx.JSON(record(
-            ok: true,
+            OK: true,
         ))
     }
 }
