@@ -20,13 +20,25 @@ func formatSourceWithFile(file *File, source string) string {
 	source = strings.ReplaceAll(source, "\r\n", "\n")
 	source = strings.ReplaceAll(source, "\r", "\n")
 	lines := strings.Split(source, "\n")
+	dropBlankLines := make([]bool, len(lines))
 	indent := 0
 	state := formatScanState{}
+	previousLineOpenedBlock := false
 	templateLines, templateEnds := templateBodyLinesForFile(file, source, lines)
 
 	for index, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			lines[index] = ""
+			if templateLines[index] || state.mode == '`' || state.mode == '/' {
+				lines[index] = line
+				formatBraceDelta(line, &state)
+				previousLineOpenedBlock = false
+				continue
+			}
+			if previousLineOpenedBlock || nextNonBlankStartsWithBlockClose(lines, index+1) {
+				dropBlankLines[index] = true
+				continue
+			}
 			continue
 		}
 		if templateLines[index] {
@@ -40,6 +52,7 @@ func formatSourceWithFile(file *File, source string) string {
 					indent = 0
 				}
 			}
+			previousLineOpenedBlock = false
 			continue
 		}
 		// Raw strings and block comments may contain intentional leading
@@ -48,24 +61,112 @@ func formatSourceWithFile(file *File, source string) string {
 		if state.mode == '`' || state.mode == '/' {
 			lines[index] = line
 			formatBraceDelta(line, &state)
+			previousLineOpenedBlock = false
 			continue
 		}
 
 		content := canonicalizeFormatLine(strings.TrimLeft(line, " \t"))
-		if formatLineStartsWithClose(content, &state) {
-			indent--
+		startsWithBraceClose := formatLineStartsWithClose(content, &state)
+		leadingBraceCloses, leadingContinuationCloses := formatLeadingClosers(content)
+		if startsWithBraceClose {
+			indent -= leadingBraceCloses
 			if indent < 0 {
 				indent = 0
 			}
 		}
-		lines[index] = strings.Repeat("    ", indent) + content
-		indent += formatBraceDelta(content, &state)
+		continuation := state.parenDepth + state.bracketDepth - leadingContinuationCloses
+		if continuation < 0 {
+			continuation = 0
+		}
+		lineIndent := indent + continuation
+		if isCaseClauseLine(content) && lineIndent > 0 {
+			lineIndent--
+		}
+		lines[index] = strings.Repeat("    ", lineIndent) + content
+		delta := formatBraceDelta(content, &state)
+		if startsWithBraceClose {
+			// The leading brace was already removed to align this line. Count
+			// only the braces after it when determining the next line's indent.
+			delta += leadingBraceCloses
+		}
+		indent += delta
+		previousLineOpenedBlock = delta > 0
 		if indent < 0 {
 			indent = 0
 		}
 	}
 
-	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	formattedLines := make([]string, 0, len(lines))
+	for index, line := range lines {
+		if !dropBlankLines[index] {
+			formattedLines = append(formattedLines, line)
+		}
+	}
+	return strings.TrimRight(strings.Join(formattedLines, "\n"), "\n") + "\n"
+}
+
+func nextNonBlankStartsWithBlockClose(lines []string, index int) bool {
+	for ; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if line == "" {
+			continue
+		}
+		return strings.HasPrefix(line, "}")
+	}
+	return false
+}
+
+func isCaseClauseLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "case ") && line != "case" && !strings.HasPrefix(line, "default") {
+		return false
+	}
+	if strings.HasPrefix(line, "default") && len(line) > len("default") && isTokenIdentPart(line[len("default")]) {
+		return false
+	}
+	start := len("case")
+	if strings.HasPrefix(line, "default") {
+		start = len("default")
+	}
+	var quote byte
+	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	for index := start; index < len(line); index++ {
+		char := line[index]
+		if quote != 0 {
+			if char == '\\' && quote != '`' {
+				index++
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		if char == '/' && index+1 < len(line) && line[index+1] == '/' {
+			return false
+		}
+		switch char {
+		case '"', '\'', '`':
+			quote = char
+		case '(':
+			parenDepth++
+		case ')':
+			parenDepth--
+		case '[':
+			bracketDepth++
+		case ']':
+			bracketDepth--
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+		case ':':
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func templateBodyLines(source string, lines []string) (map[int]bool, map[int]bool) {
@@ -186,7 +287,18 @@ func templateBodySpan(source string, start int) (int, int, int, bool) {
 }
 
 func canonicalizeFormatLine(line string) string {
-	if strings.HasPrefix(strings.TrimSpace(line), "catch ") && strings.Contains(line, ",") {
+	line = collapseCodeWhitespace(line)
+	if strings.HasPrefix(line, "}") {
+		index := 0
+		for index < len(line) && line[index] == '}' {
+			index++
+		}
+		if index < len(line) && line[index] != ' ' && line[index] != '\t' &&
+			(strings.HasPrefix(line[index:], "else") || strings.HasPrefix(line[index:], "catch") || strings.HasPrefix(line[index:], "finally")) {
+			line = line[:index] + " " + line[index:]
+		}
+	}
+	if isCatchHeader(line) && strings.Contains(line, ",") {
 		line = canonicalizeCatchSpacing(line)
 	}
 	for index := 0; index < len(line); {
@@ -229,32 +341,105 @@ func canonicalizeFormatLine(line string) string {
 	return line
 }
 
+func collapseCodeWhitespace(line string) string {
+	var output strings.Builder
+	output.Grow(len(line))
+	for index := 0; index < len(line); {
+		switch line[index] {
+		case ' ', '\t':
+			for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+				index++
+			}
+			if output.Len() > 0 && index < len(line) {
+				output.WriteByte(' ')
+			}
+		case '"', '\'', '`':
+			quote := line[index]
+			start := index
+			index++
+			for index < len(line) {
+				if line[index] == '\\' && quote != '`' {
+					index += 2
+					continue
+				}
+				if line[index] == quote {
+					index++
+					break
+				}
+				index++
+			}
+			output.WriteString(line[start:index])
+		case '/':
+			if index+1 < len(line) && line[index+1] == '/' {
+				output.WriteString(line[index:])
+				return output.String()
+			}
+			if index+1 < len(line) && line[index+1] == '*' {
+				end := strings.Index(line[index+2:], "*/")
+				if end < 0 {
+					output.WriteString(line[index:])
+					return output.String()
+				}
+				end += index + 4
+				output.WriteString(line[index:end])
+				index = end
+				continue
+			}
+			output.WriteByte(line[index])
+			index++
+		default:
+			output.WriteByte(line[index])
+			index++
+		}
+	}
+	return strings.TrimRight(output.String(), " \t")
+}
+
+func isCatchHeader(line string) bool {
+	header := strings.TrimSpace(line)
+	for strings.HasPrefix(header, "}") {
+		header = strings.TrimSpace(strings.TrimPrefix(header, "}"))
+	}
+	return strings.HasPrefix(header, "catch ")
+}
+
 func canonicalizeCatchSpacing(line string) string {
 	brace := strings.IndexByte(line, '{')
 	if brace < 0 {
 		return line
 	}
 	header := strings.TrimSpace(line[:brace])
+	closePrefix := ""
+	for strings.HasPrefix(header, "}") {
+		closePrefix += "}"
+		header = strings.TrimSpace(strings.TrimPrefix(header, "}"))
+	}
 	if !strings.HasPrefix(header, "catch ") {
 		return line
 	}
 	typesAndName := strings.TrimSpace(strings.TrimPrefix(header, "catch"))
-	for strings.Contains(typesAndName, ",  ") {
-		typesAndName = strings.ReplaceAll(typesAndName, ",  ", ", ")
+	for strings.Contains(typesAndName, ", ") {
+		typesAndName = strings.ReplaceAll(typesAndName, ", ", ",")
 	}
 	typesAndName = strings.ReplaceAll(typesAndName, ",", ", ")
-	return "catch " + typesAndName + line[brace:]
+	return closePrefix + " catch " + typesAndName + line[brace:]
 }
 
 func isBlockBracePrefix(prefix string) bool {
 	prefix = strings.TrimSpace(prefix)
+	if close := strings.LastIndex(prefix, "}"); close >= 0 {
+		prefix = strings.TrimSpace(prefix[close+1:])
+	}
 	if prefix == "" || strings.HasSuffix(prefix, "@") {
 		return false
 	}
 	if strings.HasSuffix(prefix, ")") {
 		return true
 	}
-	for _, keyword := range []string{"class", "enum", "extend", "func", "if", "else", "for", "switch", "select", "try", "catch", "finally", "template"} {
+	if strings.HasSuffix(prefix, "=>") {
+		return true
+	}
+	for _, keyword := range []string{"class", "enum", "extend", "func", "if", "else", "for", "switch", "select", "try", "catch", "finally", "template", "type"} {
 		if prefix == keyword || strings.HasPrefix(prefix, keyword+" ") {
 			return true
 		}
@@ -274,7 +459,31 @@ func FormatSourceFile(filename string, source []byte) ([]byte, error) {
 }
 
 type formatScanState struct {
-	mode byte // '/', '"', '\'', or '`'
+	mode         byte // '/', '"', '\'', or '`'
+	parenDepth   int
+	bracketDepth int
+}
+
+func formatLeadingClosers(line string) (braces, continuations int) {
+	index := 0
+	for index < len(line) {
+		for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+			index++
+		}
+		if index >= len(line) {
+			break
+		}
+		switch line[index] {
+		case '}':
+			braces++
+		case ')', ']':
+			continuations++
+		default:
+			return braces, continuations
+		}
+		index++
+	}
+	return braces, continuations
 }
 
 func formatLineStartsWithClose(line string, state *formatScanState) bool {
@@ -386,6 +595,24 @@ func formatBraceDelta(line string, state *formatScanState) int {
 				continue
 			}
 			delta--
+			index++
+		case '(':
+			state.parenDepth++
+			index++
+		case ')':
+			state.parenDepth--
+			if state.parenDepth < 0 {
+				state.parenDepth = 0
+			}
+			index++
+		case '[':
+			state.bracketDepth++
+			index++
+		case ']':
+			state.bracketDepth--
+			if state.bracketDepth < 0 {
+				state.bracketDepth = 0
+			}
 			index++
 		default:
 			index++

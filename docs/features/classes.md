@@ -52,6 +52,25 @@ The compiler emits a Go struct for the fields and Go receiver methods for the
 behavior. That makes the relationship clear in source while preserving Go's
 types and execution model in the result.
 
+Inside an instance method, class fields can be used without writing `this.`.
+Unqualified calls to other instance methods use the same receiver. An explicit
+`this.` remains valid when it makes the receiver clearer, and parameters or
+local variables take precedence when they share a member's name:
+
+```go
+class User {
+    Name string
+
+    func Greeting() string {
+        return "Hello, " + Name
+    }
+
+    func Rename(Name string) {
+        this.Name = Name
+    }
+}
+```
+
 ## Construct values
 
 Go++ offers positional and named class construction. Positional construction

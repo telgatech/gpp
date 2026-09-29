@@ -1,0 +1,11 @@
+package foo.bar
+
+import "fmt"
+
+class Customer {
+    Name string
+}
+
+func Greet(){
+    fmt.Println("foo.bar.Greet")
+}

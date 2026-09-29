@@ -1,6 +1,6 @@
 # Go++ examples
 
-Each standalone `.gpp` file can be compiled with:
+Most standalone `.gpp` files can be compiled with:
 
 ```bash
 gpp examples/<name>.gpp
@@ -18,7 +18,8 @@ gpp run examples/hello.gpp
 The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
-- `foo.gpp` — an ordinary package declaration and generated package directory.
+- `foo.gpp` — import and call the companion `foo.bar.gpp` package by its Go++
+  logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.
 - `static_methods.gpp` — class-qualified factory and parsing methods.
 - `inheritance.gpp` — multiple inheritance, embedded parents, and qualified
@@ -86,7 +87,13 @@ The examples cover:
 - `oauth.gpp` — the bundled `gpp/http` OAuth/OIDC login flow with a built-in
   provider, PKCE, callback state, normalized identity, and login/error hooks.
 
-The dotted-package example is compiled as a pair:
+The `foo` dotted-package example is compiled as a pair:
+
+```bash
+gpp run examples/foo.gpp examples/foo.bar.gpp
+```
+
+The `packages/` example is also compiled as a pair:
 
 ```bash
 gpp examples/packages/people.gpp examples/packages/main.gpp

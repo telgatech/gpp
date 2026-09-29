@@ -1,55 +1,55 @@
 package main
 
 import (
-	"fmt"
-	"os"
+    "fmt"
+    "os"
 )
 
 class ValidationError {
-	Field string
-	Message string
+    Field string
+    Message string
 
-	func Error() string {
-		return this.Field + ": " + this.Message
-	}
+    func Error() string {
+        return this.Field + ": " + this.Message
+    }
 }
 
 class PermissionError {
-	Message string
+    Message string
 
-	func Error() string {
-		return this.Message
-	}
+    func Error() string {
+        return this.Message
+    }
 }
 
 func ReadConfig(path string) []byte {
-	return os.ReadFile(path)
+    return os.ReadFile(path)
 }
 
 func main() {
-	try {
-		data := ReadConfig("missing-config.json")
-		fmt.Println(len(data))
-	} catch *os.PathError e {
-		fmt.Println("path error:", e.Path)
-	} catch e {
-		fmt.Println("load error:", e)
-	} finally {
-		fmt.Println("load finished")
-	}
+    try {
+        data := ReadConfig("missing-config.json")
+        fmt.Println(len(data))
+    } catch *os.PathError e {
+        fmt.Println("path error:", e.Path)
+    } catch e {
+        fmt.Println("load error:", e)
+    } finally {
+        fmt.Println("load finished")
+    }
 
-	try {
-		throw ValidationError(Field: "email", Message: "invalid")
-	} catch ValidationError e {
-		fmt.Println(e.Error())
-	}
+    try {
+        throw ValidationError(Field: "email", Message: "invalid")
+    } catch ValidationError e {
+        fmt.Println(e.Error())
+    }
 
-	try {
-		throw PermissionError(Message: "permission denied")
-	} catch ValidationError, PermissionError e {
-		fmt.Println("client error:", e.Error())
-	}
+    try {
+        throw PermissionError(Message: "permission denied")
+    } catch ValidationError, PermissionError e {
+        fmt.Println("client error:", e.Error())
+    }
 
-	_, err := os.ReadFile("optional-config.json")
-	fmt.Println("explicit error:", err != nil)
+    _, err := os.ReadFile("optional-config.json")
+    fmt.Println("explicit error:", err != nil)
 }

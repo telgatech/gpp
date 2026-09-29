@@ -41,6 +41,8 @@ func directMethodSource(class *ClassDecl, method Method, context constructorCont
 		return "", false, nil
 	}
 	methodContext := context
+	methodContext.CurrentClass = class.Name
+	methodContext.CurrentMethod = method.Name
 	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentParameterAST = parameterTypeNodeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentResultAST = method.ResultAST
@@ -287,6 +289,14 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		body, err = lowerExceptionABIBoundaryNode(body, method.ResultAST, method.ResultFieldsAST, bodyContext)
 		if err != nil {
 			return nil, true, err
+		}
+	}
+	if context.CurrentClass != "" {
+		if target, ok := context.Targets[context.CurrentClass]; ok && target.Class != nil {
+			body, err = formatImplicitThisBody(body, target.Class, target.Classes, method)
+			if err != nil {
+				return nil, true, err
+			}
 		}
 	}
 	return body, true, nil

@@ -1172,11 +1172,11 @@ func importSpecsFromTokens(tokens []Token) ([]*ast.ImportSpec, error) {
 		index++
 		index = nextSignificantToken(tokens, index)
 		if index >= len(tokens) || tokens[index].Text != "(" {
-			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			name, importPath, next, _, ok := sourceImportSpec(tokens, index)
 			if !ok {
 				return nil, fmt.Errorf("invalid import declaration")
 			}
-			imports = append(imports, newTokenImportSpec(name, tokens[pathIndex]))
+			imports = append(imports, newImportSpec(name, importPath))
 			index = next - 1
 			continue
 		}
@@ -1190,11 +1190,11 @@ func importSpecsFromTokens(tokens []Token) ([]*ast.ImportSpec, error) {
 			if tokens[index].Text == ")" {
 				break
 			}
-			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			name, importPath, next, _, ok := sourceImportSpec(tokens, index)
 			if !ok {
 				return nil, fmt.Errorf("invalid import declaration")
 			}
-			imports = append(imports, newTokenImportSpec(name, tokens[pathIndex]))
+			imports = append(imports, newImportSpec(name, importPath))
 			index = next
 		}
 	}
@@ -1213,11 +1213,11 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 			return nil, fmt.Errorf("import declaration is missing a path")
 		}
 		if tokens[index].Text != "(" {
-			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			name, importPath, next, logical, ok := sourceImportSpec(tokens, index)
 			if !ok {
 				return nil, fmt.Errorf("invalid import declaration")
 			}
-			declaration, err := tokenImportNode(name, tokens[pathIndex], startToken)
+			declaration, err := tokenImportNode(name, importPath, logical, startToken, tokens[next-1])
 			if err != nil {
 				return nil, err
 			}
@@ -1235,11 +1235,11 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 			if tokens[index].Text == ")" {
 				break
 			}
-			name, pathIndex, next, ok := importTokenSpec(tokens, index)
+			name, importPath, next, logical, ok := sourceImportSpec(tokens, index)
 			if !ok {
 				return nil, fmt.Errorf("invalid import declaration")
 			}
-			declaration, err := tokenImportNode(name, tokens[pathIndex], startToken)
+			declaration, err := tokenImportNode(name, importPath, logical, startToken, tokens[next-1])
 			if err != nil {
 				return nil, err
 			}
@@ -1250,24 +1250,62 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 	return imports, nil
 }
 
-func tokenImportNode(name *ast.Ident, pathToken Token, startToken Token) (ImportDecl, error) {
-	importPath, err := strconv.Unquote(pathToken.Text)
-	if err != nil || importPath == "" {
-		if err != nil {
-			return ImportDecl{}, err
-		}
+func tokenImportNode(name *ast.Ident, importPath string, logical bool, startToken, endToken Token) (ImportDecl, error) {
+	if importPath == "" {
 		return ImportDecl{}, fmt.Errorf("import path cannot be empty")
+	}
+	if strings.HasPrefix(importPath, "generated/") {
+		return ImportDecl{}, fmt.Errorf("generated import paths are internal and cannot be imported directly; use the logical package name")
 	}
 	alias := ""
 	if name != nil {
 		alias = name.Name
 	}
-	return ImportDecl{Alias: alias, Path: importPath, SpanValue: Span{
+	return ImportDecl{Alias: alias, Path: importPath, LogicalPackage: logical, SpanValue: Span{
 		Start:  startToken.Span.Start,
-		End:    pathToken.Span.End,
+		End:    endToken.Span.End,
 		Line:   startToken.Span.Line,
 		Column: startToken.Span.Column,
 	}}, nil
+}
+
+// sourceImportSpec accepts regular Go import specs and Go++ logical imports
+// such as `import foo.bar`. Logical imports are normalized to a quoted path
+// for semantic analysis and later lowered to the module's generated path.
+func sourceImportSpec(tokens []Token, index int) (*ast.Ident, string, int, bool, bool) {
+	name, pathIndex, next, ok := importTokenSpec(tokens, index)
+	if ok {
+		importPath, err := strconv.Unquote(tokens[pathIndex].Text)
+		if err != nil {
+			return nil, "", next, false, false
+		}
+		return name, importPath, next, false, true
+	}
+
+	index = nextSignificantToken(tokens, index)
+	if index >= len(tokens) || tokens[index].Kind != TokenIdentifier {
+		return nil, "", index, false, false
+	}
+	parts := []string{tokens[index].Text}
+	index++
+	for {
+		dot := nextSignificantToken(tokens, index)
+		if dot >= len(tokens) || tokens[dot].Text != "." {
+			break
+		}
+		part := nextSignificantToken(tokens, dot+1)
+		if part >= len(tokens) || tokens[part].Kind != TokenIdentifier {
+			return nil, "", part, false, false
+		}
+		parts = append(parts, tokens[part].Text)
+		index = part + 1
+	}
+	logical := strings.Join(parts, ".")
+	return &ast.Ident{Name: parts[len(parts)-1]}, logical, index, true, true
+}
+
+func newImportSpec(name *ast.Ident, importPath string) *ast.ImportSpec {
+	return &ast.ImportSpec{Name: name, Path: &ast.BasicLit{Kind: token.STRING, Value: strconv.Quote(importPath)}}
 }
 
 func nextSignificantToken(tokens []Token, index int) int {
@@ -1299,14 +1337,10 @@ func importTokenSpec(tokens []Token, index int) (*ast.Ident, int, int, bool) {
 	return &ast.Ident{Name: name}, pathIndex, pathIndex + 1, true
 }
 
-func newTokenImportSpec(name *ast.Ident, path Token) *ast.ImportSpec {
-	return &ast.ImportSpec{
-		Name: name,
-		Path: &ast.BasicLit{Kind: token.STRING, Value: path.Text},
-	}
-}
-
 func logicalPackageForImport(importPath, modulePath string, model *SemanticModel) (string, bool) {
+	if _, exists := model.Packages[importPath]; exists {
+		return importPath, true
+	}
 	if logical, ok := officialLogicalPackage(importPath); ok {
 		if _, exists := model.Packages[logical]; exists {
 			return logical, true

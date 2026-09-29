@@ -244,6 +244,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		return nil, err
 	}
 	body = insertAfterImports(body, templateImports)
+	body = rewriteLogicalPackageImports(body, file.Imports, context.ModulePath)
 	body = rewriteOfficialImports(body, context.ModulePath)
 	body = ensureGeneratedImports(body, context)
 	enumErrorAlias, enumNeedsErrorImport := enumErrorImport(file)
@@ -778,6 +779,48 @@ func defaultObjectRuntimeImports(body string) (string, string, string, string, s
 		return fmtAlias, reflectAlias, strconvAlias, stringsAlias, ""
 	}
 	return fmtAlias, reflectAlias, strconvAlias, stringsAlias, "import (\n" + output.String() + ")\n\n"
+}
+
+func rewriteLogicalPackageImports(body string, imports []ImportDecl, modulePath string) string {
+	if modulePath == "" {
+		return body
+	}
+	logicalPaths := map[string]bool{}
+	for _, declaration := range imports {
+		if declaration.LogicalPackage {
+			logicalPaths[declaration.Path] = true
+		}
+	}
+	if len(logicalPaths) == 0 {
+		return body
+	}
+	specs, _, ok := generatedImports(body)
+	if !ok {
+		return body
+	}
+	type edit struct {
+		start, end int
+		text       string
+	}
+	edits := []edit{}
+	for _, spec := range specs {
+		if !logicalPaths[spec.Path] {
+			continue
+		}
+		pathText := strconv.Quote(spec.Path)
+		offset := strings.Index(body[spec.Start:spec.End], pathText)
+		if offset < 0 {
+			continue
+		}
+		start := spec.Start + offset
+		logicalPath := strings.ReplaceAll(spec.Path, ".", "/")
+		edits = append(edits, edit{start, start + len(pathText), strconv.Quote(modulePath + "/" + logicalPath)})
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, change := range edits {
+		body = body[:change.start] + change.text + body[change.end:]
+	}
+	return body
 }
 
 func rewriteOfficialImports(body, modulePath string) string {
@@ -1611,6 +1654,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 			return err
 		}
 		body, _ = wrapExceptionBoundaryBody(body, methodResult, methodContext)
+		body = qualifyImplicitClassFields(body, class, classesForClass(context, class), method)
 
 		out.WriteString(body)
 

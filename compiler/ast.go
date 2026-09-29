@@ -40,9 +40,10 @@ func (declaration *PackageDecl) Span() Span {
 }
 
 type ImportDecl struct {
-	Alias     string
-	Path      string
-	SpanValue Span
+	Alias          string
+	Path           string
+	LogicalPackage bool
+	SpanValue      Span
 }
 
 func (*ImportDecl) node() {}

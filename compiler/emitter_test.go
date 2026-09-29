@@ -90,6 +90,29 @@ func TestEmitNamedConstructor(t *testing.T) {
 	}
 }
 
+func TestEmitClassMethodUsesImplicitThisForFields(t *testing.T) {
+	file, err := ParseFile("implicit-this.gpp", `class Person {
+    Name string
+
+    func Label() string {
+        local := "local"
+        return Name + ":" + local
+    }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, `return this.Name + ":" + local`) {
+		t.Fatalf("generated method did not qualify the field while preserving the local:\n%s", generated)
+	}
+}
+
 func TestEmitMixedDeclKeepsOrdinaryGoDeclarationsOnASTPath(t *testing.T) {
 	file := testPersonFile(t)
 	appendMixedSourceDecl(file, `var ordinary = 7

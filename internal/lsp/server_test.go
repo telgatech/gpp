@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,10 +72,24 @@ func TestRunServesInitializeCompletionAndShutdown(t *testing.T) {
 			}
 		case 3:
 			sawShutdown = true
+			if result, exists := message["result"]; !exists || result != nil {
+				t.Fatalf("shutdown response must include result: null, got %#v", message)
+			}
 		}
 	}
 	if !sawCompletion || !sawShutdown {
 		t.Fatalf("missing responses: completion=%v shutdown=%v", sawCompletion, sawShutdown)
+	}
+}
+
+func TestHandleSafelyRecoversFromPanic(t *testing.T) {
+	server := &server{logger: log.New(io.Discard, "", 0)}
+	keepRunning, err := server.handleSafely(rpcRequest{Method: "initialize", Params: json.RawMessage(`{}`)})
+	if !keepRunning {
+		t.Fatal("server should continue after recovering from a handler panic")
+	}
+	if err == nil || !strings.Contains(err.Error(), "internal LSP error") {
+		t.Fatalf("expected an internal LSP error, got %v", err)
 	}
 }
 

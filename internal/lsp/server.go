@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,7 +119,7 @@ type rpcError struct {
 type rpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
+	Result  *any            `json:"result,omitempty"`
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
@@ -466,7 +467,7 @@ func Run(in io.Reader, out io.Writer, logOut io.Writer) error {
 			logger.Printf("invalid JSON-RPC message: %v", err)
 			continue
 		}
-		keepRunning, err := s.handle(request)
+		keepRunning, err := s.handleSafely(request)
 		if err != nil {
 			logger.Printf("request %s failed: %v", request.Method, err)
 			if len(request.ID) > 0 {
@@ -477,6 +478,19 @@ func Run(in io.Reader, out io.Writer, logOut io.Writer) error {
 			return nil
 		}
 	}
+}
+
+func (s *server) handleSafely(request rpcRequest) (keepRunning bool, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			keepRunning = true
+			err = fmt.Errorf("internal LSP error: %v", recovered)
+			if s.logger != nil {
+				s.logger.Printf("panic handling %s: %v\n%s", request.Method, recovered, debug.Stack())
+			}
+		}
+	}()
+	return s.handle(request)
 }
 
 func (s *server) handle(request rpcRequest) (bool, error) {
@@ -702,7 +716,8 @@ func (s *server) respond(id json.RawMessage, result any) error {
 	if len(id) == 0 {
 		return nil
 	}
-	return s.write(rpcResponse{JSONRPC: "2.0", ID: id, Result: result})
+	resultValue := result
+	return s.write(rpcResponse{JSONRPC: "2.0", ID: id, Result: &resultValue})
 }
 
 func (s *server) respondError(id json.RawMessage, code int, message string) error {

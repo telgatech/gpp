@@ -253,6 +253,29 @@ func TestParseValidatesDottedPackageNames(t *testing.T) {
 	}
 }
 
+func TestParseSupportsLogicalPackageImportsAndRejectsGeneratedPaths(t *testing.T) {
+	file, err := ParseFile("logical-import.gpp", `package main
+
+import foo.bar
+
+func main() { bar.Greet() }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Imports) != 1 || file.Imports[0].Path != "foo.bar" ||
+		file.Imports[0].Alias != "bar" || !file.Imports[0].LogicalPackage {
+		t.Fatalf("logical import was not structured correctly: %#v", file.Imports)
+	}
+
+	_, err = ParseFile("generated-import.gpp", `package main
+import bar "generated/foo/bar"
+`)
+	if err == nil || !strings.Contains(err.Error(), "generated import paths are internal") {
+		t.Fatalf("expected generated path import to be rejected, got %v", err)
+	}
+}
+
 func TestParseIgnoresExtensionsInsideGoBodiesAndStrings(t *testing.T) {
 	file, err := ParseFile("lexical_boundaries.gpp", "func main() {\n"+
 		"    _ = `class NotAClass {}`\n"+

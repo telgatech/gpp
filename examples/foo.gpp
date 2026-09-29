@@ -1,5 +1,7 @@
-package foo
+package main
 
-class Customer {
-    Name string
+import foo.bar
+
+func main(){
+    bar.Greet()
 }

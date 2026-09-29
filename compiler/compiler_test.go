@@ -1044,7 +1044,7 @@ package main
 
 import (
     "fmt"
-    "generated/shared"
+    shared
 )
 
 func main() {
@@ -2014,7 +2014,7 @@ class Person {
 	}
 	if err := os.WriteFile(mainFile, []byte(`package main
 
-import "generated/telga/web"
+import telga.web
 
 func main() {
     person := web.Person("Bob")
@@ -2062,7 +2062,7 @@ class Employee: Person {
 	}
 	if err := os.WriteFile(mainFile, []byte(`package main
 
-import "generated/telga/web"
+import telga.web
 
 func SpeakFor(person web.Person) string {
     return person.Speak()
@@ -2259,7 +2259,7 @@ func GetUser() record {
 
 import (
     "fmt"
-    "generated/demo/people"
+    demo.people
 )
 
 func main() {
@@ -2420,7 +2420,7 @@ class Person {
 
 import (
     "fmt"
-    "generated/demo/people"
+    demo.people
 )
 
 func main() {
@@ -2542,7 +2542,7 @@ extend Person {
 
 import (
     "fmt"
-    "generated/demo/people"
+    demo.people
 )
 
 func main() {
@@ -2590,7 +2590,7 @@ class User {
 
 import (
     "fmt"
-    "generated/demo/model"
+    demo.model
 )
 
 func main() {
@@ -2635,7 +2635,7 @@ annotation private on class
 	}
 	if err := os.WriteFile(main, []byte(`package main
 
-import "generated/demo/model"
+import demo.model
 
 class Employee @{model.Public} {}
 
@@ -2669,7 +2669,7 @@ annotation private on class
 	}
 	if err := os.WriteFile(main, []byte(`package main
 
-import "generated/demo/model"
+import demo.model
 
 class Employee @{model.private} {}
 `), 0644); err != nil {

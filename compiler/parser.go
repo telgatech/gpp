@@ -699,12 +699,72 @@ func parseGoDeclarations(filename, packageName, source string) ([]ast.Decl, *tok
 	// spans as whitespace while asking go/parser for the ordinary declaration
 	// AST, so annotated Go declarations can still use GoDecl instead of the
 	// compatibility MixedDecl path.
-	goSource := stripAnnotationSyntaxPreserve(source)
+	goSource := rewriteLogicalImportsForGoParser(stripAnnotationSyntaxPreserve(source))
 	parsed, err := parser.ParseFile(fileSet, filename, "package "+goPackageName(packageName)+"\n"+goSource, parser.ParseComments)
 	if err != nil {
 		return nil, nil
 	}
 	return parsed.Decls, fileSet
+}
+
+func rewriteLogicalImportsForGoParser(source string) string {
+	tokens, err := LexSource("<source>", source)
+	if err != nil {
+		return source
+	}
+	type edit struct {
+		start, end int
+		text       string
+	}
+	edits := []edit{}
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Text != "import" {
+			continue
+		}
+		cursor := nextSignificantToken(tokens, index+1)
+		if cursor >= len(tokens) {
+			continue
+		}
+		grouped := tokens[cursor].Text == "("
+		if grouped {
+			cursor++
+		}
+		for cursor < len(tokens) {
+			cursor = nextSignificantToken(tokens, cursor)
+			if cursor >= len(tokens) || (grouped && tokens[cursor].Text == ")") {
+				break
+			}
+			name, importPath, next, logical, ok := sourceImportSpec(tokens, cursor)
+			if !ok || next <= cursor {
+				break
+			}
+			if logical {
+				startToken := nextSignificantToken(tokens, cursor)
+				endToken := nextSignificantToken(tokens, next-1)
+				alias := ""
+				if name != nil {
+					alias = name.Name + " "
+				}
+				edits = append(edits, edit{
+					start: tokens[startToken].Span.Start,
+					end:   tokens[endToken].Span.End,
+					text:  alias + strconv.Quote(importPath),
+				})
+			}
+			cursor = next
+			if !grouped {
+				break
+			}
+		}
+	}
+	if len(edits) == 0 {
+		return source
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, change := range edits {
+		source = source[:change.start] + change.text + source[change.end:]
+	}
+	return source
 }
 
 func parseEmbed(src string, start int) (*EmbedDecl, int, error) {

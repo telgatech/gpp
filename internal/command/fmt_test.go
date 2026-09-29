@@ -77,3 +77,46 @@ func TestRunFmtCheckStdoutAndAtomicRewrite(t *testing.T) {
 		t.Fatalf("--stdout returned unexpected output: code=%d output=%q", code, output)
 	}
 }
+
+func TestRunFmtFormatsExceptionHandlers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.gpp")
+	original := `package main
+func main(){
+
+try{
+
+work()
+} catch ValidationError,  PermissionError e{
+handle(e)
+} catch e{
+handle(e)
+} finally{
+cleanup()
+}
+
+}
+`
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, output := captureFmtOutput(t, func() int {
+		return runFmt([]string{"--stdout", path})
+	})
+	want := `package main
+func main() {
+    try {
+        work()
+    } catch ValidationError, PermissionError e {
+        handle(e)
+    } catch e {
+        handle(e)
+    } finally {
+        cleanup()
+    }
+}
+`
+	if code != 0 || output != want {
+		t.Fatalf("fmt did not format exception handlers: code=%d\n%s", code, output)
+	}
+}

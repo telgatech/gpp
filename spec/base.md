@@ -25,13 +25,18 @@ Packages
 
 
 Imports
-- Use Go's import syntax unchanged, including single imports, grouped imports,
-  aliases, dot imports, and blank imports:
+- Use Go's quoted import syntax unchanged for standard-library and external
+  Go packages, including single imports, grouped imports, aliases, dot imports,
+  and blank imports:
     import "fmt"
     import (
         "net/http"
         j "encoding/json"
     )
+- Import local Go++ packages by their logical dotted name, such as
+  `import telga.web`; the compiler maps that name to the configured generated
+  Go module path. Generated output paths are compiler internals and cannot be
+  imported directly from Go++ source.
 - Preserve seamless access to the Go standard library and normal Go packages.
 
 Classes
@@ -48,10 +53,19 @@ Classes
 - Methods declared inside classes transpile to Go receiver methods.
 - Implicit receiver name:
     this
+- Within an instance method, an unqualified class field reference is resolved
+  against the receiver and lowered as `this.Field`; explicit `this.Field` is
+  also valid.
+- An unqualified call to another instance method resolves against the same
+  receiver. Static methods and top-level functions do not have an implicit
+  instance receiver.
+- Parameters and local variables shadow class members with the same name.
 - Example:
     func Greet() string
   becomes:
     func (this *Person) Greet() string
+  and a body reference to `Name` becomes `this.Name` when no local or parameter
+  named `Name` is in scope.
 
 Inheritance
 - Support inheritance syntax:

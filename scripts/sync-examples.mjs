@@ -27,6 +27,7 @@ for (const line of readme.split('\n')) {
 if (currentName) descriptions.set(currentName, currentDescription.trim())
 
 const companionFiles = new Map([
+  ['foo.gpp', ['foo.bar.gpp']],
   ['embed.gpp', ['embed_assets/index.html', 'embed_schema.sql']],
   ['tpl.gpp', ['tpl_external.gpp.tpl']],
 ])
@@ -64,7 +65,7 @@ await mkdir(destinationDir, { recursive: true })
 
 const entries = []
 const rootFiles = (await readdir(sourceDir))
-  .filter((name) => name.endsWith('.gpp') && name !== 'main.gpp')
+  .filter((name) => name.endsWith('.gpp') && name !== 'main.gpp' && name !== 'foo.bar.gpp')
   .sort((left, right) => left.localeCompare(right))
 
 for (const file of rootFiles) {
@@ -77,7 +78,7 @@ for (const file of rootFiles) {
     ? ['The YAML portion requires `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module before running the example.']
     : []
   const command = file === 'foo.gpp'
-    ? 'gpp build examples/foo.gpp'
+    ? 'gpp run examples/foo.gpp examples/foo.bar.gpp'
     : file === 'testing.gpp'
       ? 'gpp test examples/testing.gpp'
       : `gpp run examples/${file}`
