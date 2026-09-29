@@ -205,3 +205,16 @@ func TestDefaultGeneratedWorkspacesDifferByProject(t *testing.T) {
 		t.Fatalf("different projects share generated workspace %q", first)
 	}
 }
+
+func TestDefaultBuildBinaryNameUsesTargetPlatformExtension(t *testing.T) {
+	sources := []string{filepath.Join(t.TempDir(), "hello.gpp")}
+	if got := defaultBuildBinaryName(sources, "windows"); got != "hello.exe" {
+		t.Fatalf("Windows default binary name = %q, want hello.exe", got)
+	}
+	if got := defaultBuildBinaryName(sources, "linux"); got != "hello" {
+		t.Fatalf("Linux default binary name = %q, want hello", got)
+	}
+	if got := defaultBuildBinaryName([]string{filepath.Join(t.TempDir(), "hello.exe.gpp")}, "windows"); got != "hello.exe" {
+		t.Fatalf("Windows source already ending in .exe got %q", got)
+	}
+}

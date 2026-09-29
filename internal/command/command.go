@@ -316,10 +316,7 @@ func runBuild(args []string) int {
 
 	binaryPath := options.binaryPath
 	if binaryPath == "" {
-		binaryPath = defaultBinaryName(sources)
-		if binaryPath == "." || binaryPath == string(filepath.Separator) || binaryPath == "" {
-			binaryPath = "gpp-app"
-		}
+		binaryPath = defaultBuildBinaryName(sources, buildTargetOS())
 	}
 	absoluteBinary, err := filepath.Abs(binaryPath)
 	if err != nil {
@@ -1477,6 +1474,24 @@ func defaultBinaryName(sources []string) string {
 		}
 	}
 	return filepath.Base(mustGetwd())
+}
+
+func defaultBuildBinaryName(sources []string, targetOS string) string {
+	name := defaultBinaryName(sources)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		name = "gpp-app"
+	}
+	if strings.EqualFold(targetOS, "windows") && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		name += ".exe"
+	}
+	return name
+}
+
+func buildTargetOS() string {
+	if target := strings.TrimSpace(os.Getenv("GOOS")); target != "" {
+		return target
+	}
+	return runtime.GOOS
 }
 
 func runInit(args []string) int {
