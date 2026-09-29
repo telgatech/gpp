@@ -97,7 +97,7 @@ go install github.com/telgatech/gpp@latest
 It provides one `gpp` executable with project commands:
 
 ```text
-gpp init|build|run|clean|fmt|test|doc|env|doctor|version
+gpp init|compile|build|run|clean|fmt|test|doc|env|doctor|version|lsp
 ```
 
 Create and run a starter project:
@@ -107,6 +107,10 @@ gpp init hello
 cd hello
 gpp run .
 ```
+
+`gpp init` creates a root `go.mod`, runs `go mod tidy`, and initializes a Git
+repository with an `init` commit when the target is not already inside a Git
+worktree. The initial commit includes only the generated project files.
 
 Build a native executable. Intermediate Go source remains in the hidden
 compiler workspace rather than beside the Go++ source:

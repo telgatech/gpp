@@ -87,6 +87,8 @@ func Run(args []string) int {
 		return runVersion(commandArgs)
 	case "lsp":
 		return runLSP(commandArgs)
+	case "compile":
+		return runCompile(commandArgs)
 	case "help", "-h", "--help":
 		if len(commandArgs) > 0 {
 			return commandHelp(commandArgs[0])
@@ -97,7 +99,7 @@ func Run(args []string) int {
 
 	// Preserve the original transpiler invocation while the subcommand CLI is
 	// adopted: `gpp file.gpp` and `gpp -module example.com/app file.gpp`.
-	if commandName == "compile" || isGoPlusSource(commandName) || strings.HasPrefix(commandName, "-") {
+	if isGoPlusSource(commandName) || strings.HasPrefix(commandName, "-") {
 		return runCompile(args)
 	}
 
@@ -113,6 +115,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("    init       create a Go++ project")
+	fmt.Println("    compile    compile Go++ source to Go")
 	fmt.Println("    build      build a Go++ program")
 	fmt.Println("    run        build and run a Go++ program")
 	fmt.Println("    clean      remove generated build artifacts")
@@ -131,7 +134,8 @@ func commandHelp(name string) int {
 		fmt.Println("Usage: gpp [options] <file.gpp|file.gpp.tpl|directory>")
 		printCompileFlags()
 	case "init":
-		fmt.Println("Usage: gpp init [directory]")
+		fmt.Println("Usage: gpp init [-module path] [directory]")
+		fmt.Println("  -module path  Go module path (defaults to example.com/<directory>)")
 	case "build":
 		fmt.Println("Usage: gpp build [options] <file.gpp|file.gpp.tpl|directory>")
 		fmt.Println("  -o path          output executable path")
@@ -1341,32 +1345,163 @@ func defaultBinaryName(sources []string) string {
 }
 
 func runInit(args []string) int {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		return commandHelp("init")
-	}
-	if len(args) > 1 {
-		fatalf("init accepts at most one directory")
-		return 2
-	}
+	modulePath := ""
 	target := "."
-	if len(args) == 1 {
-		target = args[0]
+	targetSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "-h" || arg == "--help":
+			return commandHelp("init")
+		case arg == "-module" || arg == "--module":
+			if index+1 >= len(args) {
+				return reportError(errors.New("-module requires a module path"))
+			}
+			index++
+			modulePath = args[index]
+		case strings.HasPrefix(arg, "-module=") || strings.HasPrefix(arg, "--module="):
+			modulePath = strings.SplitN(arg, "=", 2)[1]
+		case strings.HasPrefix(arg, "-"):
+			return reportError(fmt.Errorf("unknown init option %q", arg))
+		default:
+			if targetSet {
+				return reportError(errors.New("init accepts at most one directory"))
+			}
+			target = arg
+			targetSet = true
+		}
 	}
 	if err := os.MkdirAll(target, 0755); err != nil {
 		return reportError(err)
 	}
-	mainPath := filepath.Join(target, "main.gpp")
+	absoluteTarget, err := filepath.Abs(target)
+	if err != nil {
+		return reportError(err)
+	}
+	mainPath := filepath.Join(absoluteTarget, "main.gpp")
 	if _, err := os.Stat(mainPath); err == nil {
 		return reportError(fmt.Errorf("refusing to overwrite existing %s", mainPath))
 	} else if !os.IsNotExist(err) {
 		return reportError(err)
 	}
-	const starter = "import \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello from Go++\")\n}\n"
+	goModPath := filepath.Join(absoluteTarget, "go.mod")
+	if _, err := os.Stat(goModPath); err == nil {
+		return reportError(fmt.Errorf("refusing to overwrite existing %s", goModPath))
+	} else if !os.IsNotExist(err) {
+		return reportError(err)
+	}
+	if err := requireSupportedGo(); err != nil {
+		return reportError(err)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return reportError(fmt.Errorf("gpp init requires Git to initialize the project: %w", err))
+	}
+	if modulePath == "" {
+		modulePath = defaultProjectModulePath(absoluteTarget)
+	}
+	if err := runGoCommand(absoluteTarget, "mod", "init", modulePath); err != nil {
+		return reportError(err)
+	}
+	const starter = "import \"fmt\"\n\nfunc main() {\n    fmt.Println(\"Hello from Go++\")\n}\n"
 	if err := os.WriteFile(mainPath, []byte(starter), 0644); err != nil {
 		return reportError(err)
 	}
+	if err := ensureProjectGitignore(absoluteTarget); err != nil {
+		return reportError(err)
+	}
+	if err := runGoCommand(absoluteTarget, "mod", "tidy"); err != nil {
+		return reportError(err)
+	}
+	gitRoot := findGitRoot(absoluteTarget)
+	if gitRoot == "" {
+		if err := runGitCommand(absoluteTarget, "init"); err != nil {
+			return reportError(err)
+		}
+		files := []string{"main.gpp", "go.mod", ".gitignore"}
+		if _, err := os.Stat(filepath.Join(absoluteTarget, "go.sum")); err == nil {
+			files = append(files, "go.sum")
+		}
+		if err := runGitCommand(absoluteTarget, append([]string{"add", "--"}, files...)...); err != nil {
+			return reportError(err)
+		}
+		if err := runGitCommand(absoluteTarget, "commit", "-m", "init"); err != nil {
+			return reportError(fmt.Errorf("project created and staged, but the initial Git commit failed: %w", err))
+		}
+	} else {
+		fmt.Printf("using existing Git repository at %s; leaving its history unchanged\n", gitRoot)
+	}
 	fmt.Printf("created %s\n", mainPath)
 	return 0
+}
+
+func defaultProjectModulePath(directory string) string {
+	name := strings.ToLower(filepath.Base(filepath.Clean(directory)))
+	name = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			return r
+		}
+		return '-'
+	}, name)
+	name = strings.Trim(name, ".-_")
+	if name == "" {
+		name = "app"
+	}
+	return "example.com/" + name
+}
+
+func ensureProjectGitignore(directory string) error {
+	path := filepath.Join(directory, ".gitignore")
+	contents, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	present := map[string]bool{}
+	for _, line := range strings.Split(string(contents), "\n") {
+		present[strings.TrimSpace(line)] = true
+	}
+	var missing []string
+	for _, entry := range []string{".gpp/", "/main", "/main.exe"} {
+		if !present[entry] && !(entry == ".gpp/" && present[".gpp"]) {
+			missing = append(missing, entry)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if len(contents) > 0 && contents[len(contents)-1] != '\n' {
+		contents = append(contents, '\n')
+	}
+	contents = append(contents, []byte(strings.Join(missing, "\n")+"\n")...)
+	return os.WriteFile(path, contents, 0644)
+}
+
+func findGitRoot(directory string) string {
+	for current := filepath.Clean(directory); ; current = filepath.Dir(current) {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+	}
+}
+
+func runGitCommand(directory string, args ...string) error {
+	commandArgs := append([]string{"-C", directory}, args...)
+	command := exec.Command("git", commandArgs...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message != "" {
+			return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, message)
+		}
+		return fmt.Errorf("git %s failed: %w", strings.Join(args, " "), err)
+	}
+	if len(output) > 0 {
+		_, _ = os.Stdout.Write(output)
+	}
+	return nil
 }
 
 func runClean(args []string) int {

@@ -59,6 +59,7 @@ All functionality should be exposed as subcommands:
 
 ```text
 gpp init
+gpp compile
 gpp build
 gpp run
 gpp clean
@@ -67,6 +68,8 @@ gpp test
 gpp env
 gpp doctor
 gpp version
+gpp doc
+gpp lsp
 ```
 
 This keeps:
@@ -251,7 +254,10 @@ gpp version
 
 # `gpp init`
 
-Creates a new Go++ project.
+Creates a new Go++ project with a starter source file, root Go module, and Git
+history. The default module path is `example.com/<directory-name>` with the
+directory name normalized for use as a module component. Pass `-module` to
+choose a different path.
 
 Examples:
 
@@ -260,8 +266,27 @@ gpp init hello
 ```
 
 ```bash
+gpp init -module github.com/acme/hello hello
+```
+
+```bash
 gpp init .
 ```
+
+`gpp init` refuses to overwrite an existing `main.gpp` or `go.mod`. It creates
+`main.gpp` and `.gitignore` entries for `.gpp/` and the default `main` build
+output, runs `go mod init`, then runs `go mod tidy` in the project root. The initial module contains no Go
+packages yet, so Go may print its normal “matched no packages” warning.
+
+If the target is outside an existing Git worktree, `gpp init` runs `git init`,
+stages only the generated starter files (`main.gpp`, `go.mod`, `.gitignore`, and
+`go.sum` when present), and creates the first commit with the message `init`.
+It never stages unrelated files. If the target is already inside a Git
+worktree, the command does not create a nested repository or stage or commit
+any files. Git
+must be installed and configured with an author name and email for the initial
+commit; if the commit fails, the scaffold remains and its generated files stay
+staged.
 
 The default starter should remain intentionally minimal.
 
@@ -283,14 +308,8 @@ package main
 
 should be required because Go++ defaults to `main`.
 
-Possible later options:
-
-```bash
-gpp init --http
-gpp init --module example.com/foo
-```
-
-but these are not required for the first release.
+The command requires a supported Go toolchain because it creates and tidies the
+project's module.
 
 ---
 

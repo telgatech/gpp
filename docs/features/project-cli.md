@@ -6,8 +6,10 @@ hidden workspace so a project can remain organized around `.gpp` source.
 
 ## Compare project workflows
 
-Go projects usually use Go commands directly. A Go++ project adds `gpp` for
-steps that understand `.gpp` files:
+Go projects usually use Go commands directly. `gpp init` creates a starter
+source file and module, tidies the module, and creates an initial Git commit
+for a new repository. A Go++ project then uses `gpp` for steps that understand
+`.gpp` files:
 
 ::: code-group
 ```sh [Go++]
@@ -19,6 +21,10 @@ gpp build -o ./hello .
 
 ```sh [Go]
 go mod init example.com/hello
+go mod tidy
+git init
+git add main.go go.mod go.sum
+git commit -m init
 go run .
 go build -o ./hello .
 ```
