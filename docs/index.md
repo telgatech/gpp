@@ -3,7 +3,7 @@ layout: home
 
 hero:
   text: Go++
-  tagline: Gives Go superpowers — classes, polymorphism, overloading, multiple inheritance, exception handling, extension methods, serialization, annotations, records and more!
+  tagline: "Gives Go superpowers: classes, polymorphism, overloading, multiple inheritance, exception handling, extension methods, serialization, annotations, records and more!"
   image:
     src: /go-gopher-superman.png
     alt: Go's blue gopher mascot flying upward with a red cape

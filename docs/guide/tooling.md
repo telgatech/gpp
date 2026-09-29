@@ -50,11 +50,18 @@ rename, symbols, formatting, and signature help. Open-document overlays stay
 in memory, so editor feedback does not require a Go backend build on every
 change.
 
+## Visual Studio Code syntax highlighting
+
+For Go++ syntax highlighting in Visual Studio Code, see the
+[Go++ VS Code extension](https://github.com/telgatech/gpp-vscode).
+
 ## Diagnostics
 
-Compiler errors point back to the original `.gpp` source using source spans,
-rather than asking users to edit generated Go. If a backend Go error remains,
-the compiler maps it back to the closest available Go++ location.
+When compilation fails, the compiler should point to the offending line in the
+original `.gpp` source, including when the error comes from generated Go. You
+should not have to track down the corresponding generated file yourself. If a
+diagnostic points to the wrong line or only points into generated Go, please
+raise a ticket with the source and full error output so it can be fixed.
 
 ## Developing this documentation site
 
