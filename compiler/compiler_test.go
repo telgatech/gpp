@@ -480,8 +480,110 @@ func main() {
 	if strings.HasPrefix(string(output), "SKIP:") {
 		t.Skipf("loopback sockets unavailable: %s", output)
 	}
-	if string(output) != "200 shared Go\nbefore-listen,after-listen,before-request,route,after-request,before-shutdown,after-shutdown\n" {
+	result := string(output)
+	if !strings.Contains(result, "gpp/http: listening on 127.0.0.1:") {
+		t.Fatalf("server did not report its actual listener address:\n%s", output)
+	}
+	if !strings.Contains(result, "200 shared Go\nbefore-listen,after-listen,before-request,route,after-request,before-shutdown,after-shutdown\n") {
 		t.Fatalf("unexpected HTTP response:\n%s", output)
+	}
+}
+
+func TestCompileFilesSchedulesAnnotatedCronFunctions(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+	cron "gpp/cron"
+)
+
+var runs int
+
+func Pulse(ctx context.Context) error @{cron.Every(20 * time.Millisecond)} {
+	runs++
+	return nil
+}
+
+func Nightly(ctx context.Context) error @{cron.Cron("0 2 * * *")} {
+	return nil
+}
+
+func main() {
+	time.Sleep(50 * time.Millisecond)
+	if runs != 0 { panic("cron job ran before Start") }
+	if err := cron.Start(); err != nil { panic(err) }
+	time.Sleep(100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := cron.Stop(ctx); err != nil { panic(err) }
+	fmt.Println(runs > 0)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	cronTests := `package cron
+
+import (
+	"testing"
+	"time"
+)
+
+func TestCompiledCronFieldMatching(t *testing.T) {
+	schedule, err := parseCronSchedule("*/15 9-17 * * 1-5")
+	if err != nil { t.Fatal(err) }
+	if !schedule.matches(time.Date(2026, time.September, 28, 9, 15, 0, 0, time.Local)) {
+		t.Fatal("expected a matching weekday time")
+	}
+	if schedule.matches(time.Date(2026, time.September, 28, 9, 10, 0, 0, time.Local)) {
+		t.Fatal("unexpected match outside the minute step")
+	}
+
+	dayOrWeekday, err := parseCronSchedule("0 0 1 * 1")
+	if err != nil { t.Fatal(err) }
+	if !dayOrWeekday.matches(time.Date(2026, time.June, 8, 0, 0, 0, 0, time.Local)) {
+		t.Fatal("expected a match when only the weekday field matches")
+	}
+	if dayOrWeekday.matches(time.Date(2026, time.June, 2, 0, 0, 0, 0, time.Local)) {
+		t.Fatal("unexpected match when neither day field matches")
+	}
+}
+
+func TestCompiledCronRejectsMalformedSchedules(t *testing.T) {
+	for _, expression := range []string{"", "60 * * * *", "@every 0s", "0 0 * * 8"} {
+		if _, err := parseCronSchedule(expression); err == nil {
+			t.Errorf("expected %q to be rejected", expression)
+		}
+	}
+}
+`
+	cronTestPath := filepath.Join(outputDir, "gpp", "cron", "cron_test.go")
+	if err := os.WriteFile(cronTestPath, []byte(cronTests), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cronTestCommand := exec.Command("go", "test", "./gpp/cron")
+	cronTestCommand.Dir = outputDir
+	cronTestCommand.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := cronTestCommand.CombinedOutput(); err != nil {
+		t.Fatalf("generated cron package tests failed: %v\n%s", err, output)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated cron program did not run: %v\n%s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "true" {
+		t.Fatalf("annotated cron function was not run:\n%s", output)
 	}
 }
 
@@ -745,7 +847,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
     }
 
     func Accepted(ctx *http.Context) error @{http.GET("/accepted")} {
-        return ctx.JSON(202, record(ok: true))
+        return ctx.JSON(202, record(OK: true))
     }
 
     func View(ctx *http.Context) error @{http.GET("/view")} {
@@ -835,7 +937,7 @@ func main() {
 		"/broken 500 false false true false false true",
 		"<p>hello</p>",
 		"<h1>selected by request path</h1>",
-		`{"ok":true}`,
+		`{"OK":true}`,
 	} {
 		if !strings.Contains(result, expected) {
 			t.Fatalf("HTTP response helper output missing %q:\n%s", expected, output)

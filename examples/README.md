@@ -58,6 +58,8 @@ The examples cover:
 - `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed,
   multi-type, and catch-all handlers, `finally`, custom Go++ errors, and
   explicit error capture.
+- `cron.gpp` — interval and full five-field cron schedules, explicit scheduler
+  startup, context-aware jobs, and graceful shutdown.
 - `expr_catch.gpp` — expression-level error fallback with lazy fallback
   evaluation and chained `??` operators.
 - `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,

@@ -14,14 +14,9 @@ template ErrorPage(data any) {
 	<p>{{.Path}}</p>
 }
 
-class App : http.Server @{http.IP("127.0.0.1"), http.Port(9000), http.Prefix("/api"), http.OpenAPI, http.Swagger} {
+class App : http.Server @{http.IP("127.0.0.1"),  http.Prefix("/api"), http.OpenAPI, http.Swagger} {
 	func ErrorTemplate() string {
 		return "ErrorPage"
-	}
-
-	func BeforeListen() error {
-		fmt.Println("server starting on", this.HTTPServer.Addr)
-		return nil
 	}
 
 	func BeforeRequest(ctx *http.Context) error {

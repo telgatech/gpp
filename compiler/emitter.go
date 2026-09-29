@@ -966,11 +966,16 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			if err != nil {
 				return "", err
 			}
+			cronRegistration, err := cronFunctionRegistrationSource(d, context)
+			if err != nil {
+				return "", err
+			}
 			emitSourceDirective(&out, sourceDirectivePath(file), d.SourceLine)
 			out.WriteString(code)
 			if !strings.HasSuffix(code, "\n") {
 				out.WriteByte('\n')
 			}
+			out.WriteString(cronRegistration)
 
 		case *GoDecl:
 			structured, err := emitStructuredGoDecls(file, d, context, interpolationName)

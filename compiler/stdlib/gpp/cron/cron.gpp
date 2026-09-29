@@ -1,0 +1,296 @@
+package gpp.cron
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type JobFunc func(context.Context) error
+
+type registeredJob struct {
+	name       string
+	expression string
+	interval   time.Duration
+	every      bool
+	function   JobFunc
+}
+
+type parsedSchedule struct {
+	fields [5]cronField
+	every  time.Duration
+}
+
+type cronField struct {
+	values map[int]bool
+	star   bool
+}
+
+type runningScheduler struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+var cronState = struct {
+	sync.Mutex
+	jobs    []registeredJob
+	running *runningScheduler
+}{}
+
+// Register is emitted by the Go++ compiler for each function with a Cron
+// annotation. Applications should call Start rather than registering jobs
+// directly.
+func Register(name string, expression string, function JobFunc) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("cron job name cannot be empty")
+	}
+	if function == nil {
+		return fmt.Errorf("cron job %q has no function", name)
+	}
+	cronState.Lock()
+	defer cronState.Unlock()
+	if cronState.running != nil {
+		return errors.New("cannot register cron jobs after Start")
+	}
+	for _, job := range cronState.jobs {
+		if job.name == name {
+			return fmt.Errorf("duplicate cron job %q", name)
+		}
+	}
+	cronState.jobs = append(cronState.jobs, registeredJob{name: name, expression: expression, function: function})
+	return nil
+}
+
+// RegisterEvery is emitted by the Go++ compiler for functions annotated with
+// Every. Applications should use the annotation and call Start to run jobs.
+func RegisterEvery(name string, interval time.Duration, function JobFunc) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("cron job name cannot be empty")
+	}
+	if function == nil {
+		return fmt.Errorf("cron job %q has no function", name)
+	}
+	cronState.Lock()
+	defer cronState.Unlock()
+	if cronState.running != nil {
+		return errors.New("cannot register cron jobs after Start")
+	}
+	for _, job := range cronState.jobs {
+		if job.name == name {
+			return fmt.Errorf("duplicate cron job %q", name)
+		}
+	}
+	cronState.jobs = append(cronState.jobs, registeredJob{name: name, interval: interval, every: true, function: function})
+	return nil
+}
+
+// Start validates all registered schedules and starts them in the background.
+// It returns immediately; call Stop during application shutdown.
+func Start() error {
+	cronState.Lock()
+	defer cronState.Unlock()
+	if cronState.running != nil {
+		return nil
+	}
+	jobs := append([]registeredJob(nil), cronState.jobs...)
+	schedules := make([]parsedSchedule, len(jobs))
+	for index, job := range jobs {
+		if job.every {
+			if job.interval <= 0 {
+				return fmt.Errorf("cron job %q interval must be positive", job.name)
+			}
+			schedules[index] = parsedSchedule{every: job.interval}
+		} else {
+			schedule, err := parseCronSchedule(job.expression)
+			if err != nil {
+				return fmt.Errorf("cron job %q: %w", job.name, err)
+			}
+			schedules[index] = schedule
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	running := &runningScheduler{cancel: cancel, done: make(chan struct{})}
+	cronState.running = running
+	var workers sync.WaitGroup
+	for index, job := range jobs {
+		workers.Add(1)
+		go runCronJob(ctx, job, schedules[index], &workers)
+	}
+	go func() {
+		workers.Wait()
+		close(running.done)
+	}()
+	return nil
+}
+
+// Stop cancels scheduled work and waits for running jobs to return or ctx to
+// expire. A later Start call may start the registered jobs again.
+func Stop(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("cron.Stop requires a context")
+	}
+	cronState.Lock()
+	running := cronState.running
+	if running == nil {
+		cronState.Unlock()
+		return nil
+	}
+	running.cancel()
+	cronState.Unlock()
+
+	select {
+	case <-running.done:
+		cronState.Lock()
+		if cronState.running == running {
+			cronState.running = nil
+		}
+		cronState.Unlock()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func runCronJob(ctx context.Context, job registeredJob, schedule parsedSchedule, workers *sync.WaitGroup) {
+	defer workers.Done()
+	var running atomic.Bool
+	run := func() {
+		if ctx.Err() != nil {
+			return
+		}
+		if !running.CompareAndSwap(false, true) {
+			log.Printf("gpp/cron: skipped %s because its previous run is still active", job.name)
+			return
+		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			defer running.Store(false)
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("gpp/cron: job %s panicked: %v", job.name, recovered)
+				}
+			}()
+			if err := job.function(ctx); err != nil {
+				log.Printf("gpp/cron: job %s failed: %v", job.name, err)
+			}
+		}()
+	}
+
+	if schedule.every > 0 {
+		ticker := time.NewTicker(schedule.every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}
+
+	for {
+		now := time.Now()
+		next := now.Truncate(time.Minute).Add(time.Minute)
+		timer := time.NewTimer(time.Until(next))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			if schedule.matches(next) {
+				run()
+			}
+		}
+	}
+}
+
+func (schedule parsedSchedule) matches(now time.Time) bool {
+	values := [5]int{now.Minute(), now.Hour(), now.Day(), int(now.Month()), int(now.Weekday())}
+	for _, index := range []int{0, 1, 3} {
+		if !schedule.fields[index].values[values[index]] {
+			return false
+	}
+	}
+	dom := schedule.fields[2]
+	dow := schedule.fields[4]
+	if !dom.star && !dow.star {
+		return dom.values[values[2]] || dow.values[values[4]]
+	}
+	return dom.values[values[2]] && dow.values[values[4]]
+}
+
+func parseCronSchedule(expression string) (parsedSchedule, error) {
+	var result parsedSchedule
+	expression = strings.TrimSpace(expression)
+	parts := strings.Fields(expression)
+	if len(parts) != 5 {
+		return result, fmt.Errorf("expected five cron fields, got %q", expression)
+	}
+	ranges := [5][2]int{{0, 59}, {0, 23}, {1, 31}, {1, 12}, {0, 6}}
+	for index, part := range parts {
+		field, err := parseCronField(part, ranges[index][0], ranges[index][1])
+		if err != nil {
+			return result, fmt.Errorf("invalid field %d (%q): %w", index+1, part, err)
+		}
+		result.fields[index] = field
+	}
+	return result, nil
+}
+
+func parseCronField(source string, minimum int, maximum int) (cronField, error) {
+	field := cronField{values: map[int]bool{}, star: source == "*"}
+	for _, item := range strings.Split(source, ",") {
+		base, stepText, hasStep := strings.Cut(item, "/")
+		step := 1
+		if hasStep {
+			parsed, err := strconv.Atoi(stepText)
+			if err != nil || parsed < 1 {
+				return field, fmt.Errorf("step must be a positive integer")
+			}
+			step = parsed
+		}
+		start, end := minimum, maximum
+		if base != "*" {
+			if strings.Contains(base, "-") {
+				bounds := strings.Split(base, "-")
+				if len(bounds) != 2 {
+					return field, fmt.Errorf("invalid range %q", base)
+				}
+				var err error
+				start, err = strconv.Atoi(bounds[0])
+				if err != nil {
+					return field, fmt.Errorf("invalid range %q", base)
+				}
+				end, err = strconv.Atoi(bounds[1])
+				if err != nil {
+					return field, fmt.Errorf("invalid range %q", base)
+				}
+			} else {
+				value, err := strconv.Atoi(base)
+				if err != nil {
+					return field, fmt.Errorf("expected a number, range, or wildcard")
+				}
+				start = value
+				if !hasStep {
+					end = value
+				}
+			}
+		}
+		if start < minimum || end > maximum || start > end {
+			return field, fmt.Errorf("value must be between %d and %d", minimum, maximum)
+		}
+		for value := start; value <= end; value += step {
+			field.values[value] = true
+		}
+	}
+	return field, nil
+}

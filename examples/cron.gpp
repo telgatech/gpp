@@ -1,0 +1,33 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+	cron "gpp/cron"
+)
+
+var runs int
+
+func Heartbeat(ctx context.Context) error @{cron.Every(time.Second)} {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	runs++
+	fmt.Println("scheduled run", runs)
+	return nil
+}
+
+func WeekdayMaintenance(ctx context.Context) error @{cron.Cron("*/15 9-17 * * 1-5")} {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	fmt.Println("weekday maintenance")
+	return nil
+}
+
+func main() {
+	cron.Start()
+	time.Sleep(2200 * time.Millisecond)
+	cron.Stop(context.Background())
+}

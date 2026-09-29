@@ -78,6 +78,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/guide/standard-library' },
             { text: 'Prelude (implicit)', link: '/guide/standard-library/prelude' },
+            { text: 'gpp/cron', link: '/guide/standard-library/cron' },
             { text: 'gpp/orm', link: '/guide/standard-library/orm' },
             {
               text: 'gpp/http',

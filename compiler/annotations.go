@@ -191,6 +191,12 @@ func validateAnnotationArguments(use AnnotationUse, declaration *AnnotationDecl)
 		actual := annotationExpressionTypeKey(parsed)
 		expected := strings.Join(strings.Fields(parameters[index].typeText()), " ")
 		if actual == "" {
+			if declaration.Package == "gpp.cron" && declaration.Name == "Every" && expected == "time.Duration" {
+				// Duration expressions commonly combine imported constants such
+				// as time.Second. Their exact types are resolved by Go when the
+				// generated RegisterEvery call is compiled.
+				continue
+			}
 			if isSelectorAnnotationExpression(parsed) && isNamedAnnotationType(expected) {
 				// Imported enum members are selectors (for example
 				// test.High), but their declared enum type is resolved in the

@@ -362,11 +362,11 @@ func runRun(args []string) int {
 	if err := runGoCommand(options.output, "mod", "tidy"); err != nil {
 		return reportError(err)
 	}
-	goArgs := []string{"run", "."}
+	programArgs := []string(nil)
 	if separator < len(args) {
-		goArgs = append(goArgs, args[separator+1:]...)
+		programArgs = args[separator+1:]
 	}
-	if err := runGoCommand(options.output, goArgs...); err != nil {
+	if err := runGoProgram(options.output, programArgs); err != nil {
 		return reportError(err)
 	}
 	return 0
@@ -1176,6 +1176,55 @@ func runGoCommand(directory string, args ...string) error {
 	}
 	if stderr.Len() > 0 {
 		_, _ = os.Stderr.Write(stderr.Bytes())
+	}
+	return nil
+}
+
+// runGoProgram builds the generated package with captured compiler output,
+// then streams the running program directly to the terminal. Capturing `go
+// run` as one command hides output from long-running processes (including HTTP
+// server startup logs) until they exit.
+func runGoProgram(directory string, arguments []string) error {
+	goPath, err := findGo()
+	if err != nil {
+		return err
+	}
+	binary, err := os.CreateTemp("", "gpp-run-*")
+	if err != nil {
+		return err
+	}
+	binaryPath := binary.Name()
+	if err := binary.Close(); err != nil {
+		_ = os.Remove(binaryPath)
+		return err
+	}
+	defer os.Remove(binaryPath)
+
+	var stdout, stderr bytes.Buffer
+	build := exec.Command(goPath, "build", "-o", binaryPath, ".")
+	build.Dir = directory
+	build.Stdout = &stdout
+	build.Stderr = &stderr
+	if err := build.Run(); err != nil {
+		if stdout.Len() > 0 {
+			_, _ = os.Stdout.Write(stdout.Bytes())
+		}
+		if output := cleanBackendOutput(stderr.String(), directory); output != "" {
+			return backendDiagnosticError{output: output}
+		}
+		return fmt.Errorf("Go backend failed: %w", err)
+	}
+
+	program := exec.Command(binaryPath, arguments...)
+	program.Dir = directory
+	program.Stdout = os.Stdout
+	program.Stderr = os.Stderr
+	if err := program.Run(); err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			return fmt.Errorf("program exited with status %d", exitError.ExitCode())
+		}
+		return err
 	}
 	return nil
 }

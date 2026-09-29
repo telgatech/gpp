@@ -1,0 +1,8 @@
+package gpp.cron
+
+import "time"
+
+var _ time.Duration
+
+annotation Cron(expression string) on function
+annotation Every(interval time.Duration) on function

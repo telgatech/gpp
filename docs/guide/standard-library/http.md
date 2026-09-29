@@ -54,7 +54,9 @@ return server.ListenAndServe()
 ```
 :::
 
-`Listen()` creates the listener from the class configuration and runs the server. The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
+`Listen()` creates the listener from the class configuration and runs the server. Once it is ready, `gpp/http` logs the actual bound address automatically, including the assigned port when `Port(0)` (or the default ephemeral port) asks the OS to choose one. The resolved address is also available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`.
+
+The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
 
 **The two API-documentation annotations do a lot of work.** `http.OpenAPI` generates an OpenAPI 3.0.3 document for the declared routes at `/openapi.json`; `http.Swagger` serves the bundled Swagger UI at `/swagger` and connects it to that document. Open the UI, choose an operation, and use its **Try it out** control to send a request to the running API and inspect the response. You write no OpenAPI file, docs handler, Swagger page, JavaScript setup, or UI asset wiring. The same route annotations already used to run the service power this live API explorer; maintaining that infrastructure by hand can grow to hundreds or thousands of lines as an API expands.
 
