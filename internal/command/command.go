@@ -2,6 +2,8 @@ package command
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -178,7 +180,8 @@ func commandHelp(name string) int {
 
 func printCompileFlags() {
 	fmt.Println("  -module path      module path for generated Go code")
-	fmt.Println("  -output directory directory for generated Go code")
+	fmt.Println("  -output directory generated workspace (default: system cache)")
+	fmt.Println("  GPP_CACHE         environment variable for the cache root")
 	fmt.Println("  -no-prelude       disable the implicit Go++ prelude")
 	fmt.Println("  -no-stdlib        disable bundled official Go++ packages")
 }
@@ -189,7 +192,7 @@ func parseCompileFlags(name string, args []string, allowOutputBinary bool) (comp
 	flags.SetOutput(os.Stderr)
 	result := compileFlags{}
 	flags.StringVar(&result.module, "module", "generated", "module path for generated Go code")
-	flags.StringVar(&result.output, "output", ".gpp", "directory for generated Go code")
+	flags.StringVar(&result.output, "output", "", "directory for generated Go code (defaults to the system cache)")
 	flags.BoolVar(&result.noPrelude, "no-prelude", false, "disable the implicit Go++ prelude")
 	flags.BoolVar(&result.noStdlib, "no-stdlib", false, "disable bundled official Go++ packages")
 	if allowOutputBinary {
@@ -269,6 +272,9 @@ func runCompile(args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
+	if err := setDefaultOutput(&options, sources); err != nil {
+		return reportError(err)
+	}
 	if err := compileSources(sources, options, false, false); err != nil {
 		return reportError(err)
 	}
@@ -296,6 +302,9 @@ func runBuild(args []string) int {
 	}
 	sources, err := discoverSources(positional)
 	if err != nil {
+		return reportError(err)
+	}
+	if err := setDefaultOutput(&options, sources); err != nil {
 		return reportError(err)
 	}
 	if err := compileSources(sources, options, true, false); err != nil {
@@ -360,6 +369,9 @@ func runRun(args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
+	if err := setDefaultOutput(&options, sources); err != nil {
+		return reportError(err)
+	}
 	if err := compileSources(sources, options, true, false); err != nil {
 		return reportError(err)
 	}
@@ -410,6 +422,9 @@ func runTest(args []string) int {
 	}
 	sources, err := discoverSources(sourceArgs)
 	if err != nil {
+		return reportError(err)
+	}
+	if err := setDefaultOutput(&options, sources); err != nil {
 		return reportError(err)
 	}
 	selection, err := discoverTestSelection(sources, options.test)
@@ -1067,6 +1082,126 @@ func moduleRoot() string {
 	}
 }
 
+func gppCacheDirectory() (string, error) {
+	if configured := strings.TrimSpace(os.Getenv("GPP_CACHE")); configured != "" {
+		return filepath.Abs(configured)
+	}
+	userCache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(userCache, "gpp"), nil
+}
+
+func currentProjectRoot() string {
+	if root := moduleRoot(); root != "" {
+		return root
+	}
+	working, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return working
+}
+
+func setDefaultOutput(options *compileFlags, sources []string) error {
+	if options.output != "" {
+		return nil
+	}
+	root := sourceProjectRoot(sources)
+	output, err := defaultOutputForRoot(root)
+	if err != nil {
+		return err
+	}
+	options.output = output
+	return nil
+}
+
+func defaultOutputForRoot(root string) (string, error) {
+	if root == "" {
+		root = currentProjectRoot()
+	}
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	cache, err := gppCacheDirectory()
+	if err != nil {
+		return "", fmt.Errorf("resolve Go++ cache directory: %w", err)
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(absoluteRoot)))
+	return filepath.Join(cache, "workspaces", hex.EncodeToString(digest[:12])), nil
+}
+
+func sourceProjectRoot(sources []string) string {
+	if len(sources) == 0 {
+		return currentProjectRoot()
+	}
+	var module string
+	allShareModule := true
+	for _, source := range sources {
+		root := nearestModuleRoot(filepath.Dir(source))
+		if root == "" {
+			allShareModule = false
+			break
+		}
+		if module == "" {
+			module = root
+		} else if module != root {
+			allShareModule = false
+			break
+		}
+	}
+	if allShareModule && module != "" {
+		return module
+	}
+	if working, err := os.Getwd(); err == nil {
+		allWithinWorking := true
+		for _, source := range sources {
+			if !isWithin(working, source) {
+				allWithinWorking = false
+				break
+			}
+		}
+		if allWithinWorking {
+			return working
+		}
+	}
+	root := filepath.Dir(sources[0])
+	for _, source := range sources[1:] {
+		directory := filepath.Dir(source)
+		for root != directory && !isWithin(root, directory) {
+			parent := filepath.Dir(root)
+			if parent == root {
+				return currentProjectRoot()
+			}
+			root = parent
+		}
+		for !isWithin(root, directory) {
+			root = filepath.Dir(root)
+		}
+	}
+	return root
+}
+
+func nearestModuleRoot(directory string) string {
+	for {
+		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+			return directory
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return ""
+		}
+		directory = parent
+	}
+}
+
+func isWithin(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
 func goPackageName(packageName string) string {
 	parts := strings.Split(packageName, ".")
 	return parts[len(parts)-1]
@@ -1507,7 +1642,7 @@ func runGitCommand(directory string, args ...string) error {
 func runClean(args []string) int {
 	flags := flag.NewFlagSet("gpp clean", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	output := ".gpp"
+	output := ""
 	flags.StringVar(&output, "output", output, "directory for generated Go code")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1517,6 +1652,13 @@ func runClean(args []string) int {
 	}
 	if flags.NArg() != 0 {
 		return reportError(errors.New("clean does not accept source paths"))
+	}
+	if output == "" {
+		var err error
+		output, err = defaultOutputForRoot(currentProjectRoot())
+		if err != nil {
+			return reportError(err)
+		}
 	}
 	clean, err := filepath.Abs(output)
 	if err != nil {
@@ -1533,6 +1675,10 @@ func runClean(args []string) int {
 		marker := filepath.Join(clean, ".gpp-generated")
 		if _, err := os.Stat(marker); err != nil {
 			if os.IsNotExist(err) {
+				if _, directoryErr := os.Stat(clean); os.IsNotExist(directoryErr) {
+					fmt.Printf("cleaned %s\n", output)
+					return 0
+				}
 				return reportError(fmt.Errorf("refusing to clean %q: it is not marked as Go++ compiler output", output))
 			}
 			return reportError(err)
@@ -1657,9 +1803,9 @@ func runEnv(args []string) int {
 	}
 	goPath, goErr := findGo()
 	version, versionErr := goVersion()
-	cache := "<unavailable>"
-	if directory, err := os.UserCacheDir(); err == nil {
-		cache = filepath.Join(directory, "gpp")
+	cache, cacheErr := gppCacheDirectory()
+	if cacheErr != nil {
+		cache = "<unavailable>"
 	}
 	if goErr != nil {
 		goPath = "<not found>"
@@ -1706,12 +1852,11 @@ func runDoctor(args []string) int {
 	} else {
 		fmt.Printf("✓ Go version supported: %s\n", version)
 	}
-	cache, err := os.UserCacheDir()
+	cache, err := gppCacheDirectory()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ cache directory unavailable: %v\n", err)
 		failed = true
 	} else {
-		cache = filepath.Join(cache, "gpp")
 		if err := os.MkdirAll(cache, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "✗ cache not writable: %v\n", err)
 			failed = true

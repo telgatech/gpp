@@ -2,7 +2,8 @@
 
 The `gpp` command handles common source workflows and delegates dependency
 resolution and final builds to the Go toolchain. Generated Go stays in a
-hidden workspace so a project can remain organized around `.gpp` source.
+per-project system-cache workspace so a project can remain organized around
+`.gpp` source.
 
 ## Compare project workflows
 
@@ -32,11 +33,13 @@ go build -o ./hello .
 
 ## Keep generated files out of the way
 
-Project commands prepare generated Go in `.gpp/` by default. Choose a
+Project commands prepare generated Go in a stable, per-project directory under
+the system cache. Set `GPP_CACHE` to choose the cache root, or choose a
 different output directory or module path when needed:
 
 ```sh
 gpp run -output build/gpp -module example.com/myapp .
+GPP_CACHE=/var/cache/gpp gpp run .
 gpp clean
 gpp doctor
 ```

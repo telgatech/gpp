@@ -161,3 +161,47 @@ func TestCompileSubcommandUsesArgumentsAfterCommandName(t *testing.T) {
 		t.Fatalf("gpp compile did not emit Go source: %v", err)
 	}
 }
+
+func TestDefaultGeneratedWorkspaceUsesSystemCache(t *testing.T) {
+	project := t.TempDir()
+	cache := t.TempDir()
+	t.Setenv("GPP_CACHE", cache)
+	source := filepath.Join(project, "main.gpp")
+	if err := os.WriteFile(source, []byte("func main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	options := compileFlags{}
+	if err := setDefaultOutput(&options, []string{source}); err != nil {
+		t.Fatal(err)
+	}
+	if !isWithin(cache, options.output) {
+		t.Fatalf("default output %q is outside GPP_CACHE %q", options.output, cache)
+	}
+	if isWithin(project, options.output) {
+		t.Fatalf("default output %q was created inside the project %q", options.output, project)
+	}
+	second := compileFlags{}
+	if err := setDefaultOutput(&second, []string{source}); err != nil {
+		t.Fatal(err)
+	}
+	if second.output != options.output {
+		t.Fatalf("workspace is not stable: got %q and %q", options.output, second.output)
+	}
+}
+
+func TestDefaultGeneratedWorkspacesDifferByProject(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("GPP_CACHE", cache)
+	firstProject, secondProject := t.TempDir(), t.TempDir()
+	first, err := defaultOutputForRoot(firstProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := defaultOutputForRoot(secondProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("different projects share generated workspace %q", first)
+	}
+}

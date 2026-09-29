@@ -189,14 +189,6 @@ Pages → Build and deployment → Source to **GitHub Actions** once.
 
 ## Build and run
 
-The compiler can still be used as a transpiler:
-
-```bash
-gpp examples/hello.gpp
-cd .gpp
-go run .
-```
-
 For a complete project build, use the `build` subcommand. It clears stale
 generated source, runs `go mod tidy` to resolve imports, and runs `go build`:
 
@@ -253,12 +245,13 @@ Build an executable at a chosen path with `-o`:
 gpp build -o ./hello examples/hello.gpp
 ```
 
-Generated Go is written to `.gpp/`. The CLI creates `.gpp/go.mod` with the
-default module path `generated`; choose another path with `-module` when local
-Go package imports need a real module path:
+Generated Go is written to a stable, per-project workspace under the system
+cache. The CLI creates that workspace's `go.mod` with the default module path
+`generated`; choose another path with `-module` when local Go package imports
+need a real module path. Set `GPP_CACHE` to choose the cache root:
 
 ```bash
-gpp -module example.com/myapp examples/*.gpp
+GPP_CACHE=/var/cache/gpp gpp -module example.com/myapp examples/*.gpp
 ```
 
 Choose a different generated output directory with `-output`:

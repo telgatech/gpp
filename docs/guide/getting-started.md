@@ -1,8 +1,8 @@
 # Getting started
 
 Go++ is distributed as a Go CLI. The compiler generates ordinary Go in a
-hidden `.gpp/` workspace and then delegates dependency resolution, building,
-and execution to the Go toolchain.
+per-project workspace under the system cache, then delegates dependency
+resolution, building, and execution to the Go toolchain.
 
 ## Requirements
 
@@ -50,8 +50,9 @@ gpp run .
 gpp build . -o ./app
 ```
 
-Generated Go is kept in `.gpp/`. Use `-output` to choose another generated
-workspace and `-module` when local Go imports need a real module path:
+Generated Go is kept outside the project in the system cache by default. Set
+`GPP_CACHE` to choose the cache root, use `-output` to choose a workspace
+directly, and use `-module` when local Go imports need a real module path:
 
 ```bash
 gpp run -output build/gpp -module example.com/myapp .

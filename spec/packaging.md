@@ -344,8 +344,10 @@ gpp build -o app
 ```
 
 Generated intermediate Go source must not normally be placed beside the user's `.gpp` source.
-
-Use a compiler cache or temporary build directory instead.
+By default, all CLI generation commands use a stable, per-project workspace
+under the system cache directory. `GPP_CACHE` overrides the cache root, and
+`-output` selects an explicit workspace. `gpp clean` removes the current
+project's default cached workspace.
 
 ---
 
@@ -448,7 +450,8 @@ internally.
 
 # `gpp env`
 
-Displays Go++ environment information.
+Displays Go++ environment information, including the cache root used by
+generation commands. `GPP_CACHE` may be set to override the system cache path.
 
 Recommended fields include:
 
