@@ -51,7 +51,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>What license applies to Go++?</summary>
-<p>The project’s licensing terms are still being worked out. The goal is to keep the source available for people to explore, while leaving room for separate commercial discussions if a company wants to acquire or adopt the project. There is currently no published license, so don’t assume public availability grants reuse rights; check the repository for the terms as they are finalized.</p>
+<p>Go++ uses the same BSD 3-Clause license as Go. You can use, modify, and redistribute Go++ in source or binary form, including commercially, as long as you follow the license conditions. See the <a href="https://github.com/telgatech/gpp/blob/main/LICENSE">full license</a>. Some bundled third-party components have their own notices and licenses.</p>
 </details>
 
 <details>

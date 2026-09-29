@@ -2,6 +2,8 @@
 
 A superset of Go that provides modern features while staying true to the spirit of Go language including offering full compatibility and side by side compilation.
 
+Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license used by Go. Bundled third-party components may have separate licenses; see their notices.
+
 ## What's implemented?
 
 - no package declaration => `package main`
