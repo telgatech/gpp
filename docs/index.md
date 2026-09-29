@@ -2,14 +2,14 @@
 layout: home
 
 hero:
-  text: Go. With superpowers!
-  tagline: Everything you love about Go plus everything you've always wanted but were too afraid to ask! Classes, polymorphism, overloading, and multiple inheritance, exception handling, extension methods, built-in serialization, annotations, records and more!
+  text: Go++
+  tagline: Go, now with superpowers! Classes, polymorphism, overloading, multiple inheritance, exception handling, extension methods, serialization, annotations, records and more!
   image:
     src: /go-gopher-superman.png
     alt: Go's blue gopher mascot flying upward with a red cape
   actions:
     - theme: brand
-      text: Explore the core changes
+      text: Explore the features
       link: /features/classes
     - theme: alt
       text: Build your first project
