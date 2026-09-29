@@ -9,33 +9,41 @@ Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license 
 - no package declaration => `package main`
 - one package declaration per source file
 - source files do not need to live in matching package directories
-- ordinary Go `import` declarations
-- `class` => Go struct + receiver methods
+- dotted Go++ packages and imports mapped to generated Go module paths, with
+  ordinary Go imports available directly
+- `class` => Go struct + receiver methods with an implicit `this` receiver
 - class static methods and factories
 - single and multiple inheritance => embedded structs, with qualified access
   when inherited members are ambiguous
-- `Person("Bob", 42)` => `Person{Name: "Bob", Age: 42}`
-- named construction arguments such as `Person(Name: "Bob", Age: 42)`
-- `"Hello {{expr}}"` interpolation => `fmt.Sprintf(...)`
+- positional and named class construction, including inherited fields, that
+  allocates class pointers; ordinary Go composite literals remain valid
+- default class `String()` and `Dump()` methods, overridable by user methods
+- `"Hello {{expr}}"` and raw-string interpolation with formatting and
+  `String()` integration
 - arity-based overloading for functions and class methods
-- initial interface-based polymorphism for class-typed variables, parameters,
+- interface-based polymorphism for class-typed variables, parameters,
   results, and fields
 - named/default function arguments
 - exact static-type overloads such as `Format(1)` and `Format("value")`
 - known class-valued function and method results flow into base-typed calls
 - explicit `?.` safe access for nullable class values
 - anonymous structural records with deterministic generated Go structs
-- compile-time-generated class metadata through `obj.class` and `Class.fields`
+- compile-time-generated class metadata through `obj.class`, including field,
+  method, and annotation introspection
 - declared, typed annotations with target validation, inherited metadata, and
   runtime introspection
 - implicit prelude extensions for slices, maps, and strings
+- prelude string regex compilation through `CompileRegex()`
 - concise lambda expressions such as `users.Any(user => user.Active)` that
   lower to ordinary Go function literals
 - compile-time extension methods that lower to ordinary package-level functions
 - multi-target extension blocks, such as `extend string, []byte { ... }`
-- closed, named-scalar enums with validated `From`, ordered `values`, and
-  member metadata such as `Status.Active.name` and `Status.Active.value`
+- closed, named-scalar enums with grouped declarations, validated `From`,
+  ordered `values`, and member metadata such as `Status.Active.name` and
+  `Status.Active.value`
 - expression-level error fallback with lazy, short-circuiting `A ?? B`
+- automatic promotion of unhandled trailing errors, plus `throw`,
+  `try`/`catch`/`finally`, and multi-type catches
 - source-level `embed` declarations for rooted `fs.FS` directories and
   embedded `[]byte` files
 - typed template declarations using standard `html/template` syntax, layout
@@ -44,11 +52,15 @@ Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license 
 - external `.gpp.tpl` sources, with development-time reloads for
   `gpp/http.Server`
 - mixed Go and Go++ builds in both directions
-- generated JSON, YAML, and GOB serialization with field-name, ignore, and
-  omit-empty annotations
-- bundled `gpp/http`, `gpp/orm`, and `gpp/test` packages for HTTP servers,
-  database access, and suite-based tests; HTTP support includes OpenAPI,
-  Swagger UI, and OAuth/OIDC
+- `encoding.Serializable`-generated `ToJSON`/`FromJSON`, `ToYAML`/`FromYAML`,
+  and `ToGOB`/`FromGOB` helpers with field-name, ignore, and omit-empty
+  annotations
+- bundled `gpp/encoding`, `gpp/http`, `gpp/orm`, and `gpp/test` packages for
+  serialization, HTTP servers, database access, and suite-based tests; HTTP
+  support includes annotation-driven routing, request binding, lifecycle
+  hooks, OpenAPI, Swagger UI, and OAuth/OIDC
+- bundled `gpp/cron` scheduling for annotated functions with cron expressions
+  or typed intervals, controlled by explicit `Start` and `Stop` calls
 - Go++-aware formatting, source documentation, diagnostics, and LSP support
 
 ### Exception handling
