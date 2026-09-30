@@ -934,6 +934,10 @@ template PathPage(post Post) @{tpl.Path("/path-view/{id}")} {
     <h1>{{.Title}}</h1>
 }
 
+template RootPage(post Post) @{tpl.Path("/")} {
+    <h1>{{.Title}}</h1>
+}
+
 template ErrorPage(data any) {
     <h1>custom {{.Code}} {{.Message}}</h1>
 }
@@ -941,6 +945,10 @@ template ErrorPage(data any) {
 class App : http.Server @{http.IP("127.0.0.1")} {
     func ErrorTemplate() string {
         return "ErrorPage"
+    }
+
+    func Root(ctx *http.Context) error @{http.GET("/")} {
+        return ctx.Template(Post(Title: "selected by root path"))
     }
 
     func Created(ctx *http.Context) error @{http.GET("/created")} {
@@ -996,6 +1004,7 @@ func main() {
         time.Sleep(time.Millisecond)
     }
     base := "http://" + app.HTTPServer.Addr
+    request(base, "/")
     request(base, "/created")
     request(base, "/accepted")
     request(base, "/view")
@@ -1030,6 +1039,7 @@ func main() {
 	}
 	result := string(output)
 	for _, expected := range []string{
+		"/ 200 false false true",
 		"/created 201 true false false",
 		"/accepted 202 false true false",
 		"/view 200 false false true",
@@ -1037,6 +1047,7 @@ func main() {
 		"/missing 404 false false true false true false",
 		"/broken 500 false false true false false true",
 		"<p>hello</p>",
+		"<h1>selected by root path</h1>",
 		"<h1>selected by request path</h1>",
 		`{"OK":true}`,
 	} {

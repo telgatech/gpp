@@ -570,6 +570,9 @@ func normalizeTemplatePath(value string) string {
 		return ""
 	}
 	value = "/" + strings.Trim(value, "/")
+	if value == "/" {
+		return "/"
+	}
 	value = strings.TrimSuffix(value, "/")
 	parts := strings.Split(strings.Trim(value, "/"), "/")
 	for index, part := range parts {
@@ -578,7 +581,7 @@ func normalizeTemplatePath(value string) string {
 		}
 	}
 	if len(parts) == 1 && parts[0] == "" {
-		return ""
+		return "/"
 	}
 	return "/" + strings.Join(parts, "/")
 }
