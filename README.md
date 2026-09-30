@@ -1,5 +1,9 @@
 # Go++
 
+<p align="center">
+  <img src="docs/public/go-gopher-superman.png" alt="Go++ flying gopher mascot" width="320">
+</p>
+
 A superset of Go that provides modern features while staying true to the spirit of Go language including offering full compatibility and side by side compilation.
 
 Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license used by Go. Bundled third-party components may have separate licenses; see their notices.
@@ -83,6 +87,16 @@ feature with comparisons and examples.
   and API documentation directly from Go++ source.
 - **[Language server](docs/features/language-server.md)** — Get editor
   diagnostics, completion, navigation, semantic highlighting, and quick fixes.
+
+### Visual Studio Code
+
+The [Go++ VS Code extension](https://github.com/telgatech/gpp-vscode) provides
+Go++ syntax highlighting, snippets, formatting, and optional language-server
+support for diagnostics, completion, and navigation.
+
+The editor view below shows the [`Todo` model in the full example](examples/todo-app.gpp).
+
+![Go++ syntax highlighting in Visual Studio Code, showing the Todo model from the todo app example](docs/public/vscode-highlighting.svg)
 
 ## Install and build
 

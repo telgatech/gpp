@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520" role="img" aria-labelledby="title desc">
+  <title id="title">Go++ syntax highlighting in Visual Studio Code</title>
+  <desc id="desc">An editor-style illustration showing the complete Todo model from examples/todo-app.gpp, with syntax highlighting.</desc>
+  <rect width="1100" height="520" rx="12" fill="#17191f"/>
+  <path d="M12 0h1076a12 12 0 0 1 12 12v34H0V12A12 12 0 0 1 12 0Z" fill="#22252d"/>
+  <circle cx="22" cy="23" r="6" fill="#ff5f57"/><circle cx="43" cy="23" r="6" fill="#febc2e"/><circle cx="64" cy="23" r="6" fill="#28c840"/>
+  <text x="550" y="28" text-anchor="middle" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">todo-app.gpp — Go++ Language Support</text>
+  <rect x="0" y="46" width="52" height="474" fill="#20232a"/>
+  <rect x="0" y="66" width="2" height="36" fill="#61afef"/>
+  <g fill="none" stroke="#858b98" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 76h16v16H18zM22 72h16v16"/><path d="M18 130h18v15H18zM18 130l9 8 9-8"/><circle cx="27" cy="183" r="9"/><path d="m34 190 7 7"/><path d="M18 229h18v17H18zM22 225h18v17"/>
+  </g>
+  <rect x="52" y="46" width="224" height="474" fill="#1d2026"/>
+  <text x="72" y="76" fill="#b8bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="600" letter-spacing=".8">EXPLORER</text>
+  <text x="72" y="111" fill="#a9afbb" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">⌄  GPP</text>
+  <text x="94" y="143" fill="#61afef" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">◉  todo-app.gpp</text>
+  <text x="94" y="171" fill="#89909e" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">◉  go.mod</text>
+  <path d="M52 46v474M276 46v474" stroke="#30343d"/>
+  <rect x="276" y="46" width="824" height="34" fill="#1d2026"/>
+  <rect x="276" y="78" width="165" height="2" fill="#61afef"/>
+  <text x="296" y="68" fill="#d9dce3" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">◉  todo-app.gpp</text>
+  <rect x="276" y="80" width="824" height="417" fill="#17191f"/>
+  <g font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" font-size="14" xml:space="preserve">
+    <g fill="#626977" text-anchor="end">
+      <text x="316" y="110">29</text><text x="316" y="130">30</text><text x="316" y="150">31</text><text x="316" y="170">32</text><text x="316" y="190">33</text><text x="316" y="210">34</text><text x="316" y="230">35</text><text x="316" y="250">36</text><text x="316" y="270">37</text><text x="316" y="290">38</text><text x="316" y="310">39</text><text x="316" y="330">40</text><text x="316" y="350">41</text><text x="316" y="370">42</text><text x="316" y="390">43</text><text x="316" y="410">44</text><text x="316" y="430">45</text><text x="316" y="450">46</text><text x="316" y="470">47</text>
+    </g>
+    <text x="340" y="110"><tspan fill="#c678dd">class</tspan><tspan fill="#e5c07b"> Todo</tspan><tspan fill="#abb2bf"> : </tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#e5c07b">Model</tspan><tspan fill="#abb2bf"> @{</tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">Table</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"todos"</tspan><tspan fill="#abb2bf">)} {</tspan></text>
+    <text x="376" y="130"><tspan fill="#e5c07b">Id</tspan><tspan fill="#abb2bf"> </tspan><tspan fill="#e06c75">int64</tspan><tspan fill="#abb2bf"> @{</tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">Column</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"id"</tspan><tspan fill="#abb2bf">), </tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">PK</tspan><tspan fill="#abb2bf">}</tspan></text>
+    <text x="376" y="150"><tspan fill="#e5c07b">Title</tspan><tspan fill="#abb2bf"> </tspan><tspan fill="#e06c75">string</tspan><tspan fill="#abb2bf"> @{</tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">Column</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"title"</tspan><tspan fill="#abb2bf">)}</tspan></text>
+    <text x="376" y="170"><tspan fill="#e5c07b">Completed</tspan><tspan fill="#abb2bf"> </tspan><tspan fill="#e06c75">bool</tspan><tspan fill="#abb2bf"> @{</tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">Column</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"completed"</tspan><tspan fill="#abb2bf">)}</tspan></text>
+    <text x="376" y="190"><tspan fill="#e5c07b">CreatedAt</tspan><tspan fill="#abb2bf"> </tspan><tspan fill="#e06c75">int64</tspan><tspan fill="#abb2bf"> @{</tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">Column</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"created_at"</tspan><tspan fill="#abb2bf">)}</tspan></text>
+    <text x="376" y="210"><tspan fill="#e5c07b">CompletedAt</tspan><tspan fill="#abb2bf"> </tspan><tspan fill="#e06c75">int64</tspan><tspan fill="#abb2bf"> @{</tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#61afef">Column</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"completed_at"</tspan><tspan fill="#abb2bf">)}</tspan></text>
+    <text x="340" y="230"><tspan fill="#abb2bf"> </tspan></text>
+    <text x="376" y="250"><tspan fill="#c678dd">func</tspan><tspan fill="#61afef"> Validate</tspan><tspan fill="#abb2bf">(exec </tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#e5c07b">SQLExecutor</tspan><tspan fill="#abb2bf">) </tspan><tspan fill="#e06c75">error</tspan><tspan fill="#abb2bf"> {</tspan></text>
+    <text x="412" y="270"><tspan fill="#c678dd">if</tspan><tspan fill="#abb2bf"> strings.</tspan><tspan fill="#61afef">TrimSpace</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#e5c07b">this</tspan><tspan fill="#abb2bf">.Title) == </tspan><tspan fill="#98c379">""</tspan><tspan fill="#abb2bf"> {</tspan></text>
+    <text x="448" y="290"><tspan fill="#c678dd">return</tspan><tspan fill="#abb2bf"> fmt.</tspan><tspan fill="#61afef">Errorf</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#98c379">"todo title is required"</tspan><tspan fill="#abb2bf">)</tspan></text>
+    <text x="412" y="310"><tspan fill="#abb2bf">}</tspan></text>
+    <text x="412" y="330"><tspan fill="#c678dd">return</tspan><tspan fill="#e06c75"> nil</tspan></text>
+    <text x="376" y="350"><tspan fill="#abb2bf">}</tspan></text>
+    <text x="340" y="370"><tspan fill="#abb2bf"> </tspan></text>
+    <text x="376" y="390"><tspan fill="#c678dd">func</tspan><tspan fill="#61afef"> BeforeCreate</tspan><tspan fill="#abb2bf">(exec </tspan><tspan fill="#e5c07b">orm</tspan><tspan fill="#abb2bf">.</tspan><tspan fill="#e5c07b">SQLExecutor</tspan><tspan fill="#abb2bf">) </tspan><tspan fill="#e06c75">error</tspan><tspan fill="#abb2bf"> {</tspan></text>
+    <text x="412" y="410"><tspan fill="#e5c07b">this</tspan><tspan fill="#abb2bf">.Title = strings.</tspan><tspan fill="#61afef">TrimSpace</tspan><tspan fill="#abb2bf">(</tspan><tspan fill="#e5c07b">this</tspan><tspan fill="#abb2bf">.Title)</tspan></text>
+    <text x="412" y="430"><tspan fill="#c678dd">return</tspan><tspan fill="#e06c75"> nil</tspan></text>
+    <text x="376" y="450"><tspan fill="#abb2bf">}</tspan></text>
+    <text x="340" y="470"><tspan fill="#abb2bf">}</tspan></text>
+  </g>
+  <rect x="276" y="497" width="824" height="23" fill="#20232a"/>
+  <circle cx="292" cy="508" r="4" fill="#61afef"/>
+  <text x="304" y="512" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11">Go++</text>
+  <text x="1042" y="512" text-anchor="end" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11">UTF-8　 Go++</text>
+</svg>
