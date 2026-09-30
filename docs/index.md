@@ -60,6 +60,11 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 </details>
 
 <details>
+<summary>Are AI-assisted contributions welcome?</summary>
+<p>Yes. This codebase already includes contributions made with large language models, and AI-assisted contributions are welcome when they help advance the compiler or improve developer productivity. Contributions still need careful review and must preserve the project’s quality and performance.</p>
+</details>
+
+<details>
 <summary>How can I try Go++?</summary>
 <p>Install the CLI with <code>go install github.com/telgatech/gpp@latest</code>, then create and run a starter project with <code>gpp init hello</code> and <code>gpp run .</code>. The <a href="/guide/getting-started">getting started guide</a> walks through the setup.</p>
 </details>

@@ -587,6 +587,21 @@ non-fatal advisory
 
 Exact categorization may evolve.
 
+Published Go++ diagnostics carry stable string codes so extensions can offer
+reliable code actions:
+
+| Code | Meaning |
+| --- | --- |
+| `GPP1000` | Go++ syntax error |
+| `GPP1001` | Unterminated string or rune literal |
+| `GPP1002` | Unterminated block comment |
+| `GPP2000` | Go++ semantic or resolution error |
+
+The literal and block-comment diagnostics include structured `data` describing
+the delimiter fix. `textDocument/codeAction` returns a quick fix that inserts
+the closing delimiter at the literal or comment end. Clients should use the
+diagnostic code and fix data rather than matching human-readable messages.
+
 ---
 
 # 30. Deprecated Symbols
@@ -711,6 +726,14 @@ where `re` is:
 ```
 
 should primarily return members valid on that native Go type.
+
+The implementation resolves lexical parameters and declarations in the active
+function or method, class members, receiver members, and applicable extension
+methods. Receiver lookup understands explicit and safe selectors, inferred
+class and string values, lambda parameters where their collection element type
+is known, and fields declared in anonymous records. Dotted Go++ imports expose
+their logical package members and package path segments. Annotation completion
+filters declarations by the target currently being annotated.
 
 ---
 
@@ -1133,7 +1156,21 @@ deprecated symbol
 record field
 ```
 
-However, semantic highlighting may follow the basic v0.1 feature set if necessary.
+The language server provides full-document semantic tokens with a stable
+legend. Token ranges use UTF-16 line and character positions, are single-line,
+sorted, and non-overlapping. The ordered token types are:
+
+```text
+namespace, type, class, enum, interface, struct, typeParameter, parameter,
+variable, property, enumMember, function, method, macro, keyword, modifier,
+comment, string, number, operator, decorator
+```
+
+The ordered modifiers are `declaration`, `readonly`, `static`, `deprecated`,
+and `defaultLibrary`. Go++ declarations, annotation uses, enum members, methods,
+lambda and catch parameters, operators such as `?.` and `??`, and opaque
+template bodies receive semantic classifications in addition to lexical
+keywords, comments, and literals.
 
 ---
 
@@ -1143,7 +1180,7 @@ The VS Code extension should still provide a TextMate grammar or equivalent basi
 
 This works even before the language server has completed semantic analysis.
 
-The LSP may augment this later with semantic tokens.
+The LSP augments it with semantic tokens after parsing the current buffer.
 
 ---
 

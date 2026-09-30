@@ -784,7 +784,7 @@ func main() {
 		t.Skipf("loopback sockets unavailable: %s", output)
 	}
 	result := string(output)
-	if !strings.Contains(result, "/openapi.json 200 true false true true false true true true true true true true true true") {
+	if !strings.Contains(result, "/openapi.json 200 true false true false false false false false true true true true true true") {
 		t.Fatalf("unexpected OpenAPI response:\n%s", output)
 	}
 	if !strings.Contains(result, "/swagger 200 false true false false true") {

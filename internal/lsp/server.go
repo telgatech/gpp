@@ -45,8 +45,17 @@ type Diagnostic struct {
 	Range    Range  `json:"range"`
 	Severity int    `json:"severity,omitempty"`
 	Source   string `json:"source,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Data     any    `json:"data,omitempty"`
 	Message  string `json:"message"`
 }
+
+const (
+	diagnosticSyntax          = "GPP1000"
+	diagnosticUnclosedLiteral = "GPP1001"
+	diagnosticUnclosedComment = "GPP1002"
+	diagnosticSemantic        = "GPP2000"
+)
 
 type TextEdit struct {
 	Range   Range  `json:"range"`
@@ -102,6 +111,23 @@ type hover struct {
 
 type workspaceEdit struct {
 	Changes map[string][]TextEdit `json:"changes"`
+}
+
+type codeActionParams struct {
+	TextDocument textDocumentIdentifier `json:"textDocument"`
+	Range        Range                  `json:"range"`
+	Context      struct {
+		Diagnostics []Diagnostic `json:"diagnostics"`
+		Only        []string     `json:"only,omitempty"`
+	} `json:"context"`
+}
+
+type codeAction struct {
+	Title       string        `json:"title"`
+	Kind        string        `json:"kind"`
+	Diagnostics []Diagnostic  `json:"diagnostics,omitempty"`
+	Edit        workspaceEdit `json:"edit"`
+	IsPreferred bool          `json:"isPreferred,omitempty"`
 }
 
 type rpcRequest struct {
@@ -297,7 +323,15 @@ func (w *workspaceState) analyze() {
 		}
 		file, err := compiler.ParseFile(filepath.Base(state.Path), state.Source)
 		if err != nil {
-			w.diagnostics[state.URI] = []Diagnostic{diagnosticFromError(state.URI, state.Source, err)}
+			if _, lexErr := compiler.LexSource(filepath.Base(state.Path), state.Source); lexErr != nil &&
+				(strings.Contains(lexErr.Error(), "unterminated literal") || strings.Contains(lexErr.Error(), "unterminated block comment")) {
+				err = lexErr
+			}
+			diagnostic := diagnosticFromError(state.URI, state.Source, err)
+			if diagnostic.Code == diagnosticSemantic {
+				diagnostic.Code = diagnosticSyntax
+			}
+			w.diagnostics[state.URI] = []Diagnostic{diagnostic}
 			continue
 		}
 		file.SourcePath = state.Path
@@ -414,16 +448,83 @@ var locationPattern = regexp.MustCompile(`(^|:)([^:\n]+):(\d+)(?::(\d+))?:\s*(.*
 func diagnosticFromError(uri, source string, err error) Diagnostic {
 	message := err.Error()
 	line := 0
+	byteCharacter := 0
 	if match := locationPattern.FindStringSubmatch(message); match != nil {
 		line, _ = strconv.Atoi(match[3])
 		line--
+		if match[4] != "" {
+			byteCharacter, _ = strconv.Atoi(match[4])
+			byteCharacter--
+		}
 		message = match[5]
 	}
 	if line < 0 {
 		line = 0
 	}
 	lineText := sourceLine(source, line)
-	return Diagnostic{Range: Range{Start: Position{Line: line}, End: Position{Line: line, Character: utf16Length(lineText)}}, Severity: 1, Source: "gpp", Message: message}
+	character := byteCharacter
+	if byteCharacter >= 0 && byteCharacter <= len(lineText) {
+		character = utf16Length(lineText[:byteCharacter])
+	}
+	endCharacter := utf16Length(lineText)
+	if character > endCharacter {
+		character = endCharacter
+	}
+	diagnostic := Diagnostic{Range: Range{Start: Position{Line: line, Character: character}, End: Position{Line: line, Character: endCharacter}}, Severity: 1, Source: "gpp", Code: diagnosticSemantic, Message: message}
+	if strings.Contains(message, "unterminated literal") {
+		diagnostic.Code = diagnosticUnclosedLiteral
+		text := literalDelimiterAt(source, line, byteCharacter)
+		diagnostic.Data = map[string]any{"fix": "insert-delimiter", "text": text, "offset": unterminatedLiteralEnd(source, line, byteCharacter, text)}
+	} else if strings.Contains(message, "unterminated block comment") {
+		diagnostic.Code = diagnosticUnclosedComment
+		diagnostic.Data = map[string]any{"fix": "insert-delimiter", "text": "*/", "offset": len(source)}
+	} else if strings.Contains(message, "expected") || strings.Contains(message, "unexpected") || strings.Contains(message, "syntax") {
+		diagnostic.Code = diagnosticSyntax
+	}
+	return diagnostic
+}
+
+func literalDelimiterAt(source string, line, character int) string {
+	lines := strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
+	if line < 0 || line >= len(lines) {
+		return "\""
+	}
+	text := lines[line]
+	if character >= 0 && character < len(text) {
+		switch text[character] {
+		case '\'', '"', '`':
+			return string(text[character])
+		}
+	}
+	return "\""
+}
+
+func unterminatedLiteralEnd(source string, line, character int, delimiter string) int {
+	if line < 0 {
+		return len(source)
+	}
+	lineStart := 0
+	for currentLine := 0; currentLine < line; currentLine++ {
+		newline := strings.IndexByte(source[lineStart:], '\n')
+		if newline < 0 {
+			return len(source)
+		}
+		lineStart += newline + 1
+	}
+	start := lineStart + character
+	if start < lineStart || start >= len(source) {
+		return len(source)
+	}
+	for cursor := start + 1; cursor < len(source); cursor++ {
+		if delimiter != "`" && source[cursor] == '\\' {
+			cursor++
+			continue
+		}
+		if delimiter != "`" && (source[cursor] == '\r' || source[cursor] == '\n') {
+			return cursor
+		}
+	}
+	return len(source)
 }
 
 func sourceLine(source string, line int) string {
@@ -521,6 +622,8 @@ func (s *server) handle(request rpcRequest) (bool, error) {
 			"capabilities": map[string]any{
 				"textDocumentSync":           map[string]any{"openClose": true, "change": 1, "save": map[string]any{"includeText": false}},
 				"completionProvider":         map[string]any{"triggerCharacters": []string{".", "@"}},
+				"codeActionProvider":         map[string]any{"codeActionKinds": []string{"quickfix"}},
+				"semanticTokensProvider":     map[string]any{"legend": map[string]any{"tokenTypes": semanticTokenTypes, "tokenModifiers": semanticTokenModifiers}, "full": true},
 				"hoverProvider":              true,
 				"definitionProvider":         true,
 				"referencesProvider":         true,
@@ -628,6 +731,18 @@ func (s *server) handle(request rpcRequest) (bool, error) {
 			return true, err
 		}
 		return true, s.respond(request.ID, s.completions(params))
+	case "textDocument/semanticTokens/full":
+		var params semanticTokensParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return true, err
+		}
+		return true, s.respond(request.ID, s.semanticTokens(params.TextDocument.URI))
+	case "textDocument/codeAction":
+		var params codeActionParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return true, err
+		}
+		return true, s.respond(request.ID, s.codeActions(params))
 	case "textDocument/hover":
 		var params textDocumentPositionParams
 		if err := decodeParams(request.Params, &params); err != nil {
@@ -1201,33 +1316,7 @@ func (s *server) completions(params textDocumentPositionParams) []CompletionItem
 		return []CompletionItem{}
 	}
 	offset := offsetAt(state.Source, params.Position)
-	prefix := state.Source[:offset]
-	word := identifierBefore(prefix)
-	items := map[string]CompletionItem{}
-	if strings.HasSuffix(prefix, ".") || (word == "" && strings.HasSuffix(strings.TrimRight(prefix, " \t"), ".")) {
-		for _, info := range s.workspace.symbols {
-			if info.Symbol.Kind != compiler.DocMethod && info.Symbol.Kind != compiler.DocExtension && info.Symbol.Kind != compiler.DocField && info.Symbol.Kind != compiler.DocValue {
-				continue
-			}
-			items[info.Symbol.Name] = CompletionItem{Label: info.Symbol.Name, Kind: lspSymbolKind(info.Symbol.Kind), Detail: info.Symbol.Signature, Documentation: info.Symbol.Doc, Deprecated: deprecated(info.Symbol)}
-		}
-	} else {
-		for _, info := range s.workspace.symbols {
-			if info.Symbol.Package != "prelude" && state.File != nil && info.Symbol.Package != state.File.Package {
-				continue
-			}
-			items[info.Symbol.Name] = CompletionItem{Label: info.Symbol.Name, Kind: lspSymbolKind(info.Symbol.Kind), Detail: info.Symbol.Signature, Documentation: info.Symbol.Doc, Deprecated: deprecated(info.Symbol)}
-		}
-		for _, keyword := range []string{"class", "enum", "extend", "func", "if", "else", "for", "try", "catch", "throw", "import", "return", "var", "const", "template"} {
-			items[keyword] = CompletionItem{Label: keyword, Kind: 14}
-		}
-	}
-	result := make([]CompletionItem, 0, len(items))
-	for _, item := range items {
-		result = append(result, item)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Label < result[j].Label })
-	return result
+	return s.contextualCompletions(state, offset)
 }
 
 func findDeclaration(source string, symbol compiler.DocSymbol) (int, int, int) {

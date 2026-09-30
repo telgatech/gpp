@@ -34,7 +34,7 @@ func TestRunServesInitializeCompletionAndShutdown(t *testing.T) {
 	})
 	writeTestMessage(&input, map[string]any{
 		"jsonrpc": "2.0", "id": 2, "method": "textDocument/completion",
-		"params": map[string]any{"textDocument": map[string]any{"uri": uri}, "position": map[string]any{"line": 4, "character": 9}},
+		"params": map[string]any{"textDocument": map[string]any{"uri": uri}, "position": positionAtOffset(source, strings.Index(source, "name.")+len("name."))},
 	})
 	writeTestMessage(&input, map[string]any{"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": nil})
 	writeTestMessage(&input, map[string]any{"jsonrpc": "2.0", "method": "exit"})
