@@ -115,6 +115,26 @@ func RefreshIndex(ctx context.Context) error @{cron.Every(45 * time.Second)} {
 
 Call `Start` after configuration and dependencies are ready. It validates all
 registered schedules before starting any of them, then returns immediately.
+An invalid schedule makes `Start` wrap `cron.ErrInvalidSchedule`, so Go++
+applications can identify that specific startup failure in the existing catch
+with `errors.Is`:
+
+```gpp
+func main() {
+    try {
+        cron.Start()
+        app := App()
+        app.Listen()
+    } catch err {
+        if errors.Is(err, cron.ErrInvalidSchedule) {
+            fmt.Println("cron configuration is invalid")
+        } else {
+            fmt.Println("application:", err)
+        }
+    }
+}
+```
+
 The context passed to each job is canceled by `Stop`:
 
 ```go

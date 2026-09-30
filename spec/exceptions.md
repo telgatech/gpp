@@ -307,6 +307,25 @@ The first compatible catch handles the error.
 
 Typed catch matching should use normal Go/Go++ type assignability semantics.
 
+## Error-value catches
+
+An imported package error value may be caught directly without binding an error
+variable and writing a separate `errors.Is` check:
+
+```go
+try {
+    user := LoadUser(id)
+} catch sql.ErrNoRows {
+    return ctx.JSON(404, record(Error: "user not found"))
+}
+```
+
+The expression must resolve to an imported package variable assignable to
+`error`. Import Go's `errors` package; Go++ matches the value with
+`errors.Is`, so wrapped sentinel errors are also handled. A value catch does
+not catch other errors; unmatched errors continue to the next clause or
+propagate out of the `try`.
+
 ---
 
 # Catch Without Variable

@@ -98,6 +98,10 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	if err != nil {
 		return err
 	}
+	atExit, err := validateAtExit(program)
+	if err != nil {
+		return err
+	}
 	for _, file := range program.Files {
 		scope, err := annotationScopeForFile(file, model, options.ModulePath)
 		if err != nil {
@@ -168,6 +172,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		context.Exceptions = exceptionContexts[file.Package]
 		context.Annotations = model.Packages[file.Package].Annotations
 		context.Package = file.Package
+		context.AtExit = file.Package == "main" && atExit
 		context.ModulePath = options.ModulePath
 		context.Development = options.Development
 		context.AvailableImports = availableImportsForFile(file, model, options.ModulePath)

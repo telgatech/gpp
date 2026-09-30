@@ -893,6 +893,7 @@ func joinNames(names []string) string {
 func constructorContextForFile(file *File, model *SemanticModel, modulePath string) (constructorContext, error) {
 	localClasses := model.Packages[file.Package].Classes
 	context := localConstructorContext(localClasses)
+	context.GlobalValueTypes = globalValueTypesForFile(file)
 	context.Package = file.Package
 	context.Annotations, _ = annotationScopeForFile(file, model, modulePath)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
@@ -1050,6 +1051,33 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 	}
 
 	return context, nil
+}
+
+func globalValueTypesForFile(file *File) map[string]string {
+	result := map[string]string{}
+	if file == nil {
+		return result
+	}
+	for _, declaration := range file.Decls {
+		switch value := declaration.(type) {
+		case *ValueDecl:
+			if value.Type == nil {
+				continue
+			}
+			typeName, err := typeNodeSource(value.Type)
+			if err != nil {
+				continue
+			}
+			for _, name := range value.Names {
+				result[name.Text] = strings.TrimSpace(typeName)
+			}
+		case *MixedDecl:
+			collectGlobalValueTypesFromAST(value.GoASTDecls, result)
+		case *GoDecl:
+			collectGlobalValueTypesFromAST(value.Declarations, result)
+		}
+	}
+	return result
 }
 
 func addMethodOverload(overloads *overloadContext, class *ClassDecl, className string) {

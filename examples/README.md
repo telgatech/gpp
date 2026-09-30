@@ -60,6 +60,9 @@ The examples cover:
   explicit error capture.
 - `cron.gpp` — interval and full five-field cron schedules, explicit scheduler
   startup, context-aware jobs, and graceful shutdown.
+- `todo-app.gpp` — a server-rendered SQLite todo app with a JSON API, OpenAPI
+  and Swagger UI, ORM static query methods with exception-based error handling,
+  and a context-aware cron cleanup job.
 - `expr_catch.gpp` — expression-level error fallback with lazy fallback
   evaluation and chained `??` operators.
 - `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,

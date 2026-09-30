@@ -1686,6 +1686,9 @@ func staticExpressionTypeNode(expression ExprNode, context constructorContext, v
 		if valueTypes != nil && valueTypes[value.Name] != "" {
 			return valueTypes[value.Name]
 		}
+		if context.GlobalValueTypes != nil && context.GlobalValueTypes[value.Name] != "" {
+			return context.GlobalValueTypes[value.Name]
+		}
 		return value.Name
 	case *InterpolatedStringExpr:
 		return "string"

@@ -98,6 +98,14 @@ func directExtensionMethodSource(extension extensionMethod, context constructorC
 	methodContext.CurrentResultAST = method.ResultAST
 	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentParameterAST = parameterTypeNodeMapFromNodes(method.ParameterAST)
+	// One extension declaration may emit the same body for several targets.
+	// Direct lowering mutates the typed body, so parse a fresh copy from its
+	// original tokens for each emitted target.
+	if len(method.BodyTokens) > 0 {
+		if bodyCopy, parseErr := ParseBodyAST(method.BodyTokens); parseErr == nil {
+			method.BodyAST = bodyCopy
+		}
+	}
 	body, handled, err := directMethodBody(method, methodContext)
 	if !handled {
 		return "", false, nil
@@ -226,7 +234,19 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 	// reparsing BodyTokens here would reintroduce the AST-to-source-to-AST
 	// round trip this path is intended to remove.
 	bodyContext := context
-	bodyContext.CurrentParameterTypes = lambdaValueTypesAST([]*BlockStmt{bodyAST}, context)
+	bodyContext.CurrentParameterTypes = cloneStringMap(context.CurrentParameterTypes)
+	if bodyContext.CurrentParameterTypes == nil {
+		bodyContext.CurrentParameterTypes = map[string]string{}
+	}
+	for name, typeName := range context.GlobalValueTypes {
+		bodyContext.CurrentParameterTypes[name] = typeName
+	}
+	if context.CurrentExtensionReceiver != "" {
+		bodyContext.CurrentParameterTypes["this"] = context.CurrentExtensionReceiver
+	}
+	for name, typeName := range lambdaValueTypesAST([]*BlockStmt{bodyAST}, context) {
+		bodyContext.CurrentParameterTypes[name] = typeName
+	}
 	for name, typeName := range enumValueTypesAST([]*BlockStmt{bodyAST}, bodyContext) {
 		bodyContext.CurrentParameterTypes[name] = typeName
 	}

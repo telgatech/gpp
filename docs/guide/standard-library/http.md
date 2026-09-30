@@ -58,7 +58,7 @@ return server.ListenAndServe()
 
 The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
 
-**The two API-documentation annotations do a lot of work.** `http.OpenAPI` generates an OpenAPI 3.0.3 document for the declared routes at `/openapi.json`; `http.Swagger` serves the bundled Swagger UI at `/swagger` and connects it to that document. Open the UI, choose an operation, and use its **Try it out** control to send a request to the running API and inspect the response. You write no OpenAPI file, docs handler, Swagger page, JavaScript setup, or UI asset wiring. The same route annotations already used to run the service power this live API explorer; maintaining that infrastructure by hand can grow to hundreds or thousands of lines as an API expands.
+**The two API-documentation annotations do a lot of work.** `http.OpenAPI` generates an OpenAPI 3.0.3 document for routes with JSON request or response contracts at `/openapi.json`; `http.Swagger` serves the bundled Swagger UI at `/swagger` and connects it to that document. Open the UI, choose an operation, and use its **Try it out** control to send a request to the running API and inspect the response. You write no OpenAPI file, docs handler, Swagger page, JavaScript setup, or UI asset wiring. The same route annotations already used to run the service power this live API explorer; maintaining that infrastructure by hand can grow to hundreds or thousands of lines as an API expands.
 
 ## HTTP annotation catalog
 
@@ -283,7 +283,11 @@ The default signal path uses a ten-second context. For tests or application-cont
 
 OpenAPI and Swagger solve related but different problems. OpenAPI is a machine-readable contract describing an API's paths, HTTP methods, inputs, and responses. It can be consumed by API clients, validators, documentation tools, and code generators. Swagger UI is a browser application that reads that contract and lets a developer explore and call the API.
 
-Go++ derives the document from the same route annotations that register handlers. Enabling `http.OpenAPI` automatically mounts a `GET /openapi.json` endpoint containing an OpenAPI 3.0.3 document. The generator includes known route paths and methods, path parameters, and schemas it can infer from available type information; no separate JSON or YAML contract needs to be kept in sync.
+`http.OpenAPI` and `http.Swagger` add two documentation endpoints; they do not rewrite or capture the application's routes. The OpenAPI endpoint serves JSON, and Swagger UI is an HTML page that loads that document. OpenAPI currently includes only routes whose `http.RequestBody` or `http.ResponseBody` declares a JSON media type. This keeps server-rendered HTML pages available through the same server without listing them as API operations. The application routes continue to serve normally.
+
+Route inclusion is based on the declared media type: a route appears in OpenAPI when at least one `http.RequestBody` or `http.ResponseBody` uses a JSON media type, such as `application/json` or `application/problem+json`. `http.ResponseBody` contributes its status, description, schema, and example to the OpenAPI response; Swagger UI then displays that generated contract. `http.Summary`, `http.Description`, and `http.Tags` alone do not include a route. For an HTML page or form route, omit `http.ResponseBody` unless you are documenting a JSON response; the route still works, but it stays out of the API document. A non-JSON example such as `text/html` does not qualify the route for inclusion.
+
+The server's `http.Prefix` applies to all application routes and to these generated documentation endpoints. If HTML pages should live at `/` while JSON endpoints and the docs live under `/api`, declare those full paths directly and omit the shared prefix, as in the todo app example.
 
 Add `http.Swagger` to serve the bundled Swagger UI, configured to load that endpoint:
 
@@ -292,7 +296,13 @@ class App : http.Server @{
 	http.OpenAPI,
 	http.Swagger
 } {
-	func Health(ctx *http.Context) error @{http.GET("/health")} {
+	func Health(ctx *http.Context) error @{
+		http.GET("/health"),
+		http.Summary("Check service health"),
+		http.Description("Reports whether the service is available."),
+		http.Tags("Health"),
+		http.ResponseBody(200, "Service is healthy", "application/json", record(OK: true))
+	} {
 		return ctx.JSON(record(OK: true))
 	}
 }
@@ -302,10 +312,10 @@ Starting this app automatically exposes:
 
 | Endpoint | What it provides |
 | --- | --- |
-| `GET /openapi.json` | An OpenAPI 3.0.3 description generated from the server's declared routes and available type information |
+| `GET /openapi.json` | An OpenAPI 3.0.3 description of routes that declare a JSON request or response contract |
 | `/swagger` | The bundled Swagger UI, already configured to load this server's OpenAPI document |
 
-Swagger UI turns the generated contract into an interactive **Try it out** page: select an operation, fill in its path/query/body inputs, submit it to the running service, and inspect the response. There is no handwritten JSON/YAML contract to keep synchronized, no manually registered documentation route, and no Swagger client code or assets to install. This makes a growing API explorable from the same annotations that define its running routes. Custom paths are available through `http.OpenAPI("/spec.json")` and `http.Swagger("/docs")`; Swagger requires OpenAPI to be enabled.
+Operation annotations such as `http.Summary`, `http.Description`, `http.Tags`, `http.RequestBody`, and `http.ResponseBody` give Swagger UI useful guidance about each JSON route, its inputs, and its responses. Request and response examples give the UI concrete payloads to display. `http.RequestBody` documents the shape of a body decoded by the handler; it does not bind or decode the request at runtime. Swagger UI turns the generated contract into an interactive **Try it out** page: select an operation, fill in its documented inputs, submit it to the running service, and inspect the response. There is no handwritten JSON/YAML contract to keep synchronized, no manually registered documentation route, and no Swagger client code or assets to install. Custom paths are available through `http.OpenAPI("/spec.json")` and `http.Swagger("/docs")`; Swagger requires OpenAPI to be enabled.
 
 The UI is served locally from the Go++ package, so a service does not need to download its Swagger assets from a CDN at runtime. `Try it out` sends real requests to the running service; it does not mock handler behavior or validate that application logic matches every declared schema. Add the annotations once, and the route inventory, API description, and interactive explorer stay connected without handwritten spec endpoints, browser setup, or bundled UI code that could otherwise grow into hundreds or thousands of lines.
 

@@ -11,6 +11,11 @@ annotation (
 	PUT(path string) on method
 	PATCH(path string) on method
 	DELETE(path string) on method
+	Summary(text string) on method
+	Description(text string) on method
+	Tags(names ...string) on method
+	RequestBody(contentType string, description string, example any) on method
+	ResponseBody(status int, description string, contentType string, example any) on method
 
 	WebSocket(path string) on method
 	Files(path string, dir string) on class

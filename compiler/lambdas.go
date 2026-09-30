@@ -903,8 +903,10 @@ func lambdaCollectValueTypesStatement(statement Stmt, types *map[string]string, 
 			if !ok || index >= len(value.Right) {
 				continue
 			}
-			if typeName := staticExpressionTypeNode(value.Right[index], context, *types); typeName != "" {
-				(*types)[name.Name] = typeName
+			if (*types)[name.Name] == "" {
+				if typeName := staticExpressionTypeNode(value.Right[index], context, *types); typeName != "" {
+					(*types)[name.Name] = typeName
+				}
 			}
 		}
 		for _, expression := range value.Right {

@@ -184,12 +184,15 @@ func validateAnnotationArguments(use AnnotationUse, declaration *AnnotationDecl)
 		if index >= len(parameters) {
 			break
 		}
+		expected := strings.Join(strings.Fields(parameters[index].typeText()), " ")
+		if expected == "any" {
+			continue
+		}
 		parsed, err := parseAnnotationArgumentNode(argument)
 		if err != nil {
 			return fmt.Errorf("invalid argument %d to annotation %s: %w", index+1, declaration.Name, err)
 		}
 		actual := annotationExpressionTypeKey(parsed)
-		expected := strings.Join(strings.Fields(parameters[index].typeText()), " ")
 		if actual == "" {
 			if declaration.Package == "gpp.cron" && declaration.Name == "Every" && expected == "time.Duration" {
 				// Duration expressions commonly combine imported constants such
@@ -399,6 +402,14 @@ func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) str
 			args = resolved
 		}
 		for index := range args {
+			if strings.Contains(args[index], "record(") {
+				if transformed, err := transformConstructors(args[index], context); err == nil {
+					args[index] = transformed
+				}
+				if transformed, err := transformRecords(args[index], context); err == nil {
+					args[index] = transformed
+				}
+			}
 			trimmed := strings.TrimSpace(args[index])
 			if enum, ok := context.Enums[trimmed]; ok {
 				if dot := strings.LastIndex(trimmed, "."); dot >= 0 {

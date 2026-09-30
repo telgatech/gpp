@@ -1753,6 +1753,90 @@ func main() {
 	}
 }
 
+func TestEmitLowersGlobalExtensionCallsInClassTryBlocks(t *testing.T) {
+	file, err := ParseFile("global_extension_try.gpp", `
+class Box {
+    Value int
+}
+
+var globalBox *Box
+
+extend *Box {
+    func ValuePlus(delta int) (int, error) {
+        return this.Value + delta, nil
+    }
+}
+
+class App {
+    func Read() int {
+        var result int
+        try {
+            result = globalBox.ValuePlus(1)
+        } catch err {
+            panic(err)
+        }
+        return result
+    }
+}
+
+func main() {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if strings.Contains(generated, "globalBox.ValuePlus") {
+		t.Fatalf("global extension call was not lowered:\n%s", generated)
+	}
+	if !strings.Contains(generated, "GppExt_ptr_Box_ValuePlus_") || !strings.Contains(generated, "__gppUnwrap(GppExt_ptr_Box_ValuePlus_") {
+		t.Fatalf("global extension call was not promoted inside try:\n%s", generated)
+	}
+}
+
+func TestEmitAutomaticallyDefersAtExitFromMain(t *testing.T) {
+	file, err := ParseFile("at_exit.gpp", `
+func main() {
+	work()
+}
+
+func atExit() {
+	cleanup()
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	deferIndex := strings.Index(generated, "defer atExit()")
+	workIndex := strings.Index(generated, "work()")
+	if deferIndex < 0 || workIndex < 0 || deferIndex > workIndex {
+		t.Fatalf("main must defer atExit before executing its body:\n%s", generated)
+	}
+}
+
+func TestEmitRejectsInvalidAtExitSignature(t *testing.T) {
+	file, err := ParseFile("invalid_at_exit.gpp", `
+func main() {}
+func atExit(code int) {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Emit(file)
+	if err == nil || !strings.Contains(err.Error(), "atExit must have no parameters and no return values") {
+		t.Fatalf("expected invalid atExit signature error, got %v", err)
+	}
+}
+
 func TestEmitLowersVariadicExtensionCalls(t *testing.T) {
 	file, err := ParseFile("variadic_extensions.gpp", `
 extend string {
@@ -1877,6 +1961,48 @@ func main() {
 	}
 }
 
+func TestEmitLowersMultiTargetExtensionCallsForEachReceiver(t *testing.T) {
+	file, err := ParseFile("multi_target_extension_calls.gpp", `
+class DB {}
+class Tx {}
+
+extend *DB {
+	func Select() error { return nil }
+}
+
+extend *Tx {
+	func Select() error { return nil }
+}
+
+extend *DB, *Tx {
+	func Read() error { return this.Select() }
+}
+
+func main() {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	dbRead := strings.Index(generated, "func GppExt_ptr_DB_Read_")
+	txRead := strings.Index(generated, "func GppExt_ptr_Tx_Read_")
+	if dbRead < 0 || txRead < 0 || dbRead >= txRead {
+		t.Fatalf("expected DB and Tx extension methods in output:\n%s", generated)
+	}
+	dbBody := generated[dbRead:txRead]
+	txBody := generated[txRead:]
+	if !strings.Contains(dbBody, "GppExt_ptr_DB_Select_") {
+		t.Fatalf("DB extension body did not call the DB Select extension:\n%s", dbBody)
+	}
+	if !strings.Contains(txBody, "GppExt_ptr_Tx_Select_") {
+		t.Fatalf("Tx extension body did not call the Tx Select extension:\n%s", txBody)
+	}
+}
+
 func TestEmitRejectsDuplicateMultiTargetExtension(t *testing.T) {
 	file, err := ParseFile("duplicate_extension_target.gpp", `
 extend string, string {
@@ -1956,6 +2082,7 @@ func TestEmitImplicitPrelude(t *testing.T) {
 	file, err := ParseFile("prelude.gpp", `
 func main() {
     values := []int{3, 1, 2}
+    _ = values.Each(func(value int) error { return nil })
     _ = values.Any(func(value int) bool { return value == 2 })
     _ = values.Contains(2)
     _ = values.Filter(func(value int) bool { return value > 1 })
@@ -1988,6 +2115,7 @@ func main() {
 	}
 	generated := string(code)
 	for _, expected := range []string{
+		"func GppPreludeExt___T_Each_",
 		"func GppPreludeExt___T_Any_",
 		"func GppPreludeExt___T_Contains_",
 		"func GppPreludeExt___T_Sort_",

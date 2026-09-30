@@ -272,6 +272,8 @@ Recommended v1 set:
 
 ```gpp
 extend []T {
+    func Each(fn func(T) error) error
+
     func Any(fn func(T) bool) bool
     func All(fn func(T) bool) bool
 

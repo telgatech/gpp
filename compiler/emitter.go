@@ -20,6 +20,10 @@ func Emit(file *File) ([]byte, error) {
 }
 
 func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
+	atExit, err := validateAtExit(&Program{Files: []*File{file}})
+	if err != nil {
+		return nil, err
+	}
 	model, err := ResolveProgram(&Program{Files: []*File{file}})
 	if err != nil {
 		return nil, err
@@ -41,10 +45,12 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	context.Enums = model.Packages[file.Package].Enums
 	context.Annotations = model.Packages[file.Package].Annotations
 	context.Package = file.Package
+	context.AtExit = atExit
 	context.Development = options.Development
 	context.Templates = model.Packages[file.Package].Templates
 	context.Records = newRecordContext()
 	context.AvailableImports = map[string]string{}
+	context.GlobalValueTypes = globalValueTypesForFile(file)
 	if imports, importErr := goImports(file); importErr == nil {
 		for _, spec := range imports {
 			importPath, unquoteErr := strconv.Unquote(spec.Path.Value)
@@ -116,9 +122,11 @@ type constructorContext struct {
 	EmitPreludeAll             bool
 	Annotations                map[string]*AnnotationDecl
 	Package                    string
+	AtExit                     bool
 	ModulePath                 string
 	Development                bool
 	AvailableImports           map[string]string
+	GlobalValueTypes           map[string]string
 	Embeds                     []compiledEmbed
 	Templates                  map[string]*TemplateDecl
 	IntrospectionRuntimeImport string
@@ -135,6 +143,28 @@ type constructorContext struct {
 	RecordValueTypes           map[string]string
 	RecordOnlyLowering         bool
 	InterpolationName          string
+}
+
+func collectGlobalValueTypesFromAST(declarations []ast.Decl, output map[string]string) {
+	for _, declaration := range declarations {
+		group, ok := declaration.(*ast.GenDecl)
+		if !ok || group.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range group.Specs {
+			value, ok := spec.(*ast.ValueSpec)
+			if !ok || value.Type == nil {
+				continue
+			}
+			typeName := strings.TrimSpace(safeASTTypeName(value.Type))
+			if typeName == "" {
+				continue
+			}
+			for _, name := range value.Names {
+				output[name.Name] = typeName
+			}
+		}
+	}
 }
 
 func (context constructorContext) currentResultText() string {
@@ -326,10 +356,15 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 
 	out.WriteString(insertAfterImports(body, declarationsPrefix))
 
-	result, err := format.Source([]byte(out.String()))
+	generated := out.String()
+	generated, err = pruneUnusedImports(generated)
+	if err != nil {
+		return []byte(generated), err
+	}
+	result, err := format.Source([]byte(generated))
 
 	if err != nil {
-		return []byte(out.String()), fmt.Errorf(
+		return []byte(generated), fmt.Errorf(
 			"generated invalid Go: %w",
 			err,
 		)
@@ -965,6 +1000,12 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			code, err := transformTopLevelDeclSource(d, context, interpolationName)
 			if err != nil {
 				return "", err
+			}
+			if d.Name == "main" && file.Package == "main" && context.AtExit {
+				code, err = injectAtExitDefer(code)
+				if err != nil {
+					return "", err
+				}
 			}
 			cronRegistration, err := cronFunctionRegistrationSource(d, context)
 			if err != nil {

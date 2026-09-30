@@ -1,0 +1,463 @@
+// Run with `gpp run examples/todo-app.gpp`.
+// The app listens on 127.0.0.1:8080, stores data in in-memory SQLite, and
+// serves the web app at / and Swagger UI at /api/swagger with its OpenAPI
+// document at /api/openapi.json. Todos reset when the process stops. The cron
+// job removes completed todos older than 30 days and stops with the HTTP server.
+package main
+
+import (
+    "context"
+    "database/sql"
+    stdjson "encoding/json"
+    "errors"
+    "fmt"
+    "log"
+    stdhttp "net/http"
+    "strconv"
+    "strings"
+    "time"
+    _ "modernc.org/sqlite"
+    cron "gpp/cron"
+    http "gpp/http"
+    orm "gpp/orm"
+    tpl "gpp/tpl"
+)
+
+class Todo : orm.Model @{orm.Table("todos")} {
+    Id int64 @{orm.Column("id"), orm.PK}
+    Title string @{orm.Column("title")}
+    Completed bool @{orm.Column("completed")}
+    CreatedAt int64 @{orm.Column("created_at")}
+    CompletedAt int64 @{orm.Column("completed_at")}
+
+    func Validate(exec orm.SQLExecutor) error {
+        if strings.TrimSpace(this.Title) == "" {
+            return fmt.Errorf("todo title is required")
+        }
+        return nil
+    }
+
+    func BeforeCreate(exec orm.SQLExecutor) error {
+        this.Title = strings.TrimSpace(this.Title)
+        return nil
+    }
+}
+
+class CreateTodoRequest {
+    Title string
+}
+
+class TodoList {
+    Items []Todo
+}
+
+class APIError {
+    Error string
+}
+
+template TodoHome(todos []Todo) @{tpl.Path("/")} {
+    <!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Go++ Todo</title>
+        <style>
+            body { max-width: 42rem; margin: 3rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; color: #20242a; }
+            h1 { margin-bottom: .25rem; }
+            form { display: flex; gap: .5rem; margin: 1.5rem 0; }
+            input { flex: 1; padding: .65rem; font: inherit; }
+            button { padding: .55rem .8rem; font: inherit; cursor: pointer; }
+            li { display: flex; align-items: center; gap: .5rem; padding: .65rem 0; border-bottom: 1px solid #ddd; }
+            .actions { display: flex; gap: .5rem; margin-left: auto; }
+            .actions form { margin: 0; }
+            .done { color: #667; text-decoration: line-through; }
+            footer { margin-top: 2rem; color: #667; }
+        </style>
+    </head>
+    <body>
+        <h1>Go++ Todo</h1>
+        <p>A server-rendered todo list backed by SQLite.</p>
+        <form method="post" action="/todos">
+            <input name="title" placeholder="What needs doing?" required>
+            <button type="submit">Add todo</button>
+        </form>
+        <ul>
+            {{range .}}
+            <li>
+                <span class="{{if .Completed}}done{{end}}">{{.Title}}</span>
+                <div class="actions">
+                    {{if .Completed}}
+                    <form method="post" action="/todos/{{.Id}}/reopen">
+                        <button type="submit">Reopen</button>
+                    </form>
+                    {{else}}
+                    <form method="post" action="/todos/{{.Id}}/complete">
+                        <button type="submit">Complete</button>
+                    </form>
+                    {{end}}
+                    <form method="post" action="/todos/{{.Id}}/delete">
+                        <button type="submit">Remove</button>
+                    </form>
+                </div>
+            </li>
+            {{else}}
+            <li>Your list is empty. Add a todo above.</li>
+            {{end}}
+        </ul>
+        <footer>JSON API and interactive docs: <a href="/api/swagger">Swagger UI</a></footer>
+    </body>
+    </html>
+}
+
+var todoDatabase *sql.DB
+
+extend *sql.DB, *sql.Tx {
+    func Todos() ([]Todo, error) {
+        todos := []Todo{}
+        err := this.Select(&todos, "1=1")
+        return todos, err
+    }
+
+    func CompletedTodos() ([]Todo, error) {
+        todos := []Todo{}
+        err := this.Select(&todos, "completed = $1", true)
+        return todos, err
+    }
+
+    func FindTodo(id int64) (Todo, error) {
+        todo := &Todo()
+        return todo, this.Get(todo, "id = $1", id)
+    }
+
+    func CreateTodo(todo *Todo) error {
+        return this.Insert(todo)
+    }
+
+    func MarkTodoCompleted(id int64, completedAt int64) error {
+        todo := &Todo()
+        if err := this.Get(todo, "id = $1", id); err != nil {
+            return err
+        }
+        todo.Completed = true
+        todo.CompletedAt = completedAt
+        return this.Update(todo)
+    }
+
+    func MarkTodoActive(id int64) (*Todo, error) {
+        todo := &Todo()
+        if err := this.Get(todo, "id = $1", id); err != nil {
+            return nil, err
+        }
+        todo.Completed = false
+        todo.CompletedAt = 0
+        if err := this.Update(todo); err != nil {
+            return nil, err
+        }
+        return todo, nil
+    }
+
+    func DeleteTodo(id int64) error {
+        todo := &Todo()
+        if err := this.Get(todo, "id = $1", id); err != nil {
+            return err
+        }
+        return this.Delete(todo)
+    }
+}
+
+func PruneCompletedTodos(ctx context.Context) error @{cron.Every(time.Minute)} {
+    if ctx.Err() != nil {
+        return ctx.Err()
+    }
+    if todoDatabase == nil {
+        return nil
+    }
+    cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
+    todos := []Todo{}
+    if err := todoDatabase.Select(&todos, "completed = $1 AND completed_at < $2 AND completed_at > 0", true, cutoff); err != nil {
+        return err
+    }
+
+    err := todos.Each(todo => todoDatabase.DeleteTodo(todo.Id))
+    if len(todos) > 0 {
+        log.Printf("todo-app: pruned %d completed todos", len(todos))
+    }
+    return err
+}
+
+func atExit() {
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    if err := cron.Stop(ctx); err != nil {
+        log.Println("todo-app: stop cron:", err)
+    }
+    if todoDatabase != nil {
+        if err := todoDatabase.Close(); err != nil {
+            log.Println("todo-app: close database:", err)
+        }
+    }
+}
+
+class TodoApp : http.Server @{
+    http.IP("127.0.0.1"),
+    http.Port(8080),
+    http.OpenAPI("/api/openapi.json"),
+    http.Swagger("/api/swagger")
+} {
+    func parseTodoID(raw string) (int64, error) {
+        return strconv.ParseInt(raw, 10, 64)
+    }
+
+    func Home(ctx *http.Context) error @{ http.GET("/")} {
+        todos := todoDatabase.Todos()
+        return ctx.Template(todos)
+    }
+
+    func CreateTodoFromForm(ctx *http.Context) error @{
+        http.POST("/todos")
+    } {
+        if err := ctx.Request.ParseForm(); err != nil {
+            return err
+        }
+        title := strings.TrimSpace(ctx.Request.FormValue("title"))
+        if title != "" {
+            todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
+            todoDatabase.CreateTodo(&todo)
+        }
+        ctx.Redirect("/", 303)
+        return nil
+    }
+
+    func CompleteTodoFromForm(ctx *http.Context) error @{
+        http.POST("/todos/{id}/complete")
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return err
+        }
+        var todo *Todo
+        try {
+            todo = todoDatabase.FindTodo(id)
+        } catch sql.ErrNoRows {
+            ctx.Redirect("/", 303)
+            return nil
+        }
+        if !todo.Completed {
+            todo.Completed = true
+            completedAt := time.Now().Unix()
+            todo.CompletedAt = completedAt
+            todoDatabase.MarkTodoCompleted(id, completedAt)
+        }
+        ctx.Redirect("/", 303)
+        return nil
+    }
+
+    func DeleteTodoFromForm(ctx *http.Context) error @{
+        http.POST("/todos/{id}/delete")
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return err
+        }
+        try {
+            todoDatabase.DeleteTodo(id)
+        } catch sql.ErrNoRows {
+            ctx.Redirect("/", 303)
+            return nil
+        }
+        ctx.Redirect("/", 303)
+        return nil
+    }
+
+    func ReopenTodoFromForm(ctx *http.Context) error @{
+        http.POST("/todos/{id}/reopen")
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return err
+        }
+        try {
+            todoDatabase.MarkTodoActive(id)
+        } catch sql.ErrNoRows {
+            ctx.Redirect("/", 303)
+            return nil
+        }
+        ctx.Redirect("/", 303)
+        return nil
+    }
+
+    func ListTodos(ctx *http.Context) error @{
+        http.GET("/api/todos"),
+        http.Summary("List todos"),
+        http.Description("Returns every todo, including its completion state and timestamps."),
+        http.Tags("Todos"),
+        http.ResponseBody(200, "Todo list", "application/json", record(Items: []Todo{}))
+    } {
+        todos := todoDatabase.Todos()
+        return ctx.JSON(TodoList{Items: todos})
+    }
+
+    func CompletedTodos(ctx *http.Context) error @{
+        http.GET("/api/todos/completed"),
+        http.Summary("List completed todos"),
+        http.Description("Returns todos that have been marked complete."),
+        http.Tags("Todos"),
+        http.ResponseBody(200, "Completed todo list", "application/json", record(Items: []Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
+    } {
+        todos := todoDatabase.CompletedTodos()
+        return ctx.JSON(TodoList{Items: todos})
+    }
+
+    func CreateTodo(ctx *http.Context) error @{
+        http.POST("/api/todos"),
+        http.Summary("Create a todo"),
+        http.Description("Creates a todo from a JSON title and returns the stored record."),
+        http.Tags("Todos"),
+        http.RequestBody("application/json", "The todo title to create", record(Title: "Write the next Go++ example")),
+        http.ResponseBody(201, "Todo created", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(400, "The request body is invalid or the title is empty", "application/json", record(Error: "todo title is required"))
+    } {
+        request := CreateTodoRequest()
+        body := stdhttp.MaxBytesReader(ctx.Response, ctx.Request.Body, 1<<20)
+        if err := stdjson.NewDecoder(body).Decode(&request); err != nil {
+            return ctx.JSON(400, APIError{Error: "invalid JSON request body"})
+        }
+        title := strings.TrimSpace(request.Title)
+        if title == "" {
+            return ctx.JSON(400, APIError{Error: "todo title is required"})
+        }
+        todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
+        todoDatabase.CreateTodo(&todo)
+        return ctx.JSON(201, todo)
+    }
+
+    func GetTodo(ctx *http.Context) error @{
+        http.GET("/api/todos/{id}"),
+        http.Summary("Get a todo"),
+        http.Description("Returns one todo by its numeric ID."),
+        http.Tags("Todos"),
+        http.ResponseBody(200, "Todo found", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
+        }
+        var todo *Todo
+        try {
+            todo = todoDatabase.FindTodo(id)
+        } catch sql.ErrNoRows {
+            return ctx.JSON(404, APIError{Error: "todo not found"})
+        }
+        return ctx.JSON(todo)
+    }
+
+    func CompleteTodo(ctx *http.Context) error @{
+        http.PUT("/api/todos/{id}/complete"),
+        http.Summary("Complete a todo"),
+        http.Description("Marks a todo complete and records when it was completed."),
+        http.Tags("Todos"),
+        http.ResponseBody(200, "Todo completed", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)),
+        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
+        }
+        var todo *Todo
+        try {
+            todo = todoDatabase.FindTodo(id)
+            if !todo.Completed {
+                todo.Completed = true
+                completedAt := time.Now().Unix()
+                todo.CompletedAt = completedAt
+                todoDatabase.MarkTodoCompleted(id, completedAt)
+            }
+        } catch sql.ErrNoRows {
+            return ctx.JSON(404, APIError{Error: "todo not found"})
+        }
+        return ctx.JSON(todo)
+    }
+
+    func ReopenTodo(ctx *http.Context) error @{
+        http.DELETE("/api/todos/{id}/complete"),
+        http.Summary("Reopen a todo"),
+        http.Description("Clears a todo's completion state and completion timestamp."),
+        http.Tags("Todos"),
+        http.ResponseBody(200, "Todo reopened", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
+        }
+        var todo *Todo
+        try {
+            todo = todoDatabase.MarkTodoActive(id)
+        } catch sql.ErrNoRows {
+            return ctx.JSON(404, APIError{Error: "todo not found"})
+        }
+        return ctx.JSON(todo)
+    }
+
+    func DeleteTodo(ctx *http.Context) error @{
+        http.DELETE("/api/todos/{id}"),
+        http.Summary("Delete a todo"),
+        http.Description("Permanently removes a todo by its numeric ID."),
+        http.Tags("Todos"),
+        http.ResponseBody(204, "Todo deleted", "", nil),
+        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+    } {
+        var id int64
+        id, err := this.parseTodoID(ctx.Param("id"))
+        if err != nil {
+            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
+        }
+        try {
+            todoDatabase.FindTodo(id)
+        } catch sql.ErrNoRows {
+            return ctx.JSON(404, APIError{Error: "todo not found"})
+        }
+        todoDatabase.DeleteTodo(id)
+        return ctx.Text(204, "")
+    }
+}
+
+func main() {
+    try {
+        db := sql.Open("sqlite", ":memory:")
+        db.SetMaxOpenConns(1)
+        db.SetMaxIdleConns(1)
+        todoDatabase = db
+        db.Exec(`
+			CREATE TABLE IF NOT EXISTS todos (
+				id INTEGER PRIMARY KEY,
+				title TEXT NOT NULL,
+				completed BOOLEAN NOT NULL DEFAULT FALSE,
+				created_at INTEGER NOT NULL DEFAULT 0,
+				completed_at INTEGER NOT NULL DEFAULT 0
+			)
+        `)
+        cron.Start()
+        log.Println("todo-app: cleanup job scheduled")
+        app := TodoApp()
+        app.Listen()
+    } catch err {
+        if errors.Is(err, cron.ErrInvalidSchedule) {
+            fmt.Println("todo cron: invalid schedule")
+        } else if err != stdhttp.ErrServerClosed {
+            fmt.Println("todo app:", err)
+        }
+    }
+}

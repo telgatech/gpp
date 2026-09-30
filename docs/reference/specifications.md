@@ -7,6 +7,7 @@ before each docs development or production build.
 ## Compiler and language
 
 - [Base language](./specifications/base)
+- [Program exit hook](./specifications/at-exit)
 - [Compatibility](./specifications/compat)
 - [Full compiler AST](./specifications/compiler.ast)
 - [Compiler diagnostics](./specifications/compiler-diagnostics)

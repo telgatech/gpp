@@ -1,8 +1,9 @@
 package main
 
 import (
-	"fmt"
-	http "gpp/http"
+    "fmt"
+    stdhttp "net/http"
+    http "gpp/http"
 )
 
 template Page(value string) {
@@ -14,52 +15,80 @@ template ErrorPage(data any) {
 	<p>{{.Path}}</p>
 }
 
-class App : http.Server @{http.IP("127.0.0.1"),  http.Prefix("/api"), http.OpenAPI, http.Swagger} {
-	func ErrorTemplate() string {
-		return "ErrorPage"
-	}
+class HealthStatus {
+    OK bool
+}
 
-	func BeforeRequest(ctx *http.Context) error {
-		ctx.Set("request-source", "Go++")
-		return nil
-	}
+class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAPI, http.Swagger} {
+    func ErrorTemplate() string {
+        return "ErrorPage"
+    }
 
-	func Home(ctx *http.Context) error @{http.GET("/hello/{name}")} {
-		return ctx.Text(fmt.Sprintf("%s says hello to %s", ctx.Get("request-source"), ctx.Param("name")))
-	}
+    func BeforeRequest(ctx *http.Context) error {
+        ctx.Set("request-source", "Go++")
+        return nil
+    }
 
-	func Health(ctx *http.Context) error @{http.GET("/health")} {
-		return ctx.JSON(record(OK: true))
-	}
+    func Home(ctx *http.Context) error @{
+        http.GET("/hello/{name}"),
+        http.Summary("Greet someone by name"),
+        http.Description("Returns a plain-text greeting for the name in the URL."),
+        http.Tags("Greetings")
+    } {
+        return ctx.Text(fmt.Sprintf("%s says hello to %s", ctx.Get("request-source"), ctx.Param("name")))
+    }
 
-	func Created(ctx *http.Context) error @{http.POST("/created")} {
-		return ctx.JSON(201, record(OK: true))
-	}
+    func Health(ctx *http.Context) error @{
+        http.GET("/health"),
+        http.Summary("Check service health"),
+        http.Description("Reports whether the service is available."),
+        http.Tags("Health"),
+        http.ResponseBody(200, "Service is healthy", "application/json", HealthStatus{OK: true})
+    } {
+        return ctx.JSON(record(OK: true))
+    }
 
-	func Preview(ctx *http.Context) error @{http.GET("/preview")} {
-		return ctx.Template("Page", "Go++ HTTP")
-	}
+    func Created(ctx *http.Context) error @{
+        http.POST("/created"),
+        http.Summary("Create a sample resource"),
+        http.Description("Demonstrates a successful creation response."),
+        http.Tags("Resources"),
+        http.ResponseBody(201, "Resource created", "application/json", HealthStatus{OK: true})
+    } {
+        return ctx.JSON(201, record(OK: true))
+    }
 
-	func AfterRequest(ctx *http.Context) error {
-		return nil
-	}
+    func Preview(ctx *http.Context) error @{
+        http.GET("/preview"),
+        http.Summary("Render the template preview"),
+        http.Description("Returns a small HTML page rendered from a Go++ template."),
+        http.Tags("Templates")
+    } {
+        return ctx.Template("Page", "Go++ HTTP")
+    }
 
-	func BeforeShutdown() error {
-		fmt.Println("server shutting down")
-		return nil
-	}
+    func AfterRequest(ctx *http.Context) error {
+        return nil
+    }
 
-	func AfterShutdown() error {
-		fmt.Println("server stopped")
-		return nil
-	}
+    func BeforeShutdown() error {
+        fmt.Println("server shutting down")
+        return nil
+    }
+
+    func AfterShutdown() error {
+        fmt.Println("server stopped")
+        return nil
+    }
 }
 
 func main() {
-	try {
-		app := App()
-		app.Listen()
-	} catch err {
-		fmt.Println("HTTP example:", err)
-	}
+    try {
+        app := App()
+        app.Listen()
+    } catch err {
+        if err != stdhttp.ErrServerClosed {
+            fmt.Println("HTTP example:", err)
+        }
+    }
 }

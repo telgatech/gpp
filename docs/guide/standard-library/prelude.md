@@ -59,6 +59,16 @@ The parameter type is inferred from the collection element type, so these lambda
 
 ### Slice extensions
 
+#### `Each(action func(T) error) error`
+
+Runs an error-returning action for every element in order and stops at the first error. This is useful for side effects that can fail, such as deleting database records. Return the result from an enclosing function that also returns an error, or handle it locally.
+
+```go
+return todos.Each(todo => todoDatabase.DeleteTodo(todo.Id))
+```
+
+If deletion fails, later todos are not processed and the error reaches the caller.
+
 #### `Any(predicate) bool`
 
 Returns `true` as soon as the predicate matches an element. Returns `false` for an empty slice.

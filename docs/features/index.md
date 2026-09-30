@@ -11,6 +11,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Function and method overloading](./overloading)
 - [Multiple inheritance](./multiple-inheritance)
 - [Exception handling](./exceptions)
+- [Program exit hook](./at-exit)
 - [Extension methods](./extensions)
 - [Serialization](./serialization)
 - [Constructor hook: class `init()` (Planned)](./classes#constructor-hook-init-planned)

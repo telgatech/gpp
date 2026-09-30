@@ -171,6 +171,7 @@ func (statement *IfStmt) Span() Span { return statement.SpanValue }
 
 type CatchClause struct {
 	Types     []TypeNode
+	Value     string
 	Binding   string
 	Body      *BlockStmt
 	SpanValue Span
@@ -1245,6 +1246,10 @@ func astCatchClause(statement *statementDraft) CatchClause {
 	clean = clean[1:]
 	clause := CatchClause{Body: statement.Body, SpanValue: statement.SpanValue}
 	if len(clean) == 0 {
+		return clause
+	}
+	if len(clean) == 3 && clean[0].Kind == TokenIdentifier && clean[1].Text == "." && clean[2].Kind == TokenIdentifier {
+		clause.Value = clean[0].Text + "." + clean[2].Text
 		return clause
 	}
 	last := clean[len(clean)-1]

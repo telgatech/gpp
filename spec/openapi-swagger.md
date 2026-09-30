@@ -37,6 +37,10 @@ The OpenAPI document is the machine-readable API description.
 
 Swagger is an optional interactive UI consuming that OpenAPI document.
 
+These annotations add the OpenAPI document and Swagger UI as separate HTTP endpoints; they do not rewrite or capture application routes. The server continues to serve every declared route normally. The generated OpenAPI document currently includes only routes whose `http.RequestBody` or `http.ResponseBody` declares a JSON media type. HTML pages and other routes without a JSON contract remain available from the server but are omitted from the API document.
+
+`http.Prefix` is a server-wide route prefix. It applies to application routes and to the generated OpenAPI and Swagger endpoints. Applications that serve pages at `/` and keep JSON routes and documentation under `/api` should use explicit route paths and explicit documentation paths instead of a server-wide prefix.
+
 ---
 
 # 2. Design Principle
@@ -378,11 +382,14 @@ OpenAPI should reuse that binding information.
 
 Typed request-body binding should automatically produce an OpenAPI request schema.
 
+When a handler receives `*http.Context` and decodes its body explicitly, use `http.RequestBody(contentType, description, example)` to document that input in OpenAPI. This annotation describes the body for Swagger UI; it does not decode or bind the request at runtime. The example value provides both its schema type and an OpenAPI media-type example.
+
 Example:
 
 ```gpp
-func CreateUser(input CreateUser) User @{
-    http.POST("/users")
+func CreateUser(ctx *http.Context) error @{
+    http.POST("/users"),
+    http.RequestBody("application/json", "The user to create", record(Name: "Ada"))
 }
 ```
 
@@ -659,26 +666,17 @@ Do not infer status semantics merely from the HTTP verb if the runtime does not 
 
 # 26. Explicit HTTP Response Metadata
 
-If Go++ HTTP annotations later or already provide response metadata, OpenAPI should use it directly.
-
-Conceptually:
+`http.ResponseBody(status, description, contentType, example)` contributes one OpenAPI response. Multiple declarations describe alternate outcomes. For example:
 
 ```gpp
-@{
-    http.POST("/users")
-    http.Status(201)
+func CreateUser(ctx *http.Context) error @{
+    http.POST("/users"),
+    http.ResponseBody(201, "User created", "application/json", record(Id: 1, Name: "Ada")),
+    http.ResponseBody(400, "The request is invalid", "application/json", record(Error: "invalid user"))
 }
 ```
 
-would cause OpenAPI to document:
-
-```text
-201
-```
-
-as the corresponding response.
-
-The precise status annotation syntax belongs to the HTTP annotation specification.
+The example value determines the response schema and is included as the media type's OpenAPI `example`. A `record(...)` literal can provide an inline shape and sample without defining a helper function or a one-use response class. It does not set or validate the handler's runtime status. Use an empty content type and nil example for a response with no body.
 
 ---
 
@@ -755,25 +753,36 @@ Operation IDs must be unique within the generated document.
 
 # 31. Handler Documentation
 
-Documentation comments should contribute OpenAPI descriptions.
-
-Example:
+Each route may carry OpenAPI documentation annotations alongside its HTTP method annotation. These annotations describe the operation without changing its runtime behavior.
 
 ```gpp
-// GetUser returns a user by ID.
-func GetUser(id int) User @{
-    http.GET("/users/{id}")
+func User(ctx *http.Context) error @{
+    http.GET("/users/{id}"),
+    http.Summary("Get a user"),
+    http.Description("Returns the user identified by the path parameter."),
+    http.Tags("Users"),
+    http.ResponseBody(200, "User returned", "application/json", record(Id: 1, Name: "Ada")),
+    http.ResponseBody(404, "No user exists with that ID", "application/json", record(Error: "user not found"))
+} {
+    // Handle the request.
 }
 ```
 
-may generate:
+The annotations map to standard OpenAPI operation fields:
 
 ```text
-summary/description:
-    GetUser returns a user by ID.
+http.Summary(text)                    -> summary
+http.Description(text)                -> description
+http.Tags(names...)                   -> tags
+http.RequestBody(media, text, sample) -> requestBody
+http.ResponseBody(code, text, media, ex)  -> responses[code]
 ```
 
-The precise split between OpenAPI `summary` and `description` may be implementation-defined.
+`Summary` should give the operation a concise, useful label in Swagger UI. `Description` may explain behavior, constraints, side effects, or other details a caller needs. `Tags` group related operations in the UI. Path parameters are inferred from `{name}` in the route, and their schema comes from a matching handler parameter when available.
+
+`ResponseBody` may be applied more than once to document distinct status codes. Its `example` value supplies both the schema type and the OpenAPI media-type example; its value is documentation data and is not sent by the handler. Use a nil example and an empty media type for a response without a body, such as a 204 response. When any explicit response annotations are present, they define the operation's response map. If none are present, the generator keeps its generic 200 response and uses a non-error handler return type as an inferred JSON schema when possible.
+
+Annotations must match what the handler actually sends. OpenAPI metadata does not enforce status codes, content types, or schemas at runtime. Since handlers that write through `ctx.JSON`, `ctx.Text`, or `ctx.Template` expose those details only in their implementation, annotate them explicitly when Swagger callers need an accurate contract.
 
 ---
 

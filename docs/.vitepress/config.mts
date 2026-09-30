@@ -34,6 +34,7 @@ export default defineConfig({
             { text: 'Overloading', link: '/features/overloading' },
             { text: 'Multiple inheritance', link: '/features/multiple-inheritance' },
             { text: 'Exception handling', link: '/features/exceptions' },
+            { text: 'Program exit hook', link: '/features/at-exit' },
             { text: 'Extension methods', link: '/features/extensions' },
             { text: 'Serialization', link: '/features/serialization' },
             { text: 'Static methods', link: '/features/static-methods' },

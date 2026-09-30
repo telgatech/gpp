@@ -165,9 +165,12 @@ func transformExtensionsAST(src string, context constructorContext, inheritedTyp
 		if function == nil || function.Method.BodyAST == nil {
 			continue
 		}
-		types := cloneStringMap(inheritedTypes)
+		types := cloneStringMap(context.GlobalValueTypes)
 		if types == nil {
 			types = map[string]string{}
+		}
+		for name, typeName := range inheritedTypes {
+			types[name] = typeName
 		}
 		for _, parameter := range function.Method.ParameterAST {
 			if parameter.Type == nil {
@@ -187,9 +190,12 @@ func transformExtensionsAST(src string, context constructorContext, inheritedTyp
 		if parseErr != nil || block == nil {
 			return src, false, nil
 		}
-		types := cloneStringMap(inheritedTypes)
+		types := cloneStringMap(context.GlobalValueTypes)
 		if types == nil {
 			types = map[string]string{}
+		}
+		for name, typeName := range inheritedTypes {
+			types[name] = typeName
 		}
 		bodies = append(bodies, extensionASTBody{block: block, types: types})
 	}
@@ -286,8 +292,10 @@ func collectExtensionStatementType(statement Stmt, types map[string]string, cont
 			if !ok || index >= len(value.Right) {
 				continue
 			}
-			if inferred := extensionASTStaticType(value.Right[index], context, types); inferred != "" {
-				types[name.Name] = inferred
+			if types[name.Name] == "" {
+				if inferred := extensionASTStaticType(value.Right[index], context, types); inferred != "" {
+					types[name.Name] = inferred
+				}
 			}
 		}
 	case *IfStmt:

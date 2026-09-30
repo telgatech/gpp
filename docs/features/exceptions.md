@@ -152,6 +152,23 @@ if err != nil {
 This lets a package use conventional Go error handling wherever it is clearest
 and structured catches where they improve readability.
 
+## Catch a sentinel error directly
+
+When a handler knows how to respond to a specific sentinel, catch that value
+without adding a catch-all, rethrow branch, or separate `errors.Is` check:
+
+```go
+try {
+    todo := Todo.Find(id)
+    return ctx.JSON(todo)
+} catch sql.ErrNoRows {
+    return ctx.JSON(404, record(Error: "todo not found"))
+}
+```
+
+Go++ matches the value with `errors.Is`, so wrapped sentinel errors still
+match. Other errors remain unhandled and propagate normally.
+
 ## Throw, catch several types, and clean up
 
 Use `throw` to propagate an error value intentionally. A catch can match one or

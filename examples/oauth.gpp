@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	stdhttp "net/http"
 	http "gpp/http"
 )
 
@@ -24,6 +25,8 @@ func main() {
 		app := App()
 		app.Listen()
 	} catch err {
-		fmt.Println("OAuth example:", err)
+		if err != stdhttp.ErrServerClosed {
+			fmt.Println("OAuth example:", err)
+		}
 	}
 }

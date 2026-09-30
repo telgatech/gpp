@@ -138,6 +138,8 @@ Provide a useful baseline for slices.
 Conceptual API:
 
 extend []T {
+    func Each(fn func(T) error) error
+
     func Any(fn func(T) bool) bool
     func All(fn func(T) bool) bool
 
@@ -155,6 +157,8 @@ extend []T {
 
     func Sort(less func(T, T) bool)
 }
+
+`Each` visits values in order, returns immediately when its callback returns an error, and otherwise returns `nil` after the final value. The caller can return or otherwise handle that error.
 
 Exact generic constraint syntax should follow whatever Go++ currently supports.
 

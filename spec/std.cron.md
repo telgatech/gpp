@@ -80,8 +80,10 @@ before `main`, so the registry includes annotated functions from imported Go++
 packages when `cron.Start()` is called.
 
 `cron.Start() error` validates every registered schedule before starting any
-job. If one expression is invalid, `Start` returns an error and starts none of
-the jobs. It starts the scheduler in the background and returns immediately.
+job. If one expression is invalid, `Start` wraps `cron.ErrInvalidSchedule` and
+starts none of the jobs. Go++ callers can identify this specific error with
+`errors.Is` inside a catch block. It starts the scheduler in the background and
+returns immediately.
 Calling `Start` again while it is running is idempotent. After a completed
 `Stop`, it may be started again.
 
@@ -145,6 +147,8 @@ does not replay missed invocations after downtime.
 
 ```go
 type JobFunc func(context.Context) error
+
+var ErrInvalidSchedule error
 
 func Start() error
 func Stop(ctx context.Context) error

@@ -224,6 +224,68 @@ func TestCompileFilesSeparatesSameBasenameSourceAndTemplate(t *testing.T) {
 	}
 }
 
+func TestCompileFilesFindsAtExitInAnotherPackageFile(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	mainPath := filepath.Join(inputDir, "main.gpp")
+	exitPath := filepath.Join(inputDir, "exit.gpp")
+	if err := os.WriteFile(mainPath, []byte("package main\nfunc main() { work() }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exitPath, []byte("package main\nfunc atExit() { cleanup() }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions(
+		[]string{mainPath, exitPath},
+		outputDir,
+		CompileOptions{NoStdlib: true, NoPrelude: true},
+	); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(generated)
+	deferIndex := strings.Index(text, "defer atExit()")
+	workIndex := strings.Index(text, "work()")
+	if deferIndex < 0 || workIndex < 0 || deferIndex > workIndex {
+		t.Fatalf("main did not defer the hook declared in another file:\n%s", text)
+	}
+}
+
+func TestCompileFilesPrunesImportUsedOnlyByTemplateAnnotation(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+import tpl "gpp/tpl"
+
+template Home(name string) @{tpl.Path("/")} {
+	<p>{{.}}</p>
+}
+
+func main() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions(
+		[]string{sourcePath},
+		outputDir,
+		CompileOptions{ModulePath: "generated"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(generated), `import tpl "generated/gpp/tpl"`) {
+		t.Fatalf("annotation-only tpl alias remained in generated Go:\n%s", generated)
+	}
+}
+
 func TestCompileFilesSupportsAdHocTemplatesAndFunctions(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -597,6 +659,7 @@ package main
 import (
 	"context"
 	"fmt"
+	stdjson "encoding/json"
 	"io"
 	stdhttp "net/http"
 	"strings"
@@ -604,13 +667,39 @@ import (
 	http "gpp/http"
 )
 
+class HealthStatus {
+	OK bool
+}
+
 class App : http.Server @{http.IP("127.0.0.1"), http.OpenAPI, http.Swagger("/swagger")} {
-	func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
+	func Hello(ctx *http.Context) error @{
+		http.GET("/hello/{name}"),
+		http.Summary("Say hello"),
+		http.Description("Returns a greeting in plain text."),
+		http.Tags("Greetings"),
+		http.ResponseBody(200, "Greeting returned", "text/plain", "hello")
+	} {
 		return ctx.Text("hello")
 	}
 
-	func Create(ctx *http.Context) error @{http.POST("/swagger")} {
-		return ctx.Text("created")
+	func Create(ctx *http.Context) error @{
+		http.POST("/swagger"),
+		http.Summary("Create a health status"),
+		http.RequestBody("application/json", "Health status to create", record(OK: true)),
+		http.ResponseBody(201, "Health status created", "application/json", record(OK: true)),
+		http.ResponseBody(400, "The request is invalid", "", nil)
+	} {
+		status := HealthStatus()
+		if err := stdjson.NewDecoder(ctx.Request.Body).Decode(&status); err != nil { return err }
+		return ctx.JSON(201, status)
+	}
+
+	func Page(ctx *http.Context) error @{
+		http.GET("/page"),
+		http.Summary("Render a page"),
+		http.ResponseBody(200, "HTML page", "text/html", "<h1>Page</h1>")
+	} {
+		return ctx.Text("page")
 	}
 }
 
@@ -622,12 +711,24 @@ func request(base string, path string) {
 	response.Body.Close()
 	text := string(body)
 	if response.StatusCode != stdhttp.StatusOK { panic(fmt.Sprintf("%s returned %d", path, response.StatusCode)) }
+	if path == "/openapi.json" && (strings.Contains(text, "/hello/{name}") || strings.Contains(text, "/page")) {
+		panic("OpenAPI should describe JSON endpoints, not plain-text or HTML routes")
+	}
 	fmt.Println(path, response.StatusCode,
 		strings.Contains(response.Header.Get("Content-Type"), "application/json"),
 		strings.Contains(response.Header.Get("Content-Type"), "text/html"),
 		strings.Contains(text, "3.0.3"),
 		strings.Contains(text, "/hello/{name}"),
 		strings.Contains(text, "Swagger UI"),
+		strings.Contains(text, "\"summary\": \"Say hello\""),
+		strings.Contains(text, "\"description\": \"Returns a greeting in plain text.\""),
+		strings.Contains(text, "\"tags\": ["),
+		strings.Contains(text, "\"201\": {"),
+		strings.Contains(text, "\"400\": {"),
+		strings.Contains(text, "\"OK\""),
+		strings.Contains(text, "\"example\": {"),
+		strings.Contains(text, "\"requestBody\": {"),
+		strings.Contains(text, "Health status to create"),
 	)
 }
 
@@ -683,7 +784,7 @@ func main() {
 		t.Skipf("loopback sockets unavailable: %s", output)
 	}
 	result := string(output)
-	if !strings.Contains(result, "/openapi.json 200 true false true true false") {
+	if !strings.Contains(result, "/openapi.json 200 true false true true false true true true true true true true true true") {
 		t.Fatalf("unexpected OpenAPI response:\n%s", output)
 	}
 	if !strings.Contains(result, "/swagger 200 false true false false true") {
@@ -1439,6 +1540,50 @@ func main() {
 	expected := "client invalid\nclient denied\nnative true\n"
 	if string(output) != expected {
 		t.Fatalf("unexpected multi-catch output:\n%s", output)
+	}
+}
+
+func TestCompileFilesCatchesErrorValues(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+)
+
+func find() error {
+	try {
+		throw sql.ErrNoRows
+	} catch sql.ErrNoRows {
+		return nil
+	}
+	return fmt.Errorf("not caught: %w", errors.New("unexpected"))
+}
+
+func main() {
+	fmt.Println(find() == nil)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated error-value catch program did not run: %v\n%s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "true" {
+		t.Fatalf("error-value catch did not handle sql.ErrNoRows and return nil: %s", output)
 	}
 }
 

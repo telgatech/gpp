@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"sort"
@@ -82,9 +83,11 @@ func __gppDiscard3[A any, B any, C any](first A, second B, third C, err error) {
 }
 
 type catchClause struct {
-	typeNodes []TypeNode
-	variable  string
-	body      *ast.BlockStmt
+	typeNodes  []TypeNode
+	value      string
+	errorAlias string
+	variable   string
+	body       *ast.BlockStmt
 }
 
 func transformExceptions(src string, context constructorContext) (string, error) {
@@ -364,6 +367,15 @@ func validateASTCatchClauses(statement *TryStmt, context constructorContext) err
 	}
 	for _, clause := range statement.Catches {
 		types := clause.Types
+		if clause.Value != "" {
+			if isCatchTypeName(clause.Value, context) {
+				types = []TypeNode{parseTypeText(clause.Value)}
+			} else if isCatchErrorValue(clause.Value, context) {
+				continue
+			} else {
+				return fmt.Errorf("invalid catch error value %s", clause.Value)
+			}
+		}
 		if len(types) == 0 && clause.Binding != "" && isCatchTypeName(clause.Binding, context) {
 			types = []TypeNode{parseTypeText(clause.Binding)}
 		}
@@ -425,6 +437,27 @@ func isCatchTypeName(name string, context constructorContext) bool {
 		}
 	}
 	return types.AssignableTo(catchType, errorType)
+}
+
+func isCatchErrorValue(name string, context constructorContext) bool {
+	parts := strings.Split(strings.TrimSpace(name), ".")
+	if len(parts) != 2 || context.AvailableImports == nil {
+		return false
+	}
+	importPath := context.AvailableImports[parts[0]]
+	if importPath == "" {
+		return false
+	}
+	pkg, err := importNativePackage(importPath)
+	if err != nil {
+		return false
+	}
+	variable, ok := pkg.Scope().Lookup(parts[1]).(*types.Var)
+	if !ok {
+		return false
+	}
+	errorType := types.Universe.Lookup("error").Type()
+	return types.AssignableTo(types.Unalias(variable.Type()), errorType)
 }
 
 func validateCatchOrdering(clauses []catchClause, context constructorContext) error {
@@ -527,6 +560,9 @@ func lowerASTTryDirectNode(statement *TryStmt, context constructorContext, rethr
 	}
 	clauses := make([]catchClause, 0, len(statement.Catches))
 	for _, parsed := range statement.Catches {
+		if parsed.Value != "" {
+			return nil, false, nil
+		}
 		types := append([]TypeNode(nil), parsed.Types...)
 		variable := parsed.Binding
 		if len(types) == 0 && variable != "" && isCatchTypeName(variable, context) {
@@ -640,11 +676,21 @@ func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]ca
 	for _, parsed := range statement.Catches {
 		types := append([]TypeNode(nil), parsed.Types...)
 		variable := parsed.Binding
+		value := ""
+		if parsed.Value != "" {
+			if isCatchTypeName(parsed.Value, context) {
+				types = append(types, parseTypeText(parsed.Value))
+			} else if isCatchErrorValue(parsed.Value, context) {
+				value = parsed.Value
+			} else {
+				return nil, fmt.Errorf("invalid catch error value %s", parsed.Value)
+			}
+		}
 		if len(types) == 0 && variable != "" && isCatchTypeName(variable, context) {
 			types = append(types, parseTypeText(variable))
 			variable = ""
 		}
-		if len(types) == 0 {
+		if len(types) == 0 && value == "" {
 			types = []TypeNode{parseTypeText("error")}
 		}
 		for _, typeNode := range types {
@@ -663,7 +709,17 @@ func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]ca
 		if bodyErr != nil {
 			return nil, bodyErr
 		}
-		clauses = append(clauses, catchClause{typeNodes: types, variable: variable, body: body})
+		errorAlias := ""
+		if value != "" {
+			errorAlias = "errors"
+			for alias, importPath := range context.AvailableImports {
+				if importPath == "errors" {
+					errorAlias = alias
+					break
+				}
+			}
+		}
+		clauses = append(clauses, catchClause{typeNodes: types, value: value, errorAlias: errorAlias, variable: variable, body: body})
 	}
 	return clauses, nil
 }
@@ -1502,10 +1558,22 @@ func lowerExceptionResultBoundaryNode(body *ast.BlockStmt, fields []exceptionRes
 		&ast.IfStmt{Cond: &ast.BinaryExpr{X: call(ast.NewIdent("len"), selector(returned, "values")), Op: token.EQL, Y: &ast.BasicLit{Kind: token.INT, Value: "0"}}, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{}}}},
 	}
 	for index, field := range fields {
-		returnBody = append(returnBody, &ast.AssignStmt{
+		value := &ast.IndexExpr{X: selector(returned, "values"), Index: &ast.BasicLit{Kind: token.INT, Value: fmt.Sprintf("%d", index)}}
+		assignment := &ast.AssignStmt{
 			Lhs: []ast.Expr{ast.NewIdent(field.name)}, Tok: token.ASSIGN,
-			Rhs: []ast.Expr{&ast.TypeAssertExpr{X: &ast.IndexExpr{X: selector(returned, "values"), Index: &ast.BasicLit{Kind: token.INT, Value: fmt.Sprintf("%d", index)}}, Type: fieldTypes[index]}},
-		})
+			Rhs: []ast.Expr{&ast.TypeAssertExpr{X: value, Type: fieldTypes[index]}},
+		}
+		if exceptionResultFieldType(field) == "error" {
+			returnBody = append(returnBody, &ast.IfStmt{
+				Cond: &ast.BinaryExpr{X: value, Op: token.EQL, Y: ast.NewIdent("nil")},
+				Body: &ast.BlockStmt{List: []ast.Stmt{&ast.AssignStmt{
+					Lhs: []ast.Expr{ast.NewIdent(field.name)}, Tok: token.ASSIGN, Rhs: []ast.Expr{ast.NewIdent("nil")},
+				}}},
+				Else: &ast.BlockStmt{List: []ast.Stmt{assignment}},
+			})
+		} else {
+			returnBody = append(returnBody, assignment)
+		}
 	}
 	returnBody = append(returnBody, &ast.ReturnStmt{})
 	isErrorBoundary := exceptionResultFieldType(fields[len(fields)-1]) == "error"
@@ -2606,6 +2674,67 @@ func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBloc
 }
 
 func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast.Stmt, error) {
+	hasValueCatch := false
+	for _, clause := range clauses {
+		if clause.value != "" {
+			hasValueCatch = true
+			break
+		}
+	}
+	if hasValueCatch {
+		statements := []ast.Stmt{}
+		for index, clause := range clauses {
+			caseBody := []ast.Stmt{&ast.AssignStmt{
+				Lhs: []ast.Expr{handled}, Tok: token.ASSIGN, Rhs: []ast.Expr{identifier("true")},
+			}}
+			if clause.body != nil {
+				caseBody = append(caseBody, clause.body.List...)
+			}
+			if clause.value != "" {
+				value, err := parser.ParseExpr(clause.value)
+				if err != nil {
+					return nil, err
+				}
+				condition := &ast.BinaryExpr{
+					X:  &ast.BinaryExpr{X: thrownError, Op: token.NEQ, Y: identifier("nil")},
+					Op: token.LAND,
+					Y:  call(selector(identifier(clause.errorAlias), "Is"), thrownError, value),
+				}
+				condition = &ast.BinaryExpr{X: &ast.UnaryExpr{Op: token.NOT, X: handled}, Op: token.LAND, Y: condition}
+				statements = append(statements, &ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: caseBody}})
+				continue
+			}
+			typeCases := make([]ast.Expr, 0, len(clause.typeNodes))
+			for _, typeNode := range clause.typeNodes {
+				typeExpr, err := goTypeExpr(typeNode)
+				if err != nil {
+					return nil, err
+				}
+				typeCases = append(typeCases, typeExpr)
+			}
+			catchName := identifier(fmt.Sprintf("__gppCaught%d", index))
+			if clause.variable != "" {
+				value := ast.Expr(catchName)
+				if len(clause.typeNodes) > 1 {
+					value = call(identifier("error"), catchName)
+				}
+				caseBody = append([]ast.Stmt{&ast.AssignStmt{
+					Lhs: []ast.Expr{identifier(clause.variable)}, Tok: token.DEFINE, Rhs: []ast.Expr{value},
+				}}, caseBody...)
+			}
+			switchStatement := &ast.TypeSwitchStmt{
+				Assign: &ast.AssignStmt{
+					Lhs: []ast.Expr{catchName}, Tok: token.DEFINE,
+					Rhs: []ast.Expr{&ast.TypeAssertExpr{X: thrownError, Type: nil}},
+				},
+				Body: &ast.BlockStmt{List: []ast.Stmt{&ast.CaseClause{List: typeCases, Body: caseBody}}},
+			}
+			condition := &ast.BinaryExpr{X: &ast.UnaryExpr{Op: token.NOT, X: handled}, Op: token.LAND, Y: &ast.BinaryExpr{X: thrownError, Op: token.NEQ, Y: identifier("nil")}}
+			statements = append(statements, &ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: []ast.Stmt{switchStatement}}})
+		}
+		return &ast.BlockStmt{List: statements}, nil
+	}
+
 	hasCatchVariable := false
 	for _, clause := range clauses {
 		if clause.variable != "" {
