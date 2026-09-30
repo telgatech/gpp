@@ -1,4 +1,4 @@
-# Go++, an attempt to add modern features to the Go Programming Language
+# Go++
 
 A superset of Go that provides modern features while staying true to the spirit of Go language including offering full compatibility and side by side compilation.
 
@@ -6,99 +6,83 @@ Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license 
 
 ## What's implemented?
 
-- no package declaration => `package main`
-- one package declaration per source file
-- source files do not need to live in matching package directories
-- dotted Go++ packages and imports mapped to generated Go module paths, with
-  ordinary Go imports available directly
-- `class` => Go struct + receiver methods with an implicit `this` receiver
-- class static methods and factories
-- single and multiple inheritance => embedded structs, with qualified access
-  when inherited members are ambiguous
-- positional and named class construction, including inherited fields, that
-  allocates class pointers; ordinary Go composite literals remain valid
-- default class `String()` and `Dump()` methods, overridable by user methods
-- `"Hello {{expr}}"` and raw-string interpolation with formatting and
-  `String()` integration
-- arity-based overloading for functions and class methods
-- interface-based polymorphism for class-typed variables, parameters,
-  results, and fields
-- named/default function arguments
-- exact static-type overloads such as `Format(1)` and `Format("value")`
-- known class-valued function and method results flow into base-typed calls
-- explicit `?.` safe access for nullable class values
-- anonymous structural records with deterministic generated Go structs
-- compile-time-generated class metadata through `obj.class`, including field,
-  method, and annotation introspection
-- declared, typed annotations with target validation, inherited metadata, and
-  runtime introspection
-- implicit prelude extensions for slices, maps, and strings
-- prelude string regex compilation through `CompileRegex()`
-- concise lambda expressions such as `users.Any(user => user.Active)` that
-  lower to ordinary Go function literals
-- compile-time extension methods that lower to ordinary package-level functions
-- multi-target extension blocks, such as `extend string, []byte { ... }`
-- closed, named-scalar enums with grouped declarations, validated `From`,
-  ordered `values`, and member metadata such as `Status.Active.name` and
-  `Status.Active.value`
-- expression-level error fallback with lazy, short-circuiting `A ?? B`
-- automatic promotion of unhandled trailing errors, plus `throw`,
-  `try`/`catch`/`finally`, and multi-type catches
-- source-level `embed` declarations for rooted `fs.FS` directories and
-  embedded `[]byte` files
-- typed template declarations using standard `html/template` syntax, layout
-  inheritance, static and dynamic execution, and ad-hoc templates through
-  `gpp/tpl`
-- external `.gpp.tpl` sources, with development-time reloads for
-  `gpp/http.Server`
-- mixed Go and Go++ builds in both directions
-- `encoding.Serializable`-generated `ToJSON`/`FromJSON`, `ToYAML`/`FromYAML`,
-  and `ToGOB`/`FromGOB` helpers with field-name, ignore, and omit-empty
-  annotations
-- bundled `gpp/encoding`, `gpp/http`, `gpp/orm`, and `gpp/test` packages for
-  serialization, HTTP servers, database access, and suite-based tests; HTTP
-  support includes annotation-driven routing, request binding, lifecycle
-  hooks, OpenAPI, Swagger UI, and OAuth/OIDC
-- bundled `gpp/cron` scheduling for annotated functions with cron expressions
-  or typed intervals, controlled by explicit `Start` and `Stop` calls
-- Go++-aware formatting, source documentation, diagnostics, and LSP support
+Go++ adds expressive language features while keeping Go packages, generated
+code, and the familiar build toolchain in reach. The guides below explain each
+feature with comparisons and examples.
 
-### Exception handling
+### Language features
 
-Go++ uses Go's `error` interface for exceptions. If a call returns a trailing
-`error` and the caller omits that result, Go++ throws it automatically when it
-is non-nil. Capture the error explicitly to keep ordinary Go error-value
-handling:
+- **[Classes](docs/features/classes.md)** — Group fields and methods around an
+  implicit `this`, with concise construction and generated Go structs.
+- **[Static methods and factories](docs/features/static-methods.md)** — Put
+  type-level operations on a class and provide named ways to construct values.
+- **[Polymorphism](docs/features/polymorphism.md)** — Use class values through
+  compatible base types and interfaces, including when calling methods.
+- **[Multiple inheritance](docs/features/multiple-inheritance.md)** — Compose
+  behavior from multiple base classes, with qualified access when members conflict.
+- **[Overloading](docs/features/overloading.md)** — Reuse a function or method
+  name for different arities and statically distinguishable argument types.
+- **[Named arguments and defaults](docs/features/named-arguments.md)** — Make
+  call sites clearer and omit arguments that have a declared default.
+- **[Structural records](docs/features/records.md)** — Pass composite values
+  without declaring one-off structs for every function boundary.
+- **[Enums](docs/features/enums.md)** — Define closed, named value sets with
+  grouped declarations, validation, ordered values, and member metadata.
+- **[Lambdas and the prelude](docs/features/lambdas.md)** — Write concise
+  functions and use familiar collection, string, and map helpers.
+- **[Extension methods](docs/features/extensions.md)** — Add compile-time
+  methods to existing types, including several types in one extension block.
+- **[String interpolation](docs/features/interpolation.md)** — Embed values in
+  quoted or raw strings, with formatting and `String()` support.
+- **[Regular expressions](docs/features/regular-expressions.md)** — Compile
+  and use regular expressions through concise prelude helpers.
+- **[Safe access](docs/features/safe-access.md)** — Use `?.` to access members
+  of nullable class values without repeating explicit nil checks.
+- **[Lazy error fallback](docs/features/error-fallback.md)** — Use `??` to
+  evaluate a fallback only when the value on its left is absent or erroneous.
+- **[Exception handling](docs/features/exceptions.md)** — Keep Go-style error
+  values while adding `throw`, `try`, typed `catch`, and `finally` syntax.
+- **[Program exit hook](docs/features/at-exit.md)** — Register `atExit` work
+  that runs during normal program shutdown.
+- **[Annotations and introspection](docs/features/annotations.md)** — Declare
+  typed metadata, validate its targets, and inspect it at runtime.
 
-```go
-data := os.ReadFile("config.json") // throws on error
-data, err := os.ReadFile("config.json") // or capture err as an ordinary Go value
-```
+### Application features and standard library
 
-Use `throw` to raise any value that implements `error`. `catch` clauses can
-match one error type, several error types, or all errors. A catch binding gives
-the handler access to the matched error. `finally` runs after the `try` whether
-it completes, throws, or returns:
+- **[Serialization](docs/features/serialization.md)** — Generate JSON, YAML,
+  and GOB conversion methods from class annotations and field metadata.
+- **[HTTP servers and routes](docs/features/http.md)** — Build servers with
+  annotated routing, request binding, middleware, and lifecycle hooks.
+- **[OpenAPI, Swagger, and OAuth](docs/features/api-documentation.md)** —
+  Generate API documentation and interactive Swagger UI, with OAuth/OIDC support.
+- **[ORM and SQL](docs/features/orm.md)** — Map annotated models to SQL and use
+  database operations that invoke validation and lifecycle hooks.
+- **[Typed templates](docs/features/templates.md)** — Define HTML/XML templates
+  as functions and render them with Go's `html/template` protections.
+- **[External template reloads](docs/features/template-reload.md)** — Reload
+  `.gpp.tpl` files during development without rebuilding the server.
+- **[Embedded assets](docs/features/embedded-assets.md)** — Include files and
+  directories in the program through source-level declarations.
+- **[Cron scheduling](docs/guide/standard-library/cron.md)** — Schedule
+  annotated functions or dynamic jobs with explicit start and stop controls.
+- **[Suite-based tests](docs/features/testing.md)** — Organize tests into
+  suites, methods, and annotations, then run them through `gpp test`.
 
-```go
-try {
-    data := os.ReadFile("config.json")
-    fmt.Println(len(data))
-} catch *os.PathError e {
-    fmt.Println("missing:", e.Path)
-} catch e {
-    fmt.Println("failed:", e)
-} finally {
-    fmt.Println("finished")
-}
-```
+### Go compatibility and tooling
 
-Go++ catches only errors thrown explicitly or promoted from omitted trailing
-`error` results; ordinary Go panics are not converted into catchable errors.
-
-Go++ keeps ordinary `.` and explicit-error behavior compatible with Go. Safe
-access is opt-in with `?.`; structured exception syntax lowers to Go-compatible
-error handling.
+- **[Go compatibility](docs/features/packages.md)** — Use ordinary Go imports
+  and dotted Go++ packages mapped to module paths; standalone programs can omit
+  `package main`.
+- **[Mixed Go and Go++ builds](docs/features/mixed-go.md)** — Call Go from Go++
+  and Go++ from Go while compiling both languages in one project.
+- **[Project CLI](docs/features/project-cli.md)** — Initialize, build, run,
+  test, format, and inspect Go++ projects with the `gpp` command.
+- **[Formatter](docs/features/formatter.md)** — Format Go++ syntax consistently
+  and check formatting in CI.
+- **[Source documentation](docs/features/source-docs.md)** — Read declarations
+  and API documentation directly from Go++ source.
+- **[Language server](docs/features/language-server.md)** — Get editor
+  diagnostics, completion, navigation, semantic highlighting, and quick fixes.
 
 ## Install and build
 
