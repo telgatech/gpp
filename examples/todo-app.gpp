@@ -23,6 +23,9 @@ import (
     tpl "gpp/tpl"
 )
 
+var db *sql.DB
+
+
 class Todo : orm.Model @{orm.Table("todos")} {
     Id int64 @{orm.Column("id"), orm.PK}
     Title string @{orm.Column("title")}
@@ -110,7 +113,6 @@ template TodoHome(todos []Todo) @{tpl.Path("/")} {
     </html>
 }
 
-var todoDatabase *sql.DB
 
 extend *sql.DB, *sql.Tx {
     func Todos() ([]Todo, error) {
@@ -170,16 +172,16 @@ func PruneCompletedTodos(ctx context.Context) error @{cron.Every(time.Minute)} {
     if ctx.Err() != nil {
         return ctx.Err()
     }
-    if todoDatabase == nil {
+    if db == nil {
         return nil
     }
     cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
     todos := []Todo{}
-    if err := todoDatabase.Select(&todos, "completed = $1 AND completed_at < $2 AND completed_at > 0", true, cutoff); err != nil {
+    if err := db.Select(&todos, "completed = $1 AND completed_at < $2 AND completed_at > 0", true, cutoff); err != nil {
         return err
     }
 
-    err := todos.Each(todo => todoDatabase.DeleteTodo(todo.Id))
+    err := todos.Each(todo => db.DeleteTodo(todo.Id))
     if len(todos) > 0 {
         log.Printf("todo-app: pruned %d completed todos", len(todos))
     }
@@ -192,8 +194,8 @@ func atExit() {
     if err := cron.Stop(ctx); err != nil {
         log.Println("todo-app: stop cron:", err)
     }
-    if todoDatabase != nil {
-        if err := todoDatabase.Close(); err != nil {
+    if db != nil {
+        if err := db.Close(); err != nil {
             log.Println("todo-app: close database:", err)
         }
     }
@@ -210,7 +212,7 @@ class TodoApp : http.Server @{
     }
 
     func Home(ctx *http.Context) error @{ http.GET("/")} {
-        todos := todoDatabase.Todos()
+        todos := db.Todos()
         return ctx.Template(todos)
     }
 
@@ -223,7 +225,7 @@ class TodoApp : http.Server @{
         title := strings.TrimSpace(ctx.Request.FormValue("title"))
         if title != "" {
             todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
-            todoDatabase.CreateTodo(&todo)
+            db.CreateTodo(&todo)
         }
         ctx.Redirect("/", 303)
         return nil
@@ -239,7 +241,7 @@ class TodoApp : http.Server @{
         }
         var todo *Todo
         try {
-            todo = todoDatabase.FindTodo(id)
+            todo = db.FindTodo(id)
         } catch sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
@@ -248,7 +250,7 @@ class TodoApp : http.Server @{
             todo.Completed = true
             completedAt := time.Now().Unix()
             todo.CompletedAt = completedAt
-            todoDatabase.MarkTodoCompleted(id, completedAt)
+            db.MarkTodoCompleted(id, completedAt)
         }
         ctx.Redirect("/", 303)
         return nil
@@ -263,7 +265,7 @@ class TodoApp : http.Server @{
             return err
         }
         try {
-            todoDatabase.DeleteTodo(id)
+            db.DeleteTodo(id)
         } catch sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
@@ -281,7 +283,7 @@ class TodoApp : http.Server @{
             return err
         }
         try {
-            todoDatabase.MarkTodoActive(id)
+            db.MarkTodoActive(id)
         } catch sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
@@ -297,7 +299,7 @@ class TodoApp : http.Server @{
         http.Tags("Todos"),
         http.ResponseBody(200, "Todo list", "application/json", record(Items: []Todo{}))
     } {
-        todos := todoDatabase.Todos()
+        todos := db.Todos()
         return ctx.JSON(TodoList{Items: todos})
     }
 
@@ -308,7 +310,7 @@ class TodoApp : http.Server @{
         http.Tags("Todos"),
         http.ResponseBody(200, "Completed todo list", "application/json", record(Items: []Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
     } {
-        todos := todoDatabase.CompletedTodos()
+        todos := db.CompletedTodos()
         return ctx.JSON(TodoList{Items: todos})
     }
 
@@ -331,7 +333,7 @@ class TodoApp : http.Server @{
             return ctx.JSON(400, APIError{Error: "todo title is required"})
         }
         todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
-        todoDatabase.CreateTodo(&todo)
+        db.CreateTodo(&todo)
         return ctx.JSON(201, todo)
     }
 
@@ -351,7 +353,7 @@ class TodoApp : http.Server @{
         }
         var todo *Todo
         try {
-            todo = todoDatabase.FindTodo(id)
+            todo = db.FindTodo(id)
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
         }
@@ -374,12 +376,12 @@ class TodoApp : http.Server @{
         }
         var todo *Todo
         try {
-            todo = todoDatabase.FindTodo(id)
+            todo = db.FindTodo(id)
             if !todo.Completed {
                 todo.Completed = true
                 completedAt := time.Now().Unix()
                 todo.CompletedAt = completedAt
-                todoDatabase.MarkTodoCompleted(id, completedAt)
+                db.MarkTodoCompleted(id, completedAt)
             }
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
@@ -403,7 +405,7 @@ class TodoApp : http.Server @{
         }
         var todo *Todo
         try {
-            todo = todoDatabase.MarkTodoActive(id)
+            todo = db.MarkTodoActive(id)
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
         }
@@ -425,21 +427,21 @@ class TodoApp : http.Server @{
             return ctx.JSON(400, APIError{Error: "invalid todo ID"})
         }
         try {
-            todoDatabase.FindTodo(id)
+            db.FindTodo(id)
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
         }
-        todoDatabase.DeleteTodo(id)
+        db.DeleteTodo(id)
         return ctx.Text(204, "")
     }
 }
 
 func main() {
     try {
-        db := sql.Open("sqlite", ":memory:")
+        db = sql.Open("sqlite", ":memory:")
         db.SetMaxOpenConns(1)
         db.SetMaxIdleConns(1)
-        todoDatabase = db
+        db = db
         db.Exec(`
 			CREATE TABLE IF NOT EXISTS todos (
 				id INTEGER PRIMARY KEY,
