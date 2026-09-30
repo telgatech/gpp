@@ -40,19 +40,15 @@ small, stable, and consistent. At the same time, years of application
 development have left me (and countless others like me going by the feedback online)
 wishing for less ceremony and more expressive ways to
 handle some common patterns. That tension is where Go++ began: an experiment
-to see whether those annoyances can be addressed while keeping Go's character,
+to see how far we could stretch the language while still keeping its character,
 toolchain, and interoperability intact.
-
-Go++ explores that idea by compiling to ordinary Go, keeping existing Go
-packages and tools part of the story.
 
 ## Experimental status
 
-Go++ is an experiment to see how far Go can be pushed to address the major
-annoyances people raise while preserving the language's character. I’m not a
-hardened compiler developer, and this project has not yet been broadly vetted by the Go
-community. Until it has received that scrutiny and earned confidence through
-real-world use, please don’t adopt it casually for production systems.
+The toolchain is functional and Go++ is taking shape, but this still remains an
+experiment. I’m not a compiler researcher nor an expert, and the project has not yet received
+broad review from the Go community. Evaluate it carefully before relying on it
+in production.
 
 ## Consulting and project support
 
