@@ -2042,7 +2042,7 @@ func Helper(value string @{Required}) string @{Trace} {
 
 func main() {
     descriptor := Employee.class
-    table := descriptor.annotations.get(Table)
+    table := descriptor.annotations.find(Table)
     _ = table.name
     _ = table.fullName
     _ = table.args[0]
@@ -2068,6 +2068,7 @@ func main() {
 		"Args: []any{\"employees\"}",
 		"Annotations: GppAnnotations{",
 		"GppAnnotation_Table",
+		".Find(GppAnnotation_Table)",
 		".Has(GppAnnotation_PK)",
 		".All(GppAnnotation_Required)",
 		".FullName",

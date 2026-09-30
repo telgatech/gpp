@@ -1,6 +1,6 @@
 package gpp.encoding
 
-import "gopkg.in/yaml.v3"
+import yaml "gopkg.in/yaml.v3"
 
 func ToYAML(value any) ([]byte, error) {
 	return yaml.Marshal(value)

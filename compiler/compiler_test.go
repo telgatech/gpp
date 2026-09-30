@@ -2606,6 +2606,8 @@ func TestCompileFilesGeneratedCodeBuildsWithIntrospection(t *testing.T) {
 	source := `
 import "fmt"
 
+annotation Table(name string) on class
+
 class Model {
     Id string
 
@@ -2614,7 +2616,7 @@ class Model {
     }
 }
 
-class Employee: Model {
+class Employee: Model @{Table("employees")} {
     Name string
 }
 
@@ -2627,6 +2629,8 @@ func main() {
     field.set(first, "Carol")
     fmt.Println(first.class.name, Employee.class.name, first.class == second.class)
     fmt.Println(field.name, field.get(first), field.addr(first) != nil)
+    table := Employee.class.annotations.find(Table)
+    fmt.Println(table.args[0])
 
     var model Model = Employee("id3", "Dan")
     fmt.Println(model.Describe())
@@ -2654,7 +2658,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("generated introspection Go did not run: %v\n%s", err, output)
 	}
-	expected := "Employee Employee true\nName Carol true\nEmployee\nManager\n"
+	expected := "Employee Employee true\nName Carol true\nemployees\nEmployee\nManager\n"
 	if string(output) != expected {
 		t.Fatalf("unexpected introspection output:\n%s\nwant:\n%s", output, expected)
 	}

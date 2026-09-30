@@ -98,7 +98,7 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 					addEdit(span.Start, span.Start, "&")
 				}
 			}
-			if kind != introspectionAnnotations || (selector.Name != "Has" && selector.Name != "Get" && selector.Name != "All" && selector.Name != "has" && selector.Name != "get" && selector.Name != "all") {
+			if kind != introspectionAnnotations || (selector.Name != "Has" && selector.Name != "Find" && selector.Name != "All" && selector.Name != "has" && selector.Name != "find" && selector.Name != "all") {
 				return
 			}
 			name, ok := annotationNameNode(call.Arguments[0].Value)
@@ -271,7 +271,7 @@ func introspectionExpressionKindNode(expression ExprNode, variables map[string]i
 				return introspectionClass
 			}
 			base := introspectionExpressionKindNode(selector.Receiver, variables, context, valueTypes)
-			if base == introspectionAnnotations && selector.Name == "Get" || base == introspectionAnnotations && selector.Name == "get" {
+			if base == introspectionAnnotations && (selector.Name == "Find" || selector.Name == "find") {
 				return introspectionAnnotation
 			}
 			if base == introspectionAnnotations && (selector.Name == "All" || selector.Name == "all") {
@@ -321,9 +321,9 @@ func introspectionExpressionKindNode(expression ExprNode, variables map[string]i
 			if base == introspectionClass || base == introspectionField || base == introspectionMethod || base == introspectionParameter {
 				return introspectionAnnotations
 			}
-		case "has", "Has", "get", "Get", "all", "All":
+		case "has", "Has", "find", "Find", "all", "All":
 			if base == introspectionAnnotations {
-				if value.Name == "get" || value.Name == "Get" {
+				if value.Name == "find" || value.Name == "Find" {
 					return introspectionAnnotation
 				}
 				return introspectionAnnotations
@@ -378,7 +378,7 @@ func introspectionSelectorValid(kind introspectionExprKind, name string) bool {
 	case introspectionParameter:
 		return name == "name" || name == "type" || name == "annotations"
 	case introspectionAnnotations:
-		return name == "has" || name == "get" || name == "all"
+		return name == "has" || name == "find" || name == "all"
 	case introspectionAnnotation:
 		return name == "name" || name == "fullName" || name == "args"
 	case introspectionType:
@@ -663,7 +663,7 @@ func lowerIntrospectionCallArguments(call *CallExpr, context constructorContext)
 		return
 	}
 	kind := introspectionExpressionKindNode(selector.Receiver, context.CurrentIntrospectionKinds, context, context.CurrentParameterTypes)
-	if kind == introspectionAnnotations && (selector.Name == "Has" || selector.Name == "Get" || selector.Name == "All") && len(call.Arguments) > 0 {
+	if kind == introspectionAnnotations && (selector.Name == "Has" || selector.Name == "Find" || selector.Name == "All" || selector.Name == "has" || selector.Name == "find" || selector.Name == "all") && len(call.Arguments) > 0 {
 		if name, ok := annotationNameNode(call.Arguments[0].Value); ok {
 			declaration := context.Annotations[name]
 			if declaration == nil {

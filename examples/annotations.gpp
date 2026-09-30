@@ -20,7 +20,7 @@ class Employee @{Table("employees")} {
 
 func main() {
     descriptor := Employee.class
-    table := descriptor.annotations.get(Table)
+    table := descriptor.annotations.find(Table)
     fmt.Println(table.args[0])
 
     for field := range descriptor.fields {

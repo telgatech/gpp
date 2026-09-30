@@ -252,7 +252,7 @@ The class descriptor exposes these members:
 | Method | `name`, `owner`, `parameters`, `result`, `static`, `annotations` |
 | Parameter | `name`, `type`, `annotations` |
 | Type | `name` |
-| Annotation collection | `has(Annotation)`, `get(Annotation)`, `all(Annotation)` |
+| Annotation collection | `has(Annotation)`, `find(Annotation)`, `all(Annotation)` |
 | Annotation value | `name`, `fullName`, `args` |
 
 Class fields include inherited fields in deterministic parent-then-local order.
@@ -262,12 +262,12 @@ is available without exposing a complete Go reflection type system.
 ## Inspect fields and annotations
 
 Annotation collections can be queried with the annotation declaration itself.
-Use `has` for a yes/no check and `get` to read a particular annotation's
-arguments:
+Use `has` for a yes/no check and `find` to read the first matching annotation's
+arguments. `find` returns `nil` when the annotation is absent:
 
 ```go
 descriptor := Employee.class
-table := descriptor.annotations.get(orm.Table)
+table := descriptor.annotations.find(orm.Table)
 if table != nil {
     fmt.Println("table:", table.args[0])
 }
@@ -299,7 +299,7 @@ for method := range Employee.class.methods {
         fmt.Println("returns", method.result.name)
     }
     if method.annotations.has(Route) {
-        route := method.annotations.get(Route)
+        route := method.annotations.find(Route)
         fmt.Println("route:", route.args)
     }
     for parameter := range method.parameters {

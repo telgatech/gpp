@@ -103,7 +103,7 @@ func (annotations GppAnnotations) Has(annotation any) bool {
 	return annotations.find(annotation) >= 0
 }
 
-func (annotations GppAnnotations) Get(annotation any) *GppAnnotation {
+func (annotations GppAnnotations) Find(annotation any) *GppAnnotation {
 	index := annotations.find(annotation)
 	if index < 0 { return nil }
 	return &annotations[index]
@@ -574,6 +574,7 @@ var introspectionSelectorNames = map[string]string{
 	"result":      "Result",
 	"static":      "Static",
 	"has":         "Has",
+	"find":        "Find",
 	"all":         "All",
 	"fullName":    "FullName",
 	"args":        "Args",

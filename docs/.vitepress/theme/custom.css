@@ -295,15 +295,41 @@ html.dark .VPHomeHero .container .image-container::after {
   color: var(--vp-c-text-2);
 }
 
-.about-profile-copy a {
-  color: var(--vp-c-brand-1);
-  font-weight: 600;
-  text-decoration: none;
+.about-profile-socials {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.about-profile-copy a:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.about-profile-social-button {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  color: var(--vp-c-text-1);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg);
+  transition: color 0.18s ease, border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
+}
+
+.about-profile-social-button:hover {
+  color: var(--vp-c-brand-1);
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+  transform: translateY(-1px);
+}
+
+.about-profile-social-button:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 3px;
+}
+
+.about-profile-social-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 @media (max-width: 520px) {

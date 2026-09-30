@@ -589,7 +589,7 @@ But for ergonomic v1 introspection, string lookup may still exist.
 Recommended long-term API:
 
 annotations.has(web.Auth)
-annotations.get(web.Auth)
+annotations.find(web.Auth)
 
 Optional convenience:
 
@@ -606,12 +606,12 @@ Since annotations are now declared symbols, expose declaration-safe lookup.
 Example:
 
 if m.annotations.has(web.Get) {
-    a := m.annotations.get(web.Get)
+    a := m.annotations.find(web.Get)
 }
 
 This is superior to:
 
-m.annotations.get("get")
+m.annotations.find("get")
 
 because it is:
 
@@ -623,7 +623,7 @@ because it is:
 Recommended API:
 
 annotations.has(annotationType) bool
-annotations.get(annotationType) *Annotation
+annotations.find(annotationType) *Annotation
 annotations.all(annotationType) []Annotation
 
 String-based overloads may optionally remain.
@@ -652,7 +652,7 @@ class Employee @{model.Table("employees")} {
 
 Introspection:
 
-table := Employee.class.annotations.get(model.Table)
+table := Employee.class.annotations.find(model.Table)
 
 println(table.args[0])
 
@@ -801,7 +801,7 @@ valid.
 
 Therefore:
 
-annotations.get(Index)
+annotations.find(Index)
 
 returns first in source order.
 

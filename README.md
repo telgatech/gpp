@@ -158,6 +158,16 @@ gpp test --tag crud examples/testing.gpp
 gpp test --priority high examples/testing.gpp
 ```
 
+The compiler's CI also runs `go test ./...` and
+[`scripts/smoke-examples.sh`](scripts/smoke-examples.sh). That smoke test creates
+a fresh project with `gpp init`, copies in the complete examples tree, then
+runs or builds every example (and executes the Go++ testing example). Run it
+locally before submitting compiler changes:
+
+```bash
+./scripts/smoke-examples.sh
+```
+
 Inspect Go++ source-level documentation without exposing generated Go:
 
 ```bash

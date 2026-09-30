@@ -354,7 +354,7 @@ descriptor := entity.GppRuntimeClass()
 Read table metadata:
 
 ```go
-table := descriptor.annotations.get(Table)
+table := descriptor.annotations.find(Table)
 ```
 
 Enumerate fields:
@@ -367,7 +367,7 @@ for field := range descriptor.fields {
 For every field with:
 
 ```go
-field.annotations.get(Column)
+field.annotations.find(Column)
 ```
 
 collect:
@@ -617,7 +617,7 @@ return entity.AfterCreate(this)
 Obtain:
 
 ```go
-table := entity.class.annotations.get(Table)
+table := entity.class.annotations.find(Table)
 ```
 
 Enumerate:
@@ -788,7 +788,7 @@ Inspect concrete runtime fields.
 Find the field satisfying:
 
 ```go
-field.annotations.get(Column) != nil
+field.annotations.find(Column) != nil
 field.annotations.has(PK)
 ```
 
@@ -885,9 +885,9 @@ The ORM must use annotation symbols, not string names.
 Examples:
 
 ```go
-descriptor.annotations.get(Table)
+descriptor.annotations.find(Table)
 
-field.annotations.get(Column)
+field.annotations.find(Column)
 
 field.annotations.has(PK)
 ```
