@@ -27,7 +27,7 @@ import DonationButton from './.vitepress/theme/DonationButton.vue'
   </div>
 </div>
 
-## Why I created Go++
+## A little background
 
 I've been programming in Go since the early 1.0 days. I love the productivity
 it brings: the language is approachable, its tools are cohesive, and it is

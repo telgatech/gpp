@@ -2,6 +2,9 @@
   --vp-c-brand-1: #2f6fed;
   --vp-c-brand-2: #2459c7;
   --vp-c-brand-3: #17439c;
+  --vp-button-brand-bg: var(--vp-c-brand-1);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-bg: var(--vp-c-brand-3);
   --vp-nav-logo-height: 42px;
   --vp-layout-top-height: 40px;
 }
