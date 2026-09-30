@@ -56,12 +56,12 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>Can I contribute?</summary>
-<p>Yes. Questions, ideas, bug reports, and pull requests are welcome. For a larger feature, opening an issue first is a good way to discuss the design before investing in an implementation.</p>
+<p>For now, the best way to get involved is to share questions, ideas, and bug reports through <a href="https://github.com/telgatech/gpp/issues">GitHub Issues</a> or <a href="https://github.com/telgatech/gpp/discussions">GitHub Discussions</a>. For a larger feature idea, start a Discussion so we can explore the design together. I may open pull requests to outside contributors as the project matures.</p>
 </details>
 
 <details>
 <summary>Are AI-assisted contributions welcome?</summary>
-<p>Yes. This codebase already includes contributions made with large language models, and AI-assisted contributions are welcome when they help advance the compiler or improve developer productivity. Contributions still need careful review and must preserve the project’s quality and performance.</p>
+<p>This codebase already includes work made with large language models. If you use AI to develop an idea or report, share it through Issues or Discussions. Any proposed changes should advance the compiler or developer productivity without reducing quality or performance.</p>
 </details>
 
 <details>

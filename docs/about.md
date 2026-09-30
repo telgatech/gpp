@@ -17,7 +17,7 @@ import DonationButton from './.vitepress/theme/DonationButton.vue'
     <h2>Sunder Rajan</h2>
     <p>Creator of Go++ · Telga Technologies</p>
     <div class="about-profile-socials">
-      <a class="about-profile-social-button" href="https://x.com/sundersw" target="_blank" rel="noreferrer" aria-label="Sunder Rajan on X" title="X · @sundersw">
+      <a class="about-profile-social-button" href="https://x.com/@sunderrajan_" target="_blank" rel="noreferrer" aria-label="Sunder Rajan on X" title="X · @sundersw">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 1.15h3.68l-8.04 9.19L24 22.85h-7.41l-5.8-7.58-6.64 7.58H.47l8.6-9.83L0 1.15h7.6l5.24 6.93zm-1.29 19.49h2.04L6.49 3.24H4.3z" /></svg>
       </a>
       <a class="about-profile-social-button" href="https://in.linkedin.com/in/sunder-rajan-1a4154171" target="_blank" rel="noreferrer" aria-label="Sunder Rajan on LinkedIn" title="LinkedIn">
