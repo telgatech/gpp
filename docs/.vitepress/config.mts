@@ -4,10 +4,20 @@ export default defineConfig({
   lang: 'en-US',
   title: 'Go++',
   description: 'A practical, modern superset of Go.',
-  base: process.env.GITHUB_ACTIONS ? '/gpp/' : '/',
+  base: '/',
   cleanUrls: true,
   lastUpdated: true,
   ignoreDeadLinks: true,
+  head: [
+    [
+      'script',
+      {
+        type: 'module',
+        src: 'https://static.cloudflareinsights.com/beacon.min.js',
+        'data-cf-beacon': '{"token":"e077fd4b577243b9a7c9fdeed275427d"}'
+      }
+    ]
+  ],
   themeConfig: {
     logo: {
       src: '/go-gopher-nav.png',
