@@ -3,6 +3,43 @@
   --vp-c-brand-2: #2459c7;
   --vp-c-brand-3: #17439c;
   --vp-nav-logo-height: 42px;
+  --vp-layout-top-height: 40px;
+}
+
+.early-release-banner {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: var(--vp-z-index-layout-top);
+  display: flex;
+  height: var(--vp-layout-top-height);
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--vp-c-brand-1);
+  background: var(--vp-c-brand-1);
+  color: #fff;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.early-release-banner strong {
+  font-weight: 700;
+}
+
+@media (max-width: 480px) {
+  :root {
+    --vp-layout-top-height: 56px;
+  }
+
+  .early-release-banner {
+    flex-direction: column;
+    gap: 1px;
+    padding: 5px 12px;
+    font-size: 0.78rem;
+  }
 }
 
 .VPNav .VPNavBarTitle .logo {
