@@ -15,6 +15,41 @@ Install the CLI from the repository module:
 go install github.com/telgatech/gpp@latest
 ```
 
+`go install` puts the `gpp` executable in `GOBIN` when that variable is set;
+otherwise it uses `GOPATH/bin`. Add that directory to your `PATH` so your
+terminal can find `gpp`. With Go's default settings, the directory is `~/go/bin`
+on macOS and Linux, and `%USERPROFILE%\go\bin` on Windows. Check the actual
+location with `go env GOBIN GOPATH`.
+
+### Windows
+
+In PowerShell, print the directory Go uses:
+
+```powershell
+$goBin = (go env GOBIN)
+if (-not $goBin) { $goBin = Join-Path (go env GOPATH) 'bin' }
+$goBin
+```
+
+Copy the printed path. Open **Edit environment variables for your account** from
+the Start menu, select **Path** under **User variables**, choose **Edit** →
+**New**, and paste the path. Open a new terminal for the change to take effect.
+
+### macOS and Linux
+
+Add these lines to your shell startup file, then open a new terminal (or source
+the file):
+
+```sh
+goBin="$(go env GOBIN)"
+[ -n "$goBin" ] || goBin="$(go env GOPATH)/bin"
+export PATH="$goBin:$PATH"
+```
+
+Use `~/.zshrc` for the default shell on macOS, or `~/.bashrc` for Bash on Linux
+(some login shells use `~/.bash_profile` instead). Verify the install with
+`gpp version`.
+
 ## Your first program
 
 Create `hello.gpp`:
