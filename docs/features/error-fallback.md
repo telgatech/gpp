@@ -1,8 +1,9 @@
 # Lazy error and nil fallback
 
-The `??` operator supplies a fallback when an operation returns an error or a
-nullable value is absent. Its right side is evaluated only when the left side
-needs a fallback, which keeps defaults close to the operation that needs them.
+The `??` operator supplies a fallback when an operation returns an error or an
+explicit safe access (`?.`) encounters a nil receiver. Its right side is
+evaluated only when the left side needs a fallback, which keeps defaults close
+to the operation that needs them. It does not recover arbitrary Go panics.
 
 ## Compare explicit error handling
 

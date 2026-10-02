@@ -15,10 +15,165 @@ type coalesceASTCandidate struct {
 	depth int
 }
 
-// transformErrorCoalescing lowers A ?? B to a generic helper call. The
-// helper's fallback closure is invoked only after a Go++ thrown error, so its
-// evaluation remains lazy and errors from the fallback are not swallowed by
-// the same operator.
+type safeCoalesceLowering struct {
+	resultType TypeNode
+	isNil      ExprNode
+	access     ExprNode
+}
+
+// safeCoalescePlan recognizes an explicit safe member access on the left of
+// ?? and builds the nil condition separately from the value expression. This
+// keeps standalone ?. zero-value semantics while letting the paired ?? use
+// the fallback only when a safe receiver was nil.
+func safeCoalescePlan(expression ExprNode, context constructorContext, valueTypes map[string]string) (*safeCoalesceLowering, bool, error) {
+	for {
+		parenthesized, ok := expression.(*ParenthesizedExpr)
+		if !ok {
+			break
+		}
+		expression = parenthesized.Inner
+	}
+	var call *CallExpr
+	if candidate, ok := expression.(*CallExpr); ok {
+		if selector, ok := candidate.Callee.(*SelectorExpr); ok && selector.Safe {
+			call = candidate
+			expression = selector
+		}
+	}
+	selector, ok := expression.(*SelectorExpr)
+	if !ok || !selector.Safe {
+		return nil, false, nil
+	}
+	if !safeCoalesceChainRoot(selector.Receiver) {
+		return nil, false, fmt.Errorf("safe access coalescing requires an identifier-based safe access chain")
+	}
+	var guards []ExprNode
+	if err := collectSafeCoalesceGuards(selector.Receiver, context, valueTypes, &guards); err != nil {
+		return nil, false, err
+	}
+	receiverType := coalesceExpressionTypeAST(selector.Receiver, context, valueTypes)
+	typeName := coalesceTypeName(receiverType)
+	target, found := context.Targets[typeName]
+	if !found {
+		return nil, false, fmt.Errorf("safe access receiver has no known class type")
+	}
+	receiverText, err := typeNodeSource(receiverType)
+	if err != nil {
+		return nil, false, err
+	}
+	if !safeReceiverCanBeNil(receiverText, target) {
+		return nil, false, fmt.Errorf("safe access receiver must be a pointer or interface")
+	}
+	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[string]bool{})
+	if err != nil {
+		return nil, false, err
+	}
+	if memberType == nil {
+		return nil, false, fmt.Errorf("class %s has no member %s", target.Class.Name, selector.Name)
+	}
+	if isMethod != (call != nil) {
+		if isMethod {
+			return nil, false, fmt.Errorf("safe method access %s?.%s requires a call", expressionNodeSelectorReceiver(selector), selector.Name)
+		}
+		return nil, false, fmt.Errorf("safe field access %s?.%s is not callable", expressionNodeSelectorReceiver(selector), selector.Name)
+	}
+	guards = append(guards, &BinaryExpr{Left: safeOrdinaryExpr(selector.Receiver), Operator: "==", Right: &LiteralExpr{Text: "nil", Kind: TokenKeyword}})
+	var isNil ExprNode
+	for _, guard := range guards {
+		if isNil == nil {
+			isNil = guard
+		} else {
+			isNil = &BinaryExpr{Left: isNil, Operator: "||", Right: guard}
+		}
+	}
+	var access ExprNode = &SelectorExpr{Receiver: safeOrdinaryExpr(selector.Receiver), Name: selector.Name}
+	var resultType TypeNode = memberType
+	if call != nil {
+		args := make([]CallArg, len(call.Arguments))
+		for index, argument := range call.Arguments {
+			if argument.Name != "" {
+				return nil, false, fmt.Errorf("safe method access does not support named arguments in this context")
+			}
+			args[index] = CallArg{Value: argument.Value}
+		}
+		access = &CallExpr{Callee: access, Arguments: args}
+	}
+	return &safeCoalesceLowering{resultType: resultType, isNil: isNil, access: access}, true, nil
+}
+
+func safeCoalesceChainRoot(expression ExprNode) bool {
+	switch value := expression.(type) {
+	case *NameExpr:
+		return true
+	case *ParenthesizedExpr:
+		return safeCoalesceChainRoot(value.Inner)
+	case *SelectorExpr:
+		return value.Safe && safeCoalesceChainRoot(value.Receiver)
+	default:
+		return false
+	}
+}
+
+func collectSafeCoalesceGuards(expression ExprNode, context constructorContext, valueTypes map[string]string, guards *[]ExprNode) error {
+	switch value := expression.(type) {
+	case *ParenthesizedExpr:
+		return collectSafeCoalesceGuards(value.Inner, context, valueTypes, guards)
+	case *SelectorExpr:
+		if !value.Safe {
+			return nil
+		}
+		if err := collectSafeCoalesceGuards(value.Receiver, context, valueTypes, guards); err != nil {
+			return err
+		}
+		receiverType := coalesceExpressionTypeAST(value.Receiver, context, valueTypes)
+		typeName := coalesceTypeName(receiverType)
+		target, found := context.Targets[typeName]
+		if !found {
+			return fmt.Errorf("safe access receiver has no known class type")
+		}
+		receiverText, err := typeNodeSource(receiverType)
+		if err != nil {
+			return err
+		}
+		if !safeReceiverCanBeNil(receiverText, target) {
+			return fmt.Errorf("safe access receiver must be a pointer or interface")
+		}
+		*guards = append(*guards, &BinaryExpr{Left: safeOrdinaryExpr(value.Receiver), Operator: "==", Right: &LiteralExpr{Text: "nil", Kind: TokenKeyword}})
+	}
+	return nil
+}
+
+func safeOrdinaryExpr(expression ExprNode) ExprNode {
+	switch value := expression.(type) {
+	case *ParenthesizedExpr:
+		value.Inner = safeOrdinaryExpr(value.Inner)
+	case *SelectorExpr:
+		value.Receiver = safeOrdinaryExpr(value.Receiver)
+		value.Safe = false
+	case *CallExpr:
+		value.Callee = safeOrdinaryExpr(value.Callee)
+		for index := range value.Arguments {
+			value.Arguments[index].Value = safeOrdinaryExpr(value.Arguments[index].Value)
+		}
+	}
+	return expression
+}
+
+func expressionNodeSelectorReceiver(selector *SelectorExpr) string {
+	if selector == nil {
+		return "receiver"
+	}
+	text, err := expressionNodeSource(selector.Receiver)
+	if err != nil || text == "" {
+		return "receiver"
+	}
+	return text
+}
+
+// transformErrorCoalescing lowers A ?? B to a generic helper call. Ordinary
+// operands fall back after a Go++ thrown error; explicit safe-access operands
+// also fall back after a nil receiver check. In both cases fallback evaluation
+// remains lazy and errors from the fallback are not swallowed by the operator.
 func transformErrorCoalescing(src string, context constructorContext) (string, error) {
 	for strings.Contains(src, "??") {
 		transformed, handled, err := transformErrorCoalescingAST(src, context)
@@ -136,6 +291,35 @@ func lowerCoalesceExpression(expression ExprNode, context constructorContext, va
 	if !ok || binary.Operator != "??" {
 		return expressionNodeSource(expression)
 	}
+	if plan, found, planErr := safeCoalescePlan(binary.Left, context, valueTypes); planErr != nil {
+		return "", planErr
+	} else if found {
+		resultType, typeErr := typeNodeSource(plan.resultType)
+		if typeErr != nil {
+			return "", typeErr
+		}
+		isNil, sourceErr := expressionNodeSource(plan.isNil)
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		access, sourceErr := expressionNodeSource(plan.access)
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		right, sourceErr := lowerCoalesceExpression(binary.Right, context, valueTypes)
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		access, sourceErr = promoteCoalesceOperand(access, resultType, context)
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		right, sourceErr = promoteCoalesceOperand(right, resultType, context)
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		return fmt.Sprintf("__gppSafeCoalesce[%s](%s, func() %s { return %s }, func() %s { return %s })", resultType, isNil, resultType, access, resultType, right), nil
+	}
 	left, err := lowerCoalesceExpression(binary.Left, context, valueTypes)
 	if err != nil {
 		return "", err
@@ -183,6 +367,39 @@ func lowerCoalesceExpressionNode(expression ExprNode, context constructorContext
 	binary, ok := expression.(*BinaryExpr)
 	if !ok || binary.Operator != "??" {
 		return lowerExceptionExprNode(expression, context)
+	}
+	if plan, found, planErr := safeCoalescePlan(binary.Left, context, valueTypes); planErr != nil {
+		return nil, planErr
+	} else if found {
+		rightType := coalesceExpressionTypeAST(binary.Right, context, valueTypes)
+		if rightType == nil {
+			return nil, fmt.Errorf("could not infer the value type for ??")
+		}
+		access, err := lowerCoalesceOperandNode(plan.access, context, valueTypes)
+		if err != nil {
+			return nil, err
+		}
+		fallback, err := lowerCoalesceExpressionNode(binary.Right, context, valueTypes)
+		if err != nil {
+			return nil, err
+		}
+		fallback, err = lowerCoalesceOperandNode(fallback, context, valueTypes)
+		if err != nil {
+			return nil, err
+		}
+		functionType := &FunctionType{Results: []TypeNode{plan.resultType}}
+		callee := &IndexExpr{
+			Receiver: &NameExpr{Name: "__gppSafeCoalesce"},
+			Index:    &TypeExpr{Type: plan.resultType},
+		}
+		return &CallExpr{
+			Callee: callee,
+			Arguments: []CallArg{
+				{Value: plan.isNil},
+				{Value: &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{access}}}}}},
+				{Value: &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{fallback}}}}}},
+			},
+		}, nil
 	}
 	left, err := lowerCoalesceExpressionNode(binary.Left, context, valueTypes)
 	if err != nil {
@@ -486,6 +703,14 @@ func coalesceExpressionTypeNode(expression ExprNode, context constructorContext,
 			}
 		}
 	case *CallExpr:
+		if index, ok := value.Callee.(*IndexExpr); ok {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") {
+				if typeExpression, ok := index.Index.(*TypeExpr); ok {
+					typeName, _ = typeNodeSource(typeExpression.Type)
+					return typeName
+				}
+			}
+		}
 		typeName = coalesceCallResultType(value, context, valueTypes)
 	}
 	return firstCoalesceResultType(typeName)
@@ -602,14 +827,14 @@ func coalesceExpressionTypeAST(expression ExprNode, context constructorContext, 
 		}
 	case *CallExpr:
 		if index, ok := value.Callee.(*IndexExpr); ok {
-			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") {
 				if typeExpression, ok := index.Index.(*TypeExpr); ok {
 					return typeExpression.Type
 				}
 			}
 		}
 		if index, ok := value.Callee.(*IndexListExpr); ok {
-			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" && len(index.Indices) > 0 {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") && len(index.Indices) > 0 {
 				if typeExpression, ok := index.Indices[0].(*TypeExpr); ok {
 					return typeExpression.Type
 				}

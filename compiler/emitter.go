@@ -1379,10 +1379,6 @@ func transformGoDeclSource(source string, context constructorContext, interpolat
 	if err != nil {
 		return "", err
 	}
-	code, err = transformSafeAccess(code, context)
-	if err != nil {
-		return "", err
-	}
 	code, err = stripDefaultParameterValues(code)
 	if err != nil {
 		return "", err
@@ -1400,6 +1396,10 @@ func transformGoDeclSource(source string, context constructorContext, interpolat
 		return "", err
 	}
 	code, err = transformErrorCoalescing(code, context)
+	if err != nil {
+		return "", err
+	}
+	code, err = transformSafeAccess(code, context)
 	if err != nil {
 		return "", err
 	}
@@ -1439,10 +1439,6 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	if err := prepareRecordContextForFunction(function, context); err != nil {
 		return "", err
 	}
-	source, err := transformSafeAccessInFunctionSource(source, function, context)
-	if err != nil {
-		return "", err
-	}
 	code, err := transformInterpolationInFunctionSource(source, function, interpolationName)
 	if err != nil {
 		return "", err
@@ -1471,10 +1467,6 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	if err != nil {
 		return "", err
 	}
-	code, err = transformSafeAccess(code, context)
-	if err != nil {
-		return "", err
-	}
 	code, err = stripDefaultParameterValues(code)
 	if err != nil {
 		return "", err
@@ -1492,6 +1484,14 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 		return "", err
 	}
 	code, err = transformErrorCoalescing(code, context)
+	if err != nil {
+		return "", err
+	}
+	code, err = transformSafeAccessInFunctionSource(code, function, context)
+	if err != nil {
+		return "", err
+	}
+	code, err = transformSafeAccess(code, context)
 	if err != nil {
 		return "", err
 	}
@@ -1646,10 +1646,6 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		if err != nil {
 			return err
 		}
-		body, err = transformSafeAccess(body, methodContext)
-		if err != nil {
-			return err
-		}
 		body, err = transformCallableCalls(body, methodContext)
 		if err != nil {
 			return err
@@ -1659,6 +1655,10 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 			return err
 		}
 		body, err = transformErrorCoalescing(body, context)
+		if err != nil {
+			return err
+		}
+		body, err = transformSafeAccess(body, methodContext)
 		if err != nil {
 			return err
 		}
@@ -2148,10 +2148,6 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 	if err != nil {
 		return err
 	}
-	body, err = transformSafeAccess(body, methodContext)
-	if err != nil {
-		return err
-	}
 	body, err = transformCallableCalls(body, methodContext)
 	if err != nil {
 		return err
@@ -2161,6 +2157,10 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 		return err
 	}
 	body, err = transformErrorCoalescing(body, context)
+	if err != nil {
+		return err
+	}
+	body, err = transformSafeAccess(body, methodContext)
 	if err != nil {
 		return err
 	}

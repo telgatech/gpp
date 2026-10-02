@@ -126,11 +126,14 @@ common application code compact:
 message := "Hello &#123;&#123;user.Name&#125;&#125;"
 active := users.Any(user => user.Active)
 label := user?.Profile?.DisplayName ?? "anonymous"
+name := user?.Name ?? "Unknown"
 price := strconv.ParseFloat(rawPrice, 64) ?? 0.0
 ```
 
 The `??` operator is lazy: the fallback is evaluated only when the preceding
-operation returns an error or a nullable value in the supported context.
+operation returns an error or an explicit safe access encounters a nil
+receiver. A present field containing its zero value does not trigger the
+fallback.
 
 Ordinary `.` and explicit Go error handling keep their normal meaning. Safe
 access and fallback are opt-in, which makes the compatibility boundary easy to

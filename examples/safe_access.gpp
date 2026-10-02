@@ -2,6 +2,7 @@ import "fmt"
 
 class Person {
     Name string
+    Manager *Person
 
     func Speak() string {
         return "Hello " + this.Name
@@ -14,4 +15,12 @@ func main() {
     // Safe access returns the member's zero value when person is nil.
     fmt.Println(person?.Name)
     fmt.Println(person?.Speak())
+
+    // combine with fallback
+    fmt.Println(person?.Name ?? "Unknown")
+    fmt.Println(person?.Speak() ?? "Hello, stranger")
+
+    person = &Person{Name: "Ada"}
+    fmt.Println(person?.Name ?? "Unknown")
+    fmt.Println(person?.Manager?.Name ?? "No manager")
 }

@@ -52,6 +52,13 @@ func __gppCoalesce[T any](left func() T, fallback func() T) (result T) {
 	return left()
 }
 
+func __gppSafeCoalesce[T any](isNil bool, access func() T, fallback func() T) T {
+	if isNil {
+		return fallback()
+	}
+	return __gppCoalesce(access, fallback)
+}
+
 func __gppUnwrap[T any](value T, err error) T {
 	__gppThrow(err)
 	return value

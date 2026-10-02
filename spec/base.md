@@ -117,10 +117,17 @@ Nil semantics
     name := person?.Name
     greeting := person?.Speak()
 - A safe access returns the member's zero value when its receiver is nil.
-- The initial implementation supports identifier receivers whose static type is
-  a class pointer or generated class interface. Safe access is not inferred for
-  ordinary `.` access, arbitrary expressions, or nil fields reached later in a
-  chain.
+- When a safe access or safe-access chain is the left operand of `??`, a nil
+  receiver selects the fallback instead of returning the zero value. A present
+  member whose value is zero does not select the fallback:
+    name := person?.Name ?? "Unknown"
+- Within that coalescing form, safe field accesses may be chained from an
+  identifier receiver:
+    managerName := person?.Manager?.Name ?? "No manager"
+- `??` does not recover panics from ordinary `.` access.
+- Safe access starts from an identifier whose static type is a class pointer or
+  generated class interface. Safe access is not inferred for ordinary `.`
+  access or arbitrary receiver expressions.
 
 Exceptions
 - Exceptions are not a v0.2 priority.

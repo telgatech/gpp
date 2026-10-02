@@ -121,7 +121,8 @@ throws while evaluating the left expression, evaluation stops and `fallback` is 
 
 # Ordinary Go Panics
 
-`??` catches only Go++ thrown errors.
+`??` catches Go++ thrown errors and handles nil from an explicit safe access
+when the complete left operand is a safe member-access chain.
 
 It must not catch arbitrary Go panics.
 
@@ -500,61 +501,33 @@ Use full `try/catch` when:
 
 ---
 
-# Relationship to Nil Coalescing
+# Relationship to Safe Access
 
-`??` is specifically an error-catching operator.
-
-It must not also mean nil coalescing.
-
-If Go++ retains:
+`??` also supplies a fallback when an explicit `?.` access encounters a nil
+receiver. This is a compile-time nil check; `??` does not recover a nil-pointer
+panic or change ordinary `.` access.
 
 ```go
-||
+var person *Person
+name := person?.Name ?? "Unknown"
 ```
 
-for nil coalescing, the distinction is:
+The fallback is used only when the safe receiver is nil. If `person` exists and
+`person.Name` is the empty string, the result remains the empty string. A safe
+access used without `??` keeps its existing behavior and returns the accessed
+member's zero value when the receiver is nil.
+
+Safe member accesses may be chained before `??`; if any safe receiver in the
+chain is nil, the fallback is evaluated. The accessed value and fallback must
+have compatible types.
 
 ```go
-value || fallback
+label := person?.Manager?.Name ?? "No manager"
 ```
 
-means:
-
-```text
-use fallback if value is nil
-```
-
-while:
-
-```go
-expression ?? fallback
-```
-
-means:
-
-```text
-use fallback if evaluating expression throws
-```
-
-These are separate concepts.
-
-Example:
-
-```go
-user := LoadUser(id) ?? nil
-```
-
-handles an error.
-
-Then:
-
-```go
-user || GuestUser()
-```
-
-may separately handle nil.
-
-Do not merge the two behaviors.
+For any left operand that is not an explicit safe access, `??` retains its
+Go++ thrown-error fallback behavior. Ordinary Go panics, including nil-pointer
+panics from `person.Name`, continue normally.
 
 ---
 

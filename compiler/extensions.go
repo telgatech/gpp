@@ -1390,10 +1390,6 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	if err != nil {
 		return err
 	}
-	body, err = transformSafeAccess(body, methodContext)
-	if err != nil {
-		return err
-	}
 	body, err = transformCallableCalls(body, methodContext)
 	if err != nil {
 		return err
@@ -1403,6 +1399,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		return err
 	}
 	body, err = transformErrorCoalescing(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformSafeAccess(body, methodContext)
 	if err != nil {
 		return err
 	}
