@@ -59,6 +59,46 @@ The parameter type is inferred from the collection element type, so these lambda
 
 ### Slice extensions
 
+#### `Append(values ...T) []T`
+
+Returns the slice with values appended at the end. Reassign the result because append may allocate a new backing array.
+
+```go
+items = items.Append(value)
+```
+
+#### `Prepend(values ...T) []T`
+
+Returns a new slice with values placed before the existing elements. Reassign the result to keep the new slice.
+
+```go
+items = items.Prepend(first, second)
+```
+
+#### `Pop() (T, []T, bool)`
+
+Removes and returns the last element, the shortened slice, and whether an element was present. Reassign the returned slice; the removed slot is cleared.
+
+```go
+last, items, ok := items.Pop()
+```
+
+#### `Shuffle()`
+
+Shuffles the slice in place using Go's package-level pseudorandom generator.
+
+```go
+items.Shuffle()
+```
+
+#### `Sample() (T, bool)`
+
+Returns a random element and `true`, or the zero value and `false` when the slice is empty. It does not modify the slice.
+
+```go
+item, ok := items.Sample()
+```
+
 #### `Each(action func(T) error) error`
 
 Runs an error-returning action for every element in order and stops at the first error. This is useful for side effects that can fail, such as deleting database records. Return the result from an enclosing function that also returns an error, or handle it locally.
@@ -107,6 +147,14 @@ Returns a new slice containing matching values in their original order. The sour
 
 ```go
 active := people.Filter(person => person.Active)
+```
+
+#### `DeleteBy(predicate) []T`
+
+Returns a new slice without values that match the predicate, preserving the order of the remaining values. Reassign the result to keep the deletion:
+
+```go
+users = users.DeleteBy(user => !user.Active)
 ```
 
 #### `First() T`
@@ -181,9 +229,33 @@ Sorts the slice **in place** using the supplied “comes before” comparison. U
 people.Sort((left, right) => left.Name < right.Name)
 ```
 
+#### `SortBy[K cmp.Ordered](key func(T) K)`
+
+Sorts the slice **in place** by an ordered key selected from each element. Keys sort in ascending order.
+
+```go
+people.SortBy(person => person.Name)
+```
+
+#### `ReverseBy[K cmp.Ordered](key func(T) K)`
+
+Sorts the slice **in place** by an ordered key selected from each element, in descending order.
+
+```go
+people.ReverseBy(person => person.Name)
+```
+
 ### Comparable slice extensions
 
 These methods are available when the slice element type is comparable.
+
+#### `Unique() []T`
+
+Returns a new slice containing the first occurrence of each value, preserving their original order.
+
+```go
+uniqueRoles := roles.Unique()
+```
 
 #### `Contains(value T) bool`
 

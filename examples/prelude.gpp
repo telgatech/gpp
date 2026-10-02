@@ -8,14 +8,46 @@ class User {
 }
 
 func main() {
-	users := []User{User("Ada", true), User("Bob", false), User("Cara", true)}
+	users := []User{User("Cara", true), User("Bob", false), User("Ada", true)}
 	active := users.Filter(user => user.Active)
 	found, ok := users.Find(user => user.Name == "Bob")
+	users.SortBy(user => user.Name)
+	users.Each(user => println(user.Name))
+	users.ReverseBy(user => user.Name)
+	users.Each(user => println(user.Name))
+	users = users.DeleteBy(user => !user.Active)
 	users.Each(user => println(user.Name))
 
 	names := []string{"Cara", "Ada", "Bob"}
-	numbers := []int{3, 1, 2}
+	names = names.Append("Eve")
+	names = names.Prepend("Zoe")
+	numbers := []int{3, 1, 2, 2}
+	numbers = numbers.Append(4)
+	numbers = numbers.Prepend(0)
+	if numbers[0] != 0 || numbers[1] != 3 || numbers[5] != 4 {
+		panic("Append or Prepend placed values incorrectly")
+	}
+	uniqueNumbers := numbers.Unique()
+	if len(uniqueNumbers) != 5 || uniqueNumbers[0] != 0 || uniqueNumbers[1] != 3 || uniqueNumbers[2] != 1 || uniqueNumbers[3] != 2 || uniqueNumbers[4] != 4 {
+		panic("Unique did not preserve first occurrence order")
+	}
+	last, numbers, popped := numbers.Pop()
+	if !popped || last != 4 || len(numbers) != 5 || numbers[4] != 2 {
+		panic("Pop returned the wrong value or remainder")
+	}
+	beforeShuffle := numbers.Take(len(numbers))
+	numbers.Shuffle()
+	sample, hasSample := numbers.Sample()
+	if !hasSample || (sample != 0 && sample != 1 && sample != 2 && sample != 3) {
+		panic("Sample did not return an element from the slice")
+	}
 	numbers.Sort()
+	beforeShuffle.Sort()
+	for index := range numbers {
+		if numbers[index] != beforeShuffle[index] {
+			panic("Shuffle changed the slice elements")
+		}
+	}
 	min, hasMin := numbers.Min()
 	numbers.SortDesc()
 	max, hasMax := numbers.Max()
@@ -26,13 +58,25 @@ func main() {
 		users.All(user => user.Active),
 		len(active), found.Name, ok,
 		names.Contains("Ada"), names.Index("Bob"),
+		last, popped, sample, hasSample, len(uniqueNumbers),
 		min, hasMin, max, hasMax,
 		config.Has("port"), config.GetOr("host", "localhost"),
 		"   ".IsBlank(), " name ".IsBlank(), "name".Empty(),
 	)
 
+	names.Each(name => println(name))
 	names.Reverse()
+	names.Each(name => println(name))
 	names.Sort((left, right) => left < right)
+	empty := []int{}
+	emptyValue, emptyRest, emptyPop := empty.Pop()
+	if emptyPop || emptyValue != 0 || len(emptyRest) != 0 {
+		panic("Pop should report an empty slice")
+	}
+	emptyValue, emptySample := empty.Sample()
+	if emptySample || emptyValue != 0 {
+		panic("Sample should report an empty slice")
+	}
 	_ = config.Keys()
 	_ = config.Values()
 }

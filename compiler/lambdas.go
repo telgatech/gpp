@@ -51,6 +51,11 @@ func lambdaFunctionTypesForCall(call *CallExpr, index int, context constructorCo
 			if err != nil {
 				continue
 			}
+			if index < len(parameters) {
+				parameters[index].TypeAST = parseTypeText(specializeExtensionLambdaParameter(
+					extension, parameters[index], call.Arguments[index].Value, actualType, context, context.CurrentParameterTypes,
+				))
+			}
 			candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: extension.Method.ResultAST})
 		}
 	}
@@ -1110,10 +1115,57 @@ func lambdaExpectedTypesForCallAST(call *CallExpr, index int, context constructo
 			if err != nil || index >= len(parameters) {
 				continue
 			}
-			result = append(result, substituteLambdaType(parameters[index].typeText(), extensionTargetBindings(extension.Target, actualType)))
+			result = append(result, specializeExtensionLambdaParameter(
+				extension, parameters[index], call.Arguments[index].Value, actualType, context, valueTypes,
+			))
 		}
 	}
 	return result
+}
+
+// specializeExtensionLambdaParameter resolves method type parameters that
+// appear as the result of a callback parameter from the lambda body. This lets
+// callbacks such as `SortBy(user => user.Name)` provide a concrete func(T) K
+// argument before Go's own generic inference runs.
+func specializeExtensionLambdaParameter(extension extensionMethod, parameter parameterInfo, argument ExprNode, actualType string, context constructorContext, valueTypes map[string]string) string {
+	expected := substituteLambdaType(parameter.typeText(), extensionTargetBindings(extension.Target, actualType))
+	lambda, ok := argument.(*LambdaExpr)
+	if !ok || lambda.BlockBody != nil || len(extension.Method.TypeParamsAST) == 0 {
+		return expected
+	}
+	function, err := parseLambdaFunctionType(expected)
+	if err != nil || function.ResultAST == nil {
+		return expected
+	}
+	genericNames := map[string]bool{}
+	for _, typeParameter := range extension.Method.TypeParamsAST {
+		genericNames[typeParameter.Name] = true
+	}
+	resultPattern, err := typeNodeSource(function.ResultAST)
+	if err != nil || !genericNames[strings.TrimSpace(resultPattern)] {
+		return expected
+	}
+	lambdaParameters, err := lambdaParametersFromTokens(lambda.Parameters)
+	if err != nil || len(lambdaParameters) != len(function.Parameters) {
+		return expected
+	}
+	parameterTypes := map[string]TypeNode{}
+	for index, lambdaParameter := range lambdaParameters {
+		if lambdaParameter.Type != nil {
+			parameterTypes[lambdaParameter.Name] = lambdaParameter.Type
+		} else {
+			parameterTypes[lambdaParameter.Name] = function.Parameters[index]
+		}
+	}
+	actualResult := lambdaExpressionTypeAST(lambda.Body, parameterTypes, context)
+	if actualResult == nil {
+		return expected
+	}
+	actualResultText, err := typeNodeSource(actualResult)
+	if err != nil || strings.TrimSpace(actualResultText) == "" {
+		return expected
+	}
+	return substituteLambdaType(expected, map[string]string{strings.TrimSpace(resultPattern): strings.TrimSpace(actualResultText)})
 }
 
 func lambdaWalkInferenceBlock(block *BlockStmt, visit func(ExprNode)) {
