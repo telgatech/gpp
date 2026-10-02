@@ -1,6 +1,6 @@
-Go++ Feature Spec: Implicit prelude.gpp
+# Go++ Feature Spec: Implicit prelude.gpp
 
-Goal
+## Goal
 
 Provide a small, automatically available Go++ prelude containing universally useful extensions and helpers so ordinary programs can be productive immediately without repetitive imports.
 
@@ -15,9 +15,7 @@ The prelude must remain:
 
 Do NOT put ORM, web routing, validation frameworks, database abstractions, or application-specific behavior in the prelude.
 
-==================================================
-1. File name
-==================================================
+## 1. File name
 
 The built-in prelude source is:
 
@@ -27,9 +25,7 @@ It ships with the Go++ compiler/distribution.
 
 Users do not need to import it.
 
-==================================================
-2. Loading behavior
-==================================================
+## 2. Loading behavior
 
 Every Go++ package automatically has access to symbols and extension methods declared by prelude.gpp.
 
@@ -50,9 +46,7 @@ Recommended implementation:
 3. Make exported prelude symbols/extensions visible in every Go++ package.
 4. Compile required generated Go alongside user code.
 
-==================================================
-3. Go standard library remains separate
-==================================================
+## 3. Go standard library remains separate
 
 The prelude does NOT replace Go's standard library.
 
@@ -77,9 +71,7 @@ Go++ prelude
 Optional Go++ libraries
     explicitly imported packages such as model/web/validate
 
-==================================================
-4. Design rule
-==================================================
+## 4. Design rule
 
 Only include functionality that is broadly useful across nearly all application domains.
 
@@ -107,9 +99,7 @@ Bad candidates:
 
 Those should live in separate libraries.
 
-==================================================
-5. Native Go types only
-==================================================
+## 5. Native Go types only
 
 Do not invent replacement collection types.
 
@@ -129,9 +119,7 @@ name.Empty()
 
 The underlying values remain ordinary Go values.
 
-==================================================
-6. Initial slice extension set
-==================================================
+## 6. Initial slice extension set
 
 Provide a useful baseline for slices.
 
@@ -164,9 +152,7 @@ Exact generic constraint syntax should follow whatever Go++ currently supports.
 
 If generic extension constraints are not yet implemented, split implementations using available Go generic mechanisms or defer constrained methods.
 
-==================================================
-7. Any
-==================================================
+## 7. Any
 
 Example:
 
@@ -192,9 +178,7 @@ for _, v := range this {
 
 return false
 
-==================================================
-8. All
-==================================================
+## 8. All
 
 Example:
 
@@ -210,9 +194,7 @@ Empty slice returns true.
 
 Short-circuit on first false.
 
-==================================================
-9. Find
-==================================================
+## 9. Find
 
 Example:
 
@@ -239,9 +221,7 @@ If absent:
 
 zero(T), false
 
-==================================================
-10. Filter
-==================================================
+## 10. Filter
 
 Example:
 
@@ -253,9 +233,7 @@ Return a new []T containing matching elements in original order.
 
 Do not mutate original slice.
 
-==================================================
-11. Contains
-==================================================
+## 11. Contains
 
 For comparable T:
 
@@ -267,9 +245,7 @@ Use ordinary equality semantics.
 
 Could delegate to slices.Contains where available.
 
-==================================================
-12. Index
-==================================================
+## 12. Index
 
 For comparable T:
 
@@ -282,9 +258,7 @@ index >= 0 if found
 
 Could delegate to slices.Index where available.
 
-==================================================
-13. Reverse
-==================================================
+## 13. Reverse
 
 Example:
 
@@ -304,9 +278,7 @@ Reversed()
 
 Do not make Reverse silently allocate.
 
-==================================================
-14. Sort with comparator
-==================================================
+## 14. Sort with comparator
 
 Example:
 
@@ -324,9 +296,7 @@ Lower using slices.SortFunc or sort.Slice depending on generated Go/version.
 
 If using slices.SortFunc, adapt bool comparator to cmp-style result as needed.
 
-==================================================
-15. Ordered slice helpers
-==================================================
+## 15. Ordered slice helpers
 
 For ordered element types, provide:
 
@@ -356,9 +326,7 @@ Sort(func(T,T) bool)
 
 both may coexist naturally.
 
-==================================================
-16. SortDesc
-==================================================
+## 16. SortDesc
 
 For ordered T:
 
@@ -368,9 +336,7 @@ Mutates slice in place.
 
 Equivalent to descending natural ordering.
 
-==================================================
-17. Min / Max
-==================================================
+## 17. Min / Max
 
 For ordered T:
 
@@ -394,9 +360,7 @@ min, ok := values.Min()
 
 This is more Go-like and avoids hidden exceptional behavior.
 
-==================================================
-18. String helpers
-==================================================
+## 18. String helpers
 
 Provide only genuinely useful tiny helpers.
 
@@ -425,9 +389,7 @@ if name.Blank() {
 
 Avoid adding dozens of Rails-style string methods initially.
 
-==================================================
-19. Map helpers
-==================================================
+## 19. Map helpers
 
 Useful map helpers may include:
 
@@ -452,9 +414,7 @@ _, ok := m[key]
 
 Keys/Values ordering remains unspecified, matching Go map iteration semantics.
 
-==================================================
-20. GetOr
-==================================================
+## 20. GetOr
 
 Potentially useful map helper:
 
@@ -478,9 +438,7 @@ if !ok {
 }
 return v
 
-==================================================
-21. Generic numeric helpers
-==================================================
+## 21. Generic numeric helpers
 
 Potentially include:
 
@@ -492,9 +450,7 @@ only if they are not already ergonomically available from Go packages.
 
 Because the prelude should remain small, these may be deferred.
 
-==================================================
-22. No implicit `it`
-==================================================
+## 22. No implicit `it`
 
 Do NOT require implicit `it` or lambda shorthand for prelude APIs.
 
@@ -508,9 +464,7 @@ If Go++ later gains concise function syntax, these APIs automatically become nic
 
 Do not make the prelude depend on speculative language features.
 
-==================================================
-23. Implementation language
-==================================================
+## 23. Implementation language
 
 Prefer implementing prelude.gpp in Go++ itself.
 
@@ -534,9 +488,7 @@ This serves two purposes:
 
 Use native Go interop where useful.
 
-==================================================
-24. Prelude dependencies
-==================================================
+## 24. Prelude dependencies
 
 prelude.gpp may import selected Go stdlib packages internally, such as:
 
@@ -548,9 +500,7 @@ These dependencies should be compiler-managed.
 
 Users should not need to import those packages merely because the prelude implementation uses them.
 
-==================================================
-25. Name collision rules
-==================================================
+## 25. Name collision rules
 
 Real/native methods always beat prelude extensions according to normal extension resolution.
 
@@ -569,9 +519,7 @@ This gives user code an opportunity to supply a more specific extension without 
 
 If current extension resolution does not distinguish explicit vs prelude extensions, add origin metadata.
 
-==================================================
-26. Shadowing ordinary functions
-==================================================
+## 26. Shadowing ordinary functions
 
 Prelude package-level functions should enter normal symbol resolution carefully.
 
@@ -589,9 +537,7 @@ Sort(values)
 
 The prelude should not pollute package namespaces unnecessarily.
 
-==================================================
-27. Disable option
-==================================================
+## 27. Disable option
 
 Provide a compiler option for testing/minimal builds:
 
@@ -612,9 +558,7 @@ This is useful for:
 - diagnosing conflicts
 - minimal generated output
 
-==================================================
-28. Versioning
-==================================================
+## 28. Versioning
 
 The prelude is versioned with the Go++ compiler.
 
@@ -624,9 +568,7 @@ Compiler distribution contains the canonical prelude.gpp.
 
 Programs therefore get deterministic prelude behavior for a given Go++ compiler version.
 
-==================================================
-29. Source availability
-==================================================
+## 29. Source availability
 
 Ship prelude.gpp as readable source.
 
@@ -636,9 +578,7 @@ It should demonstrate idiomatic Go++.
 
 Avoid hiding most of the implementation in compiler intrinsics unless required for correctness/performance.
 
-==================================================
-30. Intrinsics
-==================================================
+## 30. Intrinsics
 
 Some operations may require compiler support, but keep intrinsics minimal.
 
@@ -653,9 +593,7 @@ should remain compiler features.
 
 Collection algorithms should not become compiler intrinsics merely for convenience.
 
-==================================================
-31. Suggested initial prelude.gpp
-==================================================
+## 31. Suggested initial prelude.gpp
 
 Conceptually:
 
@@ -737,9 +675,7 @@ extend string {
 
 The exact syntax may need adjustment to current generic-extension support.
 
-==================================================
-32. Additional ordered extensions
-==================================================
+## 32. Additional ordered extensions
 
 Where constraints are supported:
 
@@ -774,9 +710,7 @@ extend []T where T cmp.Ordered {
 
 If Go++ does not yet support this constraint syntax, implement later rather than adding ad-hoc compiler behavior.
 
-==================================================
-33. Suggested v1 contents
-==================================================
+## 33. Suggested v1 contents
 
 Ship v1 with approximately:
 
@@ -808,9 +742,7 @@ Maps:
 
 Keep v1 intentionally small.
 
-==================================================
-34. Features NOT in v1 prelude
-==================================================
+## 34. Features NOT in v1 prelude
 
 Do not include:
 
@@ -830,9 +762,7 @@ These may live in optional libraries if demand appears.
 
 The prelude should not turn into a kitchen-sink utility framework.
 
-==================================================
-35. Tests
-==================================================
+## 35. Tests
 
 Implicit availability:
 
@@ -892,9 +822,7 @@ gpp build --no-prelude
 
 must make prelude extension calls unresolved.
 
-==================================================
-36. Design principle
-==================================================
+## 36. Design principle
 
 prelude.gpp should make Go++ pleasant immediately without creating a second standard library.
 

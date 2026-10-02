@@ -75,7 +75,7 @@ uncaptured error automatically. You can continue to use standard Go encoding
 functions directly when you need lower-level control. Serialization is opt-in;
 classes without the annotation do not gain generated methods.
 
-See the [serialization guide](/guide/standard-library#serialization),
+See the [serialization guide](/guide/standard-library/encoding/),
 [Serializable specification](/reference/specifications/serialization), and
 [GOB specification](/reference/specifications/serialization.gob) for field
 rules and generated method details.

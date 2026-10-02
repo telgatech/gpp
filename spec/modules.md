@@ -1,11 +1,11 @@
-Go++ Feature Spec: Versioned Imports + Automatic Go Module Resolution
+# Go++ Feature Spec: Versioned Imports + Automatic Go Module Resolution
 
-Goal
+## Goal
 Allow Go++ source files to declare external Go dependencies directly in import paths, including optional versions.
 
 The compiler should automatically resolve/fetch external dependencies during build while still using the normal Go module system underneath.
 
-Core syntax
+## Core syntax
 
 Standard library import:
 
@@ -32,7 +32,7 @@ import (
     "github.com/google/uuid@v1.6.0"
 )
 
-Semantics
+## Semantics
 
 1. Go++ import syntax extends normal Go imports by allowing a final:
 
@@ -134,7 +134,7 @@ version ranges
 
 Do NOT implement ranges in v1 unless already trivial.
 
-Module declaration
+## Module declaration
 
 Support a project/module declaration such as:
 
@@ -176,7 +176,7 @@ func main() {
     fmt.Println(uuid.New())
 }
 
-Build behavior
+## Build behavior
 
 `gpp build` should conceptually perform:
 
@@ -204,7 +204,7 @@ The compiler may invoke Go tooling rather than reimplementing Go's module resolv
 Important:
 dependency fetching should occur during explicit build/dependency commands, not merely when parsing a file or opening it in an editor.
 
-Version conflicts
+## Version conflicts
 
 If the same module is explicitly requested at incompatible exact versions, produce a Go++ compile/build error.
 
@@ -239,7 +239,7 @@ import "github.com/foo/bar@v1.4.0"
 
 valid.
 
-Unversioned + versioned
+## Unversioned + versioned
 
 Example:
 
@@ -253,7 +253,7 @@ Treat the explicit version as the project requirement.
 
 The unversioned import simply means the source file does not impose an additional version constraint.
 
-Aliases
+## Aliases
 
 Preserve ordinary Go aliases.
 
@@ -275,7 +275,7 @@ Generated Go:
 import . "github.com/foo/bar"
 import _ "github.com/lib/pq"
 
-AST representation
+## AST representation
 
 An import node should retain both source and resolved information.
 
@@ -318,7 +318,7 @@ fmt
 Version:
 ""
 
-Parser
+## Parser
 
 Extend ordinary Go import parsing so string import paths may optionally end with:
 
@@ -326,7 +326,7 @@ Extend ordinary Go import parsing so string import paths may optionally end with
 
 Do not modify normal Go import-path contents before semantic dependency processing.
 
-Dependency analysis
+## Dependency analysis
 
 Build a project-level dependency table keyed by module/import path.
 
@@ -350,7 +350,7 @@ The compiler should use this table to:
 - decide what must be downloaded
 - produce useful diagnostics
 
-Go module source of truth
+## Go module source of truth
 
 The Go++ source specifies requested versions.
 
@@ -358,7 +358,7 @@ go.mod/go.sum are generated/managed compatibility artifacts for the Go toolchain
 
 Do not expose a separate dependency format unless a later feature requires one.
 
-Generated Go
+## Generated Go
 
 Example Go++:
 
@@ -396,7 +396,7 @@ go <current-supported-go-version>
 
 require github.com/google/uuid v1.6.0
 
-Interop requirement
+## Interop requirement
 
 The generated project must remain a normal valid Go module.
 
@@ -406,7 +406,7 @@ Do not invent wrappers around imported packages.
 
 Imported Go packages must remain directly usable exactly as they are in Go.
 
-Diagnostics
+## Diagnostics
 
 Examples:
 
@@ -430,7 +430,7 @@ project module name is not declared
 
 For single-file/temporary builds, the compiler may synthesize an internal temporary module instead.
 
-Suggested implementation order
+## Suggested implementation order
 
 1. Extend ImportDecl with Version.
 2. Parse final @version from imports.
@@ -445,7 +445,7 @@ Suggested implementation order
 11. Add cross-file dependency tests.
 12. Add temporary-module behavior for standalone files.
 
-Tests
+## Tests
 
 Stdlib:
 
@@ -490,7 +490,7 @@ import "github.com/foo/bar@v1.3.0"
 
 Must resolve to explicit v1.3.0.
 
-Design principle
+## Design principle
 
 Go++ owns the convenient dependency syntax.
 

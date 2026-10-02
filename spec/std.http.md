@@ -1,6 +1,6 @@
-Go++ Feature Spec: Official `gpp` Standard Module
+# Go++ Feature Spec: Official `gpp` Standard Module
 
-Goal
+## Goal
 
 Create an official Go++ standard module namespace:
 
@@ -12,9 +12,7 @@ The language/compiler remains small.
 
 The official `gpp` module contains reusable classes, extensions, annotations, and helpers implemented primarily in Go++.
 
-==================================================
-1. Architectural layers
-==================================================
+## 1. Architectural layers
 
 Go++ should have three distinct layers:
 
@@ -58,9 +56,7 @@ Existing Go packages remain directly usable:
 
 The `gpp` standard module must build on ordinary Go and Go++ features rather than replacing the Go ecosystem.
 
-==================================================
-2. Official namespace
-==================================================
+## 2. Official namespace
 
 Reserve:
 
@@ -77,9 +73,7 @@ import "gpp/test"
 
 Do not use this namespace for user packages.
 
-==================================================
-3. Versioning
-==================================================
+## 3. Versioning
 
 The official `gpp` module is versioned together with the Go++ compiler/distribution.
 
@@ -103,9 +97,7 @@ import "gpp/http"
 
 against the standard module bundled with that compiler.
 
-==================================================
-4. No network fetch for official `gpp` packages
-==================================================
+## 4. No network fetch for official `gpp` packages
 
 Official imports:
 
@@ -122,9 +114,7 @@ This provides:
 - offline use
 - fast builds
 
-==================================================
-5. Prelude relationship
-==================================================
+## 5. Prelude relationship
 
 `prelude.gpp` remains special and implicitly loaded.
 
@@ -148,9 +138,7 @@ gpp/http
 gpp/validate
 etc.
 
-==================================================
-6. Suggested initial package layout
-==================================================
+## 6. Suggested initial package layout
 
 Recommended:
 
@@ -171,9 +159,7 @@ gpp/
 
 Only add packages when there is a clear recurring use case.
 
-==================================================
-7. `gpp/http`
-==================================================
+## 7. `gpp/http`
 
 Purpose:
 
@@ -223,9 +209,7 @@ context
 
 where possible.
 
-==================================================
-8. Suggested `gpp/http` annotations
-==================================================
+## 8. Suggested `gpp/http` annotations
 
 Potential declarations:
 
@@ -255,9 +239,7 @@ These annotations are library metadata.
 
 The compiler itself must not understand their HTTP meaning.
 
-==================================================
-9. `gpp/http.Server`
-==================================================
+## 9. `gpp/http.Server`
 
 Conceptual API:
 
@@ -290,9 +272,7 @@ before BeforeListen() runs.
 
 `Server.Listen()` must discover App routes/configuration.
 
-==================================================
-10. `gpp/http.Context`
-==================================================
+## 10. `gpp/http.Context`
 
 Keep Context lightweight.
 
@@ -317,9 +297,7 @@ Users should always be able to access:
 ctx.Request
 ctx.Response
 
-==================================================
-11. `gpp/validate`
-==================================================
+## 11. `gpp/validate`
 
 Purpose:
 
@@ -349,9 +327,7 @@ Implementation should use:
 
 No validator semantics belong in the compiler.
 
-==================================================
-12. `gpp/collections`
-==================================================
+## 12. `gpp/collections`
 
 Purpose:
 
@@ -385,9 +361,7 @@ Continue operating on:
 []T
 map[K]V
 
-==================================================
-13. `gpp/test`
-==================================================
+## 13. `gpp/test`
 
 Purpose:
 
@@ -409,9 +383,7 @@ assertions
 fixtures
 small test utilities
 
-==================================================
-14. Standard-module source language
-==================================================
+## 14. Standard-module source language
 
 Prefer implementing official packages in Go++ itself.
 
@@ -438,9 +410,7 @@ stdlib/
 
 This dogfoods Go++ and acts as a practical regression suite for the language.
 
-==================================================
-15. Native Go escape hatch
-==================================================
+## 15. Native Go escape hatch
 
 Official packages may include ordinary .go files where useful.
 
@@ -454,9 +424,7 @@ Mixed Go/Go++ implementation should be supported if the existing build architect
 
 Prefer Go++ where practical.
 
-==================================================
-16. Compiler lookup behavior
-==================================================
+## 16. Compiler lookup behavior
 
 When encountering:
 
@@ -475,9 +443,7 @@ import "github.com/foo/bar@v1.2.3"
 
 continue using normal Go module resolution.
 
-==================================================
-17. Generated Go module integration
-==================================================
+## 17. Generated Go module integration
 
 Official gpp imports may lower to generated/internal package paths as necessary.
 
@@ -495,9 +461,7 @@ The user should not need to know this.
 
 Compiler should rewrite official package paths during lowering if required.
 
-==================================================
-18. Package identity
-==================================================
+## 18. Package identity
 
 Go++ semantic package identity for:
 
@@ -518,9 +482,7 @@ http.GET
 
 must resolve to the official annotation symbol from gpp/http.
 
-==================================================
-19. Visibility
-==================================================
+## 19. Visibility
 
 Official packages use normal Go/Go++ capitalization rules.
 
@@ -538,9 +500,7 @@ annotation (
 
 Only exported identifiers are visible to applications.
 
-==================================================
-20. No compiler magic for library APIs
-==================================================
+## 20. No compiler magic for library APIs
 
 The compiler must not contain special cases such as:
 
@@ -558,9 +518,7 @@ Official libraries must operate through normal Go++ capabilities:
 
 This is a key design requirement.
 
-==================================================
-21. Standard library replaceability
-==================================================
+## 21. Standard library replaceability
 
 Users must be able to ignore official packages and use alternatives.
 
@@ -572,9 +530,7 @@ import "github.com/example/myweb"
 
 No language feature should depend on using official packages.
 
-==================================================
-22. Documentation
-==================================================
+## 22. Documentation
 
 Treat official gpp packages as the recommended getting-started experience.
 
@@ -590,9 +546,7 @@ Go interoperability
 
 Official packages should serve as examples of idiomatic Go++.
 
-==================================================
-23. Prelude boundary
-==================================================
+## 23. Prelude boundary
 
 Keep this distinction strict:
 
@@ -610,9 +564,7 @@ gpp/collections:
 
 When uncertain, prefer explicit `gpp/...` package over expanding prelude.
 
-==================================================
-24. Distribution layout
-==================================================
+## 24. Distribution layout
 
 Suggested compiler installation:
 
@@ -631,9 +583,7 @@ Suggested compiler installation:
 
 Compiler should know its standard-library root.
 
-==================================================
-25. Standalone source builds
-==================================================
+## 25. Standalone source builds
 
 A single source file can still import:
 
@@ -643,9 +593,7 @@ without requiring a manually created go.mod or downloaded dependency.
 
 Compiler handles official standard-module resolution automatically.
 
-==================================================
-26. `--no-stdlib`
-==================================================
+## 26. `--no-stdlib`
 
 Optional useful compiler switch:
 
@@ -661,9 +609,7 @@ Keep prelude control separate:
 
 Normal users should never need these.
 
-==================================================
-27. Testing strategy
-==================================================
+## 27. Testing strategy
 
 The official standard module should be part of the compiler's integration test suite.
 
@@ -676,9 +622,7 @@ Tests should prove:
 - runtime class identity works through inherited Server methods
 - standard packages require no external network fetch
 
-==================================================
-28. Initial milestone
-==================================================
+## 28. Initial milestone
 
 Recommended first official packages:
 
@@ -702,9 +646,7 @@ only when useful.
 - native Go interop
 - runtime class identity
 
-==================================================
-29. Example complete app
-==================================================
+## 29. Example complete app
 
 import (
     "gpp/http"
@@ -740,9 +682,7 @@ Underneath:
 - classes/annotations/introspection come from Go++
 - higher-level behavior comes from gpp/http
 
-==================================================
-30. Design principle
-==================================================
+## 30. Design principle
 
 The official `gpp` standard module should answer:
 

@@ -64,4 +64,4 @@ tpl.Welcome(&output, "Ada")
 
 Use typed calls when the template is known at compile time. Dynamic execution
 is also available when a name comes from routing or configuration. See
-[template declarations](/reference/specifications/tpl) and the [template guide](/guide/standard-library#templates).
+[template declarations](/reference/specifications/tpl) and the [template guide](/guide/standard-library/templates).

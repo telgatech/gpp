@@ -1,6 +1,6 @@
-Go++ Feature Spec: Class Introspection
+# Go++ Feature Spec: Class Introspection
 
-Goal
+## Goal
 
 Provide lightweight compile-time-generated runtime metadata for every Go++ class so generic library code can inspect the concrete class name and fields.
 
@@ -15,7 +15,7 @@ Primary use cases:
 - form generation
 - generic utilities
 
-Core syntax
+## Core syntax
 
 Instance introspection:
 
@@ -50,7 +50,7 @@ for f := range e.class.fields {
     println(f.name)
 }
 
-Required semantics
+## Required semantics
 
 1. Every Go++ class has an associated class descriptor.
 
@@ -90,7 +90,7 @@ http.Request.class
 
 should be invalid unless a separate reflection mechanism is explicitly added later.
 
-Class descriptor
+## Class descriptor
 
 Conceptual built-in type:
 
@@ -128,7 +128,7 @@ the initial implementation should return:
 
 A fully-qualified name may be exposed separately later if needed.
 
-Fields
+## Fields
 
 `class.fields` returns metadata for all effective instance fields of the class.
 
@@ -153,7 +153,7 @@ Salary
 
 Inherited fields are included.
 
-Field metadata
+## Field metadata
 
 Conceptual built-in type:
 
@@ -270,7 +270,7 @@ row.Scan(
 
 This is an important interoperability requirement.
 
-Runtime concrete type
+## Runtime concrete type
 
 The object model must retain the most-derived object identity.
 
@@ -293,7 +293,7 @@ Employee().Fields()
 
 must enumerate Employee's effective fields, not merely Model's fields.
 
-Inheritance
+## Inheritance
 
 Fields from base classes participate in introspection.
 
@@ -315,7 +315,7 @@ C.class.fields
 
 must expose all effective fields.
 
-Multiple inheritance conflicts
+## Multiple inheritance conflicts
 
 If inherited field names clash and Go++ requires qualification for normal access, introspection must retain enough ownership information to distinguish them.
 
@@ -351,7 +351,7 @@ Returns the class that physically declares the field.
 
 This can also help libraries deal with inherited clashes.
 
-Field order
+## Field order
 
 Define deterministic field ordering.
 
@@ -378,7 +378,7 @@ Y
 
 This ordering should be stable across builds.
 
-Generated implementation
+## Generated implementation
 
 The compiler should generate metadata for every Go++ class.
 
@@ -434,7 +434,7 @@ var __EmployeeClass = __GppClass{
 
 Exact representation may differ.
 
-Object metadata
+## Object metadata
 
 Every Go++ class instance already needs hidden runtime metadata for polymorphism.
 
@@ -457,7 +457,7 @@ Do not use Go reflection to rediscover class structure on every call.
 
 Compiler-generated static metadata is preferred.
 
-Native Go interoperability
+## Native Go interoperability
 
 Do not change native Go types.
 
@@ -471,7 +471,7 @@ database/sql
 encoding
 other Go libraries accepting pointers/interfaces
 
-Visibility
+## Visibility
 
 All fields may initially appear in `.fields`, including lowercase/private Go++ fields.
 
@@ -484,7 +484,7 @@ field.visible
 
 Do not complicate v1 unless necessary.
 
-Class descriptor identity
+## Class descriptor identity
 
 Employee.class should return the same descriptor identity for all Employee instances.
 
@@ -509,7 +509,7 @@ and:
 
 m.class != Employee.class
 
-Built-in descriptor types
+## Built-in descriptor types
 
 `Class`, `Field`, and optionally `Type` are compiler/runtime built-ins.
 
@@ -534,7 +534,7 @@ Type:
 
 Additional metadata can be added later without changing the basic model.
 
-Example: generic CRUD library
+## Example: generic CRUD library
 
 This feature should make ordinary Go++ code like this possible:
 
@@ -559,7 +559,7 @@ class Model {
 
 No database behavior is compiler built-in.
 
-Example: database/sql Scan
+## Example: database/sql Scan
 
 func scanInto[T](row *sql.Row, obj T) error {
     dest := []any{}
@@ -573,7 +573,7 @@ func scanInto[T](row *sql.Row, obj T) error {
 
 This must lower to ordinary database/sql usage.
 
-Errors
+## Errors
 
 Invalid:
 
@@ -595,7 +595,7 @@ when obj is not compatible with the class/owner expected by the field.
 
 Diagnostics should identify the mismatched class/type.
 
-Suggested implementation order
+## Suggested implementation order
 
 1. Add Class descriptor representation.
 2. Add Field descriptor representation.
@@ -612,7 +612,7 @@ Suggested implementation order
 13. Implement static `Employee.class`.
 14. Implement generic `T.class` only after normal static class access works.
 
-Tests
+## Tests
 
 Basic class name:
 
@@ -682,7 +682,7 @@ class C : A, B {}
 
 metadata must preserve both fields and their owners.
 
-Design principle
+## Design principle
 
 Go++ classes should know what they are.
 

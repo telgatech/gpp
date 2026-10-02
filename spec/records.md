@@ -1,12 +1,12 @@
-Go++ Feature Spec: Anonymous Records
+# Go++ Feature Spec: Anonymous Records
 
-Goal
+## Goal
 Add anonymous, statically typed records for returning ad-hoc structured data without declaring named structs.
 
-Primary use case
+## Primary use case
 Database/query helpers where creating hundreds of one-off result structs is undesirable.
 
-Example
+## Example
 
 func getUser() record {
     return record(
@@ -23,7 +23,7 @@ func main() {
     println(user.age)
 }
 
-Required semantics
+## Required semantics
 
 1. `record` is a built-in anonymous structural type.
 
@@ -175,7 +175,7 @@ let b = record(name: "B", age: "2")
 
 a = b
 
-Compiler representation
+## Compiler representation
 
 Add AST nodes roughly equivalent to:
 
@@ -194,7 +194,7 @@ type RecordField struct {
     Value Expr
 }
 
-Semantic analysis
+## Semantic analysis
 
 For each record literal:
 
@@ -212,7 +212,7 @@ infer the return type from returned record expressions.
 
 After inference, replace the unresolved `record` return type internally with the exact resolved structural RecordType.
 
-Generated Go
+## Generated Go
 
 Every distinct record shape must lower to a generated Go struct.
 
@@ -252,7 +252,7 @@ rather than depending on declaration order.
 
 This improves deterministic builds.
 
-Cross-package behavior
+## Cross-package behavior
 
 Exported Go++ functions returning records must generate a Go-visible concrete return type.
 
@@ -288,7 +288,7 @@ println(u.Name)
 
 Handwritten Go should also be able to call the generated function and access exported fields.
 
-Interop requirements
+## Interop requirements
 
 Records must lower entirely to ordinary Go structs.
 
@@ -320,7 +320,7 @@ record(Name: "Bob", Age: 42)
 
 may have identical fields but remain different Go-level types unless an explicit conversion feature is added later.
 
-Parser
+## Parser
 
 Add `record` as a contextual/built-in keyword where necessary.
 
@@ -340,7 +340,7 @@ record{
 
 but NOT required for initial implementation.
 
-Field access
+## Field access
 
 Existing selector syntax should work unchanged:
 
@@ -348,7 +348,7 @@ value.field
 
 The type checker resolves fields from RecordType exactly as it would fields from a struct/class.
 
-Diagnostics
+## Diagnostics
 
 Good errors should include the inferred shapes.
 
@@ -362,7 +362,7 @@ expected:
 got:
     record{name string, age string}
 
-Suggested implementation order
+## Suggested implementation order
 
 1. Add RecordLiteral AST.
 2. Parse `record(name: expr, ...)`.
@@ -377,7 +377,7 @@ Suggested implementation order
 11. Add cross-package/export handling.
 12. Add tests.
 
-Tests
+## Tests
 
 Basic:
 
@@ -430,7 +430,7 @@ func getUser(id int) record {
     return record(
         id: id,
         name: "Alice",
-        email: "alice@example.com",
+        email: `"alice@example.com"`,
     )
 }
 
@@ -442,7 +442,7 @@ func main() {
     println(user.email)
 }
 
-Design principle
+## Design principle
 
 `record` should feel like an anonymous Go struct whose exact type is inferred and preserved by the compiler.
 
@@ -453,7 +453,7 @@ It must provide:
 - direct field access
 - no mandatory named DTO/result struct
 
-Current implementation status
+## Current implementation status
 
 The initial implementation supports record literals, nested records, structural
 hash-based generated Go structs, inferred `record`/`[]record`/`map[string]record`

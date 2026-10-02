@@ -1,6 +1,6 @@
-Go++ Feature Spec: Multi-Target Extension Methods
+# Go++ Feature Spec: Multi-Target Extension Methods
 
-Goal
+## Goal
 
 Allow one `extend` block to apply the same extension methods to multiple target types.
 
@@ -8,7 +8,7 @@ This is syntax sugar only.
 
 A multi-target extension must behave exactly as if the extension block had been duplicated once for each target type.
 
-Core syntax
+## Core syntax
 
 extend string, []byte {
     func Empty() bool {
@@ -39,7 +39,7 @@ extend *sql.DB, *sql.Tx {
     }
 }
 
-Semantics
+## Semantics
 
 1. `extend` may accept one or more target types separated by commas.
 
@@ -213,7 +213,7 @@ does NOT imply any relationship between A and B.
 
 It is only equivalent to defining the same extension method separately on both.
 
-AST
+## AST
 
 Update extension declaration representation.
 
@@ -235,7 +235,7 @@ A single-target extension simply has:
 
 len(Targets) == 1
 
-Parser
+## Parser
 
 Support:
 
@@ -271,7 +271,7 @@ extend
     ...
 }
 
-Semantic lowering
+## Semantic lowering
 
 Recommended implementation:
 
@@ -307,7 +307,7 @@ Do NOT add multi-receiver logic to method resolution.
 
 Do NOT introduce union receiver types.
 
-Type checking
+## Type checking
 
 For every target:
 
@@ -337,7 +337,7 @@ this.Exec resolves against *sql.Tx
 
 Both must succeed independently.
 
-Generated Go
+## Generated Go
 
 Generate one extension function per target/method combination.
 
@@ -377,7 +377,7 @@ __gpp_ext_slice_byte_Empty(b)
 
 Generated names must remain deterministic and collision-safe.
 
-Method lookup
+## Method lookup
 
 No changes to existing lookup precedence.
 
@@ -402,7 +402,7 @@ B -> Foo
 
 had been declared separately.
 
-Conflict handling
+## Conflict handling
 
 Existing extension conflict rules apply independently per target.
 
@@ -420,7 +420,7 @@ This causes an ambiguity/conflict for A according to normal extension rules.
 
 B is unaffected.
 
-Duplicate targets
+## Duplicate targets
 
 Reject duplicate targets in the same extension declaration after type normalization.
 
@@ -436,7 +436,7 @@ duplicate extension target string
 
 Equivalent aliases that resolve to the same type should also count as duplicates where type resolution makes that clear.
 
-Partial success
+## Partial success
 
 Compilation must be atomic.
 
@@ -450,7 +450,7 @@ the project must fail to compile.
 
 Do not silently register extensions for A and B while ignoring C.
 
-Diagnostics
+## Diagnostics
 
 Preferred error shape:
 
@@ -469,7 +469,7 @@ If multiple targets fail, report each failure where practical.
 
 Source locations should point to the original shared method body and mention the failing instantiated target.
 
-Generic targets
+## Generic targets
 
 If generic extension targets are already supported:
 
@@ -487,7 +487,7 @@ extend Box[T], Other[T] {
 
 may be deferred unless the language already supports generic extension target declarations.
 
-Interop
+## Interop
 
 Multi-target extensions must preserve all existing Go interop guarantees.
 
@@ -509,7 +509,7 @@ No vtable changes are allowed.
 
 No interface satisfaction changes are allowed.
 
-Use cases
+## Use cases
 
 Collections:
 
@@ -538,7 +538,7 @@ extend Employee, Customer {
 
 provided the body independently type-checks for both Employee and Customer.
 
-Suggested implementation order
+## Suggested implementation order
 
 1. Change ExtendDecl.Target to ExtendDecl.Targets.
 2. Parse comma-separated target list.
@@ -551,7 +551,7 @@ Suggested implementation order
 9. Add target-specific diagnostics.
 10. Add tests.
 
-Tests
+## Tests
 
 Single target regression:
 
@@ -627,7 +627,7 @@ Real method precedence:
 
 If one target already has a real method with the same name, normal real-method precedence still applies independently for that target.
 
-Design principle
+## Design principle
 
 Multi-target extensions are convenience syntax only.
 

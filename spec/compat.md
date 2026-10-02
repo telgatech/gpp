@@ -1,17 +1,17 @@
-Go++ Compatibility Spec: Go as a Source Superset
+# Go++ Compatibility Spec: Go as a Source Superset
 
-Goal
+## Goal
 Make ordinary valid Go source valid Go++ source with the same meaning whenever
 the source does not intentionally use a Go++ extension.
 
-Current status
+## Current status
 
 This is a planned compatibility track, not a completed guarantee. Go++ currently
 uses a handwritten extension parser and passes most ordinary Go declarations
 through as raw source. The compiler does not yet run a complete Go conformance
 suite.
 
-Known compatibility hazards
+## Known compatibility hazards
 
 - The top-level extension scanner recognizes `class` and `package` at line
   starts without tracking parenthesis depth. A valid Go identifier named
@@ -26,7 +26,7 @@ Known compatibility hazards
   the full Go type checker. Unusual but valid Go expressions may be preserved
   syntactically while still being outside the compiler's semantic guarantees.
 
-Compatibility rules to preserve
+## Compatibility rules to preserve
 
 1. Go imports, declarations, statements, types, generics, build-tag comments,
    and standard-library usage remain available unchanged.
@@ -37,7 +37,7 @@ Compatibility rules to preserve
 4. A compatibility fix must include a regression test containing the original
    Go source and a generated-Go build check.
 
-Planned implementation
+## Planned implementation
 
 1. Replace top-level extension scanning with Go-token-aware scanning that tracks
    parentheses, brackets, braces, comments, and strings.
@@ -51,7 +51,7 @@ Planned implementation
 5. Compile every fixture both as Go and as Go++, compare the generated program's
    build result, and add semantic output checks where transforms are involved.
 
-Acceptance criteria
+## Acceptance criteria
 
 - Every fixture accepted by the selected Go toolchain is accepted by Go++.
 - Generated Go builds with the same module and build constraints.
@@ -61,7 +61,7 @@ Acceptance criteria
 - New Go language releases add compatibility fixtures before being declared
   supported by the project.
 
-Out of scope for the initial compatibility pass
+## Out of scope for the initial compatibility pass
 
 - Making Go++ source compatible with every future Go release automatically.
 - Structural compatibility between Go++ records/classes and arbitrary native

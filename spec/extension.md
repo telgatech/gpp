@@ -1,6 +1,6 @@
-Go++ Feature Spec: Extension Methods
+# Go++ Feature Spec: Extension Methods
 
-Goal
+## Goal
 
 Allow Go++ code to add methods to existing Go and Go++ types without modifying, wrapping, embedding, or subclassing those types.
 
@@ -18,17 +18,19 @@ extend sql.DB {
 
 Usage:
 
-employee, err := db.Find[Employee](42)
+`employee, err := db.Find[Employee](42)`
 
+```gpp
 exists, err := db.Exists[Employee](
     record(Email: "a@b.com"),
 )
+```
 
 `db` remains the real `*sql.DB`.
 
 No runtime monkey-patching or modification of database/sql occurs.
 
-Core syntax
+## Core syntax
 
 extend <type> {
     <method declarations>
@@ -52,7 +54,7 @@ extend sql.DB {
 
 Extension methods use implicit `this`, consistent with Go++ class methods.
 
-Target types
+## Target types
 
 Extensions must work with:
 
@@ -81,7 +83,7 @@ extend Employee {
     ...
 }
 
-Pointer/value receiver semantics
+## Pointer/value receiver semantics
 
 The compiler must distinguish receiver type correctly.
 
@@ -107,7 +109,7 @@ to the same receiver-adjustment behavior Go uses for methods where the call targ
 
 Do not introduce copies unexpectedly for mutable native Go structs.
 
-AST
+## AST
 
 Add an extension declaration:
 
@@ -125,7 +127,7 @@ Each extension method should retain:
 - body
 - resolved extension target type
 
-Extension registration
+## Extension registration
 
 During semantic analysis, maintain an extension-method registry.
 
@@ -148,7 +150,7 @@ Extensions are compile-time symbols only.
 
 They do not alter Go runtime type metadata or Go++ vtables.
 
-Call resolution
+## Call resolution
 
 For an expression:
 
@@ -176,11 +178,11 @@ must resolve to the real method, not the Go++ extension.
 
 No silent override of actual methods.
 
-Generic method resolution
+## Generic method resolution
 
 Example:
 
-employee, err := db.Find[Employee](42)
+`employee, err := db.Find[Employee](42)`
 
 Resolve:
 
@@ -195,7 +197,7 @@ type arguments:
 
 Then type-check parameters and returns normally.
 
-Generated Go
+## Generated Go
 
 Extension methods lower to ordinary package-level functions.
 
@@ -218,11 +220,11 @@ func __gpp_ext_sql_DB_Find[T any](
 
 Call:
 
-db.Find[Employee](42)
+`db.Find[Employee](42)`
 
 lowers to:
 
-__gpp_ext_sql_DB_Find[Employee](db, 42)
+`__gpp_ext_sql_DB_Find[Employee](db, 42)`
 
 Exact generated symbol naming is implementation-defined but must be:
 
@@ -254,7 +256,7 @@ func __gpp_ext_sql_DB_PingAgain(this *sql.DB) error {
     return this.Ping()
 }
 
-Access restrictions
+## Access restrictions
 
 Extension methods do NOT gain privileged access to the extended type.
 
@@ -271,7 +273,7 @@ extend http.Request {
 
 Extensions are syntax sugar over ordinary functions, not friend methods.
 
-Dispatch semantics
+## Dispatch semantics
 
 Extension methods are always statically dispatched.
 
@@ -293,7 +295,7 @@ does not mean subclasses override Foo polymorphically.
 
 If polymorphic behavior is required, define a real class method.
 
-Visibility
+## Visibility
 
 Extension methods follow normal package/import visibility rules.
 
@@ -301,7 +303,7 @@ An extension declared in package `foo` is available only when the package/module
 
 Do not globally modify a type merely because some unrelated package declared an extension for it.
 
-Conflict handling
+## Conflict handling
 
 If two visible extensions provide an equally applicable method and no actual method wins, compilation must fail.
 
@@ -333,7 +335,7 @@ Do not silently choose one based on import order.
 
 Later we may add explicit qualification if needed.
 
-Overloading
+## Overloading
 
 Extension methods participate in normal Go++ overload resolution.
 
@@ -353,7 +355,7 @@ resolve statically.
 
 An extension overload must never hide an applicable real method.
 
-Records
+## Records
 
 Extension methods should work naturally with the `record` feature.
 
@@ -367,16 +369,18 @@ extend sql.DB {
 
 Usage:
 
+```gpp
 db.Exists[Employee](
     record(
         Email: "bob@example.com",
         Active: true,
     ),
 )
+```
 
 The record remains statically typed.
 
-Class introspection
+## Class introspection
 
 Extension methods must be compatible with planned Go++ class introspection.
 
@@ -400,13 +404,13 @@ No ORM behavior should be built into extension methods themselves.
 
 This feature merely enables library code such as:
 
-db.Find[Employee](...)
-db.Where[Employee](...)
-db.Exists[Employee](...)
+`db.Find[Employee](...)`
+`db.Where[Employee](...)`
+`db.Exists[Employee](...)`
 
 using normal database/sql underneath.
 
-Go interop
+## Go interop
 
 Extension methods must preserve direct Go interoperability.
 
@@ -422,7 +426,7 @@ normally.
 
 If a Go++ extension exists:
 
-db.Find[Employee](42)
+`db.Find[Employee](42)`
 
 only that call is rewritten.
 
@@ -434,7 +438,7 @@ No wrapper object should be generated.
 
 No adapters should be required for normal Go functions.
 
-Interfaces
+## Interfaces
 
 Extension methods must NOT cause a type to satisfy Go interfaces.
 
@@ -454,7 +458,7 @@ This rule is important for interoperability.
 
 If interface satisfaction is desired, use a wrapper/class or another explicit mechanism.
 
-Addressability
+## Addressability
 
 Follow Go's normal receiver/addressability rules as closely as practical.
 
@@ -472,7 +476,7 @@ may work when x is an addressable Thing and the compiler can safely take &x.
 
 Calling on a temporary/non-addressable value should follow Go-like restrictions.
 
-Parser
+## Parser
 
 Add parsing for:
 
@@ -496,7 +500,7 @@ extend Foo[T] { ... }
 
 but generic target extension declarations may be deferred if unnecessary for v1.
 
-Semantic validation
+## Semantic validation
 
 For each extension declaration:
 
@@ -508,7 +512,7 @@ For each extension declaration:
 6. Check overload validity.
 7. Preserve package visibility.
 
-Suggested v1 restrictions
+## Suggested v1 restrictions
 
 Keep v1 intentionally simple:
 
@@ -523,7 +527,7 @@ Keep v1 intentionally simple:
 - no implicit import of extensions
 - ambiguity is a compile error
 
-Examples
+## Examples
 
 Basic:
 
@@ -563,11 +567,9 @@ extend *sql.DB {
     }
 }
 
-func main() {
-    employee, err := db.Find[Employee](42)
-}
+`func main() { employee, err := db.Find[Employee](42) }`
 
-Lowering example
+## Lowering example
 
 Input:
 
@@ -591,7 +593,7 @@ if __gpp_ext_sql_DB_Healthy(db) {
     ...
 }
 
-Tests
+## Tests
 
 1. Extension on builtin type.
 2. Extension on imported Go type.
@@ -606,7 +608,7 @@ Tests
 11. Go stdlib receiver remains unchanged.
 12. Generic return type preserves static type.
 
-Design principle
+## Design principle
 
 Extension methods are purely compile-time method-call sugar.
 

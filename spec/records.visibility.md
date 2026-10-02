@@ -1,3 +1,5 @@
+# Go++ Record Field Visibility Specification
+
 ## Record field visibility
 
 Record fields follow normal Go++ / Go capitalization-based visibility rules.

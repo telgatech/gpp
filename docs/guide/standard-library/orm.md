@@ -83,4 +83,4 @@ when you have a concrete database handle.
 
 - [ORM specification](/reference/specifications/std.orm)
 - [ORM feature guide](/features/orm)
-- [Runnable example](https://github.com/golang-plus-plus/gpp/blob/main/examples/orm.gpp)
+- [Runnable example](https://github.com/telgatech/gpp/blob/main/examples/orm.gpp)

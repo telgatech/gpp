@@ -1,6 +1,6 @@
-Go++ Feature Spec: Lambda Expressions
+# Go++ Feature Spec: Lambda Expressions
 
-Goal
+## Goal
 
 Add lightweight lambda syntax as sugar for ordinary Go function literals.
 
@@ -22,9 +22,7 @@ Lambdas must lower to ordinary Go closures/function literals.
 
 No new runtime mechanism is required.
 
-==================================================
-1. Core syntax
-==================================================
+## 1. Core syntax
 
 Single parameter:
 
@@ -45,9 +43,7 @@ user => {
     return user.Active
 }
 
-==================================================
-2. Parameter parentheses
-==================================================
+## 2. Parameter parentheses
 
 For exactly one parameter, parentheses are optional:
 
@@ -69,9 +65,7 @@ Do not allow:
 
 a, b => expr
 
-==================================================
-3. Expression body
-==================================================
+## 3. Expression body
 
 A lambda may contain a single expression:
 
@@ -95,9 +89,7 @@ func(x int) int {
     return x * 2
 }
 
-==================================================
-4. Block body
-==================================================
+## 4. Block body
 
 A lambda may use a normal block:
 
@@ -115,9 +107,7 @@ Block-body lambdas use ordinary Go++ statement and return rules.
 
 No implicit return from the final statement in block form.
 
-==================================================
-5. Contextual type inference
-==================================================
+## 5. Contextual type inference
 
 Lambda parameter types should normally be inferred from the expected function type.
 
@@ -136,9 +126,7 @@ return type : bool
 
 No explicit type is required.
 
-==================================================
-6. Multiple parameter inference
-==================================================
+## 6. Multiple parameter inference
 
 Example:
 
@@ -154,9 +142,7 @@ a : User
 b : User
 return : bool
 
-==================================================
-7. Explicit parameter types
-==================================================
+## 7. Explicit parameter types
 
 Allow explicit types when contextual inference is unavailable or desired.
 
@@ -172,9 +158,7 @@ Zero parameter lambdas remain:
 
 () => ...
 
-==================================================
-8. Explicit return type
-==================================================
+## 8. Explicit return type
 
 Do not require explicit lambda return type in normal usage.
 
@@ -188,9 +172,7 @@ Optional explicit return type may be deferred unless there is a concrete use cas
 
 Keep v1 syntax small.
 
-==================================================
-9. Target function type
-==================================================
+## 9. Target function type
 
 A lambda must resolve to a concrete function type.
 
@@ -212,9 +194,7 @@ pred = user => user.Active
 
 valid.
 
-==================================================
-10. Standalone inference
-==================================================
+## 10. Standalone inference
 
 For:
 
@@ -239,9 +219,7 @@ Error:
 cannot infer lambda parameter type `user`
 provide an explicit type or use lambda in a typed context
 
-==================================================
-11. Generic contextual inference
-==================================================
+## 11. Generic contextual inference
 
 Example prelude method:
 
@@ -265,9 +243,7 @@ user : User
 
 Generic argument inference should happen before lambda body type-checking where necessary.
 
-==================================================
-12. Closure capture
-==================================================
+## 12. Closure capture
 
 Lambdas use normal Go closure capture semantics.
 
@@ -281,9 +257,7 @@ Generated Go should capture `limit` exactly as an ordinary Go func literal would
 
 Do not invent separate capture semantics.
 
-==================================================
-13. Mutation of captured variables
-==================================================
+## 13. Mutation of captured variables
 
 Follow ordinary generated Go semantics.
 
@@ -298,9 +272,7 @@ users.Any(user => {
 
 Whatever semantics Go++ already defines for `count++` continue to apply.
 
-==================================================
-14. Return inference for expression lambdas
-==================================================
+## 14. Return inference for expression lambdas
 
 Expression:
 
@@ -320,9 +292,7 @@ func(User) string
 
 when expected.
 
-==================================================
-15. Void expression lambdas
-==================================================
+## 15. Void expression lambdas
 
 Allow expression lambdas returning no value when the expression is a call with no result.
 
@@ -340,9 +310,7 @@ If Go++ does not yet have ForEach, this still applies to any API expecting:
 
 func(T)
 
-==================================================
-16. Block return checking
-==================================================
+## 16. Block return checking
 
 For expected:
 
@@ -358,9 +326,7 @@ because no bool is returned on all required paths.
 
 Reuse ordinary Go++ function return-path checking.
 
-==================================================
-17. Overload resolution
-==================================================
+## 17. Overload resolution
 
 Lambda contextual typing may participate in overload resolution.
 
@@ -389,9 +355,7 @@ Recommended approach:
 4. apply normal overload ranking
 5. ambiguity remains a compile error
 
-==================================================
-18. Parser
-==================================================
+## 18. Parser
 
 Recommended forms:
 
@@ -426,9 +390,7 @@ Be careful to distinguish:
 
 from ordinary parenthesized expressions.
 
-==================================================
-19. AST
-==================================================
+## 19. AST
 
 Add:
 
@@ -447,9 +409,7 @@ type LambdaParam struct {
 
 Exactly one of BodyExpr or BodyBlock is populated.
 
-==================================================
-20. Semantic analysis
-==================================================
+## 20. Semantic analysis
 
 For contextually typed lambda:
 
@@ -461,9 +421,7 @@ For contextually typed lambda:
 6. verify body return type against expected return type(s)
 7. produce resolved function type
 
-==================================================
-21. Multiple return values
-==================================================
+## 21. Multiple return values
 
 Block lambdas may return multiple values if expected function type does.
 
@@ -481,9 +439,7 @@ For expression-body lambdas, a single expression may naturally produce multiple 
 
 Do not special-case unless necessary.
 
-==================================================
-22. Variadic function types
-==================================================
+## 22. Variadic function types
 
 Lambdas themselves do not need new variadic syntax initially.
 
@@ -495,9 +451,7 @@ may reuse ordinary parameter syntax.
 
 Not required for v1.
 
-==================================================
-23. `this` inside lambdas
-==================================================
+## 23. `this` inside lambdas
 
 Lambdas nested inside class methods should capture outer `this` normally.
 
@@ -515,9 +469,7 @@ class Users {
 
 The lambda itself does not introduce a new `this`.
 
-==================================================
-24. `return` semantics
-==================================================
+## 24. `return` semantics
 
 `return` inside a lambda returns from the lambda, not the enclosing function.
 
@@ -537,25 +489,19 @@ func Foo() {
 
 This follows ordinary closure semantics.
 
-==================================================
-25. `defer`
-==================================================
+## 25. `defer`
 
 If block-body lambdas allow `defer`, it applies to the lambda invocation scope exactly as it would inside a generated Go function literal.
 
 No special behavior.
 
-==================================================
-26. Exceptions
-==================================================
+## 26. Exceptions
 
 If Go++ exceptions are implemented later, throwing from a lambda follows normal exception semantics.
 
 Do not add lambda-specific exception handling.
 
-==================================================
-27. Async/goroutines
-==================================================
+## 27. Async/goroutines
 
 Lambdas are ordinary function values and may be used where Go functions are used.
 
@@ -567,9 +513,7 @@ go (() => {
 
 Whether syntactic simplification is later added for goroutines is separate.
 
-==================================================
-28. Generated Go
-==================================================
+## 28. Generated Go
 
 Input:
 
@@ -607,9 +551,7 @@ users.Any(func(user User) bool {
     return user.Active
 })
 
-==================================================
-29. No custom lambda runtime type
-==================================================
+## 29. No custom lambda runtime type
 
 A lambda resolves directly to an ordinary Go function type.
 
@@ -621,9 +563,7 @@ Callable
 
 or any other custom runtime abstraction.
 
-==================================================
-30. Go interoperability
-==================================================
+## 30. Go interoperability
 
 Lambdas must be usable anywhere a normal Go function value is accepted.
 
@@ -637,9 +577,7 @@ Generated Go should pass an ordinary compatible function literal.
 
 No adapter should be necessary.
 
-==================================================
-31. Prelude examples
-==================================================
+## 31. Prelude examples
 
 This feature should immediately improve prelude usage.
 
@@ -683,9 +621,7 @@ if users.All(user => user.Valid) {
     ...
 }
 
-==================================================
-32. No implicit `it`
-==================================================
+## 32. No implicit `it`
 
 Do not add implicit `it` as part of lambda support.
 
@@ -699,9 +635,7 @@ it.Active
 
 This keeps nested lambdas and scopes obvious.
 
-==================================================
-33. No placeholder syntax
-==================================================
+## 33. No placeholder syntax
 
 Do not initially add:
 
@@ -713,9 +647,7 @@ or similar shorthand.
 
 `=>` provides sufficient reduction in ceremony.
 
-==================================================
-34. Formatting
-==================================================
+## 34. Formatting
 
 Formatter should preserve concise expression lambdas:
 
@@ -734,9 +666,7 @@ user => {
 
 Do not unnecessarily expand expression lambdas into blocks.
 
-==================================================
-35. Diagnostics
-==================================================
+## 35. Diagnostics
 
 Cannot infer:
 
@@ -774,9 +704,7 @@ lambda result type mismatch
 expected bool
 got string
 
-==================================================
-36. Suggested implementation order
-==================================================
+## 36. Suggested implementation order
 
 1. Parse single-parameter expression lambdas.
 2. Add LambdaExpr AST.
@@ -792,9 +720,7 @@ got string
 12. Add Go interop tests.
 13. Add prelude callback tests.
 
-==================================================
-37. Core tests
-==================================================
+## 37. Core tests
 
 Single parameter:
 
@@ -844,9 +770,7 @@ http.HandleFunc("/", (w http.ResponseWriter, r *http.Request) => {
     fmt.Fprintln(w, "ok")
 })
 
-==================================================
-38. Design principle
-==================================================
+## 38. Design principle
 
 Go++ lambdas are only concise syntax for Go function literals.
 

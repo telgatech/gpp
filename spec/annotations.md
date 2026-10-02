@@ -1,6 +1,6 @@
-Go++ Feature Spec: Declared Annotations
+# Go++ Feature Spec: Declared Annotations
 
-Goal
+## Goal
 
 Add first-class annotation declarations to Go++.
 
@@ -18,9 +18,7 @@ Annotations are reusable, type-checked metadata definitions that may be exported
 
 Their meaning remains library-defined unless the compiler explicitly reserves a specific annotation in the future.
 
---------------------------------------------------
-1. Declaration syntax
---------------------------------------------------
+## 1. Declaration syntax
 
 Single declaration:
 
@@ -49,9 +47,7 @@ import (...)
 var (...)
 const (...)
 
---------------------------------------------------
-2. Annotation parameters
---------------------------------------------------
+## 2. Annotation parameters
 
 Annotations may have zero or more typed parameters.
 
@@ -85,9 +81,7 @@ Both could optionally be tolerated, but the preferred form should be:
 
 @{PK}
 
---------------------------------------------------
-3. Group declarations
---------------------------------------------------
+## 3. Group declarations
 
 Syntax:
 
@@ -105,9 +99,7 @@ annotation Foo
 annotation Bar(x int)
 annotation Baz(name string) on class
 
---------------------------------------------------
-4. Package visibility
---------------------------------------------------
+## 4. Package visibility
 
 Annotation declarations follow normal Go/Go++ capitalization rules.
 
@@ -139,9 +131,7 @@ Accessing:
 
 from another package must be rejected.
 
---------------------------------------------------
-5. Annotation usage
---------------------------------------------------
+## 5. Annotation usage
 
 Annotations are attached using postfix:
 
@@ -174,9 +164,7 @@ Imported annotations normally require package qualification:
 
 @{model.PK}
 
---------------------------------------------------
-6. `on` target restriction
---------------------------------------------------
+## 6. `on` target restriction
 
 An annotation declaration may optionally restrict where it can be used.
 
@@ -205,9 +193,7 @@ annotation Deprecated(message string)
 
 may be used anywhere annotations are supported.
 
---------------------------------------------------
-7. Initial annotation target vocabulary
---------------------------------------------------
+## 7. Initial annotation target vocabulary
 
 Support these targets initially:
 
@@ -244,9 +230,7 @@ package
 
 Do not add targets such as variable, constant, import, etc. until there is a real use case.
 
---------------------------------------------------
-8. Method vs function
---------------------------------------------------
+## 8. Method vs function
 
 `method` and `function` should remain distinct annotation targets.
 
@@ -264,9 +248,7 @@ If an annotation should work on both:
 
 annotation Trace on method, function
 
---------------------------------------------------
-9. Placement validation
---------------------------------------------------
+## 9. Placement validation
 
 The compiler must verify that each annotation is legal on its declaration target.
 
@@ -296,9 +278,7 @@ Error:
 annotation Get cannot be applied to field
 allowed targets: method
 
---------------------------------------------------
-10. Symbol resolution
---------------------------------------------------
+## 10. Symbol resolution
 
 Annotation use must resolve to a declared annotation symbol.
 
@@ -327,9 +307,7 @@ class X @{Table("x")} {}
 
 should fail if Table resolves to a function rather than an annotation.
 
---------------------------------------------------
-11. Undeclared annotations
---------------------------------------------------
+## 11. Undeclared annotations
 
 Do NOT allow arbitrary undeclared annotation names.
 
@@ -347,9 +325,7 @@ annotation Required on field
 
 So there is little reason to permit undeclared names.
 
---------------------------------------------------
-12. Argument type checking
---------------------------------------------------
+## 12. Argument type checking
 
 Annotation arguments must be checked against the declaration.
 
@@ -377,9 +353,7 @@ Invalid:
 
 @{Table("employees", "extra")}
 
---------------------------------------------------
-13. Allowed annotation argument values
---------------------------------------------------
+## 13. Allowed annotation argument values
 
 For v1, annotation arguments should be compile-time values.
 
@@ -405,9 +379,7 @@ should work.
 
 This may be rejected initially if constant-expression evaluation is not yet available, but should be the intended direction.
 
---------------------------------------------------
-14. AST representation
---------------------------------------------------
+## 14. AST representation
 
 Declaration:
 
@@ -435,9 +407,7 @@ type AnnotationDeclGroup struct {
 
 or flattened immediately during parsing.
 
---------------------------------------------------
-15. Annotation targets representation
---------------------------------------------------
+## 15. Annotation targets representation
 
 Use an enum/bitset internally.
 
@@ -463,9 +433,7 @@ or a bitmask.
 
 Empty target set means unrestricted.
 
---------------------------------------------------
-16. Grammar
---------------------------------------------------
+## 16. Grammar
 
 Conceptually:
 
@@ -504,9 +472,7 @@ annotation (
     Table(name string) on class
 )
 
---------------------------------------------------
-17. Application grammar
---------------------------------------------------
+## 17. Application grammar
 
 Existing annotation application syntax:
 
@@ -528,9 +494,7 @@ Examples:
 
 @{validate.Required, validate.Email}
 
---------------------------------------------------
-18. Introspection integration
---------------------------------------------------
+## 18. Introspection integration
 
 Declared annotation metadata must integrate with:
 
@@ -559,9 +523,7 @@ annotation.declaration
 
 or equivalent internal link may exist, but does not need to be public in v1.
 
---------------------------------------------------
-19. Annotation descriptor identity
---------------------------------------------------
+## 19. Annotation descriptor identity
 
 Annotations with identical names from different packages are different annotation types.
 
@@ -597,9 +559,7 @@ annotations.has("Auth")
 
 String lookup must not be the sole identity mechanism.
 
---------------------------------------------------
-20. Recommended introspection improvement
---------------------------------------------------
+## 20. Recommended introspection improvement
 
 Since annotations are now declared symbols, expose declaration-safe lookup.
 
@@ -628,9 +588,7 @@ annotations.all(annotationType) []Annotation
 
 String-based overloads may optionally remain.
 
---------------------------------------------------
-21. Annotation metadata example
---------------------------------------------------
+## 21. Annotation metadata example
 
 Library:
 
@@ -662,9 +620,7 @@ for f := range Employee.class.fields {
     }
 }
 
---------------------------------------------------
-22. Web example
---------------------------------------------------
+## 22. Web example
 
 Package:
 
@@ -697,9 +653,7 @@ method.annotations
 
 The compiler itself does not interpret Get/Post/Auth/Role.
 
---------------------------------------------------
-23. Validation example
---------------------------------------------------
+## 23. Validation example
 
 Package:
 
@@ -723,9 +677,7 @@ Validation library reads metadata.
 
 No validation behavior is compiler built-in.
 
---------------------------------------------------
-24. Database example
---------------------------------------------------
+## 24. Database example
 
 Package:
 
@@ -751,9 +703,7 @@ Generic database/sql helper code can inspect these annotations.
 
 No ORM behavior is part of the language.
 
---------------------------------------------------
-25. Inheritance semantics
---------------------------------------------------
+## 25. Inheritance semantics
 
 Class-level annotations are not inherited automatically.
 
@@ -780,9 +730,7 @@ Method annotations remain attached to inherited methods.
 
 This preserves declaration ownership.
 
---------------------------------------------------
-26. Duplicate annotation usage
---------------------------------------------------
+## 26. Duplicate annotation usage
 
 Allow repeated applications of the same annotation unless the declaration later gains a uniqueness constraint.
 
@@ -811,9 +759,7 @@ returns all.
 
 Do not add "single-use" annotation declarations in v1.
 
---------------------------------------------------
-27. No compiler semantics by default
---------------------------------------------------
+## 27. No compiler semantics by default
 
 Declaring:
 
@@ -841,9 +787,7 @@ Annotations define:
 
 Libraries define behavior.
 
---------------------------------------------------
-28. Future macro integration
---------------------------------------------------
+## 28. Future macro integration
 
 The declaration system should leave room for annotations to later trigger compile-time transformations.
 
@@ -858,9 +802,7 @@ Important:
 
 ordinary declared annotations must remain passive metadata unless explicitly defined otherwise.
 
---------------------------------------------------
-29. Go struct tags
---------------------------------------------------
+## 29. Go struct tags
 
 Declared annotations do not automatically become Go struct tags.
 
@@ -876,9 +818,7 @@ A future feature may allow annotation declarations to specify tag lowering.
 
 Do not couple this feature to Go tags initially.
 
---------------------------------------------------
-30. Diagnostics
---------------------------------------------------
+## 30. Diagnostics
 
 Unknown annotation:
 
@@ -933,9 +873,7 @@ Unexported imported annotation:
 
 error according to normal package visibility rules.
 
---------------------------------------------------
-31. Suggested implementation order
---------------------------------------------------
+## 31. Suggested implementation order
 
 1. Add `annotation` declaration keyword.
 2. Parse single annotation declarations.
@@ -955,9 +893,7 @@ error according to normal package visibility rules.
 16. Add inheritance tests.
 17. Add package/import tests.
 
---------------------------------------------------
-32. Core tests
---------------------------------------------------
+## 32. Core tests
 
 Single declaration:
 
@@ -1020,9 +956,7 @@ Both may be imported and used independently:
 @{web.Auth}
 @{rpc.Auth}
 
---------------------------------------------------
-33. Design principle
---------------------------------------------------
+## 33. Design principle
 
 Annotations are real declarations.
 

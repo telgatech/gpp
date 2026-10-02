@@ -1,13 +1,13 @@
-Project: Go++ v0.2 — a Go-like language that transpiles to ordinary Go
+# Go++ Language Specification
 
-Core goal
+## Core goal
 - Preserve Go’s runtime model, stdlib access, tooling, deployment simplicity, goroutines, channels, and generated Go interoperability.
 - Improve syntax/ergonomics without turning the language into C++, Rust, or framework-heavy C#.
 - Source-to-source compiler first: .gpp -> generated .go -> go build.
 - Compiler implemented in Go.
 - Handwritten parser is acceptable/preferred initially; PEG tooling is optional, not required.
 
-Packages
+## Packages
 - One package declaration maximum per source file.
 - No package declaration defaults to package main.
 - Source directory structure does not determine package.
@@ -24,7 +24,7 @@ Packages
   imports; the CLI defaults it to `generated`.
 
 
-Imports
+## Imports
 - Use Go's quoted import syntax unchanged for standard-library and external
   Go packages, including single imports, grouped imports, aliases, dot imports,
   and blank imports:
@@ -39,7 +39,7 @@ Imports
   imported directly from Go++ source.
 - Preserve seamless access to the Go standard library and normal Go packages.
 
-Classes
+## Classes
 - Add:
     class Person {
         Name string
@@ -67,7 +67,7 @@ Classes
   and a body reference to `Name` becomes `this.Name` when no local or parameter
   named `Name` is in scope.
 
-Inheritance
+## Inheritance
 - Support inheritance syntax:
     class Employee : Person {
         ...
@@ -83,7 +83,7 @@ Inheritance
 - This implementation detail must remain invisible to normal Go++ code.
 - Everything should behave polymorphically by default; no explicit override keyword.
 
-Construction / initialization
+## Construction / initialization
 - Keep normal Go-style literals available.
 - Add compact constructor-style initialization:
     p := Person("Bob", 42)
@@ -102,14 +102,14 @@ Construction / initialization
   specified in `spec/constructors.md`. Until that proposal is implemented,
   this section describes the historical value-literal lowering.
 
-String interpolation
+## String interpolation
 - Support simple interpolation:
     "Hello {{this.Name}}, age {{this.Age}}"
 - Expressions inside {{...}} are ordinary Go++ expressions.
 - Initial transpilation may use fmt.Sprintf.
 - The syntax should remain visually simple; avoid ${...}-style clutter.
 
-Nil semantics
+## Nil semantics
 - Nil handling should be safer/easier than Go.
 - A nil dereference should not automatically become a conventional exception model.
 - Ordinary `.` access retains Go's ordinary nil behavior.
@@ -129,12 +129,12 @@ Nil semantics
   generated class interface. Safe access is not inferred for ordinary `.`
   access or arbitrary receiver expressions.
 
-Exceptions
+## Exceptions
 - Exceptions are not a v0.2 priority.
 - They are considered harder because Go has no native exception model suitable for transparent lowering.
 - Prefer retaining Go-style explicit error handling unless a clean translation emerges.
 
-Function defaults
+## Function defaults
 - Function and method parameters may have trailing default values:
     func Greet(name string, punctuation string = "!") string
 - Defaults are lowered at call sites; emitted Go declarations remain ordinary
@@ -144,7 +144,7 @@ Function defaults
 - Required parameters must precede default parameters. Named and positional
   arguments cannot be mixed.
 
-Overloading
+## Overloading
 - Method/function overloading is desired as part of the broader Go++ ergonomics goal.
 - Overloads with different parameter counts remain supported.
 - Overloads with the same parameter count may differ by exact static parameter
@@ -154,7 +154,7 @@ Overloading
 - Ambiguous or unknown call types remain ordinary Go++ errors to be tightened as
   type inference expands.
 
-Polymorphism
+## Polymorphism
 - Base-typed variables should eventually dispatch to derived implementations:
     var p Person = Employee(...)
     p.Speak()  // Employee.Speak()
@@ -173,20 +173,20 @@ Polymorphism
   parameters/results, fields, and direct derived-to-base call arguments when the
   static type is known.
 
-Go interoperability
+## Go interoperability
 - Critical requirement: Go++ must use the Go stdlib without modification.
 - Ordinary Go packages should be importable directly.
 - Generated code should remain readable, debuggable Go where practical.
 - Avoid requiring a custom runtime except for small helper support where absolutely necessary.
 - Users should still be able to call normal Go functions/types naturally.
 
-Concurrency/runtime
+## Concurrency/runtime
 - Keep Go’s concurrency model unchanged.
 - goroutines/channels remain Go’s goroutines/channels.
 - Do not introduce async/await.
 - Do not replace the Go scheduler/runtime.
 
-Compiler architecture
+## Compiler architecture
 - v0.2 remains a transpiler, not a standalone native compiler.
 - Pipeline:
     .gpp
@@ -202,7 +202,7 @@ Compiler architecture
 - Semantic resolution builds package/class symbol tables before emission and
   rejects duplicate members, unresolved parents, and inheritance cycles.
 
-Current v0.1 implementation scope (historical baseline)
+## Current v0.1 implementation scope (historical baseline)
 - default package main
 - optional package declaration
 - flat source layout independent of Go package directories
@@ -225,7 +225,7 @@ Current v0.1 implementation scope (historical baseline)
 - initial base-typed dispatch through generated method interfaces
 - arity-based overloading for functions and class methods
 
-Current v0.2 implementation scope
+## Current v0.2 implementation scope
 - named function and method arguments
 - trailing default function and method parameters
 - exact static-type overload resolution for same-arity functions and methods
@@ -242,11 +242,11 @@ Current v0.2 implementation scope
 - extension methods on native Go and Go++ types; see `spec.extension-methods.md`
 - lambda expressions with contextual parameter inference; see `spec/lambdas.md`
 
-Explicit v0.1 boundaries (historical baseline)
+## Explicit v0.1 boundaries (historical baseline)
 - Go nil behavior is unchanged; safe member access is deferred.
 - Exceptions are deferred; use explicit Go-style error returns.
 
-Explicit v0.2 boundaries
+## Explicit v0.2 boundaries
 - Exceptions remain deferred; use explicit Go-style error returns.
 - Safe access initially accepts identifier receivers only.
 - Overload resolution currently relies on exact static types and does not yet
@@ -255,13 +255,13 @@ Explicit v0.2 boundaries
   methods; chained expressions and imported method sets remain future work.
 - Generated dispatch remains interface-based rather than a hidden vtable runtime.
 
-Near-term next features
+## Near-term next features
 1. Expand expression/type analysis for conversions, chained calls, and imported
    method sets.
 2. Improve source-position diagnostics and add a first-class example/test runner.
 3. Only later consider exceptions, generics, or other invasive runtime features.
 
-Design principle
+## Design principle
 - Fix Go’s annoying surface-level warts while preserving the parts that make Go attractive:
   simple runtime model, synchronous-looking I/O, stdlib, compile speed, deployment, and low conceptual overhead.
 - Do not add features merely because C++/Rust/C# have them.

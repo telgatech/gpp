@@ -19,7 +19,7 @@ before each docs development or production build.
 
 - [Annotations](./specifications/annotations)
 - [Annotation inheritance](./specifications/annotation-inheritance)
-- [Object model](./specifications/object)
+- [Object model](./specifications/base)
 - [Enums](./specifications/enums)
 - [Exceptions](./specifications/exceptions)
 - [Expression catch](./specifications/expr-catch)
