@@ -218,3 +218,20 @@ func TestDefaultBuildBinaryNameUsesTargetPlatformExtension(t *testing.T) {
 		t.Fatalf("Windows source already ending in .exe got %q", got)
 	}
 }
+
+func TestDefaultBuildBinaryNameUsesProjectDirectory(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "my-service")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(project, "main.gpp")
+	if err := os.WriteFile(source, []byte("func main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultBuildBinaryNameForInputs([]string{project}, []string{source}, "linux"); got != "my-service" {
+		t.Fatalf("project directory default binary name = %q, want my-service", got)
+	}
+	if got := defaultBuildBinaryNameForInputs([]string{source}, []string{source}, "linux"); got != "main" {
+		t.Fatalf("single source default binary name = %q, want main", got)
+	}
+}

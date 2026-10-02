@@ -19,6 +19,22 @@ func TestParseReportsSourceLineForExtensionErrors(t *testing.T) {
 	}
 }
 
+func TestParseLeadingUsageCommentBeforeImport(t *testing.T) {
+	source := `// Run this example with: gpp test examples/testing.gpp
+
+import "gpp/test"
+
+class UserTest : test.Suite {}
+`
+	file, err := ParseFile("testing.gpp", source)
+	if err != nil {
+		t.Fatalf("leading usage comment stalled parser: %v", err)
+	}
+	if len(file.Comments) != 1 || !strings.Contains(file.Comments[0].Text, "gpp test examples/testing.gpp") {
+		t.Fatalf("usage comment was not retained in source metadata: %#v", file.Comments)
+	}
+}
+
 func TestParseSplitsDocumentedTopLevelFunctionsIntoASTDeclarations(t *testing.T) {
 	file, err := ParseFile("documented-functions.gpp", `
 func first() {

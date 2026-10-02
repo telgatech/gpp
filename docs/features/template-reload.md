@@ -28,7 +28,7 @@ template Page(name string) {
 Run the application with the development server to enable watching:
 
 ```sh
-gpp run .
+gpp run
 ```
 
 The watcher installs a new version only after it parses successfully, so a

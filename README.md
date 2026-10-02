@@ -117,7 +117,7 @@ Create and run a starter project:
 ```bash
 gpp init hello
 cd hello
-gpp run .
+gpp run
 ```
 
 `gpp init` creates a root `go.mod`, runs `go mod tidy`, and initializes a Git

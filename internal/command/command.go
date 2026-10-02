@@ -139,12 +139,14 @@ func commandHelp(name string) int {
 		fmt.Println("Usage: gpp init [-module path] [directory]")
 		fmt.Println("  -module path  Go module path (defaults to example.com/<directory>)")
 	case "build":
-		fmt.Println("Usage: gpp build [options] <file.gpp|file.gpp.tpl|directory>")
+		fmt.Println("Usage: gpp build [options] [file.gpp|file.gpp.tpl|directory]")
+		fmt.Println("  defaults to the current directory when no source is given")
 		fmt.Println("  -o path          output executable path")
 		fmt.Println("  -emit-go         retain and report generated Go source")
 		printCompileFlags()
 	case "run":
-		fmt.Println("Usage: gpp run [options] <file.gpp|file.gpp.tpl|directory> [-- program arguments]")
+		fmt.Println("Usage: gpp run [options] [file.gpp|file.gpp.tpl|directory] [-- program arguments]")
+		fmt.Println("  defaults to the current directory when no source is given")
 		printCompileFlags()
 	case "clean":
 		fmt.Println("Usage: gpp clean [-output directory]")
@@ -316,7 +318,7 @@ func runBuild(args []string) int {
 
 	binaryPath := options.binaryPath
 	if binaryPath == "" {
-		binaryPath = defaultBuildBinaryName(sources, buildTargetOS())
+		binaryPath = defaultBuildBinaryNameForInputs(positional, sources, buildTargetOS())
 	}
 	absoluteBinary, err := filepath.Abs(binaryPath)
 	if err != nil {
@@ -1478,6 +1480,21 @@ func defaultBinaryName(sources []string) string {
 
 func defaultBuildBinaryName(sources []string, targetOS string) string {
 	name := defaultBinaryName(sources)
+	return buildBinaryName(name, targetOS)
+}
+
+func defaultBuildBinaryNameForInputs(inputs, sources []string, targetOS string) string {
+	if len(inputs) == 1 {
+		if info, err := os.Stat(inputs[0]); err == nil && info.IsDir() {
+			if absolute, err := filepath.Abs(inputs[0]); err == nil {
+				return buildBinaryName(filepath.Base(absolute), targetOS)
+			}
+		}
+	}
+	return defaultBuildBinaryName(sources, targetOS)
+}
+
+func buildBinaryName(name, targetOS string) string {
 	if name == "." || name == string(filepath.Separator) || name == "" {
 		name = "gpp-app"
 	}

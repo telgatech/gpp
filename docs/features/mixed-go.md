@@ -30,7 +30,7 @@ func greeting(name string) string {
 Run both through the Go++ project command:
 
 ```sh
-gpp run .
+gpp run
 ```
 
 ## Call generated Go++ from Go

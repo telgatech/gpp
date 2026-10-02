@@ -79,7 +79,7 @@ gpp run hello.gpp
 The same source can be compiled as a native executable:
 
 ```bash
-gpp build hello.gpp -o ./hello
+gpp build hello.gpp
 ./hello
 ```
 
@@ -88,9 +88,14 @@ gpp build hello.gpp -o ./hello
 For multiple files, pass a directory or the files that belong to the build:
 
 ```bash
-gpp run .
-gpp build . -o ./app
+gpp run
+gpp build                  # writes an executable named after the project directory
+gpp build -o ./app         # override the executable path/name
 ```
+
+When building a single source file, the default executable name comes from the
+file name. When building a project directory, it comes from the directory name.
+Use `-o` to choose a different path or name.
 
 Generated Go is kept outside the project in the system cache by default. Set
 `GPP_CACHE` to choose the cache root, use `-output` to choose a workspace

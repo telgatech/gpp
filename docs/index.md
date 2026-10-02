@@ -66,7 +66,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>How can I try Go++?</summary>
-<p>Install the CLI with <code>go install github.com/telgatech/gpp@latest</code>, then create and run a starter project with <code>gpp init hello</code> and <code>gpp run .</code>. The <a href="/guide/getting-started">getting started guide</a> walks through the setup.</p>
+<p>Install the CLI with <code>go install github.com/telgatech/gpp@latest</code>, then create and run a starter project with <code>gpp init hello</code> and <code>gpp run</code>. The <a href="/guide/getting-started">getting started guide</a> walks through the setup.</p>
 </details>
 
 </div>

@@ -16,8 +16,9 @@ for a new repository. A Go++ project then uses `gpp` for steps that understand
 ```sh [Go++]
 gpp init hello
 cd hello
-gpp run .
-gpp build -o ./hello .
+gpp run
+gpp build
+gpp build -o ./hello
 ```
 
 ```sh [Go]
@@ -38,8 +39,8 @@ the system cache. Set `GPP_CACHE` to choose the cache root, or choose a
 different output directory or module path when needed:
 
 ```sh
-gpp run -output build/gpp -module example.com/myapp .
-GPP_CACHE=/var/cache/gpp gpp run .
+gpp run -output build/gpp -module example.com/myapp
+GPP_CACHE=/var/cache/gpp gpp run
 gpp clean
 gpp doctor
 ```

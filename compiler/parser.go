@@ -2186,7 +2186,7 @@ func leadingDocComments(src string, pos int) (string, int) {
 }
 
 func documentationTargetAt(src string, pos int) bool {
-	for _, keyword := range []string{"package", "func", "class", "enum", "extend", "annotation", "embed", "template"} {
+	for _, keyword := range []string{"package", "import", "func", "class", "enum", "extend", "annotation", "embed", "template"} {
 		if keywordAt(src, pos, keyword) {
 			return true
 		}
