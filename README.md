@@ -4,7 +4,7 @@
   <img src="docs/public/go-gopher-superman.webp" alt="Go++ flying gopher mascot" width="320">
 </p>
 
-A superset of Go that provides modern features while staying true to the spirit of Go language including offering full compatibility and side by side compilation.
+A [superset of Go](docs/reference/specifications/compat.md) that provides modern features while staying true to the spirit of Go language.
 
 Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license used by Go. Bundled third-party components may have separate licenses; see their notices.
 
