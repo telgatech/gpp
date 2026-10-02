@@ -40,7 +40,10 @@ func lambdaFunctionTypesForCall(call *CallExpr, index int, context constructorCo
 			className = context.CurrentClass
 		}
 		candidates = append(candidates, context.ClassMethodSignatures[className][function.Name]...)
-		for _, extension := range append(append([]extensionMethod(nil), context.Extensions...), context.PreludeExtensions...) {
+		// Prelude extensions are also included in context.Extensions. Appending
+		// both lists here duplicates signatures and makes callback overloads
+		// appear ambiguous.
+		for _, extension := range context.Extensions {
 			if extension.Method.Name != function.Name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 				continue
 			}
@@ -74,6 +77,18 @@ func lowerLambdaExprNode(lambda *LambdaExpr, context constructorContext, expecte
 		return nil, err
 	}
 	selected := (*FunctionType)(nil)
+	preferVoidCall := false
+	if lambda.BlockBody == nil {
+		_, isCall := lambda.Body.(*CallExpr)
+		if isCall {
+			for _, candidate := range expected {
+				if candidate != nil && len(candidate.Parameters) == len(parameters) && len(candidate.Results) == 0 {
+					preferVoidCall = true
+					break
+				}
+			}
+		}
+	}
 	for _, candidate := range expected {
 		if candidate == nil || len(candidate.Parameters) != len(parameters) {
 			continue
@@ -100,6 +115,9 @@ func lowerLambdaExprNode(lambda *LambdaExpr, context constructorContext, expecte
 		parameterTypeNodes := lambdaParameterTypeNodes(parameters)
 		actualResultNode := lambdaResultTypeNodeAST(lambda, parameterTypeNodes, context)
 		actualResult, _ := typeNodeSource(actualResultNode)
+		if preferVoidCall && actualResult == "" && len(candidate.Results) > 0 {
+			continue
+		}
 		if lambda.BlockBody != nil && len(candidate.Results) > 0 && !blockHasValueReturn(lambda.BlockBody) {
 			continue
 		}
@@ -162,6 +180,8 @@ func lowerLambdaExprNode(lambda *LambdaExpr, context constructorContext, expecte
 	var body *BlockStmt
 	if lambda.BlockBody != nil {
 		body = lambda.BlockBody
+	} else if len(functionType.Results) == 0 {
+		body = &BlockStmt{Statements: []Stmt{&ExpressionStmt{Expression: lambda.Body}}}
 	} else {
 		body = &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{lambda.Body}}}}
 	}
@@ -1082,7 +1102,7 @@ func lambdaExpectedTypesForCallAST(call *CallExpr, index int, context constructo
 				result = append(result, signature.Parameters[index].typeText())
 			}
 		}
-		for _, extension := range append(append([]extensionMethod(nil), context.Extensions...), context.PreludeExtensions...) {
+		for _, extension := range context.Extensions {
 			if extension.Method.Name != function.Name || !extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
 				continue
 			}
@@ -1239,6 +1259,18 @@ func renderStandaloneLambda(lambda lambdaSource, context constructorContext) (st
 
 func renderContextualLambda(lambda lambdaSource, candidates []string, context constructorContext) (string, error) {
 	viable := []string{}
+	preferVoidCall := false
+	if lambda.BlockBody == nil {
+		if _, isCall := lambda.BodyExpr.(*CallExpr); isCall {
+			for _, candidate := range candidates {
+				function, err := parseLambdaFunctionType(candidate)
+				if err == nil && len(function.Parameters) == len(lambda.Params) && function.resultText() == "" {
+					preferVoidCall = true
+					break
+				}
+			}
+		}
+	}
 	for _, candidate := range candidates {
 		function, err := parseLambdaFunctionType(candidate)
 		if err != nil || len(function.Parameters) != len(lambda.Params) {
@@ -1267,6 +1299,9 @@ func renderContextualLambda(lambda lambdaSource, candidates []string, context co
 			continue
 		}
 		actualResult := lambdaReturnType(lambda, paramTypes, context)
+		if preferVoidCall && actualResult == "" && function.resultText() != "" {
+			continue
+		}
 		if lambda.BlockBody != nil && lambda.BodyExpr == nil && function.resultText() != "" && !lambdaHasValueReturn(lambda) {
 			valid = false
 			continue

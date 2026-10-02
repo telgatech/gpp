@@ -10,6 +10,12 @@ import (
 )
 
 	extend []T {
+	func Each(fn func(T)) {
+		for _, value := range this {
+			fn(value)
+		}
+	}
+
 	func Each(fn func(T) error) error {
 		for _, value := range this {
 			if err := fn(value); err != nil {

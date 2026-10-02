@@ -11,6 +11,7 @@ func main() {
 	users := []User{User("Ada", true), User("Bob", false), User("Cara", true)}
 	active := users.Filter(user => user.Active)
 	found, ok := users.Find(user => user.Name == "Bob")
+	users.Each(user => println(user.Name))
 
 	names := []string{"Cara", "Ada", "Bob"}
 	numbers := []int{3, 1, 2}

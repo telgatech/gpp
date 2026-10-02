@@ -69,6 +69,14 @@ return todos.Each(todo => todoDatabase.DeleteTodo(todo.Id))
 
 If deletion fails, later todos are not processed and the error reaches the caller.
 
+#### `Each(action func(T))`
+
+Runs an action with no result for every element in order. Use this form for side effects that do not return errors.
+
+```go
+users.Each(user => println(user.Name))
+```
+
 #### `Any(predicate) bool`
 
 Returns `true` as soon as the predicate matches an element. Returns `false` for an empty slice.

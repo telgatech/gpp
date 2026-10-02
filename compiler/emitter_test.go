@@ -2084,6 +2084,7 @@ func TestEmitImplicitPrelude(t *testing.T) {
 func main() {
     values := []int{3, 1, 2}
     _ = values.Each(func(value int) error { return nil })
+    values.Each(value => println(value))
     _ = values.Any(func(value int) bool { return value == 2 })
     _ = values.Contains(2)
     _ = values.Filter(func(value int) bool { return value > 1 })
