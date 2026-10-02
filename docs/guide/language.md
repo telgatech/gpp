@@ -123,7 +123,7 @@ String interpolation, lambdas, safe access, and lazy error fallback keep
 common application code compact:
 
 ```go
-message := "Hello &#123;&#123;user.Name&#125;&#125;"
+message := "Hello {{user.Name}}"
 active := users.Any(user => user.Active)
 label := user?.Profile?.DisplayName ?? "anonymous"
 name := user?.Name ?? "Unknown"
@@ -219,7 +219,7 @@ files.
 
 ```go
 template Page(title string) {
-    <h1>&#123;&#123;.&#125;&#125;</h1>
+    <h1>{{.}}</h1>
 }
 
 class App : http.Server @{http.GET("/hello/{name}")} {
