@@ -91,12 +91,13 @@ Shuffles the slice in place using Go's package-level pseudorandom generator.
 items.Shuffle()
 ```
 
-#### `Sample() (T, bool)`
+#### `Sample(n int = 1) []T`
 
-Returns a random element and `true`, or the zero value and `false` when the slice is empty. It does not modify the slice.
+Returns up to `n` randomly selected elements without replacement, in random order. It returns a new slice and does not modify the source. When `n` exceeds the slice length, it returns every element; when `n` is non-positive or the source is empty, it returns an empty slice.
 
 ```go
-item, ok := items.Sample()
+sample := items.Sample()
+largerSample := items.Sample(n: 10)
 ```
 
 #### `Each(action func(T) error) error`

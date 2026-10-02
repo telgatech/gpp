@@ -37,9 +37,30 @@ func main() {
 	}
 	beforeShuffle := numbers.Take(len(numbers))
 	numbers.Shuffle()
-	sample, hasSample := numbers.Sample()
-	if !hasSample || (sample != 0 && sample != 1 && sample != 2 && sample != 3) {
-		panic("Sample did not return an element from the slice")
+	sample := numbers.Sample()
+	if len(sample) != 1 || (sample[0] != 0 && sample[0] != 1 && sample[0] != 2 && sample[0] != 3) {
+		panic("Sample() should return one element from the slice")
+	}
+	allSamples := numbers.Sample(n: len(numbers) + 2)
+	if len(allSamples) != len(numbers) {
+		panic("Sample(n) should cap the result at the slice length")
+	}
+	for _, number := range numbers {
+		sourceCount := 0
+		sampleCount := 0
+		for _, value := range numbers {
+			if value == number {
+				sourceCount++
+			}
+		}
+		for _, value := range allSamples {
+			if value == number {
+				sampleCount++
+			}
+		}
+		if sampleCount != sourceCount {
+			panic("Sample(n) should return every element when n exceeds the slice length")
+		}
 	}
 	numbers.Sort()
 	beforeShuffle.Sort()
@@ -58,7 +79,7 @@ func main() {
 		users.All(user => user.Active),
 		len(active), found.Name, ok,
 		names.Contains("Ada"), names.Index("Bob"),
-		last, popped, sample, hasSample, len(uniqueNumbers),
+		last, popped, sample, len(sample) == 1, len(uniqueNumbers),
 		min, hasMin, max, hasMax,
 		config.Has("port"), config.GetOr("host", "localhost"),
 		"   ".IsBlank(), " name ".IsBlank(), "name".Empty(),
@@ -73,8 +94,8 @@ func main() {
 	if emptyPop || emptyValue != 0 || len(emptyRest) != 0 {
 		panic("Pop should report an empty slice")
 	}
-	emptyValue, emptySample := empty.Sample()
-	if emptySample || emptyValue != 0 {
+	emptySample := empty.Sample()
+	if len(emptySample) != 0 || len(empty.Sample(2)) != 0 {
 		panic("Sample should report an empty slice")
 	}
 	_ = config.Keys()

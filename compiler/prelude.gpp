@@ -39,12 +39,18 @@ import (
 		})
 	}
 
-	func Sample() (T, bool) {
-		if len(this) == 0 {
-			var zero T
-			return zero, false
+	func Sample(n int = 1) []T {
+		if n <= 0 || len(this) == 0 {
+			return []T{}
 		}
-		return this[rand.Intn(len(this))], true
+		result := append([]T{}, this...)
+		rand.Shuffle(len(result), func(left, right int) {
+			result[left], result[right] = result[right], result[left]
+		})
+		if n < len(result) {
+			return result[:n]
+		}
+		return result
 	}
 
 	func Each(fn func(T)) {
