@@ -1,7 +1,7 @@
 # Go++
 
 <p align="center">
-  <img src="docs/public/go-gopher-superman.png" alt="Go++ flying gopher mascot" width="320">
+  <img src="docs/public/go-gopher-superman.webp" alt="Go++ flying gopher mascot" width="320">
 </p>
 
 A superset of Go that provides modern features while staying true to the spirit of Go language including offering full compatibility and side by side compilation.
