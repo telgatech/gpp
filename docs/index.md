@@ -41,12 +41,12 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>How does Go++ work with Go?</summary>
-<p>The compiler translates Go++ into ordinary Go. Go++ projects can use existing Go packages, and Go and Go++ source files can be built together. <a href="/guide/getting-started">Get started</a> or browse the <a href="/examples/">complete examples</a>.</p>
+<p>Go++ lowers to ordinary Go, so projects can use existing Go packages and interoperate with Go code. Compile <code>.gpp</code> files with the <code>gpp</code> CLI; the Go toolchain then builds and runs the generated Go. <a href="/guide/getting-started">Get started</a> or browse the <a href="/examples/">complete examples</a>.</p>
 </details>
 
 <details>
 <summary>Is Go++ ready for production?</summary>
-<p>Go++ is still an experiment and has not yet received broad community review. Its creator is not a compiler developer, so treat it as a project to explore and evaluate; don’t adopt it casually for production systems.</p>
+<p>Go++ is still an experiment and has not yet received broad community review. Until then, please don’t adopt it casually for production systems.</p>
 </details>
 
 <details>
