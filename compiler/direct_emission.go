@@ -271,9 +271,15 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 	// this pass; promotion must inspect that lowered call rather than the
 	// original Go++ selector and miss its multi-result error ABI.
 	if err := lowerExceptionBlockNodes(bodyAST, bodyContext); err != nil {
+		if isSourceLineDiagnostic(err) {
+			return nil, true, err
+		}
 		return nil, false, nil
 	}
 	if err := lowerExceptionPromotions(bodyAST, bodyContext); err != nil {
+		if isSourceLineDiagnostic(err) {
+			return nil, true, err
+		}
 		return nil, false, nil
 	}
 	if err := lowerPolymorphismBlockNode(bodyAST, bodyContext); err != nil {
@@ -285,6 +291,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		// CallExpr. The exception ABI then turns control-transfer panics back into
 		// the declared function result.
 		if err := lowerExceptionBlockNodes(bodyAST, bodyContext); err != nil {
+			if isSourceLineDiagnostic(err) {
+				return nil, true, err
+			}
 			return nil, false, nil
 		}
 		body, err := lowerFunctionGoBlockNode(bodyAST, bodyContext, "")
@@ -460,6 +469,17 @@ func validateExceptionASTStatement(statement Stmt, context constructorContext) e
 		}
 		return validateThrowExpressionNode(value.Value, context)
 	case *TryStmt:
+		if err := validateExceptionCallArgumentsBlock(value.Body); err != nil {
+			return err
+		}
+		for _, clause := range value.Catches {
+			if err := validateExceptionCallArgumentsBlock(clause.Body); err != nil {
+				return err
+			}
+		}
+		if err := validateExceptionCallArgumentsBlock(value.Finally); err != nil {
+			return err
+		}
 		if err := validateASTCatchClauses(value, context); err != nil {
 			return err
 		}
@@ -500,6 +520,215 @@ func validateExceptionASTStatement(statement Stmt, context constructorContext) e
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateExceptionCallArgumentsBlock(block *BlockStmt) error {
+	if block == nil {
+		return nil
+	}
+	for _, statement := range block.Statements {
+		if err := validateExceptionCallArgumentsStatement(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExceptionCallArgumentsStatement(statement Stmt) error {
+	if statement == nil || isNilStmt(statement) {
+		return nil
+	}
+	validate := validateExceptionCallArgumentsExpr
+	switch value := statement.(type) {
+	case *ExpressionStmt:
+		return validate(value.Expression)
+	case *DeclarationStmt:
+		for _, expression := range value.Values {
+			if err := validate(expression); err != nil {
+				return err
+			}
+		}
+	case *AssignmentStmt:
+		for _, expression := range append(append([]ExprNode{}, value.Left...), value.Right...) {
+			if err := validate(expression); err != nil {
+				return err
+			}
+		}
+	case *ReturnStmt:
+		for _, expression := range value.Values {
+			if err := validate(expression); err != nil {
+				return err
+			}
+		}
+	case *ThrowStmt:
+		return validate(value.Value)
+	case *DeferStmt:
+		return validate(value.Expression)
+	case *GoStmt:
+		return validate(value.Expression)
+	case *SendStmt:
+		if err := validate(value.Channel); err != nil {
+			return err
+		}
+		return validate(value.Value)
+	case *IncDecStmt:
+		return validate(value.Expression)
+	case *IfStmt:
+		if err := validate(value.Init); err != nil {
+			return err
+		}
+		if err := validate(value.Condition); err != nil {
+			return err
+		}
+		if err := validateExceptionCallArgumentsBlock(value.Body); err != nil {
+			return err
+		}
+		if err := validateExceptionCallArgumentsBlock(value.Else); err != nil {
+			return err
+		}
+		return validateExceptionCallArgumentsStatement(value.ElseIf)
+	case *ForStmt:
+		for _, expression := range []ExprNode{value.Init, value.Condition, value.Post, value.RangeExpr} {
+			if err := validate(expression); err != nil {
+				return err
+			}
+		}
+		for _, expression := range value.RangeKey {
+			if err := validate(expression); err != nil {
+				return err
+			}
+		}
+		return validateExceptionCallArgumentsBlock(value.Body)
+	case *SwitchStmt:
+		if err := validate(value.Init); err != nil {
+			return err
+		}
+		if err := validate(value.Tag); err != nil {
+			return err
+		}
+		return validateExceptionCallArgumentsBlock(value.Body)
+	case *CaseStmt:
+		for _, expression := range value.Clause.Expressions {
+			if err := validate(expression); err != nil {
+				return err
+			}
+		}
+		return validateExceptionCallArgumentsBlock(value.Clause.Body)
+	case *TryStmt:
+		if err := validateExceptionCallArgumentsBlock(value.Body); err != nil {
+			return err
+		}
+		for _, clause := range value.Catches {
+			if err := validateExceptionCallArgumentsBlock(clause.Body); err != nil {
+				return err
+			}
+		}
+		return validateExceptionCallArgumentsBlock(value.Finally)
+	case *BlockStmt:
+		return validateExceptionCallArgumentsBlock(value)
+	case *TokenStmt:
+		if err := validateExceptionCallArgumentsBlock(value.Body); err != nil {
+			return err
+		}
+		for _, child := range value.Children {
+			if err := validateExceptionCallArgumentsStatement(child); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateExceptionCallArgumentsExpr(expression ExprNode) error {
+	if expression == nil {
+		return nil
+	}
+	validate := validateExceptionCallArgumentsExpr
+	switch value := expression.(type) {
+	case *CallExpr:
+		if err := validateCallArgumentStyle(value); err != nil {
+			return err
+		}
+		if err := validate(value.Callee); err != nil {
+			return err
+		}
+		for _, argument := range value.Arguments {
+			if err := validate(argument.Value); err != nil {
+				return err
+			}
+		}
+	case *UnaryExpr:
+		return validate(value.Operand)
+	case *BinaryExpr:
+		if err := validate(value.Left); err != nil {
+			return err
+		}
+		return validate(value.Right)
+	case *AssignmentExpr:
+		for _, item := range append(append([]ExprNode{}, value.Left...), value.Right...) {
+			if err := validate(item); err != nil {
+				return err
+			}
+		}
+	case *SelectorExpr:
+		return validate(value.Receiver)
+	case *IndexExpr:
+		if err := validate(value.Receiver); err != nil {
+			return err
+		}
+		return validate(value.Index)
+	case *IndexListExpr:
+		if err := validate(value.Receiver); err != nil {
+			return err
+		}
+		for _, item := range value.Indices {
+			if err := validate(item); err != nil {
+				return err
+			}
+		}
+	case *SliceExpr:
+		for _, item := range []ExprNode{value.Receiver, value.Low, value.High, value.Max} {
+			if err := validate(item); err != nil {
+				return err
+			}
+		}
+	case *TypeAssertExpr:
+		return validate(value.Expression)
+	case *PostfixExpr:
+		return validate(value.Expression)
+	case *SpreadExpr:
+		return validate(value.Expression)
+	case *SendExpr:
+		if err := validate(value.Channel); err != nil {
+			return err
+		}
+		return validate(value.Value)
+	case *ParenthesizedExpr:
+		return validate(value.Inner)
+	case *CompositeLiteralExpr:
+		for _, element := range value.Elements {
+			if err := validate(element.Key); err != nil {
+				return err
+			}
+			if err := validate(element.Value); err != nil {
+				return err
+			}
+		}
+	case *InterpolatedStringExpr:
+		for _, segment := range value.Segments {
+			if err := validate(segment.Expression); err != nil {
+				return err
+			}
+		}
+	case *LambdaExpr:
+		if err := validate(value.Body); err != nil {
+			return err
+		}
+		return validateExceptionCallArgumentsBlock(value.BlockBody)
+	case *FunctionLiteralExpr:
+		return validateExceptionCallArgumentsBlock(value.Body)
 	}
 	return nil
 }

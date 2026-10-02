@@ -1045,7 +1045,7 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		positional = positional || argument.Name == ""
 	}
 	if named && positional {
-		return nil, true, fmt.Errorf("%s constructor mixes positional and named arguments", name)
+		return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot mix named and positional arguments in call to %s", name))
 	}
 	if !named && len(call.Arguments) != len(fields) && len(call.Arguments) != 0 {
 		return nil, true, fmt.Errorf("%s constructor expects %d arguments, got %d", name, len(fields), len(call.Arguments))

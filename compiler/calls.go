@@ -924,7 +924,7 @@ func resolveCallableCall(name string, args []string, signatures []callableSignat
 		for _, arg := range args {
 			colon := topLevelColon(arg)
 			if colon < 0 {
-				return args, false, fmt.Errorf("%s call mixes positional and named arguments", name)
+				return args, false, fmt.Errorf("cannot mix named and positional arguments in call to %s", name)
 			}
 			parameterName := strings.TrimSpace(arg[:colon])
 			value := strings.TrimSpace(arg[colon+1:])
@@ -940,7 +940,7 @@ func resolveCallableCall(name string, args []string, signatures []callableSignat
 				break
 			}
 			if provided[found] {
-				return args, false, fmt.Errorf("%s call repeats named argument %s", name, parameterName)
+				return args, false, fmt.Errorf("named argument %s is repeated in call to %s", parameterName, name)
 			}
 			provided[found] = true
 			values[found] = value
@@ -963,7 +963,7 @@ func resolveCallableCall(name string, args []string, signatures []callableSignat
 		}
 	}
 
-	return args, false, fmt.Errorf("no matching %s signature for named arguments", name)
+	return args, false, fmt.Errorf("no matching call signature for named arguments to %s", name)
 }
 
 func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
@@ -1076,7 +1076,7 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 		provided := make([]bool, len(signature.Parameters))
 		for _, argument := range call.Arguments {
 			if argument.Name == "" {
-				return nil, true, fmt.Errorf("%s call mixes positional and named arguments", callableName(call))
+				return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot mix named and positional arguments in call to %s", callableName(call)))
 			}
 			index := -1
 			for parameterIndex, parameter := range signature.Parameters {
@@ -1086,10 +1086,10 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 				}
 			}
 			if index < 0 {
-				return nil, true, fmt.Errorf("%s call has unknown named argument %s", callableName(call), argument.Name)
+				return nil, true, sourceLineError(call.Span(), fmt.Errorf("unknown named argument %s in call to %s", argument.Name, callableName(call)))
 			}
 			if provided[index] {
-				return nil, true, fmt.Errorf("%s call repeats named argument %s", callableName(call), argument.Name)
+				return nil, true, sourceLineError(call.Span(), fmt.Errorf("named argument %s is repeated in call to %s", argument.Name, callableName(call)))
 			}
 			provided[index] = true
 			values[index] = argument.Value
@@ -1454,7 +1454,7 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 		if len(signatures) > 0 {
 			resolved, resolvedChanged, resolveErr := resolveCallableCall(function.Name, args, signatures)
 			if resolveErr != nil {
-				return callableCallRewrite{}, false, resolveErr
+				return callableCallRewrite{}, false, sourceLineError(call.Span(), resolveErr)
 			}
 			if resolvedChanged {
 				resolved, resolveErr = transformCallableArgumentSources(resolved, context)
@@ -1473,7 +1473,7 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 			if len(signatures) > 0 {
 				resolved, resolvedChanged, resolveErr := resolveCallableCall(function.Name, args, signatures)
 				if resolveErr != nil {
-					return callableCallRewrite{}, false, resolveErr
+					return callableCallRewrite{}, false, sourceLineError(call.Span(), resolveErr)
 				}
 				if resolvedChanged {
 					resolved, resolveErr = transformCallableArgumentSources(resolved, context)
@@ -1544,7 +1544,7 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 			if len(signatures) > 0 {
 				resolved, resolvedChanged, resolveErr := resolveCallableCall(function.Name, args, signatures)
 				if resolveErr != nil {
-					return callableCallRewrite{}, false, resolveErr
+					return callableCallRewrite{}, false, sourceLineError(call.Span(), resolveErr)
 				}
 				if resolvedChanged {
 					resolved, resolveErr = transformCallableArgumentSources(resolved, context)
@@ -1561,7 +1561,7 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 			if len(signatures) > 0 {
 				goName, resolved, resolveErr := resolveStaticMethodCall(receiver, function.Name, args, signatures, context)
 				if resolveErr != nil {
-					return callableCallRewrite{}, false, resolveErr
+					return callableCallRewrite{}, false, sourceLineError(call.Span(), resolveErr)
 				}
 				resolved, resolveErr = transformCallableArgumentSources(resolved, context)
 				if resolveErr != nil {

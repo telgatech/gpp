@@ -92,7 +92,7 @@ func safeCoalescePlan(expression ExprNode, context constructorContext, valueType
 		args := make([]CallArg, len(call.Arguments))
 		for index, argument := range call.Arguments {
 			if argument.Name != "" {
-				return nil, false, fmt.Errorf("safe method access does not support named arguments in this context")
+				return nil, false, sourceLineError(call.Span(), fmt.Errorf("named arguments are not supported for safe method access"))
 			}
 			args[index] = CallArg{Value: argument.Value}
 		}

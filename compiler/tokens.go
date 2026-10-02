@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/format"
 	"go/token"
@@ -36,6 +37,33 @@ type Span struct {
 	End    int
 	Line   int
 	Column int
+}
+
+type sourceLineDiagnostic struct {
+	line int
+	err  error
+}
+
+func (diagnostic sourceLineDiagnostic) Error() string {
+	return fmt.Sprintf("%d: %v", diagnostic.line, diagnostic.err)
+}
+
+func (diagnostic sourceLineDiagnostic) Unwrap() error { return diagnostic.err }
+
+func sourceLineError(span Span, err error) error {
+	if err == nil || span.Line <= 0 {
+		return err
+	}
+	var located sourceLineDiagnostic
+	if errors.As(err, &located) {
+		return err
+	}
+	return sourceLineDiagnostic{line: span.Line, err: err}
+}
+
+func isSourceLineDiagnostic(err error) bool {
+	var located sourceLineDiagnostic
+	return errors.As(err, &located)
 }
 
 func sourceSpan(source string, start, end int) Span {

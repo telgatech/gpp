@@ -351,10 +351,11 @@ func lowerASTTryNode(statement *TryStmt, context constructorContext, rethrowName
 	}
 	// The compatibility path remains node-first for constructs that cannot use
 	// the stricter direct subset but are still representable by Go AST nodes.
-	if lowered, err := lowerASTTryCompatibilityNode(statement, context, rethrowName); err == nil {
-		return lowered, nil
+	lowered, err := lowerASTTryCompatibilityNode(statement, context, rethrowName)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("try statement could not be lowered from its AST")
+	return lowered, nil
 }
 
 func formatExceptionASTNode(node ast.Node) (string, error) {
@@ -759,6 +760,9 @@ func lowerNestedExceptionPromotionExpr(expression ExprNode, context constructorC
 	}
 	switch value := expression.(type) {
 	case *CallExpr:
+		if err := validateCallArgumentStyle(value); err != nil {
+			return nil, err
+		}
 		if promotionASTAlreadyWrapped(value) {
 			return value, nil
 		}
@@ -1968,6 +1972,9 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 		return nil, nil
 	}
 	if callExpression, ok := expression.(*CallExpr); ok {
+		if err := validateCallArgumentStyle(callExpression); err != nil {
+			return nil, err
+		}
 		if lowered, handled, err := lowerRecordCallExprNode(callExpression, context); handled {
 			return lowered, err
 		}
@@ -2124,6 +2131,26 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 	}
 }
 
+func validateCallArgumentStyle(call *CallExpr) error {
+	if call == nil {
+		return nil
+	}
+	named := false
+	positional := false
+	for _, argument := range call.Arguments {
+		if argument.Name == "" {
+			positional = true
+		} else {
+			named = true
+		}
+	}
+	if !named || !positional {
+		return nil
+	}
+	err := fmt.Errorf("cannot mix named and positional arguments in call to %s", callableName(call))
+	return sourceLineError(call.Span(), err)
+}
+
 // lowerRecordCollectionTypeNode resolves []record and map[K]record directly
 // on the expression AST.  Collection literals are the one record form where
 // the element shape is inferred from their children; leaving the TypeNode as
@@ -2243,7 +2270,7 @@ func lowerExceptionExtensionCallNode(call *CallExpr, context constructorContext)
 		loweredReceiver = &UnaryExpr{Operator: "&", Operand: loweredReceiver}
 	}
 	arguments := []CallArg{{Value: loweredReceiver}}
-	methodArguments, resolved, resolveErr := lowerExtensionArgumentNodes(call.Arguments, parameters, context)
+	methodArguments, resolved, resolveErr := lowerExtensionArgumentNodes(call, parameters, context)
 	if resolveErr != nil {
 		return nil, true, resolveErr
 	}
@@ -2273,7 +2300,11 @@ func lowerExceptionExtensionCallNode(call *CallExpr, context constructorContext)
 	return &CallExpr{Callee: callee, Arguments: arguments}, true, nil
 }
 
-func lowerExtensionArgumentNodes(args []CallArg, parameters []parameterInfo, context constructorContext) ([]CallArg, bool, error) {
+func lowerExtensionArgumentNodes(call *CallExpr, parameters []parameterInfo, context constructorContext) ([]CallArg, bool, error) {
+	if call == nil {
+		return nil, false, nil
+	}
+	args := call.Arguments
 	if len(parameters) == 0 {
 		return nil, len(args) == 0, nil
 	}
@@ -2292,7 +2323,7 @@ func lowerExtensionArgumentNodes(args []CallArg, parameters []parameterInfo, con
 	if hasNamed {
 		for _, argument := range args {
 			if argument.Name == "" {
-				return nil, true, fmt.Errorf("extension call mixes positional and named arguments")
+				return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot mix named and positional arguments in call to %s", callableName(call)))
 			}
 		}
 	}
@@ -2309,10 +2340,10 @@ func lowerExtensionArgumentNodes(args []CallArg, parameters []parameterInfo, con
 				}
 			}
 			if index < 0 {
-				return nil, true, fmt.Errorf("extension call has unknown named argument %s", argument.Name)
+				return nil, true, sourceLineError(call.Span(), fmt.Errorf("unknown named argument %s in call to %s", argument.Name, callableName(call)))
 			}
 			if provided[index] {
-				return nil, true, fmt.Errorf("extension call repeats named argument %s", argument.Name)
+				return nil, true, sourceLineError(call.Span(), fmt.Errorf("named argument %s is repeated in call to %s", argument.Name, callableName(call)))
 			}
 			provided[index] = true
 			values[index] = argument.Value

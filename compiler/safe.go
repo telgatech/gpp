@@ -183,7 +183,7 @@ func lowerSafeAccessExprNode(selector *SelectorExpr, call *CallExpr, context con
 		arguments := make([]CallArg, 0, len(call.Arguments))
 		for _, argument := range call.Arguments {
 			if argument.Name != "" {
-				return nil, fmt.Errorf("safe method access does not support named arguments in direct AST lowering")
+				return nil, sourceLineError(call.Span(), fmt.Errorf("named arguments are not supported for safe method access"))
 			}
 			lowered, lowerErr := lowerExceptionExprNode(argument.Value, context)
 			if lowerErr != nil {

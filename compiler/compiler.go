@@ -216,6 +216,9 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		)
 
 		if err != nil {
+			if isSourceLineDiagnostic(err) {
+				return fmt.Errorf("%s:%w", file.Name, err)
+			}
 			return fmt.Errorf(
 				"%s: %w",
 				file.Name,
