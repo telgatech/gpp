@@ -27,7 +27,7 @@ func main() {
 		names.Contains("Ada"), names.Index("Bob"),
 		min, hasMin, max, hasMax,
 		config.Has("port"), config.GetOr("host", "localhost"),
-		"   ".Blank(), "name".Empty(),
+		"   ".IsBlank(), " name ".IsBlank(), "name".Empty(),
 	)
 
 	names.Reverse()

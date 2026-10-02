@@ -131,7 +131,7 @@ class App : http.Server {
 	func CreateUser(ctx *http.Context) error @{http.POST("/users")} {
 		body := ctx.Request.Body.ReadAll()
 		input := CreateUserRequest.FromJSON(body)
-		if input.Name.Blank() {
+		if input.Name.IsBlank() {
 			return ctx.JSON(400, record(Message: "name is required"))
 		}
 
@@ -204,7 +204,17 @@ The provider configuration automatically reserves these routes:
 | `GET /auth/google` | Starts login, creates temporary state and PKCE values, adds an OIDC nonce when needed, and redirects the browser to Google. |
 | `GET /auth/google/callback` | Checks the returned state, exchanges the authorization code, validates tokens and identity data, then calls `OAuthLogin`. |
 
-The runtime also handles provider metadata discovery and callback URL construction. Its state cookie is temporary and protected with `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in the service environment; the credentials stay outside source code.
+The runtime also handles provider metadata discovery and callback URL construction. Its state cookie is temporary and protected with `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. Set both credential variables for the selected provider in the service environment; the app reports a configuration error if either is missing.
+
+| Built-in provider | Client ID variable | Client secret variable |
+| --- | --- | --- |
+| Google | `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_SECRET` |
+| Facebook | `FACEBOOK_CLIENT_ID` | `FACEBOOK_CLIENT_SECRET` |
+| GitHub | `GITHUB_CLIENT_ID` | `GITHUB_CLIENT_SECRET` |
+| Microsoft | `MICROSOFT_CLIENT_ID` | `MICROSOFT_CLIENT_SECRET` |
+| Apple | `APPLE_CLIENT_ID` | `APPLE_CLIENT_SECRET` |
+
+Keep the secret in your deployment's secret manager or environment configuration, not in source control.
 
 You can request additional scopes or configure an issuer that is not one of the built-in providers:
 

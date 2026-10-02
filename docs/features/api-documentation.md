@@ -38,5 +38,8 @@ class App : http.Server @{http.OpenAPI, http.Swagger} {
 ```
 
 OAuth can be enabled with provider configuration on the same server. The HTTP
-integration supports provider setup and callback handling. See [OpenAPI and Swagger](/reference/specifications/openapi-swagger)
+integration supports provider setup and callback handling. Built-in providers
+require provider-specific client ID and client secret environment variables;
+see the [OAuth and OIDC guide](/guide/standard-library/http#oauth-and-oidc) for
+the exact names. See [OpenAPI and Swagger](/reference/specifications/openapi-swagger)
 and [OAuth](/reference/specifications/http.oauth) for configuration details.

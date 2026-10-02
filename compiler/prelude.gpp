@@ -262,6 +262,10 @@ extend string {
 		return strings.EqualFold(this, other)
 	}
 
+	func IsBlank() bool {
+		return len(strings.TrimSpace(this)) == 0
+	}
+
 	func Empty() bool {
 		return len(this) == 0
 	}

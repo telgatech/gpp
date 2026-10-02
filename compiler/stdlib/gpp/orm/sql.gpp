@@ -188,6 +188,40 @@ func gppORMQuery(descriptor any, where string, limit string) (string, []gppORMCo
 	return query, columns, nil
 }
 
+func Insert(exec SQLExecutor, entity any) error {
+	return gppORMInsert(exec, entity)
+}
+
+func gppORMInsert(exec SQLExecutor, entity any) error {
+	if err := gppORMCallHook(entity, "Validate", exec); err != nil {
+		return err
+	}
+	if err := gppORMCallHook(entity, "BeforeCreate", exec); err != nil {
+		return err
+	}
+	descriptor := gppORMRuntimeClass(entity)
+	query, columns, err := gppORMQuery(descriptor, "", "")
+	if err != nil {
+		return err
+	}
+	names := []string{}
+	values := []any{}
+	for _, column := range columns {
+		names = append(names, column.Name)
+		values = append(values, gppORMFieldGet(column.Field, entity))
+	}
+	placeholders := []string{}
+	for index := range names {
+		placeholders = append(placeholders, "$"+fmt.Sprint(index+1))
+	}
+	table, _ := gppORMTable(descriptor)
+	query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(names, ", "), strings.Join(placeholders, ", "))
+	if _, err := exec.Exec(query, values...); err != nil {
+		return err
+	}
+	return gppORMCallHook(entity, "AfterCreate", exec)
+}
+
 extend *sql.DB, *sql.Tx {
 	func Get(target any, where string, args ...any) error {
 		descriptor := gppORMRuntimeClass(target)
@@ -241,33 +275,7 @@ extend *sql.DB, *sql.Tx {
 	}
 
 	func Insert(entity Model) error {
-		if err := gppORMCallHook(entity, "Validate", this); err != nil {
-			return err
-		}
-		if err := gppORMCallHook(entity, "BeforeCreate", this); err != nil {
-			return err
-		}
-		descriptor := gppORMRuntimeClass(entity)
-		query, columns, err := gppORMQuery(descriptor, "", "")
-		if err != nil {
-			return err
-		}
-		names := []string{}
-		values := []any{}
-		for _, column := range columns {
-			names = append(names, column.Name)
-			values = append(values, gppORMFieldGet(column.Field, entity))
-		}
-		placeholders := []string{}
-		for index := range names {
-			placeholders = append(placeholders, "$"+fmt.Sprint(index+1))
-		}
-		table, _ := gppORMTable(descriptor)
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(names, ", "), strings.Join(placeholders, ", "))
-		if _, err := this.Exec(query, values...); err != nil {
-			return err
-		}
-		return gppORMCallHook(entity, "AfterCreate", this)
+		return gppORMInsert(this, entity)
 	}
 
 	func Update(entity Model) error {

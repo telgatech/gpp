@@ -238,6 +238,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 	if bodyContext.CurrentParameterTypes == nil {
 		bodyContext.CurrentParameterTypes = map[string]string{}
 	}
+	if bodyContext.CurrentClass != "" {
+		bodyContext.CurrentParameterTypes["this"] = "*" + bodyContext.CurrentClass
+	}
 	for name, typeName := range context.GlobalValueTypes {
 		bodyContext.CurrentParameterTypes[name] = typeName
 	}

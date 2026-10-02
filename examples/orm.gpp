@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	_ "modernc.org/sqlite"
 	orm "gpp/orm"
 )
@@ -20,30 +19,26 @@ class Employee : orm.Model @{orm.Table("employees")} {
 
 	func RecordEvent(exec orm.SQLExecutor, action string) error {
 		event := Event(this.Id, action)
-		_, err := exec.Exec(
-			"INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)",
-			event.EmployeeId, event.Action,
-		)
-		return err
+		return orm.Insert(exec, &event)
 	}
 
 	func Validate(exec orm.SQLExecutor) error {
-		if strings.TrimSpace(this.Name) == "" {
+		if this.Name.IsBlank() {
 			return fmt.Errorf("employee name is required")
 		}
-		if strings.TrimSpace(this.Email) == "" {
+		if this.Email.IsBlank() {
 			return fmt.Errorf("employee email is required")
 		}
 		return nil
 	}
 
 	func BeforeCreate(exec orm.SQLExecutor) error {
-		this.Email = strings.ToLower(strings.TrimSpace(this.Email))
+		this.Email = this.Email.TrimSpace().ToLower()
 		return this.RecordEvent(exec, "before_create")
 	}
 
 	func BeforeUpdate(exec orm.SQLExecutor) error {
-		this.Email = strings.ToLower(strings.TrimSpace(this.Email))
+		this.Email = this.Email.TrimSpace().ToLower()
 		return this.RecordEvent(exec, "before_update")
 	}
 

@@ -391,13 +391,15 @@ Reports whether the string has zero bytes. Whitespace is not considered empty.
 if token.Empty() { /* reject missing token */ }
 ```
 
-#### `Blank() bool`
+#### `IsBlank() bool`
 
 Reports whether the string is empty or consists only of whitespace.
 
 ```go
-if comment.Blank() { /* skip comment */ }
+if comment.IsBlank() { /* skip comment */ }
 ```
+
+`Blank()` is also available as a shorter alias.
 
 #### `Lines() []string`
 

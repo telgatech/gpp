@@ -24,6 +24,6 @@ func main() {
     fmt.Println(text.Empty(), text.Size())
     fmt.Println(bytes.Empty(), bytes.Size())
     fmt.Println(runes.Empty(), runes.Size())
-    fmt.Println(text.Identity[string]("multi-target"))
-    fmt.Println(bytes.Identity[int](42))
+    fmt.Println(text.Identity("multi-target"))
+    fmt.Println(bytes.Identity(42))
 }

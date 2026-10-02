@@ -73,6 +73,12 @@ func SaveChanges(db *sql.DB, employee *Employee, account *Account) {
 
 The package also supports validation and lifecycle hooks on models. Use hooks when a model needs to validate or react to create, update, or delete operations; use explicit SQL for joins, reporting queries, and database-specific behavior.
 
+Hooks receive the active `SQLExecutor`, which can be either a database connection
+or a transaction. Use `orm.Insert(exec, &event)` to insert another model from a
+hook while keeping that write on the same connection or transaction. The
+equivalent `db.Insert(&model)` and `tx.Insert(&model)` methods remain available
+when you have a concrete database handle.
+
 ## Further reading
 
 - [ORM specification](/reference/specifications/std.orm)
