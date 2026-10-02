@@ -32,7 +32,8 @@ The examples cover:
 - `safe_access.gpp` — explicit `?.` safe access for nullable class values.
 - `records.gpp` — anonymous structural records, nested records, inferred
   return types, `let` bindings, and capitalization-based field visibility.
-- `introspection.gpp` — runtime class names, inherited field metadata, and field access.
+- `introspection.gpp` — runtime class names, parent classes, inherited field
+  ownership and access, method and parameter metadata, and annotation lookup.
 - `extension_methods.gpp` — extensions on strings and Go++ classes.
 - `multi_extension.gpp` — one extension block shared by strings and slices,
   including a generic extension method.

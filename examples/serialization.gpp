@@ -1,42 +1,47 @@
 package main
 
 import (
-	"fmt"
-	"gpp/encoding"
+    "fmt"
+    "gpp/encoding"
 )
 
 enum Membership string {
-	Basic
-	Seller = "seller"
+    Basic
+    Seller = "seller"
 }
 
 class Address @{encoding.Serializable} {
-	City string
+    City string
 }
 
 class User @{encoding.Serializable} {
-	Id int @{encoding.Name("id")}
-	Name string @{encoding.Name("name")}
-	Password string @{encoding.Ignore}
-	Nickname string @{encoding.OmitEmpty}
-	Membership Membership
-	Address Address
+    Id int @{encoding.Name("id")}
+    Name string @{encoding.Name("name")}
+    Password string @{encoding.Ignore}
+    Nickname string @{encoding.OmitEmpty}
+    Membership Membership
+    Address Address
 }
 
 func main() {
-	user := User(
-		Id: 1,
-		Name: "Ada",
-		Password: "private",
-		Membership: Membership.Seller,
-		Address: Address(City: "Paris"),
-	)
+    user := User(
+        Id: 1,
+        Name: "Ada",
+        Password: "private",
+        Membership: Membership.Seller,
+        Address: Address(City: "Paris"),
+    )
 
-	jsonData := user.ToJSON()
-	decoded := User.FromJSON(jsonData)
+    jsonData := user.ToJSON()
+    decoded := User.FromJSON(jsonData)
 
-	gobData := user.ToGOB()
-	gobDecoded := User.FromGOB(gobData)
+    yamlData := user.ToYAML()
+    yamlDecoded := User.FromYAML(yamlData)
 
-	fmt.Println(string(jsonData), decoded.Name, string(decoded.Membership), decoded.Address.City, len(gobData), gobDecoded.Name, string(gobDecoded.Membership), gobDecoded.Address.City)
+    gobData := user.ToGOB()
+    gobDecoded := User.FromGOB(gobData)
+
+    fmt.Println(string(jsonData), decoded.Name, string(decoded.Membership), decoded.Address.City)
+    fmt.Println(string(yamlData), yamlDecoded.Name, string(yamlDecoded.Membership), yamlDecoded.Address.City)
+    fmt.Println(len(gobData), gobDecoded.Name, string(gobDecoded.Membership), gobDecoded.Address.City)
 }

@@ -1,3 +1,5 @@
+// Run this example with: gpp test examples/testing.gpp
+
 import "gpp/test"
 
 class UserTest : test.Suite @{

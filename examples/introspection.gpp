@@ -2,25 +2,62 @@ package main
 
 import "fmt"
 
-class Model {
-    Id string
+annotation (
+    Entity(table string) on class
+    PrimaryKey on field
+    Required on field, parameter
+    Trace on method
+)
+
+class Model @{Entity("models")} {
+    Id string @{PrimaryKey}
 }
 
-class Employee: Model {
-    Name string
+class Employee: Model @{Entity("employees")} {
+    Name string @{Required}
     Age int
 
-    func Label() string {
-        return this.class.name
+    func Label(prefix string @{Required}) string @{Trace} {
+        return prefix + this.Name
+    }
+
+    func IsAdult() bool {
+        return this.Age >= 18
     }
 }
 
 func main() {
-    employee := Employee("id", "Bob", 42)
-    fmt.Println(employee.Label())
-    fmt.Println(Employee.class.name)
+    employee := Employee("id-1", "Bob", 42)
+    descriptor := employee.class
 
-    for f := range employee.class.fields {
-        fmt.Println(f.owner.name, f.name, f.type.name, f.get(employee))
+    fmt.Println("class", descriptor.name)
+    fmt.Println("table", descriptor.annotations.find(Entity).args[0])
+    for parent := range descriptor.parents {
+        fmt.Println("parent", parent.name, "table", parent.annotations.find(Entity).args[0])
     }
+
+    fmt.Println("fields")
+    for field := range descriptor.fields {
+        fmt.Println(" ", field.owner.name+"."+field.name, field.type.name, field.get(employee))
+        if field.annotations.has(PrimaryKey) {
+            fmt.Println("  primary key")
+        }
+        if field.annotations.has(Required) {
+            fmt.Println("  required")
+        }
+    }
+
+    fmt.Println("methods")
+    for method := range descriptor.methods {
+        fmt.Println(" ", method.owner.name+"."+method.name, "->", method.result.name)
+        if method.annotations.has(Trace) {
+            fmt.Println("  traced")
+        }
+        for parameter := range method.parameters {
+            fmt.Println("  parameter", parameter.name, parameter.type.name,
+                "required:", parameter.annotations.has(Required))
+        }
+    }
+
+    fmt.Println(employee.Label("Employee:"), employee.IsAdult())
 }
