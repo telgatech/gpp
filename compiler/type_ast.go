@@ -833,6 +833,22 @@ func typeParameterNodesSource(parameters []TypeParameterNode) (string, error) {
 	return "[" + strings.Join(parts, ", ") + "]", nil
 }
 
+// goTypeParameterNodesSource emits constraints required by Go's syntax. Go++
+// treats an omitted constraint as `any`, so preserve the concise form in
+// Go++ source rendering while making generated Go declarations explicit.
+func goTypeParameterNodesSource(parameters []TypeParameterNode) (string, error) {
+	if len(parameters) == 0 {
+		return "", nil
+	}
+	goParameters := append([]TypeParameterNode(nil), parameters...)
+	for index := range goParameters {
+		if goParameters[index].Constraint == nil {
+			goParameters[index].Constraint = &NamedType{Parts: []string{"any"}}
+		}
+	}
+	return typeParameterNodesSource(goParameters)
+}
+
 func typeNodeSource(typeNode TypeNode) (string, error) {
 	switch value := typeNode.(type) {
 	case nil:

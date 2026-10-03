@@ -1555,7 +1555,7 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 func emitClass(out *strings.Builder, file *File, class *ClassDecl, context constructorContext, interpolationName string) error {
 	sourcePath := sourceDirectivePath(file)
 	emitSourceDirective(out, sourcePath, class.SourceLine)
-	classTypeParams, err := typeParameterNodesSource(class.TypeParamsAST)
+	classTypeParams, err := goTypeParameterNodesSource(class.TypeParamsAST)
 	if err != nil {
 		return err
 	}
@@ -2185,7 +2185,11 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 	}
 
 	emitSourceDirective(out, sourcePath, class.SourceLine)
-	fmt.Fprintf(out, "func %s%s(%s)", staticMethodGoName(class, method), methodTypeParamsSource(method), parameters)
+	methodTypeParams, err := goTypeParameterNodesSource(method.TypeParamsAST)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "func %s%s(%s)", staticMethodGoName(class, method), methodTypeParams, parameters)
 	result := strings.TrimSpace(methodResult)
 	if !method.Generated {
 		result = transformPolymorphicResultType(result, context)

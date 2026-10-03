@@ -1,18 +1,18 @@
 // Run with: gpp run examples/generics.gpp
 import "fmt"
 
-func First[T any](values []T) T {
+func First[T](values []T) T {
 	return values[0]
 }
 
 class GenericHelpers {
-	static func Identity[T any](value T) T {
+	static func Identity[T](value T) T {
 		return value
 	}
 }
 
 // Stack shows one type parameter flowing through a field and method signatures.
-class Stack[T any] {
+class Stack[T] {
 	Items []T
 
 	func Push(value T) {
@@ -37,7 +37,7 @@ class Stack[T any] {
 }
 
 // Index uses a constrained type parameter as a Go map key.
-class Index[K comparable, V any] {
+class Index[K comparable, V] {
 	Entries map[K]V
 
 	func Put(key K, value V) {
@@ -54,7 +54,7 @@ class Index[K comparable, V any] {
 }
 
 // Pair demonstrates multiple type parameters on a value type.
-class Pair[A any, B any] {
+class Pair[A, B] {
 	First  A
 	Second B
 

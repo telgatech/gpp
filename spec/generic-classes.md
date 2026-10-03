@@ -30,11 +30,11 @@ and runtime introspection for generic classes remain follow-up work.
 
 ## Declaration syntax
 
-Type parameters follow the class name in square brackets, using Go's
-type-parameter and constraint syntax:
+Type parameters follow the class name in square brackets. If a constraint is
+omitted, it defaults to `any`; write a constraint when a parameter needs one:
 
 ```gpp
-class Box[T any] {
+class Box[T] {
     Value T
 
     func Get() T {
@@ -46,13 +46,15 @@ class Box[T any] {
 Multiple parameters and constraints use the corresponding Go forms:
 
 ```gpp
-class Entry[K comparable, V any] {
+class Entry[K comparable, V] {
     Key K
     Value V
 }
 ```
 
-Constraints are checked using Go's type rules. A type parameter may appear in
+Go++ lowers an omitted constraint to `any` in generated Go, where Go syntax
+requires a constraint for every type parameter. Explicit constraints are
+checked using Go's type rules. A type parameter may appear in
 field types, method parameters and results, nested pointer/slice/map/array
 types, and other type expressions accepted by Go. A reference to a type
 parameter outside its declaring generic class is an error unless it is in
@@ -118,11 +120,11 @@ A generic class may inherit from a generic class by supplying its type
 arguments:
 
 ```gpp
-class Named[T any] {
+class Named[T] {
     Value T
 }
 
-class Audited[T any]: Named[T] {
+class Audited[T]: Named[T] {
     CreatedBy string
 }
 ```
@@ -165,8 +167,8 @@ overload, extension, or generic instantiation.
 
 ## Go interoperability
 
-The generated declaration for `Box[T any]` must be an ordinary Go declaration
-equivalent to:
+The generated declaration for `Box[T]` supplies Go's required `any` constraint
+and is equivalent to:
 
 ```go
 type Box[T any] struct {
