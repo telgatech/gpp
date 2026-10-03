@@ -439,6 +439,44 @@ func TestCompileFilesSupportsFormattedRawAndEscapedInterpolation(t *testing.T) {
 	}
 }
 
+func TestCompileFilesRunsGenericClass(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `class Box[T comparable] {
+    Value T
+
+    func Get() T {
+        return this.Value
+    }
+}
+
+func Read(box Box[int]) int {
+    return box.Get()
+}
+
+func main() {
+    box := Box[int](Value: 42)
+    println(Read(box))
+}`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated generic class program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "42\n" {
+		t.Fatalf("unexpected generic class output: %q", output)
+	}
+}
+
 func TestEmitRejectsInvalidInterpolation(t *testing.T) {
 	for _, test := range []struct {
 		name   string

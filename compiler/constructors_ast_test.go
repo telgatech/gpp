@@ -30,6 +30,28 @@ func TestTransformConstructorsUsesBodyAST(t *testing.T) {
 	}
 }
 
+func TestTransformConstructorsSupportsExplicitGenericClassArguments(t *testing.T) {
+	box := &ClassDecl{
+		Name:          "Box",
+		TypeParamsAST: parseTypeParameterNodes("[T any]"),
+		Fields:        []Field{{Name: "Value", TypeAST: parseTypeText("T")}},
+	}
+	context := localConstructorContext(map[string]*ClassDecl{"Box": box})
+	transformed, handled, err := transformConstructorsAST(`func main() {
+	box := Box[int](Value: 42)
+	_ = box
+}`, context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("expected the generic constructor call to be lowered")
+	}
+	if !strings.Contains(transformed, `Box[int]{Value: 42}`) {
+		t.Fatalf("expected an instantiated generic composite literal, got:\n%s", transformed)
+	}
+}
+
 func TestTransformConstructorsUsesTopLevelFunctionBodies(t *testing.T) {
 	person := &ClassDecl{
 		Name: "Person",

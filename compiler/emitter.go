@@ -1555,7 +1555,11 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 func emitClass(out *strings.Builder, file *File, class *ClassDecl, context constructorContext, interpolationName string) error {
 	sourcePath := sourceDirectivePath(file)
 	emitSourceDirective(out, sourcePath, class.SourceLine)
-	fmt.Fprintf(out, "type %s struct {\n", class.Name)
+	classTypeParams, err := typeParameterNodesSource(class.TypeParamsAST)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "type %s%s struct {\n", class.Name, classTypeParams)
 
 	for _, parent := range classParentNames(class) {
 		fmt.Fprintf(out, "\t%s\n", parent)
@@ -1577,8 +1581,10 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	}
 
 	out.WriteString("}\n\n")
-	if err := emitGeneratedGobSupport(out, class, context); err != nil {
-		return err
+	if len(class.TypeParamsAST) == 0 {
+		if err := emitGeneratedGobSupport(out, class, context); err != nil {
+			return err
+		}
 	}
 
 	classes := classesForClass(context, class)
@@ -1599,6 +1605,9 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	for methodIndex := range methods {
 		method := methods[methodIndex]
 		if method.Generated && isDefaultObjectMethod(method) {
+			if len(class.TypeParamsAST) != 0 {
+				continue
+			}
 			emitDefaultObjectMethod(out, class, method, context)
 			continue
 		}
@@ -1671,7 +1680,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		methodContext.CurrentResultAST = methodResultTypeNode(method)
 		methodContext.MethodSignatures = context.ClassMethodSignatures[class.Name]
 		methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
-		methodContext.CurrentParameterTypes["this"] = "*" + class.Name
+		methodContext.CurrentParameterTypes["this"] = "*" + class.Name + typeParameterNames(class.TypeParamsAST)
 		body, err = transformLambdas(body, methodContext)
 		if err != nil {
 			return err
@@ -1737,6 +1746,12 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		out.WriteString("\n}\n\n")
 	}
 
+	// Runtime class descriptors describe concrete field and method types. A
+	// generic declaration has no concrete Go type until instantiated.
+	if len(class.TypeParamsAST) != 0 {
+		return nil
+	}
+
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
 	out.WriteString("\tGppRuntimeClass() *GppClass\n")
 	for _, method := range methods {
@@ -1777,10 +1792,22 @@ func isDefaultObjectMethod(method Method) bool {
 }
 
 func methodReceiverType(class *ClassDecl, method Method) string {
+	classType := class.Name + typeParameterNames(class.TypeParamsAST)
 	if method.Name == "Error" && !method.IsStatic && methodParametersSource(method) == "" && strings.TrimSpace(methodResultSource(method)) == "string" {
-		return class.Name
+		return classType
 	}
-	return "*" + class.Name
+	return "*" + classType
+}
+
+func typeParameterNames(parameters []TypeParameterNode) string {
+	if len(parameters) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(parameters))
+	for _, parameter := range parameters {
+		names = append(names, parameter.Name)
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }
 
 func emitDefaultObjectMethod(out *strings.Builder, class *ClassDecl, method Method, context constructorContext) {
@@ -1789,7 +1816,7 @@ func emitDefaultObjectMethod(out *strings.Builder, class *ClassDecl, method Meth
 	if context.IntrospectionRuntimeImport != "" {
 		formatter = "gppRuntime.FormatObject"
 	}
-	fmt.Fprintf(out, "func (this %s) %s() string {\n", class.Name, method.Name)
+	fmt.Fprintf(out, "func (this %s) %s() string {\n", class.Name+typeParameterNames(class.TypeParamsAST), method.Name)
 	fmt.Fprintf(out, "\treturn %s(Gpp%sClass, this, %t)\n", formatter, class.Name, pretty)
 	out.WriteString("}\n\n")
 }
@@ -1882,7 +1909,7 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 	resultType := qualifyImportedTypeNames(methodResultSource(method), parentName, classesForClass(context, class), context.ImportedTypes)
 	result := transformPolymorphicResultType(strings.TrimSpace(resultType), context)
 	fieldName := classParentFieldName(parentName)
-	fmt.Fprintf(out, "func (this *%s) %s(%s)", class.Name, methodName, strings.Join(parameterParts, ", "))
+	fmt.Fprintf(out, "func (this *%s%s) %s(%s)", class.Name, typeParameterNames(class.TypeParamsAST), methodName, strings.Join(parameterParts, ", "))
 	if result != "" {
 		fmt.Fprintf(out, " %s", result)
 	}
@@ -3893,13 +3920,52 @@ func matchingTokenParen(tokens []Token, open int) int {
 }
 
 func constructorTargetForCallee(callee ExprNode, context constructorContext) (string, constructorTarget, bool) {
-	name, ok := directSelectorPath(callee)
+	base := callee
+	var typeArguments []string
+	switch value := callee.(type) {
+	case *IndexExpr:
+		base = value.Receiver
+		argument, ok := genericTypeArgumentSource(value.Index)
+		if !ok {
+			return "", constructorTarget{}, false
+		}
+		typeArguments = []string{argument}
+	case *IndexListExpr:
+		base = value.Receiver
+		for _, index := range value.Indices {
+			argument, ok := genericTypeArgumentSource(index)
+			if !ok {
+				return "", constructorTarget{}, false
+			}
+			typeArguments = append(typeArguments, argument)
+		}
+	}
+	name, ok := directSelectorPath(base)
 	if !ok {
 		return "", constructorTarget{}, false
 	}
 	name = strings.TrimSpace(name)
 	target, ok := context.Targets[name]
+	if ok && len(typeArguments) != 0 {
+		name += "[" + strings.Join(typeArguments, ", ") + "]"
+	}
 	return name, target, ok
+}
+
+func genericTypeArgumentSource(expression ExprNode) (string, bool) {
+	switch value := expression.(type) {
+	case *TypeExpr:
+		if value.Type != nil {
+			text, err := typeNodeSource(value.Type)
+			return text, err == nil && text != ""
+		}
+	case *NameExpr:
+		return value.Name, value.Name != ""
+	case *SelectorExpr:
+		text, ok := directSelectorPath(value)
+		return text, ok
+	}
+	return "", false
 }
 
 type constructorField struct {

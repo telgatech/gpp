@@ -1,0 +1,89 @@
+// Run with: gpp run examples/generics.gpp
+import "fmt"
+
+func First[T any](values []T) T {
+	return values[0]
+}
+
+class GenericHelpers {
+	static func Identity[T any](value T) T {
+		return value
+	}
+}
+
+// Stack shows one type parameter flowing through a field and method signatures.
+class Stack[T any] {
+	Items []T
+
+	func Push(value T) {
+		this.Items = append(this.Items, value)
+	}
+
+	func Pop() (T, bool) {
+		if len(this.Items) == 0 {
+			var zero T
+			return zero, false
+		}
+
+		last := len(this.Items) - 1
+		value := this.Items[last]
+		this.Items = this.Items[:last]
+		return value, true
+	}
+
+	func Len() int {
+		return len(this.Items)
+	}
+}
+
+// Index uses a constrained type parameter as a Go map key.
+class Index[K comparable, V any] {
+	Entries map[K]V
+
+	func Put(key K, value V) {
+		if this.Entries == nil {
+			this.Entries = make(map[K]V)
+		}
+		this.Entries[key] = value
+	}
+
+	func Get(key K) (V, bool) {
+		value, found := this.Entries[key]
+		return value, found
+	}
+}
+
+// Pair demonstrates multiple type parameters on a value type.
+class Pair[A any, B any] {
+	First  A
+	Second B
+
+	func Describe() string {
+		return fmt.Sprintf("(%v, %v)", this.First, this.Second)
+	}
+}
+
+func main() {
+	integers := Stack[int](Items: []int{})
+	integers.Push(10)
+	integers.Push(20)
+	last, ok := integers.Pop()
+	fmt.Println("stack:", last, ok, integers.Len())
+
+	words := Stack[string](Items: []string{})
+	words.Push("Go++")
+	word, ok := words.Pop()
+	fmt.Println("string stack:", word, ok, words.Len())
+
+	users := Index[string, int](Entries: map[string]int{})
+	users.Put("ada", 37)
+	age, found := users.Get("ada")
+	fmt.Println("index:", age, found)
+
+	nameAndAge := Pair[string, int](First: "Ada", Second: age)
+	fmt.Println("pair:", nameAndAge.Describe())
+
+	first := First[string]([]string{"generic", "function"})
+	identity := GenericHelpers.Identity[int](42)
+	fmt.Println("generic callables:", first, identity)
+}

@@ -138,6 +138,10 @@ The initial resolver does not attempt to become a complete replacement for
 arguments, perform whole-program data-flow analysis, or expose unexported Go
 members.
 
+Explicitly instantiated Go and Go++ generic types are in scope for the shared
+type model. Generic class declarations and the required type-parameter
+substitution rules are specified in [generic Go++ classes](./generic-classes.md).
+
 ## Acceptance examples
 
 The compiler must build programs containing all of the following without
@@ -152,4 +156,3 @@ body, err := response.Body.ReadAll()
 
 Regression tests must cover direct calls, selector chains, import aliases,
 extension chaining, and native methods whose result does not end in `error`.
-

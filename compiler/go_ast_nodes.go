@@ -1112,7 +1112,7 @@ func constructorASTLiteralExpr(name string, class *ClassDecl, literal *construct
 			elements = append(elements, CompositeElement{Key: &NameExpr{Name: field.Name}, Value: value})
 		}
 	}
-	return &CompositeLiteralExpr{Type: &NamedType{Parts: strings.Split(name, ".")}, Elements: elements}
+	return &CompositeLiteralExpr{Type: parseTypeText(name), Elements: elements}
 }
 
 func goStmtNode(statement Stmt, rethrowName string) ([]ast.Stmt, error) {

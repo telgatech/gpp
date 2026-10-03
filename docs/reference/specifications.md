@@ -14,6 +14,7 @@ before each docs development or production build.
 - [Language server](./specifications/compiler.lsp)
 - [Formatting](./specifications/fmt)
 - [Type resolver](./specifications/type-resolver)
+- [Generic Go++ classes](./specifications/generic-classes)
 
 ## Core features
 

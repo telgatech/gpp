@@ -138,6 +138,25 @@ func TestParseTypeParametersBuildsConstraints(t *testing.T) {
 	}
 }
 
+func TestParseGenericClassTypeParameters(t *testing.T) {
+	file, err := ParseFile("generic.gpp", `class Box[T any, N ~int] {
+    Value T
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one declaration, got %d", len(file.Decls))
+	}
+	class, ok := file.Decls[0].(*ClassDecl)
+	if !ok {
+		t.Fatalf("expected a class declaration, got %T", file.Decls[0])
+	}
+	if len(class.TypeParamsAST) != 2 || class.TypeParamsAST[0].Name != "T" || class.TypeParamsAST[1].Name != "N" {
+		t.Fatalf("expected class type parameters, got %#v", class.TypeParamsAST)
+	}
+}
+
 func TestDeclarationsExposeTypeAST(t *testing.T) {
 	file, err := ParseFile("typed-declarations.gpp", `
 class User {

@@ -998,9 +998,22 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 
 	pos += n
 	pos = skipSpace(src, pos)
+	typeParams := ""
+	if pos < len(src) && src[pos] == '[' {
+		end, err := findMatchingBracket(src, pos)
+		if err != nil {
+			return nil, 0, fmt.Errorf("class %s type parameters: %w", name, err)
+		}
+		typeParams = src[pos : end+1]
+		pos = skipSpace(src, end+1)
+	}
 
 	class := &ClassDecl{
-		Name: name,
+		Name:          name,
+		TypeParamsAST: parseTypeParameterNodes(typeParams),
+	}
+	if typeParams != "" && len(class.TypeParamsAST) == 0 {
+		return nil, 0, fmt.Errorf("class %s has invalid type parameters", name)
 	}
 
 	if pos < len(src) && src[pos] == ':' {

@@ -32,6 +32,9 @@ feature with comparisons and examples.
   without declaring one-off structs for every function boundary.
 - **[Enums](docs/features/enums.md)** — Define closed, named value sets with
   grouped declarations, validation, ordered values, and member metadata.
+- **[Generic classes and functions](spec/generic-classes.md)** — Reuse
+  type-safe classes and functions across value types, with Go-compatible type
+  constraints and explicit constructor type arguments.
 - **[Lambdas and the prelude](docs/features/lambdas.md)** — Write concise
   functions and use familiar collection, string, and map helpers.
 - **[Extension methods](docs/features/extensions.md)** — Add compile-time
@@ -99,6 +102,12 @@ The editor view below shows the [`Todo` model in the full example](examples/todo
 ![Go++ syntax highlighting in Visual Studio Code, showing the Todo model from the todo app example](docs/public/vscode-highlighting.svg)
 
 ## Install and build
+
+Go++ currently supports Go 1.26 and newer. Go 1.27 adds generic methods with
+their own type parameters; Go++ plans to make Go 1.27 the baseline soon so
+those methods can work in generated projects by default. Until then, generic
+free functions, static methods, and extension methods are available, while
+generic instance methods are not yet supported end to end.
 
 The repository root is the installable Go++ CLI:
 

@@ -21,6 +21,10 @@ The examples cover:
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its Go++
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.
+- `generics.gpp` — generic `Stack[T]`, constrained `Index[K comparable, V]`,
+  multi-parameter `Pair[A, B]`, explicit type arguments, and methods whose
+  fields and signatures use those parameters; also generic free and static
+  functions.
 - `static_methods.gpp` — class-qualified factory and parsing methods.
 - `inheritance.gpp` — multiple inheritance, embedded parents, and qualified
   parent access.
