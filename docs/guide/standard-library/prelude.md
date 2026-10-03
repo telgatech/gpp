@@ -42,6 +42,9 @@ allNamed := people.All(person => person.Name != "")
 first, found := people.Find(person => person.Active)
 recent := events.Take(10)
 older := events.Drop(10)
+total := scores.Reduce(0, (sum, score) => sum + score)
+runningTotals := scores.Scan(0, (sum, score) => sum + score)
+passed, failed := scores.Partition(score => score >= 50)
 ```
 
 When a transformation needs a few steps, use a block lambda:
@@ -206,12 +209,92 @@ Returns a copy of the elements after the first `n`. A non-positive `n` copies th
 remaining := tasks.Drop(1)
 ```
 
-#### `Map[R any](transform func(T) R) []R`
+#### `Map[R](transform func(T) R) []R`
 
 Applies the transform to every element and returns a new slice of the result type. It preserves element order and does not mutate the source.
 
 ```go
 names := people.Map(person => person.Name)
+```
+
+#### `Reduce[A](initial A, combine func(A, T) A) A`
+
+Combines elements from left to right, passing the accumulated value and each
+element to `combine`. Returns `initial` for an empty slice. The accumulator
+type can differ from the element type.
+
+```go
+total := scores.Reduce(0, (sum, score) => sum + score)
+```
+
+#### `FlatMap[R](transform func(T) []R) []R`
+
+Transforms each element into a slice and concatenates the results in order. It
+returns a new slice and leaves the source unchanged.
+
+```go
+words := lines.FlatMap(line => line.Fields())
+```
+
+#### `Partition(predicate func(T) bool) ([]T, []T)`
+
+Returns the matching elements and the non-matching elements, in that order.
+Both results preserve source order and are new slices.
+
+```go
+active, inactive := users.Partition(user => user.Active)
+```
+
+#### `GroupBy[K comparable](key func(T) K) [][]T`
+
+Groups consecutive runs with equal keys. It preserves source order and does not
+merge equal keys that appear in separate runs.
+
+```go
+runs := events.GroupBy(event => event.Kind)
+```
+
+#### `Zip[U](other []U) []Pair[T, U]`
+
+Pairs corresponding elements into `Pair` values with `First` and `Second`
+fields. The result ends when either input ends; neither input is modified.
+
+```go
+peopleAndScores := people.Zip(scores)
+```
+
+#### `ZipWith[U, R](other []U, combine func(T, U) R) []R`
+
+Combines corresponding elements directly. It stops at the shorter input and
+returns a new slice.
+
+```go
+products := prices.ZipWith(quantities, (price, quantity) => price * quantity)
+```
+
+#### `TakeWhile(predicate func(T) bool) []T`
+
+Returns a copy of the longest prefix whose elements match the predicate.
+
+```go
+smallScores := scores.TakeWhile(score => score < 50)
+```
+
+#### `DropWhile(predicate func(T) bool) []T`
+
+Returns a copy of the suffix after the longest matching prefix.
+
+```go
+remaining := scores.DropWhile(score => score < 50)
+```
+
+#### `Scan[A](initial A, combine func(A, T) A) []A`
+
+Returns the initial value followed by each accumulated result. Its result has
+one more element than the input; for an empty input it returns `[initial]`.
+
+```go
+runningTotals := scores.Scan(0, (sum, score) => sum + score)
 ```
 
 #### `Reverse()`

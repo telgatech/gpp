@@ -134,6 +134,15 @@ extend []T {
     func Find(fn func(T) bool) (T, bool)
 
     func Filter(fn func(T) bool) []T
+    func Reduce[A](initial A, fn func(A, T) A) A
+    func FlatMap[R](fn func(T) []R) []R
+    func Partition(fn func(T) bool) ([]T, []T)
+    func GroupBy[K comparable](key func(T) K) [][]T
+    func Zip[U](other []U) []Pair[T, U]
+    func ZipWith[U, R](other []U, fn func(T, U) R) []R
+    func TakeWhile(fn func(T) bool) []T
+    func DropWhile(fn func(T) bool) []T
+    func Scan[A](initial A, fn func(A, T) A) []A
 
     func Contains(value T) bool
         where T is comparable
@@ -147,6 +156,9 @@ extend []T {
 }
 
 `Each` visits values in order, returns immediately when its callback returns an error, and otherwise returns `nil` after the final value. The caller can return or otherwise handle that error.
+
+The algorithm-specific semantics, including allocation, ordering, and empty
+input behavior, are defined in the generic slice algorithms section below.
 
 Exact generic constraint syntax should follow whatever Go++ currently supports.
 
@@ -257,6 +269,73 @@ index >= 0 if found
 -1 otherwise
 
 Could delegate to slices.Index where available.
+
+## Generic slice algorithms
+
+Generic algorithms are ordinary prelude extension methods over native slices.
+They must preserve element order unless their operation explicitly says
+otherwise, return new slices unless marked in-place, and handle empty inputs
+without panicking.
+
+### Reduce
+
+`Reduce(initial, combine)` applies `combine(accumulator, element)` from left to
+right and returns the final accumulator. The initial value is returned for an
+empty slice. The accumulator type may differ from the element type.
+
+```gpp
+total := numbers.Reduce(0, (sum, value) => sum + value)
+```
+
+### FlatMap
+
+`FlatMap(transform)` transforms each element into a slice and concatenates the
+results in source order. It returns a new slice and does not mutate the source.
+
+### Partition
+
+`Partition(predicate)` returns `(matching, remaining)`, each in source order.
+Both results are new slices; the source is unchanged. For an empty input, both
+results are empty slices.
+
+### GroupBy
+
+`GroupBy(key)` groups **consecutive runs** whose key values compare equal. It
+returns `[][]T`, preserving the order of the runs and elements. It does not
+reorder the source or combine matching keys that occur in separate runs.
+Grouping globally is a separate operation and is not implied by this method.
+
+### Zip and ZipWith
+
+`Zip(other)` returns `[]Pair[T, U]`; the prelude declares:
+
+```gpp
+class Pair[A, B] {
+    First A
+    Second B
+}
+```
+
+`ZipWith(other, combine)` returns the combined results directly. Both stop at
+the shorter input, preserve pair order, and leave the inputs unchanged.
+
+### TakeWhile and DropWhile
+
+`TakeWhile(predicate)` returns a copy of the longest prefix whose elements
+match. `DropWhile(predicate)` returns a copy of the remaining suffix after
+that prefix. Both leave the source unchanged. A predicate that matches every
+element makes `DropWhile` return an empty slice; one that matches no elements
+makes `TakeWhile` return an empty slice.
+
+### Scan
+
+`Scan(initial, combine)` returns the initial accumulator followed by each
+left-to-right accumulated result. Its result length is `len(input) + 1`, so an
+empty input returns a one-element slice containing `initial`.
+
+```gpp
+runningTotals := numbers.Scan(0, (sum, value) => sum + value)
+```
 
 ## 13. Reverse
 
@@ -719,6 +798,16 @@ Slices:
     All
     Find
     Filter
+    Reduce
+    FlatMap
+    Partition
+    GroupBy
+    Zip
+    ZipWith
+    Pair
+    TakeWhile
+    DropWhile
+    Scan
     Contains
     Index
     Reverse
@@ -744,12 +833,9 @@ Keep v1 intentionally small.
 
 ## 34. Features NOT in v1 prelude
 
-Do not include:
+Do not include in the implicit prelude:
 
-Reduce
-GroupBy
 Chunk
-Zip
 DistinctBy
 ParallelMap
 Retry
@@ -783,6 +869,17 @@ Find:
 v, ok := xs.Find(...)
 
 must return first match.
+
+Generic slice algorithms must satisfy the contracts in the generic slice
+algorithms section:
+
+- `Reduce` and `Scan` combine from left to right; `Scan` includes the initial
+  accumulator as its first result.
+- `FlatMap`, `Partition`, `GroupBy`, `Zip`, `ZipWith`, `TakeWhile`, and
+  `DropWhile` preserve their documented ordering and do not mutate inputs.
+- `GroupBy` forms adjacent runs; `Zip` and `ZipWith` stop at the shorter input.
+- Empty inputs return the documented empty results or initial accumulator,
+  without panicking.
 
 Filter:
 

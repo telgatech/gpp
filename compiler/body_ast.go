@@ -1398,7 +1398,7 @@ func topLevelAssignment(tokens []Token) int {
 
 func isAssignmentOperator(text string) bool {
 	switch text {
-	case "=", ":=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "??=", "||=":
+	case "=", ":=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "&^=", "??=", "||=":
 		return true
 	default:
 		return false

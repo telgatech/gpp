@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+class Pair[A, B] {
+	First A
+	Second B
+}
+
 	extend []T {
 	func Append(values ...T) []T {
 		return append(this, values...)
@@ -106,6 +111,101 @@ import (
 		return result
 	}
 
+	func Reduce[A](initial A, fn func(A, T) A) A {
+		result := initial
+		for _, value := range this {
+			result = fn(result, value)
+		}
+		return result
+	}
+
+	func FlatMap[R](fn func(T) []R) []R {
+		result := []R{}
+		for _, value := range this {
+			result = append(result, fn(value)...)
+		}
+		return result
+	}
+
+	func Partition(predicate func(T) bool) ([]T, []T) {
+		matched := []T{}
+		unmatched := []T{}
+		for _, value := range this {
+			if predicate(value) {
+				matched = append(matched, value)
+			} else {
+				unmatched = append(unmatched, value)
+			}
+		}
+		return matched, unmatched
+	}
+
+	func GroupBy[K comparable](key func(T) K) [][]T {
+		groups := [][]T{}
+		var previousKey K
+		hasGroup := false
+		for _, value := range this {
+			currentKey := key(value)
+			if !hasGroup || currentKey != previousKey {
+				groups = append(groups, []T{})
+				previousKey = currentKey
+				hasGroup = true
+			}
+			last := len(groups) - 1
+			groups[last] = append(groups[last], value)
+		}
+		return groups
+	}
+
+	func Zip[U](other []U) []Pair[T, U] {
+		length := len(this)
+		if len(other) < length {
+			length = len(other)
+		}
+		result := make([]Pair[T, U], 0, length)
+		for index := 0; index < length; index++ {
+			result = append(result, Pair[T, U](First: this[index], Second: other[index]))
+		}
+		return result
+	}
+
+	func ZipWith[U, R](other []U, fn func(T, U) R) []R {
+		length := len(this)
+		if len(other) < length {
+			length = len(other)
+		}
+		result := make([]R, 0, length)
+		for index := 0; index < length; index++ {
+			result = append(result, fn(this[index], other[index]))
+		}
+		return result
+	}
+
+	func TakeWhile(predicate func(T) bool) []T {
+		end := 0
+		for end < len(this) && predicate(this[end]) {
+			end++
+		}
+		return append([]T{}, this[:end]...)
+	}
+
+	func DropWhile(predicate func(T) bool) []T {
+		start := 0
+		for start < len(this) && predicate(this[start]) {
+			start++
+		}
+		return append([]T{}, this[start:]...)
+	}
+
+	func Scan[A](initial A, fn func(A, T) A) []A {
+		result := make([]A, 1, len(this)+1)
+		result[0] = initial
+		for _, value := range this {
+			result = append(result, fn(result[len(result)-1], value))
+		}
+		return result
+	}
+
 	func DeleteBy(predicate func(T) bool) []T {
 		result := make([]T, 0, len(this))
 		for _, value := range this {
@@ -160,7 +260,7 @@ import (
 		return append([]T{}, this[n:]...)
 	}
 
-	func Map[R any](fn func(T) R) []R {
+	func Map[R](fn func(T) R) []R {
 		result := make([]R, 0, len(this))
 		for _, value := range this {
 			result = append(result, fn(value))

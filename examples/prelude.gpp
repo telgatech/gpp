@@ -8,6 +8,36 @@ class User {
 }
 
 func main() {
+	scores := []int{1, 2, 3, 4}
+	total := scores.Reduce(0, (sum, score) => sum + score)
+	runningTotals := scores.Scan(0, (sum, score) => sum + score)
+	passed, failed := scores.Partition(score => score >= 3)
+	flattened := scores.FlatMap(score => []int{score, score * 10})
+	smallScores := scores.TakeWhile(score => score < 3)
+	remainingScores := scores.DropWhile(score => score < 3)
+	if total != 10 || len(runningTotals) != 5 || runningTotals[4] != 10 {
+		panic("Reduce or Scan returned the wrong values")
+	}
+	if len(passed) != 2 || passed[0] != 3 || len(failed) != 2 || failed[1] != 2 {
+		panic("Partition did not preserve order")
+	}
+	if len(flattened) != 8 || flattened[3] != 20 {
+		panic("FlatMap did not flatten in order")
+	}
+	if len(smallScores) != 2 || len(remainingScores) != 2 || remainingScores[0] != 3 {
+		panic("TakeWhile or DropWhile returned the wrong slice")
+	}
+	groups := []int{1, 1, 2, 2, 1}.GroupBy(value => value)
+	if len(groups) != 3 || len(groups[0]) != 2 || len(groups[1]) != 2 || len(groups[2]) != 1 {
+		panic("GroupBy should group consecutive equal keys")
+	}
+	paired := []string{"Ada", "Lin"}.Zip([]int{37, 42, 99})
+	labels := []string{"Ada", "Lin"}.ZipWith([]int{37, 42, 99}, (name, age) => fmt.Sprintf("%s:%d", name, age))
+	if len(paired) != 2 || paired[1].First != "Lin" || paired[1].Second != 42 || labels[0] != "Ada:37" {
+		panic("Zip or ZipWith did not pair corresponding values")
+	}
+	fmt.Println(total, runningTotals, passed, failed, flattened, groups, paired, labels)
+
 	users := []User{User("Cara", true), User("Bob", false), User("Ada", true)}
 	active := users.Filter(user => user.Active)
 	found, ok := users.Find(user => user.Name == "Bob")

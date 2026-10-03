@@ -1278,7 +1278,7 @@ func findExpressionClosing(tokens []Token, open int, opening, closing string) (i
 
 func expressionPrecedence(operator string) (int, bool) {
 	switch operator {
-	case "=", ":=", "+=", "-=", "*=", "/=", "??=", "||=":
+	case "=", ":=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "&^=", "??=", "||=":
 		return 1, true
 	case "??", "||":
 		return 2, true

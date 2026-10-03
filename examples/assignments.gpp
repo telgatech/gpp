@@ -1,0 +1,28 @@
+package main
+
+import "fmt"
+
+func main() {
+	count := 10
+	count += 6
+	count -= 4
+	count *= 3
+	count /= 2
+	count %= 7
+	if count != 4 {
+		panic("arithmetic compound assignment failed")
+	}
+
+	bits := 0b1100
+	bits |= 0b0011
+	bits &= 0b1110
+	bits ^= 0b0100
+	bits <<= 1
+	bits >>= 1
+	bits &^= 0b0010
+	if bits != 0b1000 {
+		panic("bitwise or shift compound assignment failed")
+	}
+
+	fmt.Println("count:", count, "bits:", bits)
+}

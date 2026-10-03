@@ -18,6 +18,7 @@ gpp run examples/hello.gpp
 The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
+- `assignments.gpp` — arithmetic, bitwise, and shift compound assignments.
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its Go++
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.

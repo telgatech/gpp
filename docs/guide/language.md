@@ -86,19 +86,30 @@ not deferred to runtime reflection.
 
 ## Go-compatible assignment operators
 
-Go++ keeps Go's compound assignment operators and increment/decrement
+Go++ supports Go's compound assignment operators and increment/decrement
 statements:
 
 ```go
 count := 0
 count += 2
+count -= 1
+count *= 3
+count /= 2
+count %= 4
+bits &= mask
+bits |= flag
+bits ^= toggle
+bits <<= 1
+bits >>= 1
+bits &^= mask
 count++
 count--
 ```
 
-Compound forms such as `+=`, `-=`, `*=`, `/=`, `%=` and the bitwise and shift
-assignments update a value in place. `++` and `--` are standalone statements,
-as they are in Go.
+The full set is `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`,
+and `&^=`. They follow Go's operand and type rules; bitwise and shift forms
+apply to integer values. `++` and `--` are standalone statements, as they are
+in Go.
 
 ## Records and enums
 
