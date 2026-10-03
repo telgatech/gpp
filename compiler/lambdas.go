@@ -52,8 +52,8 @@ func lambdaFunctionTypesForCall(call *CallExpr, index int, context constructorCo
 				continue
 			}
 			if index < len(parameters) {
-				parameters[index].TypeAST = parseTypeText(specializeExtensionLambdaParameter(
-					extension, parameters[index], call.Arguments[index].Value, actualType, context, context.CurrentParameterTypes,
+				parameters[index].TypeAST = parseTypeText(specializeExtensionLambdaParameterForCall(
+					extension, index, call, actualType, context, context.CurrentParameterTypes,
 				))
 			}
 			candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: extension.Method.ResultAST})
@@ -1115,34 +1115,51 @@ func lambdaExpectedTypesForCallAST(call *CallExpr, index int, context constructo
 			if err != nil || index >= len(parameters) {
 				continue
 			}
-			result = append(result, specializeExtensionLambdaParameter(
-				extension, parameters[index], call.Arguments[index].Value, actualType, context, valueTypes,
+			result = append(result, specializeExtensionLambdaParameterForCall(
+				extension, index, call, actualType, context, valueTypes,
 			))
 		}
 	}
 	return result
 }
 
-// specializeExtensionLambdaParameter resolves method type parameters that
-// appear as the result of a callback parameter from the lambda body. This lets
-// callbacks such as `SortBy(user => user.Name)` provide a concrete func(T) K
-// argument before Go's own generic inference runs.
-func specializeExtensionLambdaParameter(extension extensionMethod, parameter parameterInfo, argument ExprNode, actualType string, context constructorContext, valueTypes map[string]string) string {
-	expected := substituteLambdaType(parameter.typeText(), extensionTargetBindings(extension.Target, actualType))
-	lambda, ok := argument.(*LambdaExpr)
-	if !ok || lambda.BlockBody != nil || len(extension.Method.TypeParamsAST) == 0 {
-		return expected
-	}
-	function, err := parseLambdaFunctionType(expected)
-	if err != nil || function.ResultAST == nil {
-		return expected
+// specializeExtensionLambdaParameterForCall resolves generic method types
+// from ordinary arguments and callback results before lowering the callback.
+// This gives callbacks such as `Reduce(0, (sum, item) => sum + item)` a
+// concrete parameter type and lets `FlatMap(x => []int{...})` infer R.
+func specializeExtensionLambdaParameterForCall(extension extensionMethod, parameterIndex int, call *CallExpr, actualType string, context constructorContext, valueTypes map[string]string) string {
+	parameters, err := parameterInfosForMethod(extension.Method)
+	if err != nil || parameterIndex < 0 || parameterIndex >= len(parameters) || call == nil {
+		return ""
 	}
 	genericNames := map[string]bool{}
 	for _, typeParameter := range extension.Method.TypeParamsAST {
 		genericNames[typeParameter.Name] = true
 	}
-	resultPattern, err := typeNodeSource(function.ResultAST)
-	if err != nil || !genericNames[strings.TrimSpace(resultPattern)] {
+	bindings := map[string]string{}
+	targetBindings := extensionTargetBindings(extension.Target, actualType)
+	for index, argument := range call.Arguments {
+		if index == parameterIndex || index >= len(parameters) {
+			continue
+		}
+		if _, isLambda := argument.Value.(*LambdaExpr); isLambda {
+			continue
+		}
+		actual := strings.TrimSpace(staticExpressionTypeNode(argument.Value, context, valueTypes))
+		if actual == "" {
+			continue
+		}
+		pattern := parseTypeText(substituteLambdaType(parameters[index].typeText(), targetBindings))
+		_ = inferLambdaResultBindings(pattern, parseTypeText(actual), genericNames, bindings)
+	}
+	expected := substituteLambdaType(parameters[parameterIndex].typeText(), targetBindings)
+	expected = substituteLambdaType(expected, bindings)
+	lambda, ok := call.Arguments[parameterIndex].Value.(*LambdaExpr)
+	if !ok || lambda.BlockBody != nil || len(genericNames) == 0 {
+		return expected
+	}
+	function, err := parseLambdaFunctionType(expected)
+	if err != nil || function.ResultAST == nil {
 		return expected
 	}
 	lambdaParameters, err := lambdaParametersFromTokens(lambda.Parameters)
@@ -1161,11 +1178,76 @@ func specializeExtensionLambdaParameter(extension extensionMethod, parameter par
 	if actualResult == nil {
 		return expected
 	}
-	actualResultText, err := typeNodeSource(actualResult)
-	if err != nil || strings.TrimSpace(actualResultText) == "" {
+	if !inferLambdaResultBindings(function.ResultAST, actualResult, genericNames, bindings) || len(bindings) == 0 {
 		return expected
 	}
-	return substituteLambdaType(expected, map[string]string{strings.TrimSpace(resultPattern): strings.TrimSpace(actualResultText)})
+	return substituteLambdaType(expected, bindings)
+}
+
+// inferLambdaResultBindings matches the callback's declared result shape
+// against the lambda's inferred result and records method type parameters.
+// Matching recursively is needed for callbacks such as FlatMap's func(T) []R.
+func inferLambdaResultBindings(pattern, actual TypeNode, genericNames map[string]bool, bindings map[string]string) bool {
+	if pattern == nil || actual == nil {
+		return pattern == actual
+	}
+	if named, ok := pattern.(*NamedType); ok && len(named.Parts) == 1 && len(named.Arguments) == 0 && genericNames[named.Parts[0]] {
+		name := named.Parts[0]
+		actualText, err := typeNodeSource(actual)
+		if err != nil || strings.TrimSpace(actualText) == "" {
+			return false
+		}
+		if previous, exists := bindings[name]; exists {
+			return previous == strings.TrimSpace(actualText)
+		}
+		bindings[name] = strings.TrimSpace(actualText)
+		return true
+	}
+	switch expected := pattern.(type) {
+	case *NamedType:
+		observed, ok := actual.(*NamedType)
+		if !ok || strings.Join(expected.Parts, ".") != strings.Join(observed.Parts, ".") || len(expected.Arguments) != len(observed.Arguments) {
+			return false
+		}
+		for index := range expected.Arguments {
+			if !inferLambdaResultBindings(expected.Arguments[index], observed.Arguments[index], genericNames, bindings) {
+				return false
+			}
+		}
+		return true
+	case *PointerType:
+		observed, ok := actual.(*PointerType)
+		return ok && inferLambdaResultBindings(expected.Element, observed.Element, genericNames, bindings)
+	case *SliceType:
+		observed, ok := actual.(*SliceType)
+		return ok && inferLambdaResultBindings(expected.Element, observed.Element, genericNames, bindings)
+	case *ArrayType:
+		observed, ok := actual.(*ArrayType)
+		if !ok || expected.Ellipsis != observed.Ellipsis {
+			return false
+		}
+		if !expected.Ellipsis {
+			expectedLength, expectedErr := expressionNodeSource(expected.Length)
+			actualLength, actualErr := expressionNodeSource(observed.Length)
+			if expectedErr != nil || actualErr != nil || expectedLength != actualLength {
+				return false
+			}
+		}
+		return inferLambdaResultBindings(expected.Element, observed.Element, genericNames, bindings)
+	case *MapType:
+		observed, ok := actual.(*MapType)
+		return ok && inferLambdaResultBindings(expected.Key, observed.Key, genericNames, bindings) && inferLambdaResultBindings(expected.Value, observed.Value, genericNames, bindings)
+	case *ChannelType:
+		observed, ok := actual.(*ChannelType)
+		return ok && expected.Direction == observed.Direction && inferLambdaResultBindings(expected.Element, observed.Element, genericNames, bindings)
+	case *VariadicType:
+		observed, ok := actual.(*VariadicType)
+		return ok && inferLambdaResultBindings(expected.Element, observed.Element, genericNames, bindings)
+	default:
+		expectedText, expectedErr := typeNodeSource(pattern)
+		actualText, actualErr := typeNodeSource(actual)
+		return expectedErr == nil && actualErr == nil && expectedText == actualText
+	}
 }
 
 func lambdaWalkInferenceBlock(block *BlockStmt, visit func(ExprNode)) {

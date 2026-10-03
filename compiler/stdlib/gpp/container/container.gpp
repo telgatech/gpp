@@ -1,0 +1,462 @@
+package gpp.container
+
+// Set is a map-backed set whose zero value is ready to use.
+class Set[T comparable] {
+	items map[T]bool
+
+	func Add(value T) bool {
+		if this.items == nil {
+			this.items = make(map[T]bool)
+		}
+		if _, found := this.items[value]; found {
+			return false
+		}
+		this.items[value] = true
+		return true
+	}
+
+	func Remove(value T) bool {
+		if _, found := this.items[value]; !found {
+			return false
+		}
+		delete(this.items, value)
+		return true
+	}
+
+	func Contains(value T) bool {
+		_, found := this.items[value]
+		return found
+	}
+
+	func Len() int {
+		return len(this.items)
+	}
+
+	func IsEmpty() bool {
+		return len(this.items) == 0
+	}
+
+	func Clear() {
+		this.items = nil
+	}
+
+	func Values() []T {
+		values := make([]T, 0, len(this.items))
+		for value := range this.items {
+			values = append(values, value)
+		}
+		return values
+	}
+}
+
+// Stack is a last-in, first-out container. Its zero value is ready to use.
+class Stack[T] {
+	items []T
+
+	func Push(value T) {
+		this.items = append(this.items, value)
+	}
+
+	func Pop() (T, bool) {
+		if len(this.items) == 0 {
+			var zero T
+			return zero, false
+		}
+
+		last := len(this.items) - 1
+		value := this.items[last]
+		var zero T
+		this.items[last] = zero
+		this.items = this.items[:last]
+		return value, true
+	}
+
+	func Peek() (T, bool) {
+		if len(this.items) == 0 {
+			var zero T
+			return zero, false
+		}
+		return this.items[len(this.items)-1], true
+	}
+
+	func Len() int {
+		return len(this.items)
+	}
+
+	func IsEmpty() bool {
+		return len(this.items) == 0
+	}
+
+	func Clear() {
+		this.items = nil
+	}
+}
+
+// Deque is a double-ended queue backed by a growable circular slice.
+// Its zero value is ready to use.
+class Deque[T] {
+	items []T
+	head int
+	size int
+
+	func grow() {
+		capacity := len(this.items)
+		newCapacity := 8
+		if capacity > 0 {
+			newCapacity = capacity * 2
+		}
+
+		items := make([]T, newCapacity)
+		for index := 0; index < this.size; index++ {
+			items[index] = this.items[(this.head+index)%capacity]
+		}
+		this.items = items
+		this.head = 0
+	}
+
+	func PushFront(value T) {
+		if this.size == len(this.items) {
+			this.grow()
+		}
+		this.head = (this.head - 1 + len(this.items)) % len(this.items)
+		this.items[this.head] = value
+		this.size++
+	}
+
+	func PushBack(value T) {
+		if this.size == len(this.items) {
+			this.grow()
+		}
+		index := (this.head + this.size) % len(this.items)
+		this.items[index] = value
+		this.size++
+	}
+
+	func PopFront() (T, bool) {
+		if this.size == 0 {
+			var zero T
+			return zero, false
+		}
+
+		value := this.items[this.head]
+		var zero T
+		this.items[this.head] = zero
+		this.head = (this.head + 1) % len(this.items)
+		this.size--
+		if this.size == 0 {
+			this.head = 0
+		}
+		return value, true
+	}
+
+	func PopBack() (T, bool) {
+		if this.size == 0 {
+			var zero T
+			return zero, false
+		}
+
+		index := (this.head + this.size - 1) % len(this.items)
+		value := this.items[index]
+		var zero T
+		this.items[index] = zero
+		this.size--
+		if this.size == 0 {
+			this.head = 0
+		}
+		return value, true
+	}
+
+	func Front() (T, bool) {
+		if this.size == 0 {
+			var zero T
+			return zero, false
+		}
+		return this.items[this.head], true
+	}
+
+	func Back() (T, bool) {
+		if this.size == 0 {
+			var zero T
+			return zero, false
+		}
+		index := (this.head + this.size - 1) % len(this.items)
+		return this.items[index], true
+	}
+
+	func Len() int {
+		return this.size
+	}
+
+	func IsEmpty() bool {
+		return this.size == 0
+	}
+
+	func Clear() {
+		this.items = nil
+		this.head = 0
+		this.size = 0
+	}
+}
+
+// Queue is a first-in, first-out container implemented using Deque.
+// Its zero value is ready to use.
+class Queue[T] {
+	items Deque[T]
+
+	func Enqueue(value T) {
+		this.items.PushBack(value)
+	}
+
+	func Dequeue() (T, bool) {
+		return this.items.PopFront()
+	}
+
+	func Peek() (T, bool) {
+		return this.items.Front()
+	}
+
+	func Len() int {
+		return this.items.Len()
+	}
+
+	func IsEmpty() bool {
+		return this.items.IsEmpty()
+	}
+
+	func Clear() {
+		this.items.Clear()
+	}
+}
+
+// listNode is an internal typed node stored by List.
+class listNode[T] {
+	value T
+	previous int
+	next int
+}
+
+// List is a doubly linked list with typed nodes. Its zero value is ready to use.
+class List[T] {
+	nodes []listNode[T]
+	head int
+	tail int
+	freeHead int
+	size int
+
+	func allocate(value T, previous int, next int) int {
+		var node listNode[T]
+		node.value = value
+		node.previous = previous
+		node.next = next
+
+		if this.freeHead != 0 {
+			index := this.freeHead
+			this.freeHead = this.nodes[index].next
+			this.nodes[index] = node
+			return index
+		}
+
+		if len(this.nodes) == 0 {
+			var sentinel listNode[T]
+			this.nodes = append(this.nodes, sentinel)
+		}
+		this.nodes = append(this.nodes, node)
+		return len(this.nodes) - 1
+	}
+
+	func release(index int) T {
+		value := this.nodes[index].value
+		var zero T
+		this.nodes[index].value = zero
+		this.nodes[index].previous = 0
+		this.nodes[index].next = this.freeHead
+		this.freeHead = index
+		this.size--
+		return value
+	}
+
+	func PushFront(value T) {
+		index := this.allocate(value, 0, this.head)
+		if this.head == 0 {
+			this.tail = index
+		} else {
+			this.nodes[this.head].previous = index
+		}
+		this.head = index
+		this.size++
+	}
+
+	func PushBack(value T) {
+		index := this.allocate(value, this.tail, 0)
+		if this.tail == 0 {
+			this.head = index
+		} else {
+			this.nodes[this.tail].next = index
+		}
+		this.tail = index
+		this.size++
+	}
+
+	func PopFront() (T, bool) {
+		if this.head == 0 {
+			var zero T
+			return zero, false
+		}
+		index := this.head
+		next := this.nodes[index].next
+		this.head = next
+		if next == 0 {
+			this.tail = 0
+		} else {
+			this.nodes[next].previous = 0
+		}
+		return this.release(index), true
+	}
+
+	func PopBack() (T, bool) {
+		if this.tail == 0 {
+			var zero T
+			return zero, false
+		}
+		index := this.tail
+		previous := this.nodes[index].previous
+		this.tail = previous
+		if previous == 0 {
+			this.head = 0
+		} else {
+			this.nodes[previous].next = 0
+		}
+		return this.release(index), true
+	}
+
+	func Front() (T, bool) {
+		if this.head == 0 {
+			var zero T
+			return zero, false
+		}
+		return this.nodes[this.head].value, true
+	}
+
+	func Back() (T, bool) {
+		if this.tail == 0 {
+			var zero T
+			return zero, false
+		}
+		return this.nodes[this.tail].value, true
+	}
+
+	func Len() int {
+		return this.size
+	}
+
+	func IsEmpty() bool {
+		return this.size == 0
+	}
+
+	func Clear() {
+		this.nodes = nil
+		this.head = 0
+		this.tail = 0
+		this.freeHead = 0
+		this.size = 0
+	}
+
+	func Values() []T {
+		values := make([]T, 0, this.size)
+		for index := this.head; index != 0; index = this.nodes[index].next {
+			values = append(values, this.nodes[index].value)
+		}
+		return values
+	}
+}
+
+// PriorityQueue is a typed binary heap ordered by its less function.
+// Construct it with NewPriorityQueue; its zero value is not usable.
+class PriorityQueue[T] {
+	items []T
+	less func(T, T) bool
+
+	func Push(value T) {
+		this.items = append(this.items, value)
+		this.siftUp(len(this.items) - 1)
+	}
+
+	func Pop() (T, bool) {
+		if len(this.items) == 0 {
+			var zero T
+			return zero, false
+		}
+
+		value := this.items[0]
+		last := len(this.items) - 1
+		lastValue := this.items[last]
+		var zero T
+		this.items[last] = zero
+		this.items = this.items[:last]
+		if len(this.items) > 0 {
+			this.items[0] = lastValue
+			this.siftDown(0)
+		}
+		return value, true
+	}
+
+	func Peek() (T, bool) {
+		if len(this.items) == 0 {
+			var zero T
+			return zero, false
+		}
+		return this.items[0], true
+	}
+
+	func Len() int {
+		return len(this.items)
+	}
+
+	func IsEmpty() bool {
+		return len(this.items) == 0
+	}
+
+	func Clear() {
+		this.items = nil
+	}
+
+	func siftUp(index int) {
+		for index > 0 {
+			parent := (index - 1) / 2
+			if !this.less(this.items[index], this.items[parent]) {
+				return
+			}
+			this.items[index], this.items[parent] = this.items[parent], this.items[index]
+			index = parent
+		}
+	}
+
+	func siftDown(index int) {
+		for {
+			left := index*2 + 1
+			if left >= len(this.items) {
+				return
+			}
+			higher := left
+			right := left + 1
+			if right < len(this.items) && this.less(this.items[right], this.items[left]) {
+				higher = right
+			}
+			if !this.less(this.items[higher], this.items[index]) {
+				return
+			}
+			this.items[index], this.items[higher] = this.items[higher], this.items[index]
+			index = higher
+		}
+	}
+}
+
+func NewPriorityQueue[T](less func(T, T) bool) *PriorityQueue[T] {
+	if less == nil {
+		panic("gpp/container: priority queue comparator is nil")
+	}
+	var queue PriorityQueue[T]
+	queue.items = []T{}
+	queue.less = less
+	return &queue
+}

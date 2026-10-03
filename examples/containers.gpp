@@ -1,0 +1,47 @@
+// Run with: gpp run examples/containers.gpp
+import (
+	"fmt"
+	ctr "gpp/container"
+)
+
+func main() {
+	var tags ctr.Set[string]
+	tags.Add("go")
+	tags.Add("typed")
+	tags.Add("go")
+	fmt.Println("set has go:", tags.Contains("go"), "size:", tags.Len())
+
+	var undo ctr.Stack[string]
+	undo.Push("edit config")
+	undo.Push("add route")
+	lastAction, hasAction := undo.Pop()
+	fmt.Println("stack:", lastAction, hasAction)
+
+	var jobs ctr.Queue[string]
+	jobs.Enqueue("compile")
+	jobs.Enqueue("package")
+	firstJob, hasJob := jobs.Dequeue()
+	fmt.Println("queue:", firstJob, hasJob)
+
+	var recent ctr.Deque[string]
+	recent.PushFront("newest")
+	recent.PushBack("oldest")
+	newest, hasNewest := recent.PopFront()
+	oldest, hasOldest := recent.PopBack()
+	fmt.Println("deque:", newest, hasNewest, oldest, hasOldest)
+
+	var history ctr.List[string]
+	history.PushBack("created")
+	history.PushBack("validated")
+	history.PushFront("received")
+	fmt.Println("list:", history.Values())
+
+	priorities := ctr.NewPriorityQueue[int](func(left, right int) bool {
+		return left < right
+	})
+	priorities.Push(8)
+	priorities.Push(3)
+	priorities.Push(5)
+	firstPriority, hasPriority := priorities.Pop()
+	fmt.Println("priority queue:", firstPriority, hasPriority)
+}

@@ -26,7 +26,7 @@ func EmbeddedStdlibAvailable() bool {
 // OfficialStdlibPackages returns the compiler-shipped Go++ package paths that
 // can be inspected by source-level tooling such as `gpp doc`.
 func OfficialStdlibPackages() []string {
-	return []string{"gpp/cron", "gpp/encoding", "gpp/http", "gpp/orm", "gpp/test", "gpp/tpl"}
+	return []string{"gpp/container", "gpp/cron", "gpp/encoding", "gpp/http", "gpp/orm", "gpp/test", "gpp/tpl"}
 }
 
 // LoadOfficialPackage exposes the embedded source model to documentation and
@@ -79,7 +79,7 @@ func appendOfficialStdlib(program *Program) error {
 }
 
 func loadOfficialPackage(importPath string) ([]*File, error) {
-	if importPath != "gpp/cron" && importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" && importPath != "gpp/test" && importPath != "gpp/tpl" {
+	if importPath != "gpp/container" && importPath != "gpp/cron" && importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/encoding" && importPath != "gpp/test" && importPath != "gpp/tpl" {
 		return nil, fmt.Errorf("official package %q is not bundled with this compiler", importPath)
 	}
 

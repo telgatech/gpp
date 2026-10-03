@@ -15,6 +15,7 @@ before each docs development or production build.
 - [Formatting](./specifications/fmt)
 - [Type resolver](./specifications/type-resolver)
 - [Generic Go++ classes](./specifications/generic-classes)
+- [Generic containers](./specifications/std.container)
 
 ## Core features
 

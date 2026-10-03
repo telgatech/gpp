@@ -9,6 +9,7 @@ Each entry now has its own guide with an introduction, the problem it addresses,
 | Entry | What it helps with |
 | --- | --- |
 | [Prelude](/guide/standard-library/prelude) | Everyday operations available without an import |
+| [Containers](/guide/standard-library/containers) | Typed sets, stacks, queues, deques, lists, and priority queues |
 | [Cron](/guide/standard-library/cron) | Schedule annotated functions with explicit startup and shutdown |
 | [ORM](/guide/standard-library/orm) | Map annotated Go++ models onto `database/sql` |
 | [HTTP](/guide/standard-library/http) | Build servers and routes from classes and annotations |

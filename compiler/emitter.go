@@ -117,6 +117,7 @@ type constructorContext struct {
 	Introspection              *introspectionContext
 	Extensions                 []extensionMethod
 	PreludeExtensions          []extensionMethod
+	PreludeExtensionsNeeded    map[string]bool
 	PreludeImports             []string
 	EmitPrelude                bool
 	EmitPreludeAll             bool

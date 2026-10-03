@@ -129,15 +129,18 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	introspectionContexts := map[string]*introspectionContext{}
 	exceptionContexts := map[string]*exceptionContext{}
 	preludeEmitted := map[string]bool{}
-	preludeNeeded := map[string]bool{}
+	preludeExtensionsNeeded := map[string]map[string]bool{}
 	if !options.NoPrelude {
 		for _, file := range program.Files {
-			used, err := preludeUsedInFile(file)
+			used, err := preludeExtensionsUsedInFile(file)
 			if err != nil {
 				return err
 			}
-			if used {
-				preludeNeeded[file.Package] = true
+			if preludeExtensionsNeeded[file.Package] == nil {
+				preludeExtensionsNeeded[file.Package] = map[string]bool{}
+			}
+			for name := range used {
+				preludeExtensionsNeeded[file.Package][name] = true
 			}
 		}
 	}
@@ -182,7 +185,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 		if !options.NoPrelude {
 			context.EmitPrelude = !preludeEmitted[file.Package]
-			context.EmitPreludeAll = context.EmitPrelude && preludeNeeded[file.Package]
+			context.PreludeExtensionsNeeded = preludeExtensionsNeeded[file.Package]
 			preludeEmitted[file.Package] = true
 			if err := configurePrelude(&context, context.EmitPrelude); err != nil {
 				return fmt.Errorf("%s: %w", file.Name, err)

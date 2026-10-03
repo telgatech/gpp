@@ -26,6 +26,8 @@ The examples cover:
   multi-parameter `Pair[A, B]`, explicit type arguments, and methods whose
   fields and signatures use those parameters; also generic free and static
   functions.
+- `containers.gpp` — typed `Set`, `Stack`, `Queue`, `Deque`, `List`, and
+  comparator-based `PriorityQueue` from the bundled `gpp/container` package.
 - `static_methods.gpp` — class-qualified factory and parsing methods.
 - `inheritance.gpp` — multiple inheritance, embedded parents, and qualified
   parent access.

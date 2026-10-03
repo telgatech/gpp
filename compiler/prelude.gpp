@@ -164,7 +164,10 @@ class Pair[A, B] {
 		}
 		result := make([]Pair[T, U], 0, length)
 		for index := 0; index < length; index++ {
-			result = append(result, Pair[T, U](First: this[index], Second: other[index]))
+			var pair Pair[T, U]
+			pair.First = this[index]
+			pair.Second = other[index]
+			result = append(result, pair)
 		}
 		return result
 	}

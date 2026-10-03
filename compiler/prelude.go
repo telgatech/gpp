@@ -82,8 +82,27 @@ func emitPreludeExtensions(context constructorContext, body string) (string, err
 	}
 	bodyTokens, _ := LexSource("generated prelude", body)
 	var out strings.Builder
+	needsZip := context.EmitPreludeAll
+	if context.PreludeExtensionsNeeded != nil {
+		needsZip = context.PreludeExtensionsNeeded["Zip"]
+	} else if !needsZip {
+		needsZip = containsExtensionSelectorTokens(bodyTokens, "Zip")
+		for _, extension := range context.PreludeExtensions {
+			if extension.Method.Name == "Zip" && tokenSequence(bodyTokens, extension.GoName, "(") {
+				needsZip = true
+				break
+			}
+		}
+	}
+	if needsZip {
+		out.WriteString("type Pair[A, B any] struct {\n\tFirst A\n\tSecond B\n}\n")
+	}
 	for _, extension := range context.PreludeExtensions {
-		if !context.EmitPreludeAll && !containsExtensionSelectorTokens(bodyTokens, extension.Method.Name) && !tokenSequence(bodyTokens, extension.GoName, "(") {
+		if context.PreludeExtensionsNeeded != nil {
+			if !context.PreludeExtensionsNeeded[extension.Method.Name] {
+				continue
+			}
+		} else if !context.EmitPreludeAll && !containsExtensionSelectorTokens(bodyTokens, extension.Method.Name) && !tokenSequence(bodyTokens, extension.GoName, "(") {
 			continue
 		}
 		if err := emitExtensionMethod(&out, extension, context, ""); err != nil {
@@ -94,9 +113,14 @@ func emitPreludeExtensions(context constructorContext, body string) (string, err
 }
 
 func preludeUsedInFile(file *File) (bool, error) {
+	used, err := preludeExtensionsUsedInFile(file)
+	return len(used) > 0, err
+}
+
+func preludeExtensionsUsedInFile(file *File) (map[string]bool, error) {
 	prelude, err := loadPrelude()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	names := map[string]bool{}
 	for _, declaration := range prelude.Decls {
@@ -108,6 +132,7 @@ func preludeUsedInFile(file *File) (bool, error) {
 			names[method.Name] = true
 		}
 	}
+	used := map[string]bool{}
 	for _, declaration := range file.Decls {
 		var tokenGroups [][]Token
 		switch value := declaration.(type) {
@@ -131,12 +156,12 @@ func preludeUsedInFile(file *File) (bool, error) {
 		for _, tokens := range tokenGroups {
 			for name := range names {
 				if containsExtensionSelectorTokens(tokens, name) {
-					return true, nil
+					used[name] = true
 				}
 			}
 		}
 	}
-	return false, nil
+	return used, nil
 }
 
 func containsExtensionSelectorTokens(tokens []Token, name string) bool {
