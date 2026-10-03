@@ -443,8 +443,8 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 	}
 	sort.Strings(allNames)
 	for _, template := range templates {
-		if err := validateTemplateBody(template, allNames); err != nil {
-			return "", "", fmt.Errorf("%s: %w", templateLocation(template), err)
+		if err := validateTemplateBody(template, allNames, context); err != nil {
+			return "", "", err
 		}
 	}
 
@@ -571,7 +571,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 	return imports, definitions.String(), nil
 }
 
-func validateTemplateBody(template *TemplateDecl, names []string) error {
+func validateTemplateBody(template *TemplateDecl, names []string, context constructorContext) error {
 	functions := htmltemplate.FuncMap{
 		"param": func(string) string { return "" },
 		"body":  func(...any) (string, error) { return "", nil },
@@ -579,10 +579,40 @@ func validateTemplateBody(template *TemplateDecl, names []string) error {
 	for _, name := range names {
 		functions[name] = func(...any) (string, error) { return "", nil }
 	}
-	if _, err := htmltemplate.New(template.Name).Funcs(functions).Parse(template.Body); err != nil {
-		return fmt.Errorf("invalid template body: %w", err)
+	parsed, err := htmltemplate.New(template.Name).Funcs(functions).Parse(template.Body)
+	if err != nil {
+		return templateBodyParseError(template, err)
 	}
-	return nil
+	return validateTypedTemplateBody(template, parsed.Tree.Root, context)
+}
+
+func templateBodyParseError(template *TemplateDecl, err error) error {
+	message := err.Error()
+	line := 0
+	for _, prefix := range []string{
+		"template: " + template.Name + ":",
+		"html/template: " + template.Name + ":",
+	} {
+		if !strings.HasPrefix(message, prefix) {
+			continue
+		}
+		remainder := strings.TrimSpace(strings.TrimPrefix(message, prefix))
+		lineText, detail, ok := strings.Cut(remainder, ":")
+		if !ok {
+			break
+		}
+		if parsedLine, parseErr := strconv.Atoi(strings.TrimSpace(lineText)); parseErr == nil {
+			line = parsedLine
+			message = strings.TrimSpace(detail)
+		}
+		break
+	}
+	if line > 0 {
+		line = template.BodySpan.Line + line - 1
+	} else {
+		line = template.SourceLine
+	}
+	return sourceLineError(Span{Line: line}, fmt.Errorf("invalid template body: %s", message))
 }
 
 func templateUsedAsLayout(name string, templates map[string]*TemplateDecl) bool {

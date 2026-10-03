@@ -5,14 +5,24 @@ import (
 	"strings"
 )
 
+class Author {
+    Name string
+}
+
 class Post {
     ID int
     Title string
+    Author Author
+    Tags []string
 }
 
 template PostCard(post Post) @{tpl.Path("/posts/{id}")} {
     <article data-id="{{param "id"}}">
         <h1>{{.Title}}</h1>
+        <p>By {{.Author.Name}}</p>
+        {{if .Tags}}
+        <ul>{{range .Tags}}<li>{{.}}</li>{{end}}</ul>
+        {{end}}
     </article>
 }
 
@@ -33,7 +43,12 @@ template Page(post Post): Layout {
 }
 
 func main() {
-    post := Post(ID: 42, Title: "Embedded templates")
+    post := Post(
+        ID: 42,
+        Title: "Embedded templates",
+        Author: Author(Name: "Ada"),
+        Tags: []string{"Go++", "templates"},
+    )
 
     var output bytes.Buffer
     tpl.PostCard(&output, post)
@@ -49,6 +64,6 @@ func main() {
     fmt.Print(output.String())
 
     output.Reset()
-	 tpl.Execute(&output, "<strong>{{{{upper .}}}}</strong>", "ad-hoc template")
+	tpl.Execute(&output, "<strong>{{{{upper .}}}}</strong>", "ad-hoc template")
     fmt.Print(output.String())
 }

@@ -441,7 +441,6 @@ func main() {
         db = sql.Open("sqlite", ":memory:")
         db.SetMaxOpenConns(1)
         db.SetMaxIdleConns(1)
-        db = db
         db.Exec(`
 			CREATE TABLE IF NOT EXISTS todos (
 				id INTEGER PRIMARY KEY,
@@ -456,10 +455,6 @@ func main() {
         app := TodoApp()
         app.Listen()
     } catch err {
-        if errors.Is(err, cron.ErrInvalidSchedule) {
-            fmt.Println("todo cron: invalid schedule")
-        } else if err != stdhttp.ErrServerClosed {
-            fmt.Println("todo app:", err)
-        }
+        fmt.Println("todo app:", err)
     }
 }

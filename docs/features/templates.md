@@ -20,10 +20,15 @@ tpl.Welcome(&output, "Ada")
 
 This makes the boundary between application data and presentation visible in
 the source. Go++ checks direct calls to the generated renderer against the
-declared argument count and types. The compiler also parses the body using
-`html/template`, but it does not yet verify that body expressions such as
-`.Title` exist on the declared data type. Those data-access errors are found
-when the template runs; checking them statically is planned.
+declared argument count and types. It also checks template field and method
+accesses when their types are known, including accesses inside `if`, `with`,
+and `range` blocks. For example, if `post` has type `Post`, an access to
+`.MissingField` is reported while compiling.
+
+The checker follows known Go++ classes and imported Go types. Values typed as
+`any` or an interface, and values returned by dynamically typed template
+functions, remain runtime checks because their concrete types are not known at
+compile time. Template parsing and rendering still use `html/template`.
 
 ## Compare string assembly with templates
 

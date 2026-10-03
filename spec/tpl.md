@@ -397,13 +397,13 @@ Therefore:
 
 can remain valid standard Go-template command syntax.
 
-Go++ may then add semantic validation over the parsed template AST to ensure that known template calls are compatible with declared signatures.
+Go++ validates known template calls over the parsed template AST against their declared signatures.
 
 ---
 
 # 10. Compile-Time Template Call Validation
 
-Where enough type information is statically available, Go++ should validate calls between compile-time-known templates.
+Where enough type information is statically available, Go++ validates calls between compile-time-known templates.
 
 For example:
 
@@ -429,7 +429,11 @@ template Post expects Post
 current value has type User
 ```
 
-This validation is an additional Go++ layer over the standard template AST.
+This validation is an additional Go++ layer over the standard template AST. The compiler also checks known field and method accesses against the current dot type. It tracks dot through `with` and `range`, and tracks declared template variables. A missing member on a statically known type is a compile-time diagnostic.
+
+The checker follows Go++ class fields and methods, inherited class members, and imported Go types whose definitions are available through Go's type importer. Multiple template parameters are exposed to the checker as named fields, matching the template data map generated for execution.
+
+The check is limited by dynamic values. Accesses through `any`, interfaces, unresolved local Go types, and results from runtime-registered template functions are not statically verified. Standard `html/template` parsing and runtime checks still apply to those expressions; Go++ does not claim that every possible runtime template failure is eliminated.
 
 It should not require replacing Go's parser.
 
