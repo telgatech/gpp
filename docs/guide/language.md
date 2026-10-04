@@ -159,7 +159,7 @@ code where repeated propagation obscures the main path:
 try {
     data := os.ReadFile("config.json")
     fmt.Println(len(data))
-} catch *os.PathError e {
+} catch os.PathError e {
     fmt.Println("missing:", e.Path)
 } catch e {
     fmt.Println("failed:", e)

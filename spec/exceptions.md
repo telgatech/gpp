@@ -739,9 +739,16 @@ catch ValidationError e {
 }
 ```
 
-conceptually performs a type assertion/type switch against the wrapped `error`.
+performs a type assertion/type switch against the wrapped `error`. A bare
+named catch type matches both its value and pointer forms when each implements
+`error`. For example, `catch os.PathError` catches a `*os.PathError`, even
+though only the pointer form implements `error`.
 
-Pointer/value matching should follow ordinary Go rules.
+The thrown value is preserved. The compiler generates a match branch for each
+eligible form, and the catch variable has that branch's concrete Go type. The
+catch body must therefore compile for every form matched by the clause. Writing
+`catch *os.PathError` does not narrow the match to pointers; it still catches
+the error type regardless of representation.
 
 ---
 

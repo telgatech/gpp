@@ -39,7 +39,7 @@ func ShowGreeting(path string) {
     try {
         greeting := ReadGreeting(path)
         fmt.Println(greeting)
-    } catch *os.PathError e {
+    } catch os.PathError e {
         fmt.Printf("Could not read %s: %v\n", e.Path, e)
     } catch e {
         fmt.Println("Could not show greeting:", e)
@@ -55,8 +55,9 @@ Read it in order:
    continues to `fmt.Println(greeting)`.
 2. If file reading fails, Go++ sees the omitted trailing `error` and transfers
    control out of the rest of the `try` block.
-3. The first compatible `catch` handles the failure. A path error matches
-   `*os.PathError`; any other Go++-thrown error reaches the catch-all `catch e`.
+3. The first compatible `catch` handles the failure. `catch os.PathError` matches
+   the path error whether represented as `os.PathError` or `*os.PathError`; any
+   other Go++-thrown error reaches the catch-all `catch e`.
 4. `finally` runs after the `try` flow, whether it succeeded or an error was
    handled. It is a good place for cleanup that must happen either way.
 
@@ -85,7 +86,7 @@ func ShowProfile(path string) {
     try {
         profile := LoadProfile(path)
         Render(profile)
-    } catch *os.PathError e {
+    } catch os.PathError e {
         fmt.Printf("could not read %s: %v\n", e.Path, e)
     } catch e {
         fmt.Printf("could not load profile: %v\n", e)
@@ -127,7 +128,7 @@ try {
     data := os.ReadFile("settings.json")
     config := ParseConfig(data)
     Start(config)
-} catch *os.PathError e {
+} catch os.PathError e {
     fmt.Println("could not read", e.Path)
 } catch e {
     fmt.Println("configuration failed:", e)
@@ -181,7 +182,7 @@ try {
         throw errors.New("invalid input")
     }
     Save()
-} catch *os.PathError, *os.SyscallError e {
+} catch os.PathError, os.SyscallError e {
     log.Printf("filesystem error: %v", e)
 } catch e {
     log.Printf("operation failed: %v", e)
@@ -194,3 +195,8 @@ Keep explicit Go `if err != nil` handling at simple boundaries and use
 `try/catch` when several operations share meaningful recovery or cleanup logic.
 Read the [exception specification](/reference/specifications/exceptions) for
 propagation and catch matching details.
+
+A named typed catch matches both the value and pointer forms of that error type
+when each form implements `error`. The caught value keeps its original form,
+so the handler must compile for every form it can receive. Writing `*Foo` in a
+catch does not narrow it to pointers.

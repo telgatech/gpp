@@ -30,7 +30,7 @@ func main() {
     try {
         data := ReadConfig("missing-config.json")
         fmt.Println(len(data))
-    } catch *os.PathError e {
+    } catch os.PathError e {
         fmt.Println("path error:", e.Path)
     } catch e {
         fmt.Println("load error:", e)
@@ -40,13 +40,13 @@ func main() {
 
     try {
         throw ValidationError(Field: "email", Message: "invalid")
-    } catch *ValidationError e {
+    } catch ValidationError e {
         fmt.Println(e.Error())
     }
 
     try {
         throw PermissionError(Message: "permission denied")
-    } catch *ValidationError, *PermissionError e {
+    } catch ValidationError, PermissionError e {
         fmt.Println("client error:", e.Error())
     }
 

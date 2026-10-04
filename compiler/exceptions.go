@@ -421,30 +421,35 @@ func isCatchTypeName(name string, context constructorContext) bool {
 	if target, ok := context.Targets[base]; ok {
 		return classHasErrorMethod(target.Class, context, map[string]bool{})
 	}
-	parts := strings.Split(base, ".")
-	if len(parts) != 2 || context.AvailableImports == nil {
-		return false
-	}
-	importPath := context.AvailableImports[parts[0]]
-	if importPath == "" {
-		return false
-	}
-	pkg, err := importNativePackage(importPath)
-	if err != nil {
-		return false
-	}
-	typeName, ok := pkg.Scope().Lookup(parts[1]).(*types.TypeName)
+	catchType, ok := nativeCatchNamedType(base, context)
 	if !ok {
 		return false
 	}
 	errorType := types.Universe.Lookup("error").Type()
-	catchType := types.Unalias(typeName.Type())
 	if strings.HasPrefix(name, "*") {
-		if named, namedOK := catchType.(*types.Named); namedOK {
-			catchType = types.NewPointer(named)
-		}
+		return types.AssignableTo(types.NewPointer(catchType), errorType)
 	}
-	return types.AssignableTo(catchType, errorType)
+	return types.AssignableTo(catchType, errorType) || types.AssignableTo(types.NewPointer(catchType), errorType)
+}
+
+func nativeCatchNamedType(name string, context constructorContext) (types.Type, bool) {
+	parts := strings.Split(name, ".")
+	if len(parts) != 2 || context.AvailableImports == nil {
+		return nil, false
+	}
+	importPath := context.AvailableImports[parts[0]]
+	if importPath == "" {
+		return nil, false
+	}
+	pkg, err := importNativePackage(importPath)
+	if err != nil {
+		return nil, false
+	}
+	typeName, ok := pkg.Scope().Lookup(parts[1]).(*types.TypeName)
+	if !ok {
+		return nil, false
+	}
+	return types.Unalias(typeName.Type()), true
 }
 
 func isCatchErrorValue(name string, context constructorContext) bool {
@@ -515,10 +520,13 @@ func catchTypeCovers(earlier, later string, context constructorContext) bool {
 	if earlier == later || earlier == "error" {
 		return true
 	}
-	// Local class inheritance is represented in the semantic model. A later
-	// derived class is unreachable after an earlier parent catch.
 	earlierBase := strings.TrimPrefix(earlier, "*")
 	laterBase := strings.TrimPrefix(later, "*")
+	if earlierBase == laterBase {
+		// Catch clauses select the error type, regardless of whether it was
+		// thrown as a value or pointer.
+		return true
+	}
 	earlierTarget, earlierOK := context.Targets[earlierBase]
 	laterTarget, laterOK := context.Targets[laterBase]
 	if !earlierOK || !laterOK {
@@ -2742,13 +2750,13 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 				statements = append(statements, &ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: caseBody}})
 				continue
 			}
-			typeCases := make([]ast.Expr, 0, len(clause.typeNodes))
+			typeCases := make([]ast.Expr, 0, len(clause.typeNodes)*2)
 			for _, typeNode := range clause.typeNodes {
-				typeExpr, err := lowerCatchTypeExpr(typeNode, context)
+				typeExprs, err := lowerCatchTypeExprs(typeNode, context)
 				if err != nil {
 					return nil, err
 				}
-				typeCases = append(typeCases, typeExpr)
+				typeCases = append(typeCases, typeExprs...)
 			}
 			catchName := identifier(fmt.Sprintf("__gppCaught%d", index))
 			if clause.variable != "" {
@@ -2765,7 +2773,7 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 					Lhs: []ast.Expr{catchName}, Tok: token.DEFINE,
 					Rhs: []ast.Expr{&ast.TypeAssertExpr{X: thrownError, Type: nil}},
 				},
-				Body: &ast.BlockStmt{List: []ast.Stmt{&ast.CaseClause{List: typeCases, Body: caseBody}}},
+				Body: &ast.BlockStmt{List: catchTypeSwitchCases(typeCases, caseBody, len(clause.typeNodes) == 1)},
 			}
 			condition := &ast.BinaryExpr{X: &ast.UnaryExpr{Op: token.NOT, X: handled}, Op: token.LAND, Y: &ast.BinaryExpr{X: thrownError, Op: token.NEQ, Y: identifier("nil")}}
 			statements = append(statements, &ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: []ast.Stmt{switchStatement}}})
@@ -2821,15 +2829,15 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 		if clause.body != nil {
 			caseBody = append(caseBody, clause.body.List...)
 		}
-		caseExprs := make([]ast.Expr, 0, len(clause.typeNodes))
+		caseExprs := make([]ast.Expr, 0, len(clause.typeNodes)*2)
 		for _, typeNode := range clause.typeNodes {
-			expression, typeErr := lowerCatchTypeExpr(typeNode, context)
+			expressions, typeErr := lowerCatchTypeExprs(typeNode, context)
 			if typeErr != nil {
 				return nil, typeErr
 			}
-			caseExprs = append(caseExprs, expression)
+			caseExprs = append(caseExprs, expressions...)
 		}
-		body = append(body, &ast.CaseClause{List: caseExprs, Body: caseBody})
+		body = append(body, catchTypeSwitchCases(caseExprs, caseBody, len(clause.typeNodes) == 1)...)
 	}
 
 	return &ast.TypeSwitchStmt{
@@ -2838,12 +2846,80 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 	}, nil
 }
 
-func lowerCatchTypeExpr(typeNode TypeNode, context constructorContext) (ast.Expr, error) {
-	transformed, ok := transformPolymorphicTypeNode(typeNode, context)
-	if !ok || transformed == nil {
-		return goTypeExpr(typeNode)
+func catchTypeSwitchCases(types []ast.Expr, body []ast.Stmt, preserveConcreteBinding bool) []ast.Stmt {
+	if preserveConcreteBinding && len(types) > 1 {
+		cases := make([]ast.Stmt, 0, len(types))
+		for _, typeExpr := range types {
+			cases = append(cases, &ast.CaseClause{List: []ast.Expr{typeExpr}, Body: body})
+		}
+		return cases
 	}
-	return goTypeExpr(transformed)
+	return []ast.Stmt{&ast.CaseClause{List: types, Body: body}}
+}
+
+func lowerCatchTypeExprs(typeNode TypeNode, context constructorContext) ([]ast.Expr, error) {
+	typeNodes, err := catchTypeAlternatives(typeNode, context)
+	if err != nil {
+		return nil, err
+	}
+	expressions := make([]ast.Expr, 0, len(typeNodes))
+	for _, candidate := range typeNodes {
+		transformed, ok := transformPolymorphicTypeNode(candidate, context)
+		if !ok || transformed == nil {
+			transformed = candidate
+		}
+		expression, typeErr := goTypeExpr(transformed)
+		if typeErr != nil {
+			return nil, typeErr
+		}
+		expressions = append(expressions, expression)
+	}
+	return expressions, nil
+}
+
+func catchTypeAlternatives(typeNode TypeNode, context constructorContext) ([]TypeNode, error) {
+	named, ok := typeNode.(*NamedType)
+	if pointer, pointerType := typeNode.(*PointerType); pointerType {
+		named, ok = pointer.Element.(*NamedType)
+		if ok {
+			typeNode = named
+		}
+	}
+	if !ok {
+		return []TypeNode{typeNode}, nil
+	}
+	name, err := typeNodeSource(typeNode)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "error" || name == "any" {
+		return []TypeNode{typeNode}, nil
+	}
+	if target, exists := context.Targets[name]; exists {
+		if classHasDerived(target.Class, target.Classes) {
+			return []TypeNode{typeNode}, nil
+		}
+		pointer := &PointerType{Element: named, SpanValue: named.SpanValue}
+		return []TypeNode{typeNode, pointer}, nil
+	}
+
+	nativeType, exists := nativeCatchNamedType(name, context)
+	if !exists {
+		return []TypeNode{typeNode}, nil
+	}
+	errorType := types.Universe.Lookup("error").Type()
+	alternatives := make([]TypeNode, 0, 2)
+	if types.AssignableTo(nativeType, errorType) {
+		alternatives = append(alternatives, typeNode)
+	}
+	if types.AssignableTo(types.NewPointer(nativeType), errorType) {
+		alternatives = append(alternatives, &PointerType{Element: named, SpanValue: named.SpanValue})
+	}
+	if len(alternatives) == 0 {
+		return []TypeNode{typeNode}, nil
+	}
+	return alternatives, nil
 }
 
 func identifier(name string) *ast.Ident {

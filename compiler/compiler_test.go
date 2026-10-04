@@ -930,11 +930,11 @@ class Post {
     Title string
 }
 
-template PathPage(post Post) @{tpl.Path("/path-view/{id}")} {
+template PathPage(post *Post) @{tpl.Path("/path-view/{id}")} {
     <h1>{{.Title}}</h1>
 }
 
-template RootPage(post Post) @{tpl.Path("/")} {
+template RootPage(post *Post) @{tpl.Path("/")} {
     <h1>{{.Title}}</h1>
 }
 
@@ -1536,7 +1536,7 @@ func Save() error {
 func main() {
     try {
         ReadName("/definitely/missing/gpp-file")
-    } catch *os.PathError e {
+    } catch os.PathError e {
         fmt.Println("path", e.Op)
     } finally {
         fmt.Println("cleanup")
@@ -1551,6 +1551,12 @@ func main() {
     try {
         throw ValidationError(Field: "email", Message: "invalid")
     } catch ValidationError e {
+        fmt.Println(e.Field)
+    }
+
+    try {
+        throw ValidationError{Field: "name", Message: "required"}
+    } catch *ValidationError e {
         fmt.Println(e.Field)
     }
 
@@ -1571,7 +1577,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("generated exception program did not run: %v\n%s", err, output)
 	}
-	expected := "path open\ncleanup\nsave failed\nemail\ntrue\n"
+	expected := "path open\ncleanup\nsave failed\nemail\nname\ntrue\n"
 	if string(output) != expected {
 		t.Fatalf("unexpected exception output:\n%s", output)
 	}
@@ -1616,14 +1622,14 @@ func main() {
     }
 
     try {
-        throw PermissionError(Message: "denied")
+        throw PermissionError{Message: "denied"}
     } catch ValidationError, PermissionError e {
         fmt.Println("client", e.Error())
     }
 
     try {
         os.ReadFile("/definitely/missing/gpp-multicatch-file")
-    } catch *os.PathError, *url.Error e {
+    } catch os.PathError, url.Error e {
         fmt.Println("native", e.Error() != "")
     }
 }

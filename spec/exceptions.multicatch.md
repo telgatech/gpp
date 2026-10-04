@@ -281,11 +281,22 @@ A `Foo` error is handled by the first clause.
 
 Typed catch matching uses the same Go++ error matching semantics as existing typed catches.
 
-Catch types preserve the Go type written in the clause. A Go++ class constructor
-call returns a pointer, so `throw Foo()` is caught by `catch *Foo`. A value
-thrown as `Foo` is caught by `catch Foo`. To accept either representation in
-one clause, list both types: `catch Foo, *Foo`. The compiler does not silently
-change a value catch type into a pointer type.
+A bare named catch type matches both its value and pointer forms when each form
+implements Go's `error` interface. For example, `catch Foo` matches a thrown
+`Foo` value and a thrown `*Foo` pointer when both implement `error`. This also
+applies to imported Go error types: `catch os.PathError` matches a thrown
+`*os.PathError`, even though `os.PathError` itself does not implement `error`.
+
+The catch does not change the thrown value. The generated match handles each
+eligible representation separately, so the catch variable retains the
+representation that was thrown. Its body must therefore be valid for every
+form matched by the clause. For example, accessing a shared field or calling
+an `Error()` method works when available on both forms. If only `*Foo`
+implements `error`, only the pointer form can match.
+
+Pointer spelling does not narrow the match: `catch *Foo` also matches either
+eligible representation of `Foo`. Writing both `Foo` and `*Foo` in one catch
+is redundant because both select the same error type.
 
 For ordinary Go errors, implementation may rely on behavior equivalent to:
 
@@ -399,7 +410,8 @@ This keeps the feature small.
 
 # 16. Single-Type Catch Variable
 
-Single-type catches retain their precise type.
+Single-type catches retain the precise Go type matched by each generated branch.
+For a bare named type, that may be either the value or pointer form.
 
 Example:
 
@@ -409,13 +421,11 @@ catch ValidationError e {
 }
 ```
 
-Here:
-
-```text
-e : ValidationError
-```
-
-so type-specific fields and methods remain available.
+If both `ValidationError` and `*ValidationError` implement `error`, the catch
+body is generated for both forms, and `e` has the corresponding concrete type
+in each branch. Operations in the body must compile for both forms. Types for
+which only the pointer implements `error` have only a pointer branch. Fields
+and methods remain available when they work on every matched form.
 
 ---
 
@@ -1185,12 +1195,14 @@ The formatter owns the final wrapping style.
 ```gpp
 try {
     data := FetchAndLoad(url)
-} catch *url.Error, *os.PathError e {
+} catch url.Error, os.PathError e {
     return TemporaryFailure(e)
 }
 ```
 
-subject to the existing native-Go typed catch semantics.
+The bare named types match their eligible value and pointer forms under Go's
+`error` method-set rules. The catch variable is `error` here because the clause
+lists multiple types.
 
 ---
 
