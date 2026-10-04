@@ -2171,7 +2171,7 @@ func useORM(exec orm.SQLExecutor) error {
         return nil
     }
     employee := Employee()
-    return db.Insert(&employee)
+    return db.Insert(employee)
 }
 
 func main() {}
@@ -2207,7 +2207,7 @@ class Person {
 	}
 	if err := os.WriteFile(userFile, []byte(`package telga.web
 
-func NewPerson() Person {
+func NewPerson() *Person {
     return Person("Bob")
 }
 `), 0644); err != nil {
@@ -2227,7 +2227,7 @@ func NewPerson() Person {
 	if !strings.Contains(string(generated), "package web") {
 		t.Fatalf("generated file has incorrect package name:\n%s", generated)
 	}
-	if !strings.Contains(string(generated), `Person{Name: "Bob"}`) {
+	if !strings.Contains(string(generated), `&Person{Name: "Bob"}`) {
 		t.Fatalf("class resolution did not lower the constructor:\n%s", generated)
 	}
 }
@@ -2387,7 +2387,7 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), `web.Person{Name: "Bob"}`) {
+	if !strings.Contains(string(generated), `&web.Person{Name: "Bob"}`) {
 		t.Fatalf("qualified constructor was not lowered:\n%s", generated)
 	}
 }
@@ -2934,7 +2934,7 @@ func TestCompileFilesSupportsImportedStaticMethods(t *testing.T) {
 class User {
     Name string
 
-    static func Guest() User {
+    static func Guest() *User {
         return User(Name: "Guest")
     }
 }

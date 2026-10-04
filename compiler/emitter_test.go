@@ -65,7 +65,7 @@ func TestEmitPositionalConstructor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), `p := Person{Name: "Bob", Age: 42}`) {
+	if !strings.Contains(string(code), `p := &Person{Name: "Bob", Age: 42}`) {
 		t.Fatalf("generated code did not contain compact construction:\n%s", code)
 	}
 }
@@ -85,7 +85,7 @@ func TestEmitNamedConstructor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), `p := Person{Name: "Bob", Age: 42}`) {
+	if !strings.Contains(string(code), `p := &Person{Name: "Bob", Age: 42}`) {
 		t.Fatalf("generated code did not contain named construction:\n%s", code)
 	}
 }
@@ -130,7 +130,7 @@ func main() {
 	if !strings.Contains(generated, "var ordinary = 7") {
 		t.Fatalf("ordinary Go declaration was not emitted from its AST:\n%s", generated)
 	}
-	if !strings.Contains(generated, `person := Person{Name: "Bob", Age: 42}`) {
+	if !strings.Contains(generated, `person := &Person{Name: "Bob", Age: 42}`) {
 		t.Fatalf("neighboring Go++ function was not lowered:\n%s", generated)
 	}
 }
@@ -288,7 +288,7 @@ func TestEmitConstructorHandlesNestedExpressions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), `p := Person{Name: makeName("Bob, Jr."), Age: add(20, 22)}`) {
+	if !strings.Contains(string(code), `p := &Person{Name: makeName("Bob, Jr."), Age: add(20, 22)}`) {
 		t.Fatalf("generated code did not preserve nested expressions:\n%s", code)
 	}
 }
@@ -451,7 +451,7 @@ func TestCompileFilesRunsGenericClass(t *testing.T) {
     }
 }
 
-func Read(box Box[int]) int {
+func Read(box *Box[int]) int {
     return box.Get()
 }
 
@@ -543,7 +543,7 @@ func main() {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), `Employee{Person: Person{Name: "Bob"}, Salary: 100}`) {
+	if !strings.Contains(string(code), `&Employee{Person: Person{Name: "Bob"}, Salary: 100}`) {
 		t.Fatalf("generated code did not initialize inherited fields:\n%s", code)
 	}
 }
@@ -575,7 +575,7 @@ func main() {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), `Employee{Person: Person{Name: "Bob"}, Salary: 100}`) {
+	if !strings.Contains(string(code), `&Employee{Person: Person{Name: "Bob"}, Salary: 100}`) {
 		t.Fatalf("generated named construction did not initialize inherited fields:\n%s", code)
 	}
 }
@@ -1716,8 +1716,8 @@ func main() {
 		"_ = f.Owner.Name",
 		"_ = f.Type.Name",
 		"_ = f.Get(employee)",
-		"f.Set(&employee, \"Alice\")",
-		"_ = f.Addr(&employee)",
+		"f.Set(employee, \"Alice\")",
+		"_ = f.Addr(employee)",
 	} {
 		if !strings.Contains(generated, expected) {
 			t.Fatalf("introspection output missing %q:\n%s", expected, code)

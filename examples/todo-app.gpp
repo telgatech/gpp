@@ -127,8 +127,8 @@ extend *sql.DB, *sql.Tx {
         return todos, err
     }
 
-    func FindTodo(id int64) (Todo, error) {
-        todo := &Todo()
+    func FindTodo(id int64) (*Todo, error) {
+        todo := Todo()
         return todo, this.Get(todo, "id = $1", id)
     }
 
@@ -137,7 +137,7 @@ extend *sql.DB, *sql.Tx {
     }
 
     func MarkTodoCompleted(id int64, completedAt int64) error {
-        todo := &Todo()
+        todo := Todo()
         if err := this.Get(todo, "id = $1", id); err != nil {
             return err
         }
@@ -147,7 +147,7 @@ extend *sql.DB, *sql.Tx {
     }
 
     func MarkTodoActive(id int64) (*Todo, error) {
-        todo := &Todo()
+        todo := Todo()
         if err := this.Get(todo, "id = $1", id); err != nil {
             return nil, err
         }
@@ -160,7 +160,7 @@ extend *sql.DB, *sql.Tx {
     }
 
     func DeleteTodo(id int64) error {
-        todo := &Todo()
+        todo := Todo()
         if err := this.Get(todo, "id = $1", id); err != nil {
             return err
         }
@@ -225,7 +225,7 @@ class TodoApp : http.Server @{
         title := strings.TrimSpace(ctx.Request.FormValue("title"))
         if title != "" {
             todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
-            db.CreateTodo(&todo)
+            db.CreateTodo(todo)
         }
         ctx.Redirect("/", 303)
         return nil
@@ -308,7 +308,7 @@ class TodoApp : http.Server @{
         http.Summary("List completed todos"),
         http.Description("Returns todos that have been marked complete."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Completed todo list", "application/json", record(Items: []Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
+        http.ResponseBody(200, "Completed todo list", "application/json", record(Items: []*Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
     } {
         todos := db.CompletedTodos()
         return ctx.JSON(TodoList{Items: todos})
@@ -333,7 +333,7 @@ class TodoApp : http.Server @{
             return ctx.JSON(400, APIError{Error: "todo title is required"})
         }
         todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
-        db.CreateTodo(&todo)
+        db.CreateTodo(todo)
         return ctx.JSON(201, todo)
     }
 

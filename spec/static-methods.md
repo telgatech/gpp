@@ -27,13 +27,13 @@ Use:
 
 ```go
 class User {
-    static func Guest() User {
+    static func Guest() *User {
         return User(
             Name: "Guest",
         )
     }
 
-    static func FromString(value string) (User, error) {
+    static func FromString(value string) (*User, error) {
         ...
     }
 }
@@ -71,7 +71,7 @@ Static method:
 
 ```go
 class User {
-    static func Guest() User {
+    static func Guest() *User {
         return User(Name: "Guest")
     }
 }
@@ -133,7 +133,7 @@ Go++:
 
 ```go
 class User {
-    static func Guest() User {
+    static func Guest() *User {
         return User(Name: "Guest")
     }
 }
@@ -297,11 +297,11 @@ Example:
 
 ```go
 class User {
-    static func Parse(value string) User {
+    static func Parse(value string) *User {
         ...
     }
 
-    static func Parse(value []byte) User {
+    static func Parse(value []byte) *User {
         ...
     }
 }
@@ -362,8 +362,8 @@ class User @{encoding.Serializable} {
 may synthesize:
 
 ```go
-static func FromJSON(data []byte) (User, error)
-static func FromYAML(data []byte) (User, error)
+static func FromJSON(data []byte) (*User, error)
+static func FromYAML(data []byte) (*User, error)
 ```
 
 Generated static methods behave exactly like explicitly written static methods.
@@ -505,13 +505,13 @@ Generate only a package-level function and class-qualified lookup metadata as ne
 class User {
     Name string
 
-    static func Guest() User {
+    static func Guest() *User {
         return User(
             Name: "Guest",
         )
     }
 
-    static func Parse(name string) User {
+    static func Parse(name string) *User {
         return User(
             Name: strings.TrimSpace(name),
         )

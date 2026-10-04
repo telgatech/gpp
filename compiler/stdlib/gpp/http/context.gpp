@@ -13,6 +13,7 @@ class Context {
 	Values map[string]any
 	Status int
 	Written bool
+	Socket *WebSocketConn
 
 	func Set(name string, value any) {
 		if this.Values == nil {

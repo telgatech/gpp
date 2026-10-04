@@ -203,6 +203,7 @@ func TestLowerTryUsesGoASTWrapper(t *testing.T) {
 		[]catchClause{{typeNodes: []TypeNode{parseTypeText("error")}, variable: "err", body: catchBody}},
 		finallyBody,
 		true,
+		constructorContext{},
 	)
 	if err != nil {
 		t.Fatal(err)

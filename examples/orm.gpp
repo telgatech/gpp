@@ -81,28 +81,28 @@ func main() {
 	`)
 
 		employee := Employee(1, "Ada Lovelace", "ada@example.com")
-		db.Insert(&employee)
+		db.Insert(employee)
 
 		second := Employee(2, "Grace Hopper", "grace@example.com")
 		tx := db.Begin()
 		defer tx.Rollback()
-		tx.Insert(&second)
+		tx.Insert(second)
 		employee.Email = " ADA@ANALYTICAL.EXAMPLE "
-		tx.Update(&employee)
+		tx.Update(employee)
 		employees := []Employee{}
 		tx.Select(&employees, "email LIKE $1", "%example.com")
 		target := Employee()
-		tx.Get(&target, "name = $1", "Ada Lovelace")
+		tx.Get(target, "name = $1", "Ada Lovelace")
 		tx.Commit()
 		fmt.Println("transaction:", len(employees), "selected, get:", target.Name)
 
 		loaded := Employee()
-		db.Get(&loaded, "id = $1", employee.Id)
+		db.Get(loaded, "id = $1", employee.Id)
 		tx = db.Begin()
 		defer tx.Rollback()
-		tx.Delete(&loaded)
+		tx.Delete(loaded)
 		tx.Commit()
-		deleted := db.Get(&loaded, "id = $1", employee.Id) == sql.ErrNoRows
+		deleted := db.Get(loaded, "id = $1", employee.Id) == sql.ErrNoRows
 
 		fmt.Println("loaded after update:", loaded.Name, loaded.Email)
 		fmt.Println("deleted:", deleted)

@@ -52,3 +52,55 @@ class App : http.Server {
 Optional hooks can run before listening, around requests, and during shutdown.
 Handlers return errors for the server boundary to handle. See the [HTTP specification](/reference/specifications/std.http)
 and [lifecycle guide](/reference/specifications/std.http.lifecycle).
+
+## WebSocket handlers
+
+Use `http.WebSocket(path)` on a handler method to accept a WebSocket connection.
+The handler owns the message loop, so local variables keep state for that
+connection:
+
+```go
+class App : http.Server {
+    func Echo(ctx *http.Context) error @{http.WebSocket("/echo")} {
+        for {
+            message, err := ctx.Socket.ReadText()
+            if err != nil {
+                return nil
+            }
+            if err := ctx.Socket.WriteText("echo: " + message); err != nil {
+                return err
+            }
+        }
+    }
+}
+```
+
+`ctx.Socket` wraps `golang.org/x/net/websocket` with text read/write and close
+helpers, and exposes the underlying connection for other operations. Each
+handler invocation belongs to one connection. Shared server fields remain
+shared across connections; store sockets there only when other work needs to
+send to clients, such as for broadcasts. See the
+[WebSocket specification](/reference/specifications/std.http.websocket).
+
+## Mount independent route groups
+
+Keep route methods on the server class, or group related handlers in a class
+marked with `http.Mountable` and mount it at one or more paths or hostnames:
+
+```go
+class BillingRoutes @{http.Mountable} {
+    func Status(ctx *http.Context) error @{http.GET("/status")} {
+        return ctx.JSON(record(Area: "billing"))
+    }
+}
+
+app := App()
+app.Mount(BillingRoutes(), "/billing", "billing.example.com")
+app.Listen()
+```
+
+`http.Mountable` is a marker annotation; no router base class is required. Path
+mounts start with `/`; host mounts use a hostname, optionally followed by a
+path. The same class instance serves every supplied address. Mount classes
+before starting the server. Server-level request hooks apply to mounted routes,
+and the server prefix is combined with the mount path and class prefix.

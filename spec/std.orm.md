@@ -292,11 +292,11 @@ extend *sql.DB, *sql.Tx {
 This allows identical code with databases and transactions:
 
 ```go
-db.Insert(&employee)
-tx.Insert(&employee)
+db.Insert(employee)
+tx.Insert(employee)
 
-db.Get(&employee, ...)
-tx.Get(&employee, ...)
+db.Get(employee, ...)
+tx.Get(employee, ...)
 ```
 
 No wrapper around `sql.DB` or `sql.Tx` should be introduced.
@@ -584,7 +584,7 @@ Typical usage:
 
 ```go
 employee := Employee(...)
-err := db.Insert(&employee)
+err := db.Insert(employee)
 ```
 
 Because `Employee` derives from `Model`, it may be passed polymorphically while retaining its concrete runtime class metadata.
@@ -917,7 +917,7 @@ class Employee : Model {
 Calling:
 
 ```go
-db.Insert(&employee)
+db.Insert(employee)
 ```
 
 must result in:
@@ -949,12 +949,12 @@ Example:
 ```go
 tx, err := db.Begin()
 
-if err := tx.Insert(&employee); err != nil {
+if err := tx.Insert(employee); err != nil {
     tx.Rollback()
     return err
 }
 
-if err := tx.Update(&other); err != nil {
+if err := tx.Update(other); err != nil {
     tx.Rollback()
     return err
 }
@@ -1031,14 +1031,14 @@ employee := Employee(
     "ada@example.com",
 )
 
-if err := db.Insert(&employee); err != nil {
+if err := db.Insert(employee); err != nil {
     return err
 }
 
 loaded := Employee()
 
 if err := db.Get(
-    &loaded,
+    loaded,
     "id = $1",
     employee.Id,
 ); err != nil {
@@ -1047,7 +1047,7 @@ if err := db.Get(
 
 loaded.Email = "new@example.com"
 
-if err := db.Update(&loaded); err != nil {
+if err := db.Update(loaded); err != nil {
     return err
 }
 
@@ -1061,7 +1061,7 @@ if err := db.Select(
     return err
 }
 
-if err := db.Delete(&loaded); err != nil {
+if err := db.Delete(loaded); err != nil {
     return err
 }
 ```

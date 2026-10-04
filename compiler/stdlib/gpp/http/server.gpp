@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/signal"
 	stdhttp "net/http"
+	gppwebsocket "golang.org/x/net/websocket"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -106,27 +108,60 @@ func gppCallError(app any, ctx *Context, code int, cause error) {
 	}
 }
 
-func gppRouteHandler(app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	handler := reflect.ValueOf(app).MethodByName(methodName)
+func gppRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	handler := reflect.ValueOf(router).MethodByName(methodName)
 	ctx := Context(Response: w, Request: r, Values: map[string]any{})
 	if !handler.IsValid() {
-		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, fmt.Errorf("route handler not found"))
+		gppCallError(app, ctx, stdhttp.StatusInternalServerError, fmt.Errorf("route handler not found"))
 		return
 	}
-	if err := gppCallHook(app, "BeforeRequest", &ctx); err != nil {
-		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, err)
+	if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 		return
 	}
-	result := handler.Call([]reflect.Value{reflect.ValueOf(&ctx)})
+	result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
 	routeErr := gppErrorResult(result)
-	afterErr := gppCallHook(app, "AfterRequest", &ctx)
+	afterErr := gppCallHook(app, "AfterRequest", ctx)
 	if routeErr != nil {
-		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, routeErr)
+		gppCallError(app, ctx, stdhttp.StatusInternalServerError, routeErr)
 		return
 	}
 	if afterErr != nil {
-		gppCallError(app, &ctx, stdhttp.StatusInternalServerError, afterErr)
+		gppCallError(app, ctx, stdhttp.StatusInternalServerError, afterErr)
 	}
+}
+
+func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	ctx := Context(Response: w, Request: r, Values: map[string]any{})
+	if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+		return
+	}
+	wsHandler := gppwebsocket.Handler(func(connection *gppwebsocket.Conn) {
+		socket := WebSocketConn(Connection: connection)
+		defer socket.Close()
+		ctx.Request = connection.Request()
+		ctx.Socket = socket
+		handler := reflect.ValueOf(router).MethodByName(methodName)
+		if !handler.IsValid() {
+			log.Printf("http: websocket handler %s not found", methodName)
+			_ = socket.Close()
+			return
+		}
+		result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
+		routeErr := gppErrorResult(result)
+		afterErr := gppCallHook(app, "AfterRequest", ctx)
+		if routeErr != nil {
+			log.Printf("http: websocket handler %s failed: %v", methodName, routeErr)
+			_ = socket.Close()
+			return
+		}
+		if afterErr != nil {
+			log.Printf("http: after-request hook failed after websocket handler %s: %v", methodName, afterErr)
+			_ = socket.Close()
+		}
+	})
+	wsHandler.ServeHTTP(w, r)
 }
 
 func gppRuntimeClass(value any) any {
@@ -176,7 +211,100 @@ func gppAnnotationArgs(owner any, name string) []any {
 	return nil
 }
 
-func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) error {
+func gppHasAnnotation(owner any, name string) bool {
+	if owner == nil {
+		return false
+	}
+	value := reflect.ValueOf(owner)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() {
+		return false
+	}
+	annotations := value.FieldByName("Annotations")
+	if !annotations.IsValid() {
+		return false
+	}
+	for index := 0; index < annotations.Len(); index++ {
+		annotation := gppReflectIndex(annotations, index)
+		annotationName := fmt.Sprint(annotation.FieldByName("Name").Interface())
+		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
+		if annotationName == name || fullName == name {
+			return true
+		}
+	}
+	return false
+}
+
+type gppHTTPMount struct {
+	Router    any
+	Addresses []string
+}
+
+func gppJoinHTTPPath(prefix string, route string) string {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	route = "/" + strings.TrimLeft(strings.TrimSpace(route), "/")
+	if prefix == "" {
+		return route
+	}
+	if route == "/" {
+		return prefix
+	}
+	return prefix + route
+}
+
+func gppParseMountAddress(address string) (string, string, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", "", fmt.Errorf("http: mount address cannot be empty")
+	}
+	if strings.HasPrefix(address, "/") {
+		return "", gppJoinHTTPPath("", address), nil
+	}
+	parts := strings.SplitN(address, "/", 2)
+	host := parts[0]
+	if strings.ContainsAny(host, " \t?#") || host == "" {
+		return "", "", fmt.Errorf("http: invalid mount host %q", host)
+	}
+	if strings.Contains(host, ":") {
+		if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+			host = parsedHost
+		} else {
+			return "", "", fmt.Errorf("http: mount hosts must be DNS names or IPv4 addresses without a port: %q", host)
+		}
+	}
+	path := ""
+	if len(parts) == 2 {
+		path = gppJoinHTTPPath("", parts[1])
+	}
+	return host, path, nil
+}
+
+func gppMuxPattern(host string, path string) string {
+	if path == "/" {
+		if host != "" {
+			return host + "/{$}"
+		}
+		return "/{$}"
+	}
+	if host != "" {
+		return host + path
+	}
+	return path
+}
+
+func gppRegisterMuxHandler(mux *stdhttp.ServeMux, pattern string, handler func(stdhttp.ResponseWriter, *stdhttp.Request)) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("http: cannot register route %q: %v", pattern, recovered)
+		}
+	}()
+	mux.HandleFunc(pattern, handler)
+	return nil
+}
+
+func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor any, prefix string, host string, fallback bool) error {
 	if descriptor == nil {
 		return nil
 	}
@@ -190,17 +318,19 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 	for index := 0; index < methods.Len(); index++ {
 		method := gppReflectIndex(methods, index)
 		methodName := fmt.Sprint(method.FieldByName("Name").Interface())
-	register := func(routePath string, httpMethod string) error {
-			path := routePath
-			if prefix != "" {
-				path = strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(path, "/")
-			}
+		register := func(routePath string, httpMethod string, websocketRoute bool) error {
+			path := gppJoinHTTPPath(prefix, routePath)
 			handler := func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				if r.Method != httpMethod {
+					w.Header().Set("Allow", httpMethod)
 					w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 					return
 				}
-				gppRouteHandler(app, methodName, w, r)
+				if websocketRoute {
+					gppWebSocketRouteHandler(router, app, methodName, w, r)
+					return
+				}
+				gppRouteHandler(router, app, methodName, w, r)
 			}
 			if path == "/" {
 				if rootHandlers[httpMethod] != nil {
@@ -229,33 +359,53 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix st
 			{annotation: "gpp.http.DELETE", method: "DELETE"},
 		} {
 			if arguments := gppAnnotationArgs(method.Interface(), route.annotation); len(arguments) > 0 {
-				if err := register(fmt.Sprint(arguments[0]), route.method); err != nil {
+				if err := register(fmt.Sprint(arguments[0]), route.method, false); err != nil {
 					return err
 				}
 			}
 		}
-	}
-	for path, handlers := range routeHandlers {
-		registeredPath := path
-		registeredHandlers := handlers
-		mux.HandleFunc(registeredPath, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-			if handler := registeredHandlers[r.Method]; handler != nil {
-				handler(w, r)
-				return
-			}
-			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
-		})
-	}
-	mux.HandleFunc("/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if r.URL.Path == "/" {
-			if handler := rootHandlers[r.Method]; handler != nil {
-				handler(w, r)
-				return
+		if arguments := gppAnnotationArgs(method.Interface(), "gpp.http.WebSocket"); len(arguments) > 0 {
+			if err := register(fmt.Sprint(arguments[0]), "GET", true); err != nil {
+				return err
 			}
 		}
-		ctx := Context(Response: w, Request: r, Values: map[string]any{})
-		gppCallError(app, &ctx, stdhttp.StatusNotFound, nil)
-	})
+	}
+	paths := make([]string, 0, len(routeHandlers))
+	for path := range routeHandlers {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		handlers := routeHandlers[path]
+		methods := make([]string, 0, len(handlers))
+		for method := range handlers {
+			methods = append(methods, method)
+		}
+		sort.Strings(methods)
+		for _, method := range methods {
+			pattern := method + " " + gppMuxPattern(host, path)
+			if err := gppRegisterMuxHandler(mux, pattern, handlers[method]); err != nil {
+				return err
+			}
+		}
+	}
+	rootMethods := make([]string, 0, len(rootHandlers))
+	for method := range rootHandlers {
+		rootMethods = append(rootMethods, method)
+	}
+	sort.Strings(rootMethods)
+	for _, method := range rootMethods {
+		pattern := method + " " + gppMuxPattern(host, "/")
+		if err := gppRegisterMuxHandler(mux, pattern, rootHandlers[method]); err != nil {
+			return err
+		}
+	}
+	if fallback {
+		return gppRegisterMuxHandler(mux, "/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			ctx := Context(Response: w, Request: r, Values: map[string]any{})
+			gppCallError(app, ctx, stdhttp.StatusNotFound, nil)
+		})
+	}
 	return nil
 }
 
@@ -336,12 +486,48 @@ type gppHTTPErrorData struct {
 
 class Server {
 	HTTPServer *stdhttp.Server
+	mounts []gppHTTPMount
 	ShutdownSetup *sync.Once
 	ShutdownLifecycle *sync.Once
 	ShutdownResult error
 	TemplateWatchStop chan struct{}
 	TemplateWatchDone chan struct{}
 	TemplateWatchOnce *sync.Once
+
+	func Mount(router any, addresses ...string) error {
+		if this.HTTPServer != nil {
+			return fmt.Errorf("http: mount routers before Serve or Listen")
+		}
+		if router == nil {
+			return fmt.Errorf("http: cannot mount a nil router")
+		}
+		descriptor := gppRuntimeClass(router)
+		if descriptor == nil {
+			return fmt.Errorf("http: mounted value must be a Go++ class")
+		}
+		if !gppHasAnnotation(descriptor, "gpp.http.Mountable") {
+			return fmt.Errorf("http: mounted class must have the http.Mountable annotation")
+		}
+		if len(addresses) == 0 {
+			return fmt.Errorf("http: Mount requires at least one address")
+		}
+		for _, address := range addresses {
+			if _, _, err := gppParseMountAddress(address); err != nil {
+				return err
+			}
+		}
+		routerValue := reflect.ValueOf(router)
+		if routerValue.Kind() != reflect.Pointer {
+			routerPointer := reflect.New(routerValue.Type())
+			routerPointer.Elem().Set(routerValue)
+			router = routerPointer.Interface()
+		}
+		this.mounts = append(this.mounts, gppHTTPMount{
+			Router: router,
+			Addresses: append([]string{}, addresses...),
+		})
+		return nil
+	}
 
 	func SetupShutdownHandler() {
 		app := any(this)
@@ -458,16 +644,45 @@ class Server {
 		if args := gppAnnotationArgs(descriptor, "gpp.http.Files"); len(args) > 1 {
 			path := fmt.Sprint(args[0])
 			directory := fmt.Sprint(args[1])
-			mux.Handle(path, stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory))))
+			fileServer := stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory)))
+			if err := gppRegisterMuxHandler(mux, path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+				fileServer.ServeHTTP(w, r)
+			}); err != nil {
+				_ = listener.Close()
+				return err
+			}
 		}
 		oauthEngine, oauthErr := gppOAuthNewEngine(descriptor)
 		if oauthErr != nil {
 			_ = listener.Close()
 			return oauthErr
 		}
-		if err := gppRegisterRoutes(mux, app, descriptor, prefix); err != nil {
+		if err := gppRegisterRoutes(mux, app, app, descriptor, prefix, "", true); err != nil {
 			_ = listener.Close()
 			return err
+		}
+		for _, mount := range this.mounts {
+			mountDescriptor := gppRuntimeClass(mount.Router)
+			if mountDescriptor == nil {
+				_ = listener.Close()
+				return fmt.Errorf("http: mounted router has no Go++ class metadata")
+			}
+			routerPrefix := ""
+			if args := gppAnnotationArgs(mountDescriptor, "gpp.http.Prefix"); len(args) > 0 {
+				routerPrefix = fmt.Sprint(args[0])
+			}
+			for _, address := range mount.Addresses {
+				host, mountPath, err := gppParseMountAddress(address)
+				if err != nil {
+					_ = listener.Close()
+					return err
+				}
+				mountPrefix := gppJoinHTTPPath(gppJoinHTTPPath(prefix, mountPath), routerPrefix)
+				if err := gppRegisterRoutes(mux, mount.Router, app, mountDescriptor, mountPrefix, host, false); err != nil {
+					_ = listener.Close()
+					return err
+				}
+			}
 		}
 		if err := gppRegisterOAuthRoutes(mux, app, descriptor, prefix, oauthEngine); err != nil {
 			_ = listener.Close()

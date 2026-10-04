@@ -121,6 +121,11 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		if err := ensureGoModule(outputDir, options.ModulePath); err != nil {
 			return err
 		}
+		if programUsesModule(model, "golang.org/x/net/websocket") {
+			if err := ensureGoModuleRequirement(outputDir, "golang.org/x/net", "v0.58.0"); err != nil {
+				return err
+			}
+		}
 		if err := ensureGeneratedMarker(outputDir); err != nil {
 			return err
 		}
@@ -643,6 +648,71 @@ func ensureGoModule(outputDir, modulePath string) error {
 
 	content := fmt.Sprintf("module %s\n\ngo 1.26\n", modulePath)
 	return os.WriteFile(goModPath, []byte(content), 0644)
+}
+
+func programUsesModule(model *SemanticModel, importPath string) bool {
+	if model == nil {
+		return false
+	}
+	for _, pkg := range model.Packages {
+		for _, path := range pkg.Imports {
+			if path == importPath {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ensureGoModuleRequirement(outputDir, modulePath, version string) error {
+	goModPath := filepath.Join(outputDir, "go.mod")
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		for index := range fields {
+			if fields[index] == modulePath {
+				return nil
+			}
+		}
+	}
+
+	updated := strings.TrimRight(string(content), "\n") + "\n\nrequire " + modulePath + " " + version + "\n"
+	if err := os.WriteFile(goModPath, []byte(updated), 0644); err != nil {
+		return err
+	}
+	return ensureGoModuleSums(outputDir, modulePath, version)
+}
+
+func ensureGoModuleSums(outputDir, modulePath, version string) error {
+	if modulePath != "golang.org/x/net" || version != "v0.58.0" {
+		return nil
+	}
+	goSumPath := filepath.Join(outputDir, "go.sum")
+	content, err := os.ReadFile(goSumPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	lines := strings.Split(string(content), "\n")
+	entries := []string{
+		"golang.org/x/net v0.58.0 h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=",
+		"golang.org/x/net v0.58.0/go.mod h1:YwCddHnFlT7eLQqVprV19OnhLGtc5xOKgE0RyqgfWAU=",
+	}
+	for _, entry := range entries {
+		found := false
+		for _, line := range lines {
+			if line == entry {
+				found = true
+				break
+			}
+		}
+		if !found {
+			lines = append(lines, entry)
+		}
+	}
+	return os.WriteFile(goSumPath, []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n")+"\n"), 0644)
 }
 
 func ensureGeneratedMarker(outputDir string) error {

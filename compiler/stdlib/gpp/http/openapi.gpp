@@ -204,7 +204,7 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 	}
 	if hasOpenAPI {
 		payload := append([]byte(nil), document...)
-		gppRegisterGeneratedGET(mux, app, openAPIPath, func(ctx *Context) error {
+		if err := gppRegisterGeneratedGET(mux, app, openAPIPath, func(ctx *Context) error {
 			ctx.Response.Header().Set("Content-Type", "application/json")
 			if !ctx.Written {
 				ctx.Response.WriteHeader(stdhttp.StatusOK)
@@ -213,11 +213,11 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 			}
 			_, err := ctx.Response.Write(payload)
 			return err
-		})
+		}); err != nil { return err }
 	}
 	if hasSwagger {
 		payload := gppSwaggerPage(openAPIPath, swaggerPath)
-		gppRegisterGeneratedGET(mux, app, swaggerPath, func(ctx *Context) error {
+		if err := gppRegisterGeneratedGET(mux, app, swaggerPath, func(ctx *Context) error {
 			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if !ctx.Written {
 				ctx.Response.WriteHeader(stdhttp.StatusOK)
@@ -226,9 +226,9 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 			}
 			_, err := ctx.Response.Write(payload)
 			return err
-		})
+		}); err != nil { return err }
 		if swaggerPath != "/" {
-			gppRegisterGeneratedGET(mux, app, swaggerPath+"/", func(ctx *Context) error {
+			if err := gppRegisterGeneratedGET(mux, app, swaggerPath+"/", func(ctx *Context) error {
 				ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 				if !ctx.Written {
 					ctx.Response.WriteHeader(stdhttp.StatusOK)
@@ -237,12 +237,12 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 				}
 				_, err := ctx.Response.Write(payload)
 				return err
-			})
+			}); err != nil { return err }
 		}
 		for _, asset := range gppSwaggerAssetDefinitions {
 			asset := asset
 			assetPath := strings.TrimRight(swaggerPath, "/") + "/" + asset.Name
-			gppRegisterGeneratedGET(mux, app, assetPath, func(ctx *Context) error {
+			if err := gppRegisterGeneratedGET(mux, app, assetPath, func(ctx *Context) error {
 				data, err := stdFS.ReadFile(swaggerFiles, asset.Name)
 				if err != nil {
 					return err
@@ -256,31 +256,31 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pr
 				}
 				_, err = ctx.Response.Write(data)
 				return err
-			})
+			}); err != nil { return err }
 		}
 	}
 	return nil
 }
 
-func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handler func(*Context) error) {
-	mux.HandleFunc("GET "+path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handler func(*Context) error) error {
+	return gppRegisterMuxHandler(mux, "GET "+path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if r.Method != stdhttp.MethodGet {
 			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 			return
 		}
 		ctx := Context(Response: w, Request: r, Values: map[string]any{})
-		if err := gppCallHook(app, "BeforeRequest", &ctx); err != nil {
-			gppCallError(app, &ctx, stdhttp.StatusInternalServerError, err)
+		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 			return
 		}
-		routeErr := handler(&ctx)
-		afterErr := gppCallHook(app, "AfterRequest", &ctx)
+		routeErr := handler(ctx)
+		afterErr := gppCallHook(app, "AfterRequest", ctx)
 		if routeErr != nil && !ctx.Written {
-			gppCallError(app, &ctx, stdhttp.StatusInternalServerError, routeErr)
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, routeErr)
 			return
 		}
 		if afterErr != nil && !ctx.Written {
-			gppCallError(app, &ctx, stdhttp.StatusInternalServerError, afterErr)
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, afterErr)
 		}
 	})
 }

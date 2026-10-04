@@ -35,11 +35,11 @@ transaction executor:
 
 ```go
 employee := Employee(Name: "Ada")
-db.Insert(&employee)
+db.Insert(employee)
 
 tx := db.Begin()
 defer tx.Rollback()
-tx.Insert(&employee)
+tx.Insert(employee)
 tx.Commit()
 ```
 

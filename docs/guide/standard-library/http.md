@@ -69,31 +69,73 @@ These are the annotations declared by `gpp/http`. The first group is read by the
 | `http.IP(addr)` | Server class | TCP bind address | Avoids setting up a listener just to choose the interface. |
 | `http.Port(port)` | Server class | TCP port | Avoids passing a separate address into listener setup. |
 | `http.Unix(path)` | Server class | Unix-domain socket path | Selects a local socket without writing custom `net.Listen` setup. |
-| `http.Prefix(path)` | Server class | Shared prefix for app routes | Keeps a common `/api` prefix out of every route declaration. |
+| `http.Prefix(path)` | Server or mountable class | Prefix for its routes | Keeps a common `/api` or `/v1` prefix out of every route declaration. |
+| `http.Mountable` | Class | Marks a class as eligible for `Server.Mount`. | Makes the class's annotated routes available as a reusable module. |
 | `http.GET(path)` | Handler method | GET route | Replaces explicit mux registration and keeps the route next to its handler. |
 | `http.POST(path)` | Handler method | POST route | Same route-to-method declaration for writes and submissions. |
 | `http.PUT(path)` | Handler method | PUT route | Same route-to-method declaration for full updates. |
 | `http.PATCH(path)` | Handler method | PATCH route | Same route-to-method declaration for partial updates. |
 | `http.DELETE(path)` | Handler method | DELETE route | Same route-to-method declaration for deletes. |
+| `http.WebSocket(path)` | Handler method | WebSocket endpoint that handles a GET upgrade | Sends each connection to the annotated handler method. |
 | `http.Files(path, dir)` | Server class | Static-file mount | Replaces manual `FileServer` and `StripPrefix` registration. |
 | `http.OpenAPI(path)` | Server class | Generated OpenAPI endpoint; defaults to `/openapi.json` | Avoids maintaining a separate API description and serving handler. |
 | `http.Swagger(path)` | Server class | Bundled Swagger UI; defaults to `/swagger` | Avoids adding Swagger assets, page setup, and spec-loading code. Requires `http.OpenAPI`. |
 | `http.OAuth(options...)` | Server class | OAuth/OIDC provider login and callback routes | Replaces hand-written protocol routes and state/token-exchange plumbing; the app still chooses its user and session behavior. |
 
-The package also declares the following policy and transport annotations, but the current router does not read them yet:
+The package also declares the following policy annotations, but the current router does not read them yet:
 
 | Annotation | Intended purpose | Current behavior |
 | --- | --- | --- |
-| `http.WebSocket(path)` | Mark a method as a WebSocket endpoint. | Not registered by the current route dispatcher; it does not create a WebSocket route today. |
 | `http.Auth` | Mark a server or method as requiring authentication. | Metadata only; it does not enforce authentication. |
 | `http.NoAuth` | Mark a method as exempt from inherited authentication policy. | Metadata only; it does not change routing or auth behavior. |
 | `http.Role(name)` | Declare a required role for a server or method. | Metadata only; it does not enforce role checks. |
 
-Do not rely on `Auth`, `NoAuth`, or `Role` to protect a route yet. Use implemented OAuth/OIDC sign-in plus application-owned sessions and authorization middleware or checks. Likewise, WebSocket routes need a Go HTTP integration rather than this annotation for now.
+Do not rely on `Auth`, `NoAuth`, or `Role` to protect a route yet. Use implemented OAuth/OIDC sign-in plus application-owned sessions and authorization middleware or checks.
 
 ## Routing and request context
 
 Go++ builds on `http.ServeMux` and uses standard method-and-path behavior. Path parameters are declared in the route and read by name. The context also exposes query values and the underlying Go request and response writer:
+
+## WebSocket handlers
+
+Mark a normal handler method with `http.WebSocket(path)`. The framework upgrades
+the GET request and provides `ctx.Socket`; the method owns the connection loop
+and any per-connection local state:
+
+```gpp
+class App : http.Server {
+	func Echo(ctx *http.Context) error @{http.WebSocket("/echo")} {
+		received := 0
+		for {
+			message, err := ctx.Socket.ReadText()
+			if err != nil {
+				return nil // the connection closed
+			}
+
+			received++
+			if err := ctx.Socket.WriteText(fmt.Sprintf("message %d: %s", received, message)); err != nil {
+				return err
+			}
+		}
+	}
+}
+```
+
+`ctx.Socket` provides `ReadText`, `WriteText`, and `Close`, and exposes the
+underlying `golang.org/x/net/websocket.Conn` for other operations. The framework
+closes the socket when the handler returns. Each connection runs the method
+independently, so local variables are not shared; mutable fields on the server
+instance are shared and need synchronization. Store sockets in application
+state only when other handlers or background work need to reach them, such as
+for broadcasts.
+
+WebSocket support uses `golang.org/x/net/websocket`; `gpp build` and `gpp run`
+resolve this generated Go dependency through Go modules. HTTP response helpers
+such as `ctx.Text` and `ctx.JSON` should not be used after the upgrade. The
+request hooks run before the handshake and after the handler returns. An error
+after upgrade is logged and closes the socket because an HTTP error response
+can no longer be sent. See the [WebSocket specification](/reference/specifications/std.http.websocket)
+for full lifecycle behavior.
 
 When returning a record through `ctx.JSON`, capitalize fields that should appear in the response. Go records preserve Go's export rules, and `encoding/json` omits lowercase, unexported fields.
 
@@ -111,6 +153,26 @@ class App : http.Server @{http.Prefix("/api")} {
 ```
 
 The context provides `Text`, `JSON`, `Template`, and `Redirect` response helpers. It retains `Request` and `Response` for code that needs the full `net/http` API. `Files(path, directory)` mounts a static directory, while `Prefix(path)` applies a common path prefix to application routes.
+
+## Mount route modules
+
+Keep routes on the server class for small applications. For larger services, put a related set of routes in any class marked `http.Mountable`, then mount an instance before calling `Listen` or `Serve`:
+
+```gpp
+class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
+	func Status(ctx *http.Context) error @{http.GET("/status")} {
+		return ctx.JSON(record(Area: "admin"))
+	}
+}
+
+app := App()
+app.Mount(AdminRoutes(), "/admin", "admin.example.com")
+app.Listen()
+```
+
+`http.Mountable` is a marker annotation; the class does not need to inherit from a router base type. Each mount address sends requests to the same class instance. A leading slash mounts by path; a hostname mounts by the request host, and `host/path` combines both. For the example above, the route is available at `/api/admin/v1/status` and at `admin.example.com/api/v1/status` when the server also has `http.Prefix("/api")`. Host mounts select requests by hostname; configure the listener port on `http.Server` as usual. Pass several addresses to expose a mountable class at local and deployed entry points.
+
+The server's `BeforeRequest`, `AfterRequest`, and `Error` hooks also apply to mounted routes. `http.Prefix` on the server is prepended before the mount path and the mounted class's own prefix. Mounting must happen before `Listen` or `Serve`; conflicting route patterns are reported as errors when the server is prepared. OpenAPI currently describes routes declared directly on the server class, not mounted classes.
 
 ## Bind a request body into a class
 
@@ -332,6 +394,7 @@ The UI is served locally from the Go++ package, so a service does not need to do
 ## Further reading
 
 - [HTTP specification](/reference/specifications/std.http)
+- [WebSocket handlers](/reference/specifications/std.http.websocket)
 - [Server lifecycle, middleware, and shutdown](/reference/specifications/std.http.lifecycle)
 - [OpenAPI and Swagger](/reference/specifications/openapi-swagger)
 - [OAuth/OIDC](/reference/specifications/http.oauth)

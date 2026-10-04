@@ -104,6 +104,7 @@ func ParseFile(name, src string) (*File, error) {
 				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
 			}
 			class.SourceFile = name
+			class.Owner = file
 			class.SourceLine = sourceLine(src, declarationPos)
 			class.SpanValue = sourceSpan(src, declarationPos, end)
 			class.Doc = doc

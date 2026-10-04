@@ -606,7 +606,7 @@ func lowerASTTryDirectNode(statement *TryStmt, context constructorContext, rethr
 	if err := validateCatchOrdering(clauses, context); err != nil {
 		return nil, true, err
 	}
-	lowered, err := lowerTryASTNode(tryBlock, clauses, finallyBlock, hasFinally)
+	lowered, err := lowerTryASTNode(tryBlock, clauses, finallyBlock, hasFinally, context)
 	return lowered, true, err
 }
 
@@ -673,7 +673,7 @@ func lowerASTTryCompatibilityNode(statement *TryStmt, context constructorContext
 	if err := validateCatchOrdering(clauses, context); err != nil {
 		return nil, err
 	}
-	return lowerTryASTNode(tryBlock, clauses, finallyBlock, hasFinally)
+	return lowerTryASTNode(tryBlock, clauses, finallyBlock, hasFinally, context)
 }
 
 func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]catchClause, error) {
@@ -1504,8 +1504,8 @@ func transformPolymorphicTypeNode(typeNode TypeNode, context constructorContext)
 		interfaceName := dispatchInterfaceType(target)
 		return &NamedType{Parts: strings.Split(interfaceName, ".")}, true
 	case *PointerType:
-		// Match transformPolymorphicType: pointer declarations already carry
-		// their intended representation and are not replaced by an interface.
+		// Explicit pointer declarations already carry their intended
+		// representation and are not replaced by interfaces.
 		return typeNode, true
 	case *TupleType:
 		elements := make([]TypeNode, len(value.Elements))
@@ -2628,7 +2628,7 @@ func validateFinallyControlTransfersBlock(block *BlockStmt) error {
 	return result
 }
 
-func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBlock *ast.BlockStmt, hasFinally bool) (ast.Stmt, error) {
+func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBlock *ast.BlockStmt, hasFinally bool, context constructorContext) (ast.Stmt, error) {
 	deferBody := []ast.Stmt{}
 	if hasFinally {
 		deferBody = append(deferBody, &ast.DeferStmt{Call: &ast.CallExpr{
@@ -2687,7 +2687,7 @@ func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBloc
 			}},
 		},
 	}
-	catchSwitch, err := lowerCatchSwitch(thrownError, handled, clauses)
+	catchSwitch, err := lowerCatchSwitch(thrownError, handled, clauses, context)
 	if err != nil {
 		return nil, fmt.Errorf("catch body is not valid Go after AST lowering: %w", err)
 	}
@@ -2711,7 +2711,7 @@ func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBloc
 	return run, nil
 }
 
-func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast.Stmt, error) {
+func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, context constructorContext) (ast.Stmt, error) {
 	hasValueCatch := false
 	for _, clause := range clauses {
 		if clause.value != "" {
@@ -2744,7 +2744,7 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast
 			}
 			typeCases := make([]ast.Expr, 0, len(clause.typeNodes))
 			for _, typeNode := range clause.typeNodes {
-				typeExpr, err := goTypeExpr(typeNode)
+				typeExpr, err := lowerCatchTypeExpr(typeNode, context)
 				if err != nil {
 					return nil, err
 				}
@@ -2823,7 +2823,7 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast
 		}
 		caseExprs := make([]ast.Expr, 0, len(clause.typeNodes))
 		for _, typeNode := range clause.typeNodes {
-			expression, typeErr := goTypeExpr(typeNode)
+			expression, typeErr := lowerCatchTypeExpr(typeNode, context)
 			if typeErr != nil {
 				return nil, typeErr
 			}
@@ -2836,6 +2836,14 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause) (ast
 		Assign: assign,
 		Body:   &ast.BlockStmt{List: body},
 	}, nil
+}
+
+func lowerCatchTypeExpr(typeNode TypeNode, context constructorContext) (ast.Expr, error) {
+	transformed, ok := transformPolymorphicTypeNode(typeNode, context)
+	if !ok || transformed == nil {
+		return goTypeExpr(typeNode)
+	}
+	return goTypeExpr(transformed)
 }
 
 func identifier(name string) *ast.Ident {

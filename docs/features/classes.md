@@ -73,9 +73,10 @@ class User {
 
 ## Construct values
 
-Go++ offers positional and named class construction. Positional construction
-follows declared field order; named construction can list fields in any order
-and makes call sites easier to scan when a class has several fields:
+Go++ offers positional and named class construction. These constructor calls
+return pointers to mutable class instances. Positional construction follows
+declared field order; named construction can list fields in any order and makes
+call sites easier to scan when a class has several fields:
 
 ```go
 first := User("Ada", 36)
@@ -89,7 +90,8 @@ Go++ checks the class fields and constructor argument count while compiling.
 Named fields can appear in any order; positional construction follows field
 order. A call cannot mix positional and named arguments. Ordinary Go composite
 literals remain available for interoperability and produce ordinary Go
-values:
+values. Use `*User` in an explicit type annotation when storing a constructed
+instance; `User{...}` remains a `User` value:
 
 ```go
 user := User{
@@ -191,7 +193,7 @@ next to the class without introducing a separate builder framework:
 class User {
     Name string
 
-    static func Guest() User {
+    static func Guest() *User {
         return User(Name: "Guest")
     }
 }

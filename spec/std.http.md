@@ -219,6 +219,7 @@ annotation (
     Unix(path string) on class
 
     Prefix(path string) on class
+    Mountable on class
 
     GET(path string) on method
     POST(path string) on method
@@ -235,9 +236,9 @@ annotation (
     Role(name string) on class, method
 )
 
-These annotations are library metadata.
-
-The compiler itself must not understand their HTTP meaning.
+These annotations are library metadata. The `gpp/http` runtime reads the
+annotations to register routes; the compiler itself must not implement their
+HTTP behavior.
 
 ## 9. `gpp/http.Server`
 
@@ -246,8 +247,33 @@ Conceptual API:
 class Server {
     func Listen() error
     func Serve(listener net.Listener) error
+    func Mount(mountable any, addresses ...string) error
     func Shutdown(ctx context.Context) error
 }
+
+`Mount` accepts an instance of a Go++ class marked with the `Mountable`
+annotation and one or more mount addresses. Its methods use the same HTTP
+method annotations as a `Server` subclass. `Mountable` is a marker; classes do
+not inherit from a router base type. An address may be a path prefix such as
+`/admin`, a hostname such as `admin.example.com`, or a hostname followed by a
+path. A leading slash identifies a path mount. Hostname mounts match the
+request host; the listener address and port remain configured on the server.
+
+The server's `Prefix` is applied before each mount path and the mountable
+class's own `Prefix`; route annotation paths are appended after those prefixes.
+A mountable class may be mounted at multiple addresses. Mounting must happen before `Serve` or
+`Listen`. The server's request hooks and error handler apply to mounted routes.
+Route-pattern conflicts must return an error from `Serve` instead of panicking.
+
+Methods annotated with `http.WebSocket(path)` register GET endpoints in the
+same route table. The handler receives the ordinary `*Context` with its
+`Socket` field set after the WebSocket handshake succeeds. See the
+[WebSocket specification](./std.http.websocket.md) for protocol integration,
+message helpers, and connection lifecycle behavior.
+
+OpenAPI and OAuth route generation currently use annotations on the server
+class itself. Mounted class methods are routed normally but are not included
+in the server's generated OpenAPI document.
 
 `Listen()` should introspect:
 
@@ -281,6 +307,7 @@ Conceptual:
 class Context {
     Response http.ResponseWriter
     Request *http.Request
+    Socket *WebSocketConn
 
     func Param(name string) string
     func Query(name string) string
@@ -296,6 +323,10 @@ Users should always be able to access:
 
 ctx.Request
 ctx.Response
+
+`Socket` is non-nil only while a method annotated with `http.WebSocket` is
+handling an upgraded request. See the [WebSocket specification](./std.http.websocket.md)
+for the connection API and lifecycle.
 
 ## 11. `gpp/validate`
 

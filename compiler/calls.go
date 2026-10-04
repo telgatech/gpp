@@ -1787,6 +1787,9 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 	if call == nil || call.Callee == nil {
 		return ""
 	}
+	if name, _, ok := constructorTargetForCallee(call.Callee, context); ok {
+		return "*" + name
+	}
 	if receiver, name, typeArguments, ok := extensionASTCallParts(call); ok {
 		actualType := extensionASTStaticType(receiver, context, valueTypes)
 		candidates := applicableExtensionASTs(name, actualType, call.Arguments, typeArguments, valueTypes, context)

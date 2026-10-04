@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed language specification. This document records the intended semantics
-for the next constructor change; it does not claim that the current compiler
-implements every rule below.
+Partially implemented. Constructor-style class calls now lower to pointers and
+ordinary composite literals remain values. The `init()` hook, initializer
+validation, and initializer error behavior remain proposed work; this document
+records their intended semantics.
 
 ## Goals
 
@@ -297,4 +298,3 @@ tests to settle without changing the source-level contract:
   functions;
 * how constructor overloads are represented in generated Go; and
 * the exact diagnostic wording for inaccessible or ambiguous inherited fields.
-

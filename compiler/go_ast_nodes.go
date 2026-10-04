@@ -1075,7 +1075,8 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		}
 		setConstructorASTValue(root, field.Path, field.Name, value)
 	}
-	return constructorASTLiteralExpr(name, class, root, classes, target.Qualifier), true, nil
+	value := constructorASTLiteralExpr(name, class, root, classes, target.Qualifier)
+	return &UnaryExpr{Operator: "&", Operand: value}, true, nil
 }
 
 func setConstructorASTValue(root *constructorASTLiteral, path []string, fieldName string, value ExprNode) {

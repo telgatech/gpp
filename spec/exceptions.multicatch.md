@@ -281,6 +281,12 @@ A `Foo` error is handled by the first clause.
 
 Typed catch matching uses the same Go++ error matching semantics as existing typed catches.
 
+Catch types preserve the Go type written in the clause. A Go++ class constructor
+call returns a pointer, so `throw Foo()` is caught by `catch *Foo`. A value
+thrown as `Foo` is caught by `catch Foo`. To accept either representation in
+one clause, list both types: `catch Foo, *Foo`. The compiler does not silently
+change a value catch type into a pointer type.
+
 For ordinary Go errors, implementation may rely on behavior equivalent to:
 
 ```go

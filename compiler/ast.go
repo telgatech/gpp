@@ -217,6 +217,7 @@ func (declaration *TemplateDecl) Span() Span {
 
 type ClassDecl struct {
 	Name          string
+	Owner         *File
 	TypeParamsAST []TypeParameterNode
 	Doc           string
 	SourceFile    string

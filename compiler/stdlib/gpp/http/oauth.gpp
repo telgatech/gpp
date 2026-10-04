@@ -384,8 +384,8 @@ func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pref
 		callbackPath := loginPath + "/callback"
 		if gppOpenAPIHasRoute(routes, "GET", loginPath) || gppOpenAPIHasRoute(routes, "GET", callbackPath) { return fmt.Errorf("OAuth provider %s conflicts with an existing HTTP route", name) }
 		provider := name
-		gppRegisterGeneratedGET(mux, app, loginPath, func(ctx *Context) error { return gppOAuthLogin(engine, app, provider, ctx) })
-		gppRegisterGeneratedGET(mux, app, callbackPath, func(ctx *Context) error {
+		if err := gppRegisterGeneratedGET(mux, app, loginPath, func(ctx *Context) error { return gppOAuthLogin(engine, app, provider, ctx) }); err != nil { return err }
+		if err := gppRegisterGeneratedGET(mux, app, callbackPath, func(ctx *Context) error {
 			if err := gppOAuthCallback(engine, app, provider, ctx); err != nil {
 				log.Printf("gpp/http OAuth provider %s failed: %v", provider, err)
 				if hookErr := gppOAuthInvokeError(app, ctx, provider, err); hookErr != nil { err = hookErr }
@@ -393,7 +393,7 @@ func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pref
 			}
 			if !ctx.Written { return ctx.Text("OAuth authentication succeeded") }
 			return nil
-		})
+		}); err != nil { return err }
 	}
 	return nil
 }

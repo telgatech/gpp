@@ -5,6 +5,7 @@ annotation (
 	Port(port int) on class
 	Unix(path string) on class
 	Prefix(path string) on class
+	Mountable on class
 
 	GET(path string) on method
 	POST(path string) on method

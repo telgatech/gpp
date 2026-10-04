@@ -94,10 +94,11 @@ The examples cover:
 - `mixed/` — side-by-side compilation in both directions: Go++ calling
   handwritten Go functions and handwritten Go importing generated Go++ code.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
-  annotated routes, path parameters, status-aware JSON/text/template responses,
+  annotated HTTP and WebSocket handlers, path parameters, status-aware JSON/text/template responses,
   custom error templates, request context values, lifecycle hooks, graceful
-  shutdown, configurable ports, and opt-in OpenAPI JSON plus self-contained
-  Swagger UI endpoints under the configured prefix.
+  shutdown, configurable ports, path and hostname mounts for independent route
+  classes, and opt-in OpenAPI JSON plus self-contained Swagger UI endpoints
+  under the configured prefix.
 - `oauth.gpp` — the bundled `gpp/http` OAuth/OIDC login flow with a built-in
   provider, PKCE, callback state, normalized identity, and login/error hooks.
 

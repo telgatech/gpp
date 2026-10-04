@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"go/token"
 	"strconv"
 	"strings"
 )
@@ -294,6 +295,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	if err != nil {
 		return err
 	}
+	fields = filterInaccessibleInheritedFields(class, fields)
 
 	parentNames := classParentNames(class)
 	parentReferences := make([]string, 0, len(parentNames))
@@ -378,6 +380,31 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	}
 	out.WriteString("}\n\n")
 	return nil
+}
+
+func filterInaccessibleInheritedFields(class *ClassDecl, fields []constructorField) []constructorField {
+	if class == nil || class.Owner == nil {
+		return fields
+	}
+	currentPackage := filePackageIdentity(class.Owner)
+	accessible := fields[:0]
+	for _, field := range fields {
+		if len(field.Path) > 0 && field.File != nil && !token.IsExported(field.Name) && filePackageIdentity(field.File) != currentPackage {
+			continue
+		}
+		accessible = append(accessible, field)
+	}
+	return accessible
+}
+
+func filePackageIdentity(file *File) string {
+	if file == nil {
+		return ""
+	}
+	if file.OfficialPackage != "" {
+		return file.OfficialPackage
+	}
+	return file.Package
 }
 
 type methodDescriptor struct {

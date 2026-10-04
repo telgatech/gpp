@@ -2763,7 +2763,6 @@ func transformPolymorphicType(typeName string, context constructorContext) strin
 	if !ok || !classHasDerived(target.Class, target.Classes) {
 		return typeName
 	}
-
 	return dispatchInterfaceType(target)
 }
 
@@ -3978,6 +3977,7 @@ type constructorField struct {
 	Type        string
 	Path        []string
 	Owner       string
+	File        *File
 	Annotations []AnnotationUse
 }
 
@@ -4018,6 +4018,7 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 			Type:        fieldTypeSource(field),
 			Path:        append([]string(nil), prefix...),
 			Owner:       class.Name,
+			File:        field.Owner,
 			Annotations: field.Annotations,
 		})
 	}

@@ -19,6 +19,12 @@ class HealthStatus {
     OK bool
 }
 
+class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
+    func Status(ctx *http.Context) error @{http.GET("/status")} {
+        return ctx.JSON(record(Area: "admin"))
+    }
+}
+
 class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAPI, http.Swagger} {
     func ErrorTemplate() string {
         return "ErrorPage"
@@ -46,6 +52,18 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         http.ResponseBody(200, "Service is healthy", "application/json", HealthStatus{OK: true})
     } {
         return ctx.JSON(record(OK: true))
+    }
+
+    func Echo(ctx *http.Context) error @{http.WebSocket("/ws/echo")} {
+        for {
+            message, err := ctx.Socket.ReadText()
+            if err != nil {
+                return nil
+            }
+            if err := ctx.Socket.WriteText("echo: " + message); err != nil {
+                return err
+            }
+        }
     }
 
     func Created(ctx *http.Context) error @{
@@ -85,6 +103,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
 func main() {
     try {
         app := App()
+        app.Mount(AdminRoutes(), "/admin", "admin.localhost")
         app.Listen()
     } catch err {
         if err != stdhttp.ErrServerClosed {

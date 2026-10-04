@@ -8,13 +8,13 @@ import (
 class User {
 	Name string
 
-	static func Guest() User {
+	static func Guest() *User {
 		return User(
 			Name: "Guest",
 		)
 	}
 
-	static func Parse(name string) User {
+	static func Parse(name string) *User {
 		return User(
 			Name: strings.TrimSpace(name),
 		)
