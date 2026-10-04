@@ -267,7 +267,7 @@ Route-pattern conflicts must return an error from `Serve` instead of panicking.
 
 Methods annotated with `http.WebSocket(path)` register GET endpoints in the
 same route table. The handler receives the ordinary `*Context` with its
-`Socket` field set after the WebSocket handshake succeeds. See the
+`Conn` field set after the WebSocket handshake succeeds. See the
 [WebSocket specification](./std.http.websocket.md) for protocol integration,
 message helpers, and connection lifecycle behavior.
 
@@ -307,7 +307,7 @@ Conceptual:
 class Context {
     Response http.ResponseWriter
     Request *http.Request
-    Socket *WebSocketConn
+    Conn *websocket.Conn
 
     func Param(name string) string
     func Query(name string) string
@@ -324,7 +324,7 @@ Users should always be able to access:
 ctx.Request
 ctx.Response
 
-`Socket` is non-nil only while a method annotated with `http.WebSocket` is
+`Conn` is non-nil only while a method annotated with `http.WebSocket` is
 handling an upgraded request. See the [WebSocket specification](./std.http.websocket.md)
 for the connection API and lifecycle.
 

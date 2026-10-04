@@ -3,8 +3,8 @@
 ## Status
 
 This specification defines the initial, deliberately small WebSocket API in
-`gpp/http`. It wraps `golang.org/x/net/websocket` and does not add a WebSocket
-class hierarchy or a separate connection lifecycle framework.
+`gpp/http`. It exposes `golang.org/x/net/websocket.Conn` directly and does not
+add a WebSocket class hierarchy or a separate connection lifecycle framework.
 
 ## Goals
 
@@ -50,27 +50,23 @@ message loop, connection-local state, and application-specific cleanup.
 
 ## Handler and connection API
 
-`http.Context` exposes the upgraded connection through `Socket`:
+`http.Context` exposes the upgraded connection directly through `Conn`:
 
 ```gpp
 class Context {
-    Socket *WebSocketConn
-}
-
-class WebSocketConn {
-    Connection *websocket.Conn
-
-    func ReadText() (string, error)
-    func WriteText(message string) error
-    func Close() error
+    Conn *websocket.Conn
 }
 ```
 
-`Socket` is non-nil only while an annotated WebSocket handler is running.
-`ReadText` receives one text message; `WriteText` sends one text message.
-`Connection` exposes the wrapped `golang.org/x/net/websocket.Conn` for callers
-that need functionality outside the small convenience API. `Close` closes the
-underlying connection.
+`Conn` is non-nil only while an annotated WebSocket handler is running and is
+the actual `*websocket.Conn` passed to the handler by `golang.org/x/net/websocket`.
+The `gpp/http` package adds `Read(&message)` and `Write(message)` extensions for
+strings. These call `websocket.Message.Receive` and `websocket.Message.Send`, so
+they receive and send whole text messages. The connection's native
+`Read([]byte)` and `Write([]byte)` methods remain available with their
+`io.Reader`/`io.Writer` behavior and `(n, error)` results. Use
+`websocket.Message.Receive`/`Send` directly when you need whole binary messages.
+`Conn.Close()` closes the underlying connection.
 
 The framework closes the connection after the handler returns. Handlers may
 also call `Close` explicitly. HTTP response helpers such as `Text` and `JSON`
@@ -126,14 +122,14 @@ class App : http.Server {
     func Echo(ctx *http.Context) error @{http.WebSocket("/echo")} {
         received := 0
         for {
-            message, err := ctx.Socket.ReadText()
-            if err != nil {
+            var message string
+            if err := ctx.Conn.Read(&message); err != nil {
                 return nil
             }
 
             received++
             reply := fmt.Sprintf("message %d: %s", received, message)
-            if err := ctx.Socket.WriteText(reply); err != nil {
+            if err := ctx.Conn.Write(reply); err != nil {
                 return err
             }
         }

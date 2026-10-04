@@ -101,6 +101,7 @@ type overloadContext struct {
 	MethodTypes      map[string]map[string]string
 	ClassMethods     map[string]map[string]map[int]string
 	ClassMethodTypes map[string]map[string]map[string]string
+	ClassFieldTypes  map[string]map[string]string
 	LocalTypes       map[string]string
 	CurrentClass     string
 }
@@ -199,6 +200,7 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 			MethodTypes:      map[string]map[string]string{},
 			ClassMethods:     map[string]map[string]map[int]string{},
 			ClassMethodTypes: map[string]map[string]map[string]string{},
+			ClassFieldTypes:  map[string]map[string]string{},
 		},
 		FunctionSignatures:     map[string][]callableSignature{},
 		MethodSignatures:       map[string][]callableSignature{},
@@ -220,6 +222,9 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 		typeSet := methodOverloadTypesForClass(class, classes, map[string]bool{})
 		context.Overloads.ClassMethodTypes[class.Name] = typeSet
 		context.Overloads.ClassMethodTypes["__gpp_"+class.Name] = typeSet
+		fieldTypes := classFieldTypesForClass(class, classes, map[string]bool{})
+		context.Overloads.ClassFieldTypes[class.Name] = fieldTypes
+		context.Overloads.ClassFieldTypes["__gpp_"+class.Name] = fieldTypes
 		context.ClassMethodSignatures[class.Name] = methodSignaturesForClass(
 			class,
 			classes,
@@ -1542,7 +1547,12 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	if err != nil {
 		return "", err
 	}
-	code, err = transformOverloads(code, context.Overloads)
+	// Overload resolution in a top-level function needs the function's
+	// parameter types to distinguish Go++ class receivers from unrelated Go
+	// selectors (for example, ctx.Text versus ResponseWriter.Write).
+	overloadContext := context.Overloads
+	overloadContext.LocalTypes = parameterTypeMapFromNodes(function.Method.ParameterAST)
+	code, err = transformOverloads(code, overloadContext)
 	if err != nil {
 		return "", err
 	}
@@ -2375,6 +2385,29 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 	return overloads
 }
 
+func classFieldTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string]string {
+	if class == nil || visiting[class.Name] {
+		return map[string]string{}
+	}
+	visiting[class.Name] = true
+	defer delete(visiting, class.Name)
+
+	fields := map[string]string{}
+	for _, parentName := range classParentNames(class) {
+		if parent, ok := classes[parentName]; ok {
+			for name, typeName := range classFieldTypesForClass(parent, classes, visiting) {
+				fields[name] = typeName
+			}
+		}
+	}
+	for _, field := range class.Fields {
+		if typeName := strings.TrimSpace(fieldTypeSource(field)); typeName != "" {
+			fields[field.Name] = typeName
+		}
+	}
+	return fields
+}
+
 func transformPolymorphicDeclarations(src string, context constructorContext) (string, error) {
 	if len(context.Targets) == 0 {
 		return src, nil
@@ -2960,11 +2993,11 @@ func transformOverloadsAST(src string, overloads overloadContext) (string, bool,
 	for _, body := range bodies {
 		collectOverloadStatementTypes(body.block, body.types)
 		var resolutionErr error
-		collectOverloadBodyCalls(body.block, func(call *CallExpr) {
+		collectOverloadBodyCalls(body.block, body.types, func(call *CallExpr, callTypes map[string]string) {
 			if resolutionErr != nil {
 				return
 			}
-			name, ok, err := overloadCallName(call, body.types, overloads)
+			name, ok, err := overloadCallName(call, callTypes, overloads)
 			if err != nil {
 				resolutionErr = err
 				return
@@ -2984,7 +3017,8 @@ func transformOverloadsAST(src string, overloads overloadContext) (string, bool,
 		if resolutionErr != nil {
 			return src, true, resolutionErr
 		}
-		collectOverloadTokenCalls(src, tokens, body.block, body.types, overloads, &edits)
+		tokenScopes := collectOverloadFunctionLiteralTypeScopes(tokens, body.block)
+		collectOverloadTokenCalls(src, tokens, body.block, body.types, tokenScopes, overloads, &edits)
 	}
 	sort.SliceStable(edits, func(left, right int) bool { return edits[left].start > edits[right].start })
 	for _, edit := range edits {
@@ -2993,7 +3027,69 @@ func transformOverloadsAST(src string, overloads overloadContext) (string, bool,
 	return src, true, nil
 }
 
-func collectOverloadTokenCalls(source string, tokens []Token, block *BlockStmt, types map[string]string, overloads overloadContext, edits *[]struct {
+type overloadTokenTypeScope struct {
+	start int
+	end   int
+	types map[string]string
+}
+
+// collectOverloadFunctionLiteralTypeScopes recovers receiver types from typed
+// function literals whose expression AST is incomplete, while preserving
+// their lexical scope during token-backed call resolution.
+func collectOverloadFunctionLiteralTypeScopes(tokens []Token, block *BlockStmt) []overloadTokenTypeScope {
+	if block == nil {
+		return nil
+	}
+	start, end := block.Span().Start, block.Span().End
+	scopes := []overloadTokenTypeScope{}
+	for index := 0; index+1 < len(tokens); index++ {
+		if tokens[index].Span.Start < start || tokens[index].Span.End > end || tokens[index].Text != "func" || tokens[index+1].Text != "(" {
+			continue
+		}
+		close := matchingToken(tokens, index+1, "(", ")")
+		if close < 0 {
+			continue
+		}
+		parameters, err := parseParameterInfos(expressionTokensSource(tokens[index+2 : close]))
+		if err != nil {
+			continue
+		}
+		bodyOpen := -1
+		for cursor := close + 1; cursor < len(tokens) && tokens[cursor].Span.Start < end; cursor++ {
+			if tokens[cursor].Text == "{" {
+				bodyOpen = cursor
+				break
+			}
+			if tokens[cursor].Text == ";" || tokens[cursor].Text == "=>" {
+				break
+			}
+		}
+		if bodyOpen < 0 {
+			continue
+		}
+		bodyClose := matchingToken(tokens, bodyOpen, "{", "}")
+		if bodyClose < 0 {
+			continue
+		}
+		literalTypes := map[string]string{}
+		for _, parameter := range parameters {
+			if parameter.Name == "" || parameter.TypeAST == nil {
+				continue
+			}
+			if typeName, typeErr := typeNodeSource(parameter.TypeAST); typeErr == nil {
+				literalTypes[parameter.Name] = strings.TrimSpace(typeName)
+			}
+		}
+		scopes = append(scopes, overloadTokenTypeScope{
+			start: tokens[bodyOpen].Span.Start,
+			end:   tokens[bodyClose].Span.End,
+			types: literalTypes,
+		})
+	}
+	return scopes
+}
+
+func collectOverloadTokenCalls(source string, tokens []Token, block *BlockStmt, types map[string]string, scopes []overloadTokenTypeScope, overloads overloadContext, edits *[]struct {
 	start int
 	end   int
 	text  string
@@ -3032,7 +3128,18 @@ func collectOverloadTokenCalls(source string, tokens []Token, block *BlockStmt, 
 			Arguments: arguments,
 			SpanValue: Span{Start: tokens[index].Span.Start, End: tokens[close].Span.End, Line: tokens[index].Span.Line, Column: tokens[index].Span.Column},
 		}
-		name, ok, _ := overloadCallName(call, types, overloads)
+		callTypes := cloneStringMap(types)
+		if callTypes == nil {
+			callTypes = map[string]string{}
+		}
+		for _, scope := range scopes {
+			if tokens[index].Span.Start >= scope.start && tokens[index].Span.Start < scope.end {
+				for name, typeName := range scope.types {
+					callTypes[name] = typeName
+				}
+			}
+		}
+		name, ok, _ := overloadCallName(call, callTypes, overloads)
 		if !ok || name == "" || name == tokens[index+2].Text {
 			continue
 		}
@@ -3149,66 +3256,80 @@ func collectOverloadStatementType(statement Stmt, types map[string]string) {
 	}
 }
 
-func collectOverloadBodyCalls(block *BlockStmt, visit func(*CallExpr)) {
+func collectOverloadBodyCalls(block *BlockStmt, types map[string]string, visit func(*CallExpr, map[string]string)) {
 	if block == nil {
 		return
 	}
 	for _, statement := range block.Statements {
 		walkStmtExpressions(statement, func(expression ExprNode) {
-			collectOverloadCalls(expression, visit)
+			collectOverloadCalls(expression, types, visit)
 		})
 	}
 }
 
-func collectOverloadCalls(expression ExprNode, visit func(*CallExpr)) {
+func collectOverloadCalls(expression ExprNode, types map[string]string, visit func(*CallExpr, map[string]string)) {
 	if expression == nil {
 		return
 	}
 	switch value := expression.(type) {
 	case *CallExpr:
-		visit(value)
-		collectOverloadCalls(value.Callee, visit)
+		visit(value, types)
+		collectOverloadCalls(value.Callee, types, visit)
 		for _, argument := range value.Arguments {
-			collectOverloadCalls(argument.Value, visit)
+			collectOverloadCalls(argument.Value, types, visit)
 		}
 	case *UnaryExpr:
-		collectOverloadCalls(value.Operand, visit)
+		collectOverloadCalls(value.Operand, types, visit)
 	case *BinaryExpr:
-		collectOverloadCalls(value.Left, visit)
-		collectOverloadCalls(value.Right, visit)
+		collectOverloadCalls(value.Left, types, visit)
+		collectOverloadCalls(value.Right, types, visit)
 	case *AssignmentExpr:
 		for _, expression := range value.Left {
-			collectOverloadCalls(expression, visit)
+			collectOverloadCalls(expression, types, visit)
 		}
 		for _, expression := range value.Right {
-			collectOverloadCalls(expression, visit)
+			collectOverloadCalls(expression, types, visit)
 		}
 	case *SelectorExpr:
-		collectOverloadCalls(value.Receiver, visit)
+		collectOverloadCalls(value.Receiver, types, visit)
 	case *IndexExpr:
-		collectOverloadCalls(value.Receiver, visit)
-		collectOverloadCalls(value.Index, visit)
+		collectOverloadCalls(value.Receiver, types, visit)
+		collectOverloadCalls(value.Index, types, visit)
 	case *IndexListExpr:
-		collectOverloadCalls(value.Receiver, visit)
+		collectOverloadCalls(value.Receiver, types, visit)
 		for _, index := range value.Indices {
-			collectOverloadCalls(index, visit)
+			collectOverloadCalls(index, types, visit)
 		}
 	case *ParenthesizedExpr:
-		collectOverloadCalls(value.Inner, visit)
+		collectOverloadCalls(value.Inner, types, visit)
 	case *CompositeLiteralExpr:
 		for _, element := range value.Elements {
-			collectOverloadCalls(element.Key, visit)
-			collectOverloadCalls(element.Value, visit)
+			collectOverloadCalls(element.Key, types, visit)
+			collectOverloadCalls(element.Value, types, visit)
 		}
 	case *InterpolatedStringExpr:
 		for _, segment := range value.Segments {
-			collectOverloadCalls(segment.Expression, visit)
+			collectOverloadCalls(segment.Expression, types, visit)
 		}
 	case *LambdaExpr:
-		collectOverloadCalls(value.Body, visit)
-		collectOverloadBodyCalls(value.BlockBody, visit)
+		collectOverloadCalls(value.Body, types, visit)
+		collectOverloadBodyCalls(value.BlockBody, types, visit)
 	case *FunctionLiteralExpr:
-		collectOverloadBodyCalls(value.Body, visit)
+		literalTypes := cloneStringMap(types)
+		if literalTypes == nil {
+			literalTypes = map[string]string{}
+		}
+		if value.Type != nil {
+			for _, parameter := range value.Type.Parameters {
+				if parameter.Name == "" || parameter.Type == nil {
+					continue
+				}
+				if typeName, err := typeNodeSource(parameter.Type); err == nil {
+					literalTypes[parameter.Name] = strings.TrimSpace(typeName)
+				}
+			}
+		}
+		collectOverloadBodyCalls(value.Body, literalTypes, visit)
 	}
 }
 
@@ -3361,11 +3482,16 @@ func overloadCallName(call *CallExpr, types map[string]string, overloads overloa
 	case *SelectorExpr:
 		methodSet := overloads.Methods
 		methodTypes := overloads.MethodTypes
-		if receiver, ok := function.Receiver.(*NameExpr); ok && receiver.Name != "this" {
-			typeName := strings.TrimPrefix(types[receiver.Name], "*")
-			if typeName != "" {
-				methodSet = overloads.ClassMethods[typeName]
-				methodTypes = overloads.ClassMethodTypes[typeName]
+		if receiver, ok := function.Receiver.(*NameExpr); !ok || receiver.Name != "this" {
+			typeName := overloadReceiverTypeKey(function.Receiver, types, overloads)
+			if typeName == "" {
+				return "", false, nil
+			}
+			typeName = strings.TrimPrefix(strings.TrimSpace(typeName), "*")
+			methodSet = overloads.ClassMethods[typeName]
+			methodTypes = overloads.ClassMethodTypes[typeName]
+			if methodSet == nil && methodTypes == nil {
+				return "", false, nil
 			}
 		}
 		set := methodTypes[function.Name]
@@ -3379,6 +3505,37 @@ func overloadCallName(call *CallExpr, types map[string]string, overloads overloa
 		return name, name != "", nil
 	}
 	return "", false, nil
+}
+
+func overloadReceiverTypeKey(expression ExprNode, types map[string]string, overloads overloadContext) string {
+	switch value := expression.(type) {
+	case *NameExpr:
+		if value.Name == "this" && overloads.CurrentClass != "" {
+			return "*" + overloads.CurrentClass
+		}
+		return strings.TrimSpace(types[value.Name])
+	case *SelectorExpr:
+		receiverType := overloadReceiverTypeKey(value.Receiver, types, overloads)
+		typeName := strings.TrimPrefix(strings.TrimSpace(receiverType), "*")
+		if typeName == "" {
+			return ""
+		}
+		return strings.TrimSpace(overloads.ClassFieldTypes[typeName][value.Name])
+	case *CompositeLiteralExpr:
+		name, _ := typeNodeSource(value.Type)
+		if name != "" {
+			return "*" + strings.TrimSpace(name)
+		}
+	case *CallExpr:
+		if name, ok := value.Callee.(*NameExpr); ok {
+			if overloads.ClassMethods[name.Name] != nil || overloads.ClassMethodTypes[name.Name] != nil {
+				return "*" + name.Name
+			}
+		}
+	case *ParenthesizedExpr:
+		return overloadReceiverTypeKey(value.Inner, types, overloads)
+	}
+	return ""
 }
 
 func overloadCallCalleeSpan(call *CallExpr) Span {

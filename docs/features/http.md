@@ -63,11 +63,11 @@ connection:
 class App : http.Server {
     func Echo(ctx *http.Context) error @{http.WebSocket("/echo")} {
         for {
-            message, err := ctx.Socket.ReadText()
-            if err != nil {
+            var message string
+            if err := ctx.Conn.Read(&message); err != nil {
                 return nil
             }
-            if err := ctx.Socket.WriteText("echo: " + message); err != nil {
+            if err := ctx.Conn.Write("echo: " + message); err != nil {
                 return err
             }
         }
@@ -75,11 +75,14 @@ class App : http.Server {
 }
 ```
 
-`ctx.Socket` wraps `golang.org/x/net/websocket` with text read/write and close
-helpers, and exposes the underlying connection for other operations. Each
-handler invocation belongs to one connection. Shared server fields remain
-shared across connections; store sockets there only when other work needs to
-send to clients, such as for broadcasts. See the
+`ctx.Conn` is the underlying `*websocket.Conn`. The `gpp/http` package adds
+`Read(&message)` and `Write(message)` extensions for strings; its native
+`Read([]byte)` and `Write([]byte)` methods remain available for byte I/O and
+return `(n, error)`. Use `websocket.Message.Receive` or `Send` directly when
+you need whole binary messages. Each handler invocation belongs to one
+connection. Shared server fields remain shared across connections; store
+connections there only when other work needs to send to clients, such as for
+broadcasts. See the
 [WebSocket specification](/reference/specifications/std.http.websocket).
 
 ## Mount independent route groups

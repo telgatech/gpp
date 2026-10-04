@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	stdhttp "net/http"
+	"golang.org/x/net/websocket"
 	tpl "gpp/tpl"
 )
 
@@ -13,7 +14,7 @@ class Context {
 	Values map[string]any
 	Status int
 	Written bool
-	Socket *WebSocketConn
+	Conn *websocket.Conn
 
 	func Set(name string, value any) {
 		if this.Values == nil {

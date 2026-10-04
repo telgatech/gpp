@@ -12,7 +12,7 @@ Each entry now has its own guide with an introduction, the problem it addresses,
 | [Containers](/guide/standard-library/containers) | Typed sets, stacks, queues, deques, lists, and priority queues |
 | [Cron](/guide/standard-library/cron) | Schedule annotated functions with explicit startup and shutdown |
 | [ORM](/guide/standard-library/orm) | Map annotated Go++ models onto `database/sql` |
-| [HTTP](/guide/standard-library/http) | Build servers and routes from classes and annotations |
+| [HTTP](/guide/standard-library/http) | Build servers, routes, and WebSocket handlers from classes and annotations |
 | [Encoding](/guide/standard-library/encoding/) | Encode and decode JSON, YAML, and GOB |
 | [Templates](/guide/standard-library/templates) | Render typed Go++ templates and HTTP pages |
 | [Testing](/guide/standard-library/testing) | Organize tests as suites, methods, and annotations |

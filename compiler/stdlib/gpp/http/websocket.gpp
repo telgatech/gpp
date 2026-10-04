@@ -2,22 +2,12 @@ package gpp.http
 
 import "golang.org/x/net/websocket"
 
-class WebSocketConn {
-	Connection *websocket.Conn
-
-	func ReadText() (string, error) {
-		var message string
-		if err := websocket.Message.Receive(this.Connection, &message); err != nil {
-			return "", err
-		}
-		return message, nil
+extend *websocket.Conn {
+	func Read(message *string) error {
+		return websocket.Message.Receive(this, message)
 	}
 
-	func WriteText(message string) error {
-		return websocket.Message.Send(this.Connection, message)
-	}
-
-	func Close() error {
-		return this.Connection.Close()
+	func Write(message string) error {
+		return websocket.Message.Send(this, message)
 	}
 }

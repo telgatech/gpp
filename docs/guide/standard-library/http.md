@@ -32,6 +32,18 @@ class App : http.Server @{
 	func CreateUser(ctx *http.Context) error @{http.POST("/users")} {
 		return ctx.JSON(201, record(OK: true))
 	}
+
+	func Echo(ctx *http.Context) error @{http.WebSocket("/ws/echo")} {
+		for {
+			var message string
+			if err := ctx.Conn.Read(&message); err != nil {
+				return nil
+			}
+			if err := ctx.Conn.Write("echo: " + message); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func main() {
@@ -42,11 +54,29 @@ func main() {
 
 ```go [Go]
 mux := http.NewServeMux()
-mux.Handle("GET /users/{id}", logging(authenticate(
+mux.Handle("GET /api/users/{id}", logging(authenticate(
 	http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(loadUser(r.PathValue("id")))
 	}),
 )))
+
+mux.Handle("POST /api/users", logging(authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]bool{"OK": true})
+}))))
+
+mux.Handle("GET /api/ws/echo", websocket.Handler(func(conn *websocket.Conn) {
+	var message string
+	for {
+		if err := websocket.Message.Receive(conn, &message); err != nil {
+			return
+		}
+		if err := websocket.Message.Send(conn, "echo: "+message); err != nil {
+			return
+		}
+	}
+}))
 
 server := &http.Server{Addr: ":8080", Handler: mux}
 go waitForSignalAndShutdown(server)
@@ -99,7 +129,7 @@ Go++ builds on `http.ServeMux` and uses standard method-and-path behavior. Path 
 ## WebSocket handlers
 
 Mark a normal handler method with `http.WebSocket(path)`. The framework upgrades
-the GET request and provides `ctx.Socket`; the method owns the connection loop
+the GET request and provides `ctx.Conn`; the method owns the connection loop
 and any per-connection local state:
 
 ```gpp
@@ -107,13 +137,13 @@ class App : http.Server {
 	func Echo(ctx *http.Context) error @{http.WebSocket("/echo")} {
 		received := 0
 		for {
-			message, err := ctx.Socket.ReadText()
-			if err != nil {
+			var message string
+			if err := ctx.Conn.Read(&message); err != nil {
 				return nil // the connection closed
 			}
 
 			received++
-			if err := ctx.Socket.WriteText(fmt.Sprintf("message %d: %s", received, message)); err != nil {
+			if err := ctx.Conn.Write(fmt.Sprintf("message %d: %s", received, message)); err != nil {
 				return err
 			}
 		}
@@ -121,10 +151,13 @@ class App : http.Server {
 }
 ```
 
-`ctx.Socket` provides `ReadText`, `WriteText`, and `Close`, and exposes the
-underlying `golang.org/x/net/websocket.Conn` for other operations. The framework
-closes the socket when the handler returns. Each connection runs the method
-independently, so local variables are not shared; mutable fields on the server
+`ctx.Conn` is the underlying `*websocket.Conn`. The `gpp/http` package adds
+`Read(&message)` and `Write(message)` extensions for strings; the native
+`Read([]byte)` and `Write([]byte)` methods remain available for byte I/O and
+return `(n, error)`. Use `websocket.Message.Receive` or `Send` directly when
+you need whole binary messages. The framework closes the connection when the
+handler returns. Each connection runs the method independently, so local
+variables are not shared; mutable fields on the server
 instance are shared and need synchronization. Store sockets in application
 state only when other handlers or background work need to reach them, such as
 for broadcasts.

@@ -56,11 +56,11 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
 
     func Echo(ctx *http.Context) error @{http.WebSocket("/ws/echo")} {
         for {
-            message, err := ctx.Socket.ReadText()
-            if err != nil {
+            var message string
+            if err := ctx.Conn.Read(&message); err != nil {
                 return nil
             }
-            if err := ctx.Socket.WriteText("echo: " + message); err != nil {
+            if err := ctx.Conn.Write("echo: " + message); err != nil {
                 return err
             }
         }

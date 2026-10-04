@@ -138,14 +138,13 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		return
 	}
 	wsHandler := gppwebsocket.Handler(func(connection *gppwebsocket.Conn) {
-		socket := WebSocketConn(Connection: connection)
-		defer socket.Close()
+		defer connection.Close()
 		ctx.Request = connection.Request()
-		ctx.Socket = socket
+		ctx.Conn = connection
 		handler := reflect.ValueOf(router).MethodByName(methodName)
 		if !handler.IsValid() {
 			log.Printf("http: websocket handler %s not found", methodName)
-			_ = socket.Close()
+			_ = connection.Close()
 			return
 		}
 		result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
@@ -153,12 +152,12 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		afterErr := gppCallHook(app, "AfterRequest", ctx)
 		if routeErr != nil {
 			log.Printf("http: websocket handler %s failed: %v", methodName, routeErr)
-			_ = socket.Close()
+			_ = connection.Close()
 			return
 		}
 		if afterErr != nil {
 			log.Printf("http: after-request hook failed after websocket handler %s: %v", methodName, afterErr)
-			_ = socket.Close()
+			_ = connection.Close()
 		}
 	})
 	wsHandler.ServeHTTP(w, r)

@@ -976,6 +976,14 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 				pkg.Classes,
 				map[string]bool{},
 			)
+			fieldTypes := classFieldTypesForClass(class, pkg.Classes, map[string]bool{})
+			if qualifier != "" {
+				importedTypes := map[string]map[string]bool{qualifier: pkg.Types}
+				for fieldName, typeName := range fieldTypes {
+					fieldTypes[fieldName] = qualifyImportedTypeNames(typeName, qualifier+"._", pkg.Classes, importedTypes)
+				}
+			}
+			context.Overloads.ClassFieldTypes[methodKey] = fieldTypes
 			addMethodOverload(&context.Overloads, class, key)
 		}
 		importedExtensions := extensionMethodsForDeclarations(pkg.Extensions, alias)
