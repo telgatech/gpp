@@ -22,7 +22,6 @@ The initial API does not provide:
 - `OnConnect`, `OnMessage`, or `OnDisconnect` override hooks;
 - automatic JSON message dispatch, heartbeat policy, or reconnect behavior;
 - a client-side WebSocket dialer;
-- SSE helpers.
 
 Applications may build shared connection registries when they need broadcasts.
 

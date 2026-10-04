@@ -3,6 +3,7 @@ package gpp.http
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	stdhttp "net/http"
 	"golang.org/x/net/websocket"
 	tpl "gpp/tpl"
@@ -15,6 +16,7 @@ class Context {
 	Status int
 	Written bool
 	Conn *websocket.Conn
+	SSE *SSEStream
 
 	func Set(name string, value any) {
 		if this.Values == nil {
@@ -36,6 +38,9 @@ class Context {
 	}
 
 	func commit(status int, contentType string, body []byte) error {
+		if this.SSE != nil && this.SSE.Started {
+			return fmt.Errorf("http: cannot replace an active SSE response")
+		}
 		if !this.Written {
 			this.Response.Header().Set("Content-Type", contentType)
 			this.Response.WriteHeader(status)
@@ -93,4 +98,10 @@ class Context {
 			this.Written = true
 		}
 	}
+}
+
+func gppNewContext(response stdhttp.ResponseWriter, request *stdhttp.Request) *Context {
+	ctx := Context(Response: response, Request: request, Values: map[string]any{})
+	ctx.SSE = SSEStream(Context: ctx)
+	return ctx
 }

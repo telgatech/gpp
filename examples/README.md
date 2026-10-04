@@ -99,6 +99,8 @@ The examples cover:
   shutdown, configurable ports, path and hostname mounts for independent route
   classes, and opt-in OpenAPI JSON plus self-contained Swagger UI endpoints
   under the configured prefix.
+- `sse.gpp` — a GET endpoint that streams periodic multiline events with
+  incrementing IDs and retry delay using the optional `http.SSE` marker.
 - `oauth.gpp` — the bundled `gpp/http` OAuth/OIDC login flow with a built-in
   provider, PKCE, callback state, normalized identity, and login/error hooks.
 

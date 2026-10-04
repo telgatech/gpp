@@ -33,6 +33,7 @@ before each docs development or production build.
 ## Application libraries
 
 - [HTTP](./specifications/std.http)
+- [HTTP Server-Sent Events](./specifications/std.http.sse)
 - [HTTP WebSockets](./specifications/std.http.websocket)
 - [HTTP lifecycle](./specifications/std.http.lifecycle)
 - [OAuth](./specifications/http.oauth)

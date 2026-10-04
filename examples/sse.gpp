@@ -1,0 +1,35 @@
+package main
+
+import "fmt"
+import "time"
+import http "gpp/http"
+
+class App : http.Server @{http.IP("127.0.0.1"), http.Port(8080)} {
+	func Events(ctx *http.Context) error @{
+		http.GET("/events"),
+		http.SSE
+	} {
+		retryMS := 3000
+		counter := 0
+		for {
+			counter++
+			id := "{{counter}}"
+			try {
+				ctx.SSE.Write("update {{counter}}\nstream is active", "update", &id, &retryMS)
+			} catch {
+				// A failed write means the client disconnected.
+				return nil
+			}
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+func main() {
+	try {
+		app := App()
+		app.Listen()
+	} catch err {
+		fmt.Println("SSE example:", err)
+	}
+}

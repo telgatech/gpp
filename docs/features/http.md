@@ -85,6 +85,41 @@ connections there only when other work needs to send to clients, such as for
 broadcasts. See the
 [WebSocket specification](/reference/specifications/std.http.websocket).
 
+## Server-Sent Events
+
+Use an ordinary `http.GET(path)` handler and write events through
+`ctx.SSE.Write`. The optional `http.SSE` marker makes the handler's intent
+clear in the route declaration; it does not affect routing or runtime behavior.
+Each call writes and flushes one WHATWG-formatted event, including multiline
+data and optional event name, ID, and retry delay:
+
+```go
+import "time"
+
+class App : http.Server {
+    func Events(ctx *http.Context) error @{
+        http.GET("/events"),
+        http.SSE
+    } {
+        retryMS := 3000
+        counter := 0
+        for {
+            counter++
+            id := "{{counter}}"
+            try {
+                ctx.SSE.Write("update {{counter}}\nstream is active", "update", &id, &retryMS)
+            } catch {
+                return nil // the client disconnected
+            }
+            time.Sleep(time.Second)
+        }
+    }
+}
+```
+
+SSE endpoints are typically GET routes for browser `EventSource` clients.
+See the [Server-Sent Events specification](/reference/specifications/std.http.sse).
+
 ## Mount independent route groups
 
 Keep route methods on the server class, or group related handlers in a class

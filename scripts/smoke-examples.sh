@@ -53,7 +53,7 @@ for source in examples/*.gpp; do
     example="$(basename "$source" .gpp)"
     case "$example" in
         foo.bar) continue ;;
-        http|oauth|todo-app)
+        http|oauth|sse|todo-app)
             # These examples start listeners; compile and link them here.
             build_example "$example" "$source"
             ;;

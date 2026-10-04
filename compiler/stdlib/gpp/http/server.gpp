@@ -89,6 +89,12 @@ func gppErrorTemplate(app any) string {
 }
 
 func gppCallError(app any, ctx *Context, code int, cause error) {
+	if ctx != nil && ctx.SSE != nil && ctx.SSE.Started {
+		if cause != nil {
+			log.Printf("http: handler error after SSE stream started: %v", cause)
+		}
+		return
+	}
 	handler := reflect.ValueOf(app).MethodByName("Error")
 	if !handler.IsValid() || handler.Type().NumIn() != 3 {
 		gppWriteMinimalError(ctx)
@@ -110,7 +116,7 @@ func gppCallError(app any, ctx *Context, code int, cause error) {
 
 func gppRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	handler := reflect.ValueOf(router).MethodByName(methodName)
-	ctx := Context(Response: w, Request: r, Values: map[string]any{})
+	ctx := gppNewContext(w, r)
 	if !handler.IsValid() {
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, fmt.Errorf("route handler not found"))
 		return
@@ -132,7 +138,7 @@ func gppRouteHandler(router any, app any, methodName string, w stdhttp.ResponseW
 }
 
 func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	ctx := Context(Response: w, Request: r, Values: map[string]any{})
+	ctx := gppNewContext(w, r)
 	if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 		return
@@ -401,7 +407,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 	}
 	if fallback {
 		return gppRegisterMuxHandler(mux, "/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-			ctx := Context(Response: w, Request: r, Values: map[string]any{})
+			ctx := gppNewContext(w, r)
 			gppCallError(app, ctx, stdhttp.StatusNotFound, nil)
 		})
 	}

@@ -1,0 +1,78 @@
+package gpp.http
+
+import (
+	"bytes"
+	"fmt"
+	stdhttp "net/http"
+	"strings"
+	"unicode/utf8"
+)
+
+class SSEStream {
+	Context *Context
+	Started bool
+
+	func Write(data string, event string = "", id *string = nil, retryMS *int = nil) error {
+		if this.Context == nil {
+			return fmt.Errorf("http: SSE stream is not attached to a request")
+		}
+
+		payload, err := gppEncodeSSEEvent(data, event, id, retryMS)
+		if err != nil {
+			return err
+		}
+
+		ctx := this.Context
+		if !this.Started {
+			if ctx.Written {
+				return fmt.Errorf("http: cannot start SSE after the response was written")
+			}
+			ctx.Response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			if ctx.Response.Header().Get("Cache-Control") == "" {
+				ctx.Response.Header().Set("Cache-Control", "no-cache")
+			}
+			ctx.Response.WriteHeader(stdhttp.StatusOK)
+			ctx.Status = stdhttp.StatusOK
+			ctx.Written = true
+			this.Started = true
+		}
+
+		if _, err := ctx.Response.Write(payload); err != nil {
+			return err
+		}
+		return stdhttp.NewResponseController(ctx.Response).Flush()
+	}
+}
+
+func gppEncodeSSEEvent(data string, event string, id *string, retryMS *int) ([]byte, error) {
+	if !utf8.ValidString(data) || !utf8.ValidString(event) {
+		return nil, fmt.Errorf("http: SSE fields must be valid UTF-8")
+	}
+	if strings.ContainsAny(event, "\r\n") {
+		return nil, fmt.Errorf("http: SSE event name cannot contain a line break")
+	}
+	if id != nil && (!utf8.ValidString(*id) || strings.ContainsAny(*id, "\x00\r\n")) {
+		return nil, fmt.Errorf("http: SSE id must be valid UTF-8 and cannot contain NUL or a line break")
+	}
+	if retryMS != nil && *retryMS < 0 {
+		return nil, fmt.Errorf("http: SSE retry delay cannot be negative")
+	}
+
+	var body bytes.Buffer
+	if event != "" {
+		fmt.Fprintf(&body, "event: %s\n", event)
+	}
+	if id != nil {
+		fmt.Fprintf(&body, "id: %s\n", *id)
+	}
+	if retryMS != nil {
+		fmt.Fprintf(&body, "retry: %d\n", *retryMS)
+	}
+
+	data = strings.ReplaceAll(strings.ReplaceAll(data, "\r\n", "\n"), "\r", "\n")
+	for _, line := range strings.Split(data, "\n") {
+		fmt.Fprintf(&body, "data: %s\n", line)
+	}
+	body.WriteByte('\n')
+	return body.Bytes(), nil
+}

@@ -12,7 +12,7 @@ class Team {
 	Enabled bool
 
 	func Active() []*User {
-		return this.Users.Filter((user *User) => this.Enabled && user.Active)
+		return this.Users.Filter(user => this.Enabled && user.Active)
 	}
 }
 
@@ -34,7 +34,7 @@ func main() {
 	users.Sort((left, right) => left.Name < right.Name)
 
 	var predicate func(*User) bool
-	predicate = (user *User) => user.Active
+	predicate = user => user.Active
 
 	count := 0
 	users.Any(user => {

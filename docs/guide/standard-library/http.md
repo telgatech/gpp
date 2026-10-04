@@ -107,6 +107,7 @@ These are the annotations declared by `gpp/http`. The first group is read by the
 | `http.PATCH(path)` | Handler method | PATCH route | Same route-to-method declaration for partial updates. |
 | `http.DELETE(path)` | Handler method | DELETE route | Same route-to-method declaration for deletes. |
 | `http.WebSocket(path)` | Handler method | WebSocket endpoint that handles a GET upgrade | Sends each connection to the annotated handler method. |
+| `http.SSE` | Handler method | Optional Server-Sent Events marker | Documents that a GET handler writes an event stream through `ctx.SSE`; it has no routing effect. |
 | `http.Files(path, dir)` | Server class | Static-file mount | Replaces manual `FileServer` and `StripPrefix` registration. |
 | `http.OpenAPI(path)` | Server class | Generated OpenAPI endpoint; defaults to `/openapi.json` | Avoids maintaining a separate API description and serving handler. |
 | `http.Swagger(path)` | Server class | Bundled Swagger UI; defaults to `/swagger` | Avoids adding Swagger assets, page setup, and spec-loading code. Requires `http.OpenAPI`. |
@@ -125,6 +126,45 @@ Do not rely on `Auth`, `NoAuth`, or `Role` to protect a route yet. Use implement
 ## Routing and request context
 
 Go++ builds on `http.ServeMux` and uses standard method-and-path behavior. Path parameters are declared in the route and read by name. The context also exposes query values and the underlying Go request and response writer:
+
+## Server-Sent Events
+
+Declare an ordinary GET route and write events through `ctx.SSE.Write`. The
+optional `http.SSE` marker makes the route's purpose visible in the declaration;
+it does not register the route or change runtime behavior. The writer frames
+multiline data, optional event names, IDs, and retry delays, then flushes each
+event:
+
+```gpp
+import "time"
+
+class App : http.Server {
+	func Events(ctx *http.Context) error @{
+		http.GET("/events"),
+		http.SSE
+	} {
+		retryMS := 3000
+		counter := 0
+		for {
+			counter++
+			id := "{{counter}}"
+			try {
+				ctx.SSE.Write("update {{counter}}\nstream is active", "update", &id, &retryMS)
+			} catch {
+				return nil // the client disconnected
+			}
+			time.Sleep(time.Second)
+		}
+	}
+}
+```
+
+`Write(data, event = "", id *string = nil, retryMS *int = nil)` requires the
+data string. Pass nil to omit an ID or retry field; pass a pointer to an empty
+ID to reset the client's last event ID. A retry delay below zero is rejected.
+SSE is normally a GET endpoint for browser `EventSource` clients. See the
+[Server-Sent Events specification](/reference/specifications/std.http.sse)
+and [runnable example](/examples/sse-gpp).
 
 ## WebSocket handlers
 
@@ -427,6 +467,7 @@ The UI is served locally from the Go++ package, so a service does not need to do
 ## Further reading
 
 - [HTTP specification](/reference/specifications/std.http)
+- [Server-Sent Events](/reference/specifications/std.http.sse)
 - [WebSocket handlers](/reference/specifications/std.http.websocket)
 - [Server lifecycle, middleware, and shutdown](/reference/specifications/std.http.lifecycle)
 - [OpenAPI and Swagger](/reference/specifications/openapi-swagger)
