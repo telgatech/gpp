@@ -38,7 +38,7 @@ func main() {
 	}
 	fmt.Println(total, runningTotals, passed, failed, flattened, groups, paired, labels)
 
-	users := []User{User("Cara", true), User("Bob", false), User("Ada", true)}
+	users := []*User{User("Cara", true), User("Bob", false), User("Ada", true)}
 	active := users.Filter(user => user.Active)
 	found, ok := users.Find(user => user.Name == "Bob")
 	users.SortBy(user => user.Name)
