@@ -2,21 +2,59 @@ import "fmt"
 
 class Named {
     Name string
+
+    func Description() string {
+        return "named: " + this.Name
+    }
 }
 
 class Salaried {
     Salary int
+
+    func AnnualPay() int {
+        return this.Salary
+    }
 }
 
 class Employee: Named, Salaried {
     Role string
 
-    func Summary() string {
-        return "{{Name}} is a {{Role}} earning {{Salary}}"
+    func Description() string {
+        return "employee: " + this.Name + " (" + this.Role + ")"
+    }
+
+    func AnnualPay() int {
+        return this.Salary + 5000
     }
 }
 
+func Describe(value Named) string {
+    return value.Description()
+}
+
+func Pay(value Salaried) int {
+    return value.AnnualPay()
+}
+
 func main() {
-    employee := Employee("Bob", 100000, "engineer")
-    fmt.Println(employee.Summary())
+    employee := Employee(
+        Named.Name: "Ada",
+        Salaried.Salary: 120000,
+        Role: "engineer",
+    )
+
+    // Employee can be used through either parent type.
+    fmt.Println(Describe(employee))
+    fmt.Println(Pay(employee))
+
+    var named Named = employee
+    var salaried Salaried = employee
+    fmt.Println(named.Description())
+    fmt.Println(salaried.AnnualPay())
+
+    // Explicit parent qualification reaches the inherited implementation
+    // and data even when Employee overrides Description.
+    fmt.Println(employee.Named.Description())
+    fmt.Println(employee.Salaried.AnnualPay())
+    fmt.Println(employee.Salaried.Salary)
 }

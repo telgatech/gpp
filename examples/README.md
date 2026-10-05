@@ -29,13 +29,13 @@ The examples cover:
 - `containers.gpp` — typed `Set`, `Stack`, `Queue`, `Deque`, `List`, and
   comparator-based `PriorityQueue` from the bundled `gpp/container` package.
 - `static_methods.gpp` — class-qualified factory and parsing methods.
-- `inheritance.gpp` — multiple inheritance, embedded parents, and qualified
-  parent access.
+- `inheritance.gpp` — multiple parent fields and methods, overrides dispatched
+  through both parent types, and qualified parent access.
 - `imports.gpp` — ordinary grouped Go imports and aliases.
 - `overloading.gpp` — method/function overloading, typed overloads, named calls,
   and default parameters.
-- `polymorphism.gpp` — base-typed dispatch, polymorphic fields, and a
-  class-valued function result passed directly to a base-typed function.
+- `polymorphism.gpp` — derived instances flowing through base-typed variables,
+  parameters, results, and fields; virtual dispatch and shared mutation.
 - `safe_access.gpp` — explicit `?.` safe access for nullable class values.
 - `records.gpp` — anonymous structural records, nested records, inferred
   return types, `let` bindings, and capitalization-based field visibility.

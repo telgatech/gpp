@@ -1,36 +1,73 @@
 import "fmt"
 
-class Person {
+class Animal {
     Name string
 
-    func Speak() string {
-        return "Person: " + this.Name
+    func Kind() string {
+        return "animal"
+    }
+
+    func Describe() string {
+        return this.Name + ":" + this.Kind()
+    }
+
+    func Rename(name string) {
+        this.Name = name
     }
 }
 
-class Employee: Person {
-    func Speak() string {
-        return "Employee: " + this.Name
+class Dog: Animal {
+    func Kind() string {
+        return "dog"
     }
 }
 
-class Holder {
-    Value Person
+class Cat: Animal {
+    func Kind() string {
+        return "cat"
+    }
 }
 
-func Announce(person Person) string {
-    return person.Speak()
+class Shelter {
+    Resident Animal
 }
 
-func MakeEmployee() Employee {
-    return Employee("Carol")
+func DescribeAnimal(animal Animal) string {
+    return animal.Describe()
+}
+
+func MakeAnimal(name string) Animal {
+    return Dog(Name: name)
+}
+
+class AnimalFactory {
+    func Make() Animal {
+        return Cat(Name: "Mittens")
+    }
 }
 
 func main() {
-    var person Person = Employee("Bob")
-    holder := Holder(Employee("Alice"))
+    // A constructed derived value can flow into a base-typed variable.
+    dog := Dog(Name: "Rex")
+    fmt.Println(DescribeAnimal(dog))
+    var animal Animal = dog
+    fmt.Println(DescribeAnimal(animal))
 
-    fmt.Println(Announce(person))
-    fmt.Println(holder.Value.Speak())
-    fmt.Println(Announce(MakeEmployee()))
+    // Calls through the base dispatch the derived override. The base method
+    // Describe calls Kind, which must also dispatch to Dog.Kind.
+    animal.Rename("Max")
+    fmt.Println(dog.Name)
+
+    // Derived values can be returned as the base type and passed directly.
+    fmt.Println(DescribeAnimal(MakeAnimal("Buddy")))
+    factory := AnimalFactory()
+    fmt.Println(DescribeAnimal(factory.Make()))
+
+    // A base-typed field can hold a derived value and dispatch through it.
+    shelter := Shelter(Resident: dog)
+    fmt.Println(DescribeAnimal(shelter.Resident))
+
+    // The same base-typed variable can hold a different derived class later.
+    animal = Cat(Name: "Mittens")
+    fmt.Println(DescribeAnimal(animal))
 }

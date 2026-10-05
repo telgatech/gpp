@@ -82,6 +82,24 @@ This pattern is useful for notification backends, storage adapters, payment
 providers, and other parts of an application where callers should depend on a
 small shared API.
 
+## Keep the concrete behavior across the boundary
+
+The derived value keeps its concrete type when it flows through a base-typed
+variable, parameter, return value, or field. Method calls through that base
+value still dispatch to the derived implementation, including calls made from
+another inherited method. Since class instances are shared pointers, mutations
+made through the base value are visible through the derived value too.
+
+The [runnable polymorphism example](https://github.com/telgatech/gpp/blob/main/examples/polymorphism.gpp)
+covers these cases together. Run it from a repository checkout with:
+
+```bash
+gpp run examples/polymorphism.gpp
+```
+
+Its output demonstrates that `Dog.Kind` and `Cat.Kind` are called through
+`Animal`, while renaming an `Animal` also changes the original `Dog` instance.
+
 ## Compatible with Go
 
 Go++ generates the dispatch support needed for base-typed values. Go++ source

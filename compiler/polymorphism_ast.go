@@ -246,7 +246,9 @@ func polymorphismStatementEdits(statement Stmt, valueTypes map[string]string, co
 						span := value.Type.Span()
 						addEdit(span.Start, span.End, typeName)
 					}
-					addPointer(value.Values[0])
+					if !strings.HasPrefix(strings.TrimSpace(polymorphismExpressionType(value.Values[0], context, valueTypes)), "*") {
+						addPointer(value.Values[0])
+					}
 				}
 			}
 		}
@@ -427,11 +429,19 @@ func polymorphismValueTypesAST(block *BlockStmt, context constructorContext) map
 				declared := ""
 				if value.Type != nil {
 					declared, _ = typeNodeSource(value.Type)
+					if base, ok := dispatchTargetForTypeNode(value.Type, context); ok {
+						declared = dispatchInterfaceType(base)
+					}
 				}
 				for index, name := range value.Names {
 					inferred := declared
 					if inferred == "" && index < len(value.Values) {
 						inferred = polymorphismExpressionType(value.Values[index], context, result)
+						if call, ok := value.Values[index].(*CallExpr); ok {
+							if _, _, isConstructor := constructorTargetForCallee(call.Callee, context); isConstructor && inferred != "" && !strings.HasPrefix(inferred, "*") {
+								inferred = "*" + inferred
+							}
+						}
 					}
 					if inferred != "" {
 						result[name.Text] = inferred
@@ -535,7 +545,7 @@ func polymorphismExpressionType(expression ExprNode, context constructorContext,
 		if target, ok := context.Targets[base]; ok && target.Class != nil {
 			for _, field := range target.Class.Fields {
 				if field.Name == value.Name {
-					return fieldTypeSource(field)
+					return transformPolymorphicType(fieldTypeSource(field), context)
 				}
 			}
 			for _, signature := range context.ClassMethodSignatures[base][value.Name] {
@@ -723,7 +733,9 @@ func lowerPolymorphismBlockNode(block *BlockStmt, context constructorContext) er
 			// lowering incorrectly emits `&person` (a pointer to an interface).
 			valueTypes[statement.Names[0].Text] = interfaceName
 		}
-		statement.Values[0] = polymorphismAddressOf(statement.Values[0])
+		if !strings.HasPrefix(strings.TrimSpace(polymorphismExpressionType(statement.Values[0], context, valueTypes)), "*") {
+			statement.Values[0] = polymorphismAddressOf(statement.Values[0])
+		}
 	}
 	lowerReturns := func(statement Stmt) {
 		returnStatement, ok := statement.(*ReturnStmt)

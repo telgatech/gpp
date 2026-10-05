@@ -2455,6 +2455,106 @@ func MakePerson() web.Person {
 	}
 }
 
+func TestCompileFilesPreservesSubstitutabilityAcrossInheritanceBoundaries(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `import "fmt"
+
+class Animal {
+    Name string
+
+    func Kind() string { return "animal" }
+    func Describe() string { return this.Name + ":" + this.Kind() }
+    func Rename(name string) { this.Name = name }
+}
+
+class Dog: Animal {
+    func Kind() string { return "dog" }
+}
+
+class Cat: Animal {
+    func Kind() string { return "cat" }
+}
+
+class Shelter {
+    Resident Animal
+}
+
+func DescribeAnimal(animal Animal) string {
+    return animal.Describe()
+}
+
+func MakeAnimal(name string) Animal {
+    return Dog(Name: name)
+}
+
+class AnimalFactory {
+    func Make() Animal {
+        return Cat(Name: "Mittens")
+    }
+}
+
+func main() {
+    dog := Dog(Name: "Rex")
+    fmt.Println(DescribeAnimal(dog))
+    var animal Animal = dog
+    fmt.Println(DescribeAnimal(animal))
+
+    animal.Rename("Max")
+    fmt.Println(dog.Name)
+    fmt.Println(DescribeAnimal(MakeAnimal("Buddy")))
+
+    factory := AnimalFactory()
+    fmt.Println(DescribeAnimal(factory.Make()))
+
+    shelter := Shelter(Resident: dog)
+    fmt.Println(DescribeAnimal(shelter.Resident))
+
+    animal = Cat(Name: "Mittens")
+    fmt.Println(DescribeAnimal(animal))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated inheritance substitutability program did not run: %v\n%s", err, output)
+	}
+	want := "Rex:dog\nRex:dog\nMax\nBuddy:dog\nMittens:cat\nMax:dog\nMittens:cat\n"
+	if string(output) != want {
+		t.Fatalf("unexpected polymorphic behavior:\n got: %q\nwant: %q", output, want)
+	}
+}
+
+func TestCompileFilesPreservesMultipleInheritanceDispatch(t *testing.T) {
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join("..", "examples", "inheritance.gpp")
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile multiple inheritance example: %v", err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated multiple inheritance program did not run: %v\n%s", err, output)
+	}
+	want := "employee: Ada (engineer)\n125000\nemployee: Ada (engineer)\n125000\nnamed: Ada\n120000\n120000\n"
+	if string(output) != want {
+		t.Fatalf("unexpected multiple inheritance behavior:\n got: %q\nwant: %q", output, want)
+	}
+}
+
 func TestCompileFilesResolvesFunctionOverloadsAcrossFiles(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

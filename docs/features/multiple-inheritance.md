@@ -164,6 +164,27 @@ The qualification keeps both meanings visible at the call site. The same
 parent-qualified access applies when two inherited methods share a name:
 choose the parent whose implementation the code needs.
 
+## Use either parent contract
+
+A class with multiple parents can be passed through either parent type. Calls
+through each parent retain the concrete child's overrides, while explicit
+qualification selects a particular parent's implementation:
+
+```go
+func Describe(value Named) string { return value.Description() }
+func Pay(value Salaried) int { return value.AnnualPay() }
+
+employee := Employee(Named.Name: "Ada", Salaried.Salary: 120000, Role: "engineer")
+fmt.Println(Describe(employee)) // employee: Ada (engineer)
+fmt.Println(Pay(employee))      // 125000: Employee.AnnualPay override
+fmt.Println(employee.Named.Description()) // named: Ada
+fmt.Println(employee.Salaried.AnnualPay()) // 120000: parent implementation
+```
+
+The [runnable multiple inheritance example](https://github.com/telgatech/gpp/blob/main/examples/inheritance.gpp)
+also assigns the instance to variables typed as each parent and reads
+parent-qualified fields.
+
 ## Use inheritance with care
 
 Multiple inheritance works best when each parent represents a cohesive,
