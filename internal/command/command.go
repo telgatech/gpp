@@ -1576,9 +1576,6 @@ func runInit(args []string) int {
 	if err := ensureProjectGitignore(absoluteTarget); err != nil {
 		return reportError(err)
 	}
-	if err := runGoCommand(absoluteTarget, "mod", "tidy"); err != nil {
-		return reportError(err)
-	}
 	gitRoot := findGitRoot(absoluteTarget)
 	if gitRoot == "" {
 		if err := runGitCommand(absoluteTarget, "init"); err != nil {

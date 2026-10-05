@@ -1,5 +1,12 @@
 # Go++
 
+> **Notice:** Go++ is an independent open source project and is not affiliated
+> with or endorsed by Google or the Go project.
+>
+> **Attribution:** The Go Gopher was created by Renee French and is licensed
+> under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Go++ campaign
+> images are AI-assisted adaptations.
+
 <p align="center">
   <img src="docs/public/go-gopher-superman.webp" alt="Go++ flying gopher mascot" width="320">
 </p>
@@ -129,9 +136,10 @@ cd hello
 gpp run
 ```
 
-`gpp init` creates a root `go.mod`, runs `go mod tidy`, and initializes a Git
-repository with an `init` commit when the target is not already inside a Git
-worktree. The initial commit includes only the generated project files.
+`gpp init` creates a root `go.mod` and initializes a Git repository with an
+`init` commit when the target is not already inside a Git worktree. Dependency
+resolution happens when you build or run the project. The initial commit
+includes only the generated project files.
 
 Build a native executable. Intermediate Go source remains in the hidden
 compiler workspace rather than beside the Go++ source:

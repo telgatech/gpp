@@ -275,8 +275,9 @@ gpp init .
 
 `gpp init` refuses to overwrite an existing `main.gpp` or `go.mod`. It creates
 `main.gpp` and `.gitignore` entries for `.gpp/` and the default `main` build
-output, runs `go mod init`, then runs `go mod tidy` in the project root. The initial module contains no Go
-packages yet, so Go may print its normal “matched no packages” warning.
+output, then runs `go mod init`. It does not run `go mod tidy` during
+initialization because the starter project has no Go packages yet. Dependency
+resolution happens when the project is built or run.
 
 If the target is outside an existing Git worktree, `gpp init` runs `git init`,
 stages only the generated starter files (`main.gpp`, `go.mod`, `.gitignore`, and

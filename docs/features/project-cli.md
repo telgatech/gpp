@@ -8,9 +8,9 @@ per-project system-cache workspace so a project can remain organized around
 ## Compare project workflows
 
 Go projects usually use Go commands directly. `gpp init` creates a starter
-source file and module, tidies the module, and creates an initial Git commit
-for a new repository. A Go++ project then uses `gpp` for steps that understand
-`.gpp` files:
+source file and module, and creates an initial Git commit for a new repository.
+Go resolves dependencies when the project is built or run. A Go++ project then
+uses `gpp` for steps that understand `.gpp` files:
 
 ::: code-group
 ```sh [Go++]
