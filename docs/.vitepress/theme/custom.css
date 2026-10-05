@@ -62,6 +62,15 @@
   max-width: 42rem;
 }
 
+.VPHome .home-brand-notice {
+  max-width: 620px;
+  margin: 30px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  text-align: left;
+}
+
 .VPHomeHero .container .image-container {
   position: relative;
   display: grid;
