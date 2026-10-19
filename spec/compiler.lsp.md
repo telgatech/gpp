@@ -1238,6 +1238,13 @@ tpl.UserPage(w, user)
 
 Errors in template declarations should point to the `.gpp.tpl` source.
 
+The LSP must report duplicate effective `tpl.Path(...)` patterns as compile-time
+diagnostics for declarations in the same Go++ package, including conflicts
+between template declarations in different source files. Equal paths in
+different packages are valid. The diagnostic should identify the conflicting
+template and its source location, using the same path normalization and
+parameter equivalence rules as the compiler.
+
 Examples:
 
 ```text

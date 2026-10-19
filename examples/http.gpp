@@ -19,6 +19,11 @@ class HealthStatus {
     OK bool
 }
 
+class CreateUserRequest {
+    Name string
+    Email string
+}
+
 class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
     func Status(ctx *http.Context) error @{http.GET("/status")} {
         return ctx.JSON(record(Area: "admin"))
@@ -35,13 +40,13 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         return nil
     }
 
-    func Home(ctx *http.Context) error @{
+    func Home(ctx *http.Context, name string @{http.Path}) error @{
         http.GET("/hello/{name}"),
         http.Summary("Greet someone by name"),
         http.Description("Returns a plain-text greeting for the name in the URL."),
         http.Tags("Greetings")
     } {
-        return ctx.Text(fmt.Sprintf("%s says hello to %s", ctx.Get("request-source"), ctx.Param("name")))
+        return ctx.Text(fmt.Sprintf("%s says hello to %s", ctx.Get("request-source"), name))
     }
 
     func Health(ctx *http.Context) error @{
@@ -52,6 +57,14 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         http.ResponseBody(200, "Service is healthy", "application/json", HealthStatus{OK: true})
     } {
         return ctx.JSON(record(OK: true))
+    }
+
+    func SearchUsers(ctx *http.Context, name string @{http.Query}, active bool @{http.Query}) error @{http.GET("/users")} {
+        return ctx.JSON(200, record(Name: name, Active: active))
+    }
+
+    func CreateUser(ctx *http.Context, input *CreateUserRequest @{http.Body}) error @{http.POST("/users")} {
+        return ctx.JSON(201, input)
     }
 
     func Echo(ctx *http.Context) error @{http.WebSocket("/ws/echo")} {

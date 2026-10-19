@@ -801,6 +801,21 @@ This should be a priority case because interpolation lowering often introduces s
 
 Errors originating from compile-time `.gpp.tpl` parsing or validation should point directly to the `.gpp.tpl` source.
 
+The compiler must also reject duplicate effective `tpl.Path(...)` patterns
+among template declarations in the same Go++ package, including declarations
+in different source files. Templates in different packages have independent
+registries, so equal paths across packages are valid. Report the later path
+annotation's source location and identify the first conflicting template and
+its location. Parameter names and the legacy `:name` / `{name}` spellings do
+not make otherwise identical patterns distinct. Keep runtime duplicate checks
+within each package scope for dynamically loaded or registered templates.
+
+Example:
+
+```text
+views/users.gpp.tpl:18: duplicate template path "/users/{slug}"; conflicts with UserByID at views/users.gpp.tpl:7
+```
+
 Example:
 
 ```text

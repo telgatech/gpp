@@ -114,9 +114,10 @@ func gppCallError(app any, ctx *Context, code int, cause error) {
 	}
 }
 
-func gppRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func gppRouteHandler(router any, app any, methodName string, methodMetadata any, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	handler := reflect.ValueOf(router).MethodByName(methodName)
 	ctx := gppNewContext(w, r)
+	ctx.TemplateScope = gppTemplateScope(router)
 	if !handler.IsValid() {
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, fmt.Errorf("route handler not found"))
 		return
@@ -125,7 +126,12 @@ func gppRouteHandler(router any, app any, methodName string, w stdhttp.ResponseW
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 		return
 	}
-	result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
+	arguments, err := gppRouteArguments(handler, methodMetadata, ctx)
+	if err != nil {
+		gppCallError(app, ctx, stdhttp.StatusBadRequest, err)
+		return
+	}
+	result := handler.Call(arguments)
 	routeErr := gppErrorResult(result)
 	afterErr := gppCallHook(app, "AfterRequest", ctx)
 	if routeErr != nil {
@@ -137,8 +143,127 @@ func gppRouteHandler(router any, app any, methodName string, w stdhttp.ResponseW
 	}
 }
 
+func gppRouteArguments(handler reflect.Value, methodMetadata any, ctx *Context) ([]reflect.Value, error) {
+	parameters := reflect.ValueOf(methodMetadata)
+	if parameters.Kind() == reflect.Pointer {
+		parameters = parameters.Elem()
+	}
+	if !parameters.IsValid() || parameters.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("http: route handler parameter metadata is unavailable")
+	}
+	parameters = parameters.FieldByName("Parameters")
+	if !parameters.IsValid() || parameters.Len() != handler.Type().NumIn() {
+		return nil, fmt.Errorf("http: route handler parameter metadata does not match its signature")
+	}
+	arguments := make([]reflect.Value, handler.Type().NumIn())
+	arguments[0] = reflect.ValueOf(ctx)
+	for index := 1; index < handler.Type().NumIn(); index++ {
+		parameter := gppReflectIndex(parameters, index)
+		parameterName := fmt.Sprint(parameter.FieldByName("Name").Interface())
+		annotationNames := []string{"gpp.http.Path", "gpp.http.Query", "gpp.http.Body"}
+		matched := ""
+		for _, name := range annotationNames {
+			if gppHasAnnotation(parameter.Interface(), name) {
+				if matched != "" {
+					return nil, fmt.Errorf("http: parameter %s has multiple request binding annotations", parameterName)
+				}
+				matched = name
+			}
+		}
+		if matched == "" {
+			return nil, fmt.Errorf("http: handler parameter %s requires http.Path, http.Query, or http.Body", parameterName)
+		}
+		argumentType := handler.Type().In(index)
+		switch matched {
+		case "gpp.http.Path", "gpp.http.Query":
+			name := parameterName
+			if annotationArguments := gppAnnotationArgs(parameter.Interface(), matched); len(annotationArguments) > 0 {
+				if explicitName := strings.TrimSpace(fmt.Sprint(annotationArguments[0])); explicitName != "" {
+					name = explicitName
+				}
+			}
+			var value string
+			var present bool
+			var values []string
+			if matched == "gpp.http.Path" {
+				value = ctx.Request.PathValue(name)
+				present = value != ""
+				if present {
+					values = []string{value}
+				}
+			} else {
+				values, present = ctx.Request.URL.Query()[name]
+				present = present && len(values) > 0
+			}
+			if matched == "gpp.http.Path" && !present {
+				return nil, fmt.Errorf("http: route parameter %q is missing", name)
+			}
+			argument := reflect.New(argumentType).Elem()
+			if present {
+				if err := gppSetBindField(argument, values); err != nil {
+					return nil, fmt.Errorf("http: bind parameter %s: %w", parameterName, err)
+				}
+			}
+			arguments[index] = argument
+		case "gpp.http.Body":
+			var target reflect.Value
+			if argumentType.Kind() == reflect.Pointer {
+				target = reflect.New(argumentType.Elem())
+				arguments[index] = target
+			} else {
+				target = reflect.New(argumentType)
+				arguments[index] = target.Elem()
+			}
+			if err := gppBindRequest(ctx.Request, ctx.Response, target.Interface()); err != nil {
+				return nil, fmt.Errorf("http: bind request body into parameter %s: %w", parameterName, err)
+			}
+		}
+	}
+	return arguments, nil
+}
+
+func gppValidateRouteSignature(handler reflect.Value, methodMetadata any) error {
+	contextType := reflect.TypeOf((*Context)(nil))
+	if !handler.IsValid() || handler.Type().NumIn() == 0 || handler.Type().In(0) != contextType {
+		return fmt.Errorf("route handler must take *http.Context as its first parameter")
+	}
+	metadata := reflect.ValueOf(methodMetadata)
+	if metadata.Kind() == reflect.Pointer {
+		metadata = metadata.Elem()
+	}
+	if !metadata.IsValid() || metadata.Kind() != reflect.Struct {
+		return fmt.Errorf("route handler parameter metadata is unavailable")
+	}
+	parameters := metadata.FieldByName("Parameters")
+	if !parameters.IsValid() || parameters.Len() != handler.Type().NumIn() {
+		return fmt.Errorf("route handler parameter metadata does not match its signature")
+	}
+	bodyCount := 0
+	for index := 1; index < parameters.Len(); index++ {
+		parameter := gppReflectIndex(parameters, index)
+		name := fmt.Sprint(parameter.FieldByName("Name").Interface())
+		matches := 0
+		for _, annotation := range []string{"gpp.http.Path", "gpp.http.Query", "gpp.http.Body"} {
+			if gppHasAnnotation(parameter.Interface(), annotation) {
+				matches++
+				if annotation == "gpp.http.Body" {
+					bodyCount++
+				}
+			}
+		}
+		if matches != 1 {
+			return fmt.Errorf("handler parameter %s must have exactly one of http.Path, http.Query, or http.Body", name)
+		}
+	}
+	if bodyCount > 1 {
+		return fmt.Errorf("route handler can have at most one http.Body parameter")
+	}
+	return nil
+}
+
 func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	ctx := gppNewContext(w, r)
+	ctx.TemplateScope = gppTemplateScope(router)
 	if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 		return
@@ -179,6 +304,28 @@ func gppRuntimeClass(value any) any {
 		return nil
 	}
 	return result[0].Interface()
+}
+
+func gppTemplateScope(value any) string {
+	class := gppRuntimeClass(value)
+	if class == nil {
+		return ""
+	}
+	metadata := reflect.ValueOf(class)
+	if metadata.Kind() == reflect.Pointer {
+		if metadata.IsNil() {
+			return ""
+		}
+		metadata = metadata.Elem()
+	}
+	if !metadata.IsValid() || metadata.Kind() != reflect.Struct {
+		return ""
+	}
+	scope := metadata.FieldByName("Package")
+	if !scope.IsValid() || scope.Kind() != reflect.String {
+		return ""
+	}
+	return scope.String()
 }
 
 func gppReflectIndex(value reflect.Value, index int) reflect.Value {
@@ -324,6 +471,14 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 		method := gppReflectIndex(methods, index)
 		methodName := fmt.Sprint(method.FieldByName("Name").Interface())
 		register := func(routePath string, httpMethod string, websocketRoute bool) error {
+			handlerMethod := reflect.ValueOf(router).MethodByName(methodName)
+			if websocketRoute {
+				if !handlerMethod.IsValid() || handlerMethod.Type().NumIn() != 1 || handlerMethod.Type().In(0) != reflect.TypeOf((*Context)(nil)) {
+					return fmt.Errorf("http: WebSocket handler %s must take only *http.Context", methodName)
+				}
+			} else if err := gppValidateRouteSignature(handlerMethod, method.Interface()); err != nil {
+				return fmt.Errorf("http: invalid route handler %s: %w", methodName, err)
+			}
 			path := gppJoinHTTPPath(prefix, routePath)
 			handler := func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				if r.Method != httpMethod {
@@ -335,7 +490,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 					gppWebSocketRouteHandler(router, app, methodName, w, r)
 					return
 				}
-				gppRouteHandler(router, app, methodName, w, r)
+				gppRouteHandler(router, app, methodName, method.Interface(), w, r)
 			}
 			if path == "/" {
 				if rootHandlers[httpMethod] != nil {

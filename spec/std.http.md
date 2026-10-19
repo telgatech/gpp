@@ -226,6 +226,9 @@ annotation (
     PUT(path string) on method
     PATCH(path string) on method
     DELETE(path string) on method
+    Path(name string = "") on parameter
+    Query(name string = "") on parameter
+    Body on parameter
 
     WebSocket(path string) on method
 
@@ -298,6 +301,19 @@ before BeforeListen() runs.
 
 `Server.Listen()` must discover App routes/configuration.
 
+For ordinary HTTP route methods, the first parameter is `*http.Context`.
+Additional parameters must each have exactly one request-binding annotation:
+`http.Path`, `http.Query`, or `http.Body`. Path and query annotations accept an
+optional source-name override and otherwise use the Go++ parameter name. Path
+names must match wildcards in the route path. Path values are required; missing
+path values and conversion failures produce a 400
+response through the configured error handler. Missing query values remain the
+parameter type's zero value; repeated query values may bind to slice parameters.
+The `Body` annotation decodes a struct or class parameter using the same
+content-type-aware behavior and 1 MiB limit as `Context.Bind`. Binding errors
+also produce a 400 response. WebSocket handlers continue to receive only their
+context parameter; these binding annotations do not apply to upgraded routes.
+
 ## 10. `gpp/http.Context`
 
 Keep Context lightweight.
@@ -311,6 +327,10 @@ class Context {
 
     func Param(name string) string
     func Query(name string) string
+    func Bind(target any) error
+    func BindQuery(target any) error
+    func BindJSON(target any) error
+    func BindForm(target any) error
 
     func Text(value string) error
     func JSON(value any) error
@@ -323,6 +343,20 @@ Users should always be able to access:
 
 ctx.Request
 ctx.Response
+
+`Bind(target)` selects query binding for GET and HEAD requests, JSON decoding for
+JSON request bodies, and form binding for URL-encoded and multipart form bodies.
+`BindQuery`, `BindJSON`, and `BindForm` select a source explicitly. Bind targets
+must be non-nil pointers to structs. Query and form values map to exported
+fields using the corresponding `query` or `form` struct tag; a `json` tag is
+the fallback, followed by the lower-camel field name. Go++ class fields use
+their lower-camel names; native Go struct targets may use tags. Repeated
+values populate slice fields. JSON and form request bodies are limited to 1
+MiB. Binding errors are returned to the handler; validation remains the
+application's responsibility. These methods decode into an explicitly supplied
+target. Route methods can instead opt into argument binding with the
+`http.Path`, `http.Query`, and `http.Body` parameter annotations described in
+the server section.
 
 `Conn` is non-nil only while a method annotated with `http.WebSocket` is
 handling an upgraded request. See the [WebSocket specification](./std.http.websocket.md)

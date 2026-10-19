@@ -478,6 +478,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		parameterText := templateParameterText(parameters, context)
 		dataExpression := templateDataExpression(parameters)
 		managedDevelopment := context.Development && strings.HasSuffix(file.Name, ".gpp.tpl") && file.SourcePath != ""
+		packageScope := templatePackageScope(context.ModulePath, context.Package)
 		fmt.Fprintf(&definitions, "func __gpp_tpl_static_funcs_%s() %s.FuncMap {\n", template.Name, htmlAlias)
 		fmt.Fprintf(&definitions, "\tfunctions := %s.FuncMap{}\n", htmlAlias)
 		fmt.Fprintf(&definitions, "\tfor name, function := range %s.Funcs.Snapshot() { functions[name] = function }\n", tplAlias)
@@ -503,7 +504,7 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		}
 		fmt.Fprintf(&definitions, "func __gpp_tpl_%s(w %s.Writer%s) error {\n", template.Name, ioAlias, parameterText)
 		if managedDevelopment && template.Layout == "" {
-			fmt.Fprintf(&definitions, "\tif __gpp_tpl_development_%s { return %s.Execute(w, %q", template.Name, tplAlias, template.Name)
+			fmt.Fprintf(&definitions, "\tif __gpp_tpl_development_%s { return %s.ExecuteIn(%q, w, %q", template.Name, tplAlias, packageScope, template.Name)
 			for _, parameter := range parameters {
 				fmt.Fprintf(&definitions, ", %s", parameter.Name)
 			}
@@ -569,12 +570,24 @@ func emitTemplateDeclarations(file *File, context constructorContext, body strin
 		definitions.WriteString("); err != nil { return \"\", err }\n")
 		fmt.Fprintf(&definitions, "\treturn %s.HTML(buffer.String()), nil\n}\n\n", htmlAlias)
 		if managedDevelopment {
-			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.RegisterManaged(%q, %q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, template.Name, templatePath(template), file.SourcePath, template.Name)
+			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.RegisterManagedIn(%q, %q, %q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, packageScope, template.Name, templatePath(template), file.SourcePath, template.Name)
 		} else {
-			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.Register(%q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, template.Name, templatePath(template), template.Name)
+			fmt.Fprintf(&definitions, "func init() {\n\tparsed, err := %s.New(%q).Funcs(__gpp_tpl_static_funcs_%s()).Parse(%s)\n\tif err != nil { panic(err) }\n\t__gpp_tpl_%s_template = parsed\n\tif err := %s.RegisterIn(%q, %q, %q, __gpp_tpl_render_%s); err != nil { panic(err) }\n}\n\n", htmlAlias, template.Name, template.Name, strconv.Quote(template.Body), template.Name, tplAlias, packageScope, template.Name, templatePath(template), template.Name)
 		}
 	}
 	return imports, definitions.String(), nil
+}
+
+func templatePackageScope(modulePath, packageName string) string {
+	packagePath := strings.ReplaceAll(strings.TrimSpace(packageName), ".", "/")
+	if packagePath == "" || packagePath == "main" {
+		return strings.TrimSuffix(strings.TrimSpace(modulePath), "/")
+	}
+	modulePath = strings.TrimSuffix(strings.TrimSpace(modulePath), "/")
+	if modulePath == "" {
+		return packagePath
+	}
+	return modulePath + "/" + strings.TrimPrefix(packagePath, "/")
 }
 
 func validateTemplateBody(template *TemplateDecl, names []string, context constructorContext) error {

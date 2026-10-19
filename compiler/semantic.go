@@ -19,6 +19,7 @@ type PackageSymbols struct {
 	Enums           map[string]*EnumDecl
 	Embeds          map[string]EmbedEntry
 	Templates       map[string]*TemplateDecl
+	TemplateOrder   []*TemplateDecl
 	Imports         map[string]string
 	ImportedClasses map[string]*ClassDecl
 	ImportedEnums   map[string]*EnumDecl
@@ -64,6 +65,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 				Enums:           map[string]*EnumDecl{},
 				Embeds:          map[string]EmbedEntry{},
 				Templates:       map[string]*TemplateDecl{},
+				TemplateOrder:   []*TemplateDecl{},
 				Imports:         map[string]string{},
 				ImportedClasses: map[string]*ClassDecl{},
 				ImportedEnums:   map[string]*EnumDecl{},
@@ -149,7 +151,23 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 						templateLocation(template), template.Name, file.Package, previous.SourceFile, previous.SourceLine,
 					)
 				}
+				if currentPath := templatePath(template); currentPath != "" {
+					for _, previous := range pkg.TemplateOrder {
+						previousPath := templatePath(previous)
+						if previousPath == "" || !sameTemplatePathPattern(currentPath, previousPath) {
+							continue
+						}
+						return nil, fmt.Errorf(
+							"%s: duplicate template path %q; conflicts with %s at %s",
+							templatePathLocation(template),
+							normalizeTemplatePathPattern(currentPath),
+							previous.Name,
+							templatePathLocation(previous),
+						)
+					}
+				}
 				pkg.Templates[template.Name] = template
+				pkg.TemplateOrder = append(pkg.TemplateOrder, template)
 				continue
 			}
 			if extension, ok := decl.(*ExtendDecl); ok {
@@ -353,6 +371,62 @@ func templateLocation(template *TemplateDecl) string {
 		return fmt.Sprintf("%s:%d", template.SourceFile, template.SourceLine)
 	}
 	return template.SourceFile
+}
+
+func templatePathLocation(template *TemplateDecl) string {
+	for _, annotation := range template.Annotations {
+		if annotation.Name == "Path" || strings.HasSuffix(annotation.Name, ".Path") {
+			return annotationUseLocation(annotation)
+		}
+	}
+	return templateLocation(template)
+}
+
+func normalizeTemplatePathPattern(value string) string {
+	if value == "" {
+		return ""
+	}
+	value = "/" + strings.Trim(value, "/")
+	if value == "/" {
+		return "/"
+	}
+	value = strings.TrimSuffix(value, "/")
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	for index, part := range parts {
+		if name, ok := templatePathPatternParameter(part); ok {
+			parts[index] = "{" + name + "}"
+		}
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
+func templatePathPatternParameter(segment string) (string, bool) {
+	if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") && len(segment) > 2 {
+		return segment[1 : len(segment)-1], true
+	}
+	if strings.HasPrefix(segment, ":") && len(segment) > 1 {
+		return strings.TrimPrefix(segment, ":"), true
+	}
+	return "", false
+}
+
+func sameTemplatePathPattern(left, right string) bool {
+	leftParts := strings.Split(strings.Trim(normalizeTemplatePathPattern(left), "/"), "/")
+	rightParts := strings.Split(strings.Trim(normalizeTemplatePathPattern(right), "/"), "/")
+	if len(leftParts) != len(rightParts) {
+		return false
+	}
+	for index := range leftParts {
+		_, leftParameter := templatePathPatternParameter(leftParts[index])
+		_, rightParameter := templatePathPatternParameter(rightParts[index])
+		if leftParameter && rightParameter {
+			continue
+		}
+		if leftParameter || rightParameter || leftParts[index] != rightParts[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func annotationLocation(annotation *AnnotationDecl) string {

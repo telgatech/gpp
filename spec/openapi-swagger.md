@@ -188,7 +188,7 @@ Go++ HTTP routes use brace parameters.
 Example:
 
 ```gpp
-func User(id int) User @{
+func User(ctx *http.Context, id int @{http.Path}) error @{
     http.GET("/users/{id}")
 }
 ```
@@ -274,7 +274,7 @@ is valid.
 This should be rejected:
 
 ```gpp
-func User() User @{
+func User(ctx *http.Context) error @{
     http.GET("/users/{id}")
 }
 ```
@@ -294,7 +294,7 @@ class App : http.Server @{
     http.OpenAPI
 } {
 
-    func User(id int) User @{
+    func User(ctx *http.Context, id int @{http.Path}) error @{
         http.GET("/users/{id}")
     }
 
@@ -342,24 +342,29 @@ under the corresponding OpenAPI paths.
 
 # 13. Typed Parameters
 
-Handler parameter types should drive OpenAPI parameter schemas.
+Handler parameter types drive OpenAPI parameter schemas when present in the
+HTTP operation model. Runtime binding is opt-in through parameter annotations:
+`http.Path` binds a route wildcard and `http.Query` binds a query value. Each
+annotation accepts an optional source-name override and otherwise uses the
+parameter name. `http.Body` binds a typed request body. The first route
+parameter remains `*http.Context`.
 
 Examples:
 
 ```gpp
-func User(id int)
+func User(ctx *http.Context, id int @{http.Path})
 ```
 
 becomes an integer parameter.
 
 ```gpp
-func Search(q string)
+func Search(ctx *http.Context, q string @{http.Query})
 ```
 
 becomes a string parameter.
 
 ```gpp
-func Enabled(active bool)
+func Enabled(ctx *http.Context, active bool @{http.Query})
 ```
 
 becomes a boolean parameter.
@@ -380,9 +385,13 @@ OpenAPI should reuse that binding information.
 
 # 14. Request Bodies
 
-Typed request-body binding should automatically produce an OpenAPI request schema.
-
-When a handler receives `*http.Context` and decodes its body explicitly, use `http.RequestBody(contentType, description, example)` to document that input in OpenAPI. This annotation describes the body for Swagger UI; it does not decode or bind the request at runtime. The example value provides both its schema type and an OpenAPI media-type example.
+Runtime request decoding can use a handler parameter annotated with
+`http.Body`, or be performed explicitly through `ctx.Bind`, `ctx.BindJSON`, or
+`ctx.BindForm`. `http.RequestBody(contentType, description, example)` documents
+the body for OpenAPI and Swagger UI, but does not decode it at runtime. Its
+example value supplies the schema and media-type example. When a parameter has
+`http.Body` and no `http.RequestBody` annotation is present, OpenAPI derives the
+request schema from that parameter's declared type.
 
 Example:
 
@@ -393,15 +402,10 @@ func CreateUser(ctx *http.Context) error @{
 }
 ```
 
-where the HTTP binding model identifies `input` as the request body.
-
-OpenAPI should derive its request schema from:
-
-```gpp
-CreateUser
-```
-
-rather than requiring the schema to be separately declared.
+The generated operation should use the annotation's content type, description,
+and example for its request-body documentation. Since the runtime binder accepts
+an arbitrary target through `any`, the OpenAPI generator must not claim that
+the target type is statically known from the call to `ctx.Bind`.
 
 ---
 

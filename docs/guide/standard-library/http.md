@@ -106,6 +106,9 @@ These are the annotations declared by `gpp/http`. The first group is read by the
 | `http.PUT(path)` | Handler method | PUT route | Same route-to-method declaration for full updates. |
 | `http.PATCH(path)` | Handler method | PATCH route | Same route-to-method declaration for partial updates. |
 | `http.DELETE(path)` | Handler method | DELETE route | Same route-to-method declaration for deletes. |
+| `http.Path(name = "")` | Handler parameter | Binds a route wildcard; defaults to the parameter name. | Avoids a separate `ctx.Param` lookup and string conversion. |
+| `http.Query(name = "")` | Handler parameter | Binds query values; defaults to the parameter name. | Avoids manual query lookup and scalar parsing. |
+| `http.Body` | Handler parameter | Binds a JSON or form request body into a typed parameter. | Avoids creating and populating a request object inside the handler. |
 | `http.WebSocket(path)` | Handler method | WebSocket endpoint that handles a GET upgrade | Sends each connection to the annotated handler method. |
 | `http.SSE` | Handler method | Optional Server-Sent Events marker | Documents that a GET handler writes an event stream through `ctx.SSE`; it has no routing effect. |
 | `http.Files(path, dir)` | Server class | Static-file mount | Replaces manual `FileServer` and `StripPrefix` registration. |
@@ -122,6 +125,47 @@ The package also declares the following policy annotations, but the current rout
 | `http.Role(name)` | Declare a required role for a server or method. | Metadata only; it does not enforce role checks. |
 
 Do not rely on `Auth`, `NoAuth`, or `Role` to protect a route yet. Use implemented OAuth/OIDC sign-in plus application-owned sessions and authorization middleware or checks.
+
+## Bind handler parameters
+
+Put `*http.Context` first, then annotate each request value you want injected.
+The route's `{name}` wildcard maps to `http.Path`; query values map to
+`http.Query`; and `http.Body` decodes the request body into a struct or class.
+An optional annotation name overrides the parameter name:
+
+```gpp
+class CreateUserRequest {
+	Name string
+	Email string
+}
+
+class App : http.Server {
+	func User(ctx *http.Context, id int @{http.Path}) error @{http.GET("/users/{id}")} {
+		return ctx.JSON(record(ID: id))
+	}
+
+	func Search(ctx *http.Context, term string @{http.Query("q")}, active bool @{http.Query}) error @{http.GET("/users")} {
+		return ctx.JSON(record(Term: term, Active: active))
+	}
+
+	func Create(ctx *http.Context, input *CreateUserRequest @{http.Body}) error @{http.POST("/users")} {
+		return ctx.JSON(201, input)
+	}
+}
+```
+
+The source name for `http.Path` must match a wildcard in the route, such as
+`http.Path("user_id")` for `/{user_id}`. Path values are required and converted
+to the declared parameter type. A missing query value remains its Go zero value
+(or nil for a pointer); repeated query
+values can bind to slice parameters. A body parameter uses the same content-type
+selection as `Context.Bind`: JSON and URL encoded or multipart forms are
+supported, with a 1 MiB body limit. Invalid values and malformed bodies are
+reported through the server's error handler with status 400. Each non-context
+handler parameter must have exactly one of these binding annotations.
+
+Use `Context.Bind`, `BindQuery`, `BindJSON`, or `BindForm` when the handler needs
+to choose or inspect binding behavior manually.
 
 ## Routing and request context
 
@@ -249,23 +293,24 @@ The server's `BeforeRequest`, `AfterRequest`, and `Error` hooks also apply to mo
 
 ## Bind a request body into a class
 
-Use a Go++ class as the typed shape for a JSON request. Its fields can use ordinary Go JSON tags, and `gpp/encoding` decodes the body into an instance:
+Use a Go++ class as the typed shape for a JSON request. `Context.Bind` decodes the request into an instance:
 
-```go
+```gpp
 import (
-	encoding "gpp/encoding"
 	http "gpp/http"
 )
 
-class CreateUserRequest @{encoding.Serializable} {
-	Name string `json:"name"`
-	Email string `json:"email"`
+class CreateUserRequest {
+	Name string
+	Email string
 }
 
 class App : http.Server {
 	func CreateUser(ctx *http.Context) error @{http.POST("/users")} {
-		body := ctx.Request.Body.ReadAll()
-		input := CreateUserRequest.FromJSON(body)
+		input := CreateUserRequest()
+		if err := ctx.Bind(input); err != nil {
+			return err
+		}
 		if input.Name.IsBlank() {
 			return ctx.JSON(400, record(Message: "name is required"))
 		}
@@ -275,7 +320,24 @@ class App : http.Server {
 }
 ```
 
-This is the same basic flow as `json.NewDecoder(r.Body).Decode(&input)` in Go, with the request shape named as a Go++ class and decoding expressed as a typed function call. Read and decode errors propagate automatically; application validation remains explicit. Binding is explicit today: handlers receive `*http.Context`, and `gpp/http` currently declares no `Body`, `Query`, or `Path` argument annotation and does not inject extra method parameters. The OpenAPI generator can inspect extra method parameters as documentation metadata, but that does not bind them at runtime; keep route handlers to the context parameter until the dispatcher supports binding. Apply a request-size limit before reading bodies from untrusted clients, and validate the decoded value before using it.
+`Context.Bind` chooses query binding for `GET` and `HEAD`, JSON binding for JSON request bodies, and form binding for URL encoded or multipart form bodies. JSON and form bodies are limited to 1 MiB. Use `BindQuery`, `BindJSON`, or `BindForm` when a handler should select the source explicitly. Native Go struct targets can use `query:"..."` and `form:"..."` tags; both also honor `json:"..."` as a fallback. Go++ class fields use the lower-camel field name. Repeated values bind to slice fields. Binding errors are returned to the handler, and application validation remains explicit.
+
+For a query endpoint, bind directly into a request class:
+
+```gpp
+class UserSearch {
+	Name string
+	Active bool
+}
+
+func SearchUsers(ctx *http.Context) error @{http.GET("/users")} {
+	query := UserSearch()
+	if err := ctx.Bind(query); err != nil {
+		return err
+	}
+	return ctx.JSON(200, users.Search(query))
+}
+```
 
 ## Shared request behavior and middleware
 

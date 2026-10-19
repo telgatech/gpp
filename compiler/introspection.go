@@ -163,6 +163,7 @@ type GppParameter struct {
 
 type GppClass struct {
 	Name        string
+	Package     string
 	Parents     []*GppClass
 	Fields      []GppField
 	Methods     []GppMethod
@@ -308,7 +309,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	if len(parentReferences) > 0 {
 		parents = "[]*GppClass{" + strings.Join(parentReferences, ", ") + "}"
 	}
-	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Parents: %s, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, parents, annotationUsesLiteral(class.Annotations, context))
+	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Package: %q, Parents: %s, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, templatePackageScope(context.ModulePath, context.Package), parents, annotationUsesLiteral(class.Annotations, context))
 	methods, err := effectiveMethodDescriptors(class, classes, map[string]bool{})
 	if err != nil {
 		return err

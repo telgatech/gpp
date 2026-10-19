@@ -12,6 +12,9 @@ annotation (
 	PUT(path string) on method
 	PATCH(path string) on method
 	DELETE(path string) on method
+	Path(name string = "") on parameter
+	Query(name string = "") on parameter
+	Body on parameter
 	Summary(text string) on method
 	Description(text string) on method
 	Tags(names ...string) on method

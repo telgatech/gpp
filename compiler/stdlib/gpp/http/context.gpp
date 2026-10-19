@@ -17,6 +17,7 @@ class Context {
 	Written bool
 	Conn *websocket.Conn
 	SSE *SSEStream
+	TemplateScope string
 
 	func Set(name string, value any) {
 		if this.Values == nil {
@@ -35,6 +36,22 @@ class Context {
 
 	func Query(name string) string {
 		return this.Request.URL.Query().Get(name)
+	}
+
+	func Bind(target any) error {
+		return gppBindRequest(this.Request, this.Response, target)
+	}
+
+	func BindQuery(target any) error {
+		return gppBindValues(this.Request.URL.Query(), target, "query")
+	}
+
+	func BindJSON(target any) error {
+		return gppBindJSON(this.Request, this.Response, target)
+	}
+
+	func BindForm(target any) error {
+		return gppBindForm(this.Request, this.Response, target)
 	}
 
 	func commit(status int, contentType string, body []byte) error {
@@ -85,7 +102,7 @@ class Context {
 
 	func renderTemplate(status int, key string, args ...any) error {
 		var body bytes.Buffer
-		if err := tpl.Execute(&body, key, args...); err != nil {
+		if err := tpl.ExecuteIn(this.TemplateScope, &body, key, args...); err != nil {
 			return err
 		}
 		return this.commit(status, "text/html; charset=utf-8", body.Bytes())

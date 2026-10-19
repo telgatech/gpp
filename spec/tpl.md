@@ -30,6 +30,31 @@ Runtime template behavior lives primarily in `gpp/tpl`.
 
 The underlying template parser and execution model should remain Go's standard `html/template` implementation wherever possible.
 
+## Package Scope
+
+Each Go++ package has an independent template namespace and path registry.
+Template package identity is the compiler's package identity (the canonical
+import path in a module build), not merely a template name or source filename.
+Declarations in different source files of the same package share one
+namespace.
+
+Template names and `tpl.Path(...)` patterns may be reused in different
+packages. In particular, independent HTTP servers in different packages may
+each have a template for `/` without conflicting.
+
+Resolution must use the package scope of the Go++ call site. The compiler must
+preserve that scope for generated typed template calls and dynamic calls such
+as `tpl.Execute`. HTTP route dispatch must carry the scope of the package that
+declared the matched handler into `Context.Template` and other framework
+rendering helpers. A path lookup must never silently select a template from an
+unrelated package.
+
+Runtime loading and registration must also be associated with a package scope.
+The runtime may expose internal scoped registration and execution operations;
+the compiler and framework are responsible for supplying the correct scope.
+The public API for native Go callers that need to choose a scope must be
+specified alongside those APIs.
+
 ---
 
 # 2. Core Design Principle
@@ -876,7 +901,10 @@ Wildcard matching is not part of v1.
 
 # 21. Ambiguous Paths
 
-Ambiguous patterns must be rejected.
+Ambiguous patterns must be rejected during compilation whenever both template
+declarations are known to the compiler in the same Go++ package. The compiler
+must compare declarations across all source files that contribute templates
+to the package, not only declarations in one `.gpp.tpl` file.
 
 For example:
 
@@ -890,7 +918,35 @@ and:
 @{tpl.Path("/blog/{slug}")}
 ```
 
-represent the same match pattern and must produce a compiler or runtime-load error.
+represent the same match pattern and must be rejected. Compiler-known template
+declarations fail compilation; dynamically registered templates fail when
+loaded or registered.
+
+Compiler-known declarations with the same effective path pattern are a
+compile-time error. Path comparison must use the same normalization and
+parameter rules as runtime matching:
+
+* leading and trailing slashes are normalized;
+* `{name}` and the legacy `:name` spelling both represent a parameter segment;
+* parameter names do not distinguish otherwise identical patterns.
+
+For example, `/users/{id}` and `/users/:slug` conflict. A literal path and a
+parameterized path do not conflict merely because they can both match a URL:
+`/blog/archive` and `/blog/{id}` are valid together because the literal path
+wins by specificity.
+
+The diagnostic must point to the later path annotation and identify the first
+conflicting template and its source location. For example:
+
+```text
+views/users.gpp.tpl:18: duplicate template path "/users/{slug}"; conflicts with UserByID at views/users.gpp.tpl:7
+```
+
+This compile-time check applies within one package scope. The same effective
+pattern in another package is valid and must not be reported as a duplicate.
+Runtime duplicate-path checks must remain within each package scope for
+templates registered dynamically through `tpl.LoadFile`, `tpl.LoadDir`, or
+`tpl.Register`, since those sources may not be available to the compiler.
 
 Ambiguity must not depend on registration order.
 

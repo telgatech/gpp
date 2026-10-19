@@ -72,6 +72,10 @@ The examples cover:
 - `todo-app.gpp` — a server-rendered SQLite todo app with a JSON API, OpenAPI
   and Swagger UI, ORM static query methods with exception-based error handling,
   and a context-aware cron cleanup job.
+- `todo-app.go` — the standard Go counterpart to `todo-app.gpp`, with the same
+  pages, SQLite model, API routes, OpenAPI document, and cleanup job. It uses
+  package-level functions instead of app/store types, and `modernc.org/sqlite`;
+  see the file header for run instructions.
 - `expr_catch.gpp` — expression-level error fallback with lazy fallback
   evaluation and chained `??` operators.
 - `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,

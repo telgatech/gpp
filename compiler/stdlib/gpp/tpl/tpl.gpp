@@ -23,6 +23,7 @@ annotation (
 type templateRenderer func(io.Writer, map[string]string, ...any) error
 
 type templateSource struct {
+	Scope   string
 	Kind    string
 	Path    string
 	FS      fs.FS
@@ -31,6 +32,7 @@ type templateSource struct {
 }
 
 type templateRegistration struct {
+	Scope    string
 	Name     string
 	Path     string
 	Render   templateRenderer
@@ -142,40 +144,53 @@ var templateRegistry = struct {
 	managedNames: map[string]bool{},
 }
 
+func templateRegistryKey(scope string, name string) string {
+	return scope + "\x00" + name
+}
+
 func Register(name string, pattern string, render templateRenderer) error {
+	return RegisterIn("", name, pattern, render)
+}
+
+func RegisterIn(scope string, name string, pattern string, render templateRenderer) error {
 	if name == "" || render == nil {
 		return errors.New("template registration requires a name and renderer")
 	}
 	templateRegistry.Lock()
 	defer templateRegistry.Unlock()
-	if _, exists := templateRegistry.byName[name]; exists {
+	key := templateRegistryKey(scope, name)
+	if _, exists := templateRegistry.byName[key]; exists {
 		return fmt.Errorf("template already registered: %s", name)
 	}
 	pattern = normalizeTemplatePath(pattern)
 	for _, existing := range templateRegistry.byName {
-		if pattern != "" && existing.Path != "" && sameTemplatePath(pattern, existing.Path) {
+		if existing.Scope == scope && pattern != "" && existing.Path != "" && sameTemplatePath(pattern, existing.Path) {
 			return fmt.Errorf("template path already registered: %s", pattern)
 		}
 	}
-	templateRegistry.byName[name] = templateRegistration{Name: name, Path: pattern, Render: render}
+	templateRegistry.byName[key] = templateRegistration{Scope: scope, Name: name, Path: pattern, Render: render}
 	return nil
 }
 
 func Execute(writer io.Writer, key string, args ...any) error {
+	return ExecuteIn("", writer, key, args...)
+}
+
+func ExecuteIn(scope string, writer io.Writer, key string, args ...any) error {
 	templateRegistry.RLock()
 	if strings.Contains(key, "/") {
-		registration, params, err := lookupTemplatePath(key)
+		registration, params, err := lookupTemplatePath(scope, key)
 		if err == nil {
 			templateRegistry.RUnlock()
 			return registration.Render(writer, params, args...)
 		}
 	}
-	if registration, exists := templateRegistry.byName[key]; exists {
+	if registration, exists := templateRegistry.byName[templateRegistryKey(scope, key)]; exists {
 		templateRegistry.RUnlock()
 		return registration.Render(writer, nil, args...)
 	}
 	templateRegistry.RUnlock()
-	return executeInline(writer, key, args...)
+	return executeInlineIn(scope, writer, key, args...)
 }
 
 // Render is retained as a source-compatible alias for older Go++ programs.
@@ -184,18 +199,22 @@ func Render(writer io.Writer, key string, args ...any) error {
 }
 
 func RegisterManaged(name string, pattern string, source string, render templateRenderer) error {
-	if err := Register(name, pattern, render); err != nil {
+	return RegisterManagedIn("", name, pattern, source, render)
+}
+
+func RegisterManagedIn(scope string, name string, pattern string, source string, render templateRenderer) error {
+	if err := RegisterIn(scope, name, pattern, render); err != nil {
 		return err
 	}
 	templateRegistry.Lock()
-	templateRegistry.managedNames[name] = true
+	templateRegistry.managedNames[templateRegistryKey(scope, name)] = true
 	for _, existing := range templateRegistry.sources {
-		if existing.Managed && existing.Kind == "file" && existing.Path == source {
+		if existing.Scope == scope && existing.Managed && existing.Kind == "file" && existing.Path == source {
 			templateRegistry.Unlock()
 			return nil
 		}
 	}
-	templateRegistry.sources = append(templateRegistry.sources, templateSource{Kind: "file", Path: source, Managed: true})
+	templateRegistry.sources = append(templateRegistry.sources, templateSource{Scope: scope, Kind: "file", Path: source, Managed: true})
 	templateRegistry.Unlock()
 	return nil
 }
@@ -206,10 +225,11 @@ func ManagedSourcePaths() []string {
 	seen := map[string]bool{}
 	paths := []string{}
 	for _, source := range templateRegistry.sources {
-		if !source.Managed || source.Kind != "file" || seen[source.Path] {
+		key := source.Scope + "\x00" + source.Path
+		if !source.Managed || source.Kind != "file" || seen[key] {
 			continue
 		}
-		seen[source.Path] = true
+		seen[key] = true
 		paths = append(paths, source.Path)
 	}
 	sort.Strings(paths)
@@ -218,7 +238,32 @@ func ManagedSourcePaths() []string {
 
 func Reload() error {
 	templateRegistry.RLock()
-	sources := append([]templateSource(nil), templateRegistry.sources...)
+	scopes := map[string]bool{}
+	for _, source := range templateRegistry.sources {
+		scopes[source.Scope] = true
+	}
+	templateRegistry.RUnlock()
+	orderedScopes := make([]string, 0, len(scopes))
+	for scope := range scopes {
+		orderedScopes = append(orderedScopes, scope)
+	}
+	sort.Strings(orderedScopes)
+	for _, scope := range orderedScopes {
+		if err := ReloadIn(scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ReloadIn(scope string) error {
+	templateRegistry.RLock()
+	sources := []templateSource{}
+	for _, source := range templateRegistry.sources {
+		if source.Scope == scope {
+			sources = append(sources, source)
+		}
+	}
 	templateRegistry.RUnlock()
 
 	loaded := []templateDefinition{}
@@ -233,23 +278,44 @@ func Reload() error {
 	templateRegistry.Lock()
 	defer templateRegistry.Unlock()
 	next := map[string]templateRegistration{}
-	for name, registration := range templateRegistry.byName {
-		if !templateRegistry.runtimeNames[name] && !templateRegistry.managedNames[name] {
-			next[name] = registration
+	existing := map[string]templateRegistration{}
+	for key, registration := range templateRegistry.byName {
+		if registration.Scope != scope {
+			continue
+		}
+		if !templateRegistry.runtimeNames[key] && !templateRegistry.managedNames[key] {
+			next[key] = registration
+			existing[registration.Name] = registration
 		}
 	}
-	if err := validateDefinitions(loaded, next); err != nil {
+	if err := validateDefinitions(loaded, existing); err != nil {
 		return err
 	}
 	nextRuntimeNames := map[string]bool{}
 	for _, definition := range loaded {
-		if err := addDefinition(next, definition); err != nil {
+		if err := addDefinition(next, scope, definition); err != nil {
 			return err
 		}
-		nextRuntimeNames[definition.Name] = true
+		nextRuntimeNames[templateRegistryKey(scope, definition.Name)] = true
 	}
-	templateRegistry.byName = next
-	templateRegistry.runtimeNames = nextRuntimeNames
+	for key, registration := range templateRegistry.byName {
+		if registration.Scope == scope {
+			delete(templateRegistry.byName, key)
+		}
+	}
+	for key, registration := range next {
+		if registration.Scope == scope {
+			templateRegistry.byName[key] = registration
+		}
+	}
+	for key := range templateRegistry.runtimeNames {
+		if strings.HasPrefix(key, scope+"\x00") {
+			delete(templateRegistry.runtimeNames, key)
+		}
+	}
+	for key := range nextRuntimeNames {
+		templateRegistry.runtimeNames[key] = true
+	}
 	return nil
 }
 
@@ -258,11 +324,15 @@ func Param(name string) string {
 }
 
 func executeInline(writer io.Writer, source string, args ...any) error {
+	return executeInlineIn("", writer, source, args...)
+}
+
+func executeInlineIn(scope string, writer io.Writer, source string, args ...any) error {
 	if len(args) > 1 {
 		return errors.New("inline templates accept zero or one data argument")
 	}
 	functions := templateFunctions(nil)
-	addRegisteredTemplateFunctions(functions, nil)
+	addRegisteredTemplateFunctions(functions, nil, scope)
 	parsed, err := htmltemplate.New("inline template").Funcs(functions).Parse(source)
 	if err != nil {
 		return fmt.Errorf("inline template: %w", err)
@@ -283,11 +353,13 @@ func templateFunctions(params map[string]string) htmltemplate.FuncMap {
 	return functions
 }
 
-func addRegisteredTemplateFunctions(functions htmltemplate.FuncMap, params map[string]string) {
+func addRegisteredTemplateFunctions(functions htmltemplate.FuncMap, params map[string]string, scope string) {
 	templateRegistry.RLock()
 	registrations := make([]templateRegistration, 0, len(templateRegistry.byName))
 	for _, registration := range templateRegistry.byName {
-		registrations = append(registrations, registration)
+		if registration.Scope == scope {
+			registrations = append(registrations, registration)
+		}
 	}
 	templateRegistry.RUnlock()
 	for _, registration := range registrations {
@@ -303,6 +375,10 @@ func addRegisteredTemplateFunctions(functions htmltemplate.FuncMap, params map[s
 }
 
 func LoadFile(source any, names ...string) error {
+	return LoadFileIn("", source, names...)
+}
+
+func LoadFileIn(scope string, source any, names ...string) error {
 	data, displayName, err := readTemplateFile(source, names...)
 	if err != nil {
 		return err
@@ -311,12 +387,12 @@ func LoadFile(source any, names ...string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", displayName, err)
 	}
-	if err := registerDefinitions(definitions); err != nil {
+	if err := registerDefinitions(scope, definitions); err != nil {
 		return err
 	}
-	descriptor := templateSource{Kind: "file", Path: displayName}
+	descriptor := templateSource{Scope: scope, Kind: "file", Path: displayName}
 	if filesystem, ok := source.(fs.FS); ok {
-		descriptor = templateSource{Kind: "filesystem-file", FS: filesystem, Name: names[0]}
+		descriptor = templateSource{Scope: scope, Kind: "filesystem-file", FS: filesystem, Name: names[0]}
 	}
 	templateRegistry.Lock()
 	templateRegistry.sources = append(templateRegistry.sources, descriptor)
@@ -325,6 +401,10 @@ func LoadFile(source any, names ...string) error {
 }
 
 func LoadDir(source any) error {
+	return LoadDirIn("", source)
+}
+
+func LoadDirIn(scope string, source any) error {
 	var descriptor templateSource
 	switch value := source.(type) {
 	case string:
@@ -338,9 +418,10 @@ func LoadDir(source any) error {
 	if err != nil {
 		return err
 	}
-	if err := registerDefinitions(definitions); err != nil {
+	if err := registerDefinitions(scope, definitions); err != nil {
 		return err
 	}
+	descriptor.Scope = scope
 	templateRegistry.Lock()
 	templateRegistry.sources = append(templateRegistry.sources, descriptor)
 	templateRegistry.Unlock()
@@ -445,24 +526,30 @@ func readTemplateFile(source any, names ...string) ([]byte, string, error) {
 	}
 }
 
-func registerDefinitions(definitions []templateDefinition) error {
+func registerDefinitions(scope string, definitions []templateDefinition) error {
 	templateRegistry.Lock()
 	defer templateRegistry.Unlock()
-	if err := validateDefinitions(definitions, templateRegistry.byName); err != nil {
+	existing := map[string]templateRegistration{}
+	for _, registration := range templateRegistry.byName {
+		if registration.Scope == scope {
+			existing[registration.Name] = registration
+		}
+	}
+	if err := validateDefinitions(definitions, existing); err != nil {
 		return err
 	}
 	next := map[string]templateRegistration{}
-	for name, registration := range templateRegistry.byName {
-		next[name] = registration
+	for key, registration := range templateRegistry.byName {
+		next[key] = registration
 	}
 	for _, definition := range definitions {
-		if err := addDefinition(next, definition); err != nil {
+		if err := addDefinition(next, scope, definition); err != nil {
 			return err
 		}
 	}
 	templateRegistry.byName = next
 	for _, definition := range definitions {
-		templateRegistry.runtimeNames[definition.Name] = true
+		templateRegistry.runtimeNames[templateRegistryKey(scope, definition.Name)] = true
 	}
 	return nil
 }
@@ -483,33 +570,35 @@ func validateDefinitions(definitions []templateDefinition, existing map[string]t
 	return nil
 }
 
-func addDefinition(registry map[string]templateRegistration, definition templateDefinition) error {
+func addDefinition(registry map[string]templateRegistration, scope string, definition templateDefinition) error {
 	if definition.Name == "" {
 		return errors.New("template declaration requires a name")
 	}
-	if _, exists := registry[definition.Name]; exists {
+	key := templateRegistryKey(scope, definition.Name)
+	if _, exists := registry[key]; exists {
 		return fmt.Errorf("template already registered: %s", definition.Name)
 	}
 	definition.Path = normalizeTemplatePath(definition.Path)
 	for _, existing := range registry {
-		if definition.Path != "" && existing.Path != "" && sameTemplatePath(definition.Path, existing.Path) {
+		if existing.Scope == scope && definition.Path != "" && existing.Path != "" && sameTemplatePath(definition.Path, existing.Path) {
 			return fmt.Errorf("template path already registered: %s", definition.Path)
 		}
 	}
 	copy := definition
-	registry[definition.Name] = templateRegistration{
+	registry[key] = templateRegistration{
+		Scope: scope,
 		Name: definition.Name,
 		Path: definition.Path,
 			Render: func(writer io.Writer, params map[string]string, args ...any) error {
-				return renderDefinition(writer, copy, params, args...)
+				return renderDefinition(scope, writer, copy, params, args...)
 			},
 	}
 	return nil
 }
 
-func renderDefinition(writer io.Writer, definition templateDefinition, params map[string]string, args ...any) error {
+func renderDefinition(scope string, writer io.Writer, definition templateDefinition, params map[string]string, args ...any) error {
 	functions := templateFunctions(params)
-	addRegisteredTemplateFunctions(functions, params)
+	addRegisteredTemplateFunctions(functions, params, scope)
 	parsed, err := htmltemplate.New(definition.Name).Funcs(functions).Parse(definition.Body)
 	if err != nil {
 		return err
@@ -540,13 +629,13 @@ func templateData(parameters string, args ...any) any {
 	return data
 }
 
-func lookupTemplatePath(value string) (templateRegistration, map[string]string, error) {
+func lookupTemplatePath(scope string, value string) (templateRegistration, map[string]string, error) {
 	value = normalizeTemplatePath(value)
 	var selected templateRegistration
 	var selectedParams map[string]string
 	selectedStatic := -1
 	for _, registration := range templateRegistry.byName {
-		if registration.Path == "" {
+		if registration.Scope != scope || registration.Path == "" {
 			continue
 		}
 		params, static, ok := matchTemplatePath(registration.Path, value)

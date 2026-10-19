@@ -410,29 +410,48 @@ func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas
 			if name == "" || strings.EqualFold(name, "ctx") || strings.Contains(typeName, "Context") {
 				continue
 			}
+			binding := ""
+			bindingName := name
+			for _, annotation := range []string{"gpp.http.Path", "gpp.http.Query", "gpp.http.Body"} {
+				if !gppHasAnnotation(parameter.Interface(), annotation) {
+					continue
+				}
+				binding = annotation
+				if arguments := gppAnnotationArgs(parameter.Interface(), annotation); len(arguments) > 0 {
+					if explicitName := strings.TrimSpace(fmt.Sprint(arguments[0])); explicitName != "" {
+						bindingName = explicitName
+					}
+				}
+				break
+			}
+			if binding == "" {
+				continue
+			}
 			schema := gppOpenAPISchemaForTypeName(typeName, schemas)
-			if gppOpenAPIPathParameter(route.Path, name) {
+			if binding == "gpp.http.Path" {
 				parameters = append(parameters, map[string]any{
-					"name":     name,
+					"name":     bindingName,
 					"in":       "path",
 					"required": true,
 					"schema":   schema,
 				})
-				boundPathParameters[name] = true
+				boundPathParameters[bindingName] = true
 				continue
 			}
-			if route.Method == "GET" || route.Method == "DELETE" {
+			if binding == "gpp.http.Query" {
 				parameters = append(parameters, map[string]any{
-					"name":     name,
+					"name":     bindingName,
 					"in":       "query",
 					"required": false,
 					"schema":   schema,
 				})
 				continue
 			}
-			bodyParameter = map[string]any{"content": map[string]any{
-				"application/json": map[string]any{"schema": schema},
-			}}
+			if binding == "gpp.http.Body" {
+				bodyParameter = map[string]any{"content": map[string]any{
+					"application/json": map[string]any{"schema": schema},
+				}}
+			}
 		}
 	}
 	for _, name := range gppOpenAPIPathParameters(route.Path) {

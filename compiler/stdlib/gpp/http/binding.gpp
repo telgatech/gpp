@@ -1,0 +1,170 @@
+package gpp.http
+
+import (
+	"encoding"
+	"encoding/json"
+	"fmt"
+	"mime"
+	stdhttp "net/http"
+	"reflect"
+	"strconv"
+	"strings"
+)
+
+const gppDefaultMaxBodyBytes int64 = 1 << 20
+
+func gppBindRequest(request *stdhttp.Request, response stdhttp.ResponseWriter, target any) error {
+	if request.Method == stdhttp.MethodGet || request.Method == stdhttp.MethodHead {
+		return gppBindValues(request.URL.Query(), target, "query")
+	}
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil {
+		return fmt.Errorf("http: invalid request Content-Type: %w", err)
+	}
+	switch {
+	case contentType == "application/json" || strings.HasSuffix(contentType, "+json") || contentType == "":
+		return gppBindJSON(request, response, target)
+	case contentType == "application/x-www-form-urlencoded" || contentType == "multipart/form-data":
+		return gppBindForm(request, response, target)
+	default:
+		return fmt.Errorf("http: unsupported request Content-Type %q", contentType)
+	}
+}
+
+func gppBindJSON(request *stdhttp.Request, response stdhttp.ResponseWriter, target any) error {
+	if err := gppValidateBindTarget(target); err != nil {
+		return err
+	}
+	request.Body = stdhttp.MaxBytesReader(response, request.Body, gppDefaultMaxBodyBytes)
+	if err := json.NewDecoder(request.Body).Decode(target); err != nil {
+		return fmt.Errorf("http: decode JSON request body: %w", err)
+	}
+	return nil
+}
+
+func gppBindForm(request *stdhttp.Request, response stdhttp.ResponseWriter, target any) error {
+	request.Body = stdhttp.MaxBytesReader(response, request.Body, gppDefaultMaxBodyBytes)
+	if err := request.ParseMultipartForm(32 << 10); err != nil && err != stdhttp.ErrNotMultipart {
+		return err
+	}
+	return gppBindValues(request.PostForm, target, "form")
+}
+
+func gppBindValues(values map[string][]string, target any, tagName string) error {
+	if err := gppValidateBindTarget(target); err != nil {
+		return err
+	}
+	value := reflect.ValueOf(target).Elem()
+	if value.Kind() != reflect.Struct {
+		return fmt.Errorf("http: bind target must point to a struct, got %s", value.Kind())
+	}
+	typeOf := value.Type()
+	for index := 0; index < value.NumField(); index++ {
+		fieldType := typeOf.Field(index)
+		fieldValue := value.Field(index)
+		if fieldType.PkgPath != "" || !fieldValue.CanSet() {
+			continue
+		}
+		name := gppBindFieldName(fieldType, tagName)
+		if name == "" {
+			continue
+		}
+		fieldValues, exists := values[name]
+		if !exists || len(fieldValues) == 0 {
+			continue
+		}
+		if err := gppSetBindField(fieldValue, fieldValues); err != nil {
+			return fmt.Errorf("http: bind field %s: %w", fieldType.Name, err)
+		}
+	}
+	return nil
+}
+
+func gppValidateBindTarget(target any) error {
+	if target == nil {
+		return fmt.Errorf("http: bind target cannot be nil")
+	}
+	value := reflect.ValueOf(target)
+	if value.Kind() != reflect.Ptr || value.IsNil() {
+		return fmt.Errorf("http: bind target must be a non-nil pointer")
+	}
+	return nil
+}
+
+func gppBindFieldName(field reflect.StructField, tagName string) string {
+	for _, name := range []string{tagName, "json"} {
+		if tag := field.Tag.Get(name); tag != "" {
+			value := strings.Split(tag, ",")[0]
+			if value == "-" {
+				return ""
+			}
+			if value != "" {
+				return value
+			}
+		}
+	}
+	if field.Name == "" {
+		return ""
+	}
+	return strings.ToLower(field.Name[:1]) + field.Name[1:]
+}
+
+func gppSetBindField(field reflect.Value, values []string) error {
+	if field.Kind() == reflect.Ptr {
+		field.Set(reflect.New(field.Type().Elem()))
+		return gppSetBindField(field.Elem(), values)
+	}
+	if field.Kind() == reflect.Slice && field.Type().Elem().Kind() != reflect.Uint8 {
+		result := reflect.MakeSlice(field.Type(), len(values), len(values))
+		for index, value := range values {
+			if err := gppSetBindScalar(result.Index(index), value); err != nil {
+				return err
+			}
+		}
+		field.Set(result)
+		return nil
+	}
+	return gppSetBindScalar(field, values[0])
+}
+
+func gppSetBindScalar(field reflect.Value, value string) error {
+	textUnmarshaler := reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
+	if field.CanAddr() && field.Addr().Type().Implements(textUnmarshaler) {
+		return field.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(value))
+	}
+	switch field.Kind() {
+	case reflect.String:
+		field.SetString(value)
+	case reflect.Bool:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		field.SetBool(parsed)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		parsed, err := strconv.ParseInt(value, 10, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetInt(parsed)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		parsed, err := strconv.ParseUint(value, 10, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetUint(parsed)
+	case reflect.Float32, reflect.Float64:
+		parsed, err := strconv.ParseFloat(value, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetFloat(parsed)
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(data, field.Addr().Interface())
+	}
+	return nil
+}
