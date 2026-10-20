@@ -84,7 +84,7 @@ return server.ListenAndServe()
 ```
 :::
 
-`Listen()` creates the listener from the class configuration and runs the server. Once it is ready, `gpp/http` logs the actual bound address automatically, including the assigned port when `Port(0)` (or the default ephemeral port) asks the OS to choose one. The resolved address is also available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`.
+`Listen()` creates the listener from the class configuration and runs the server. Once it is ready, `gpp/http` logs the actual bound HTTP URL, including the assigned port when `Port(0)` (or the default ephemeral port) asks the OS to choose one. The resolved address is also available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`.
 
 The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
 

@@ -870,7 +870,11 @@ class Server {
 			<-done
 			return err
 		}
-		log.Printf("gpp/http: listening on %s", listener.Addr().String())
+		listenerAddress := listener.Addr().String()
+		if listener.Addr().Network() == "tcp" || listener.Addr().Network() == "tcp4" || listener.Addr().Network() == "tcp6" {
+			listenerAddress = "http://" + listenerAddress
+		}
+		log.Printf("gpp/http: listening on %s", listenerAddress)
 		if len(tpl.ManagedSourcePaths()) > 0 {
 			this.TemplateWatchStop = make(chan struct{})
 			this.TemplateWatchDone = make(chan struct{})
