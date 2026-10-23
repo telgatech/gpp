@@ -904,6 +904,73 @@ class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
 	}
 }
 
+func TestCompileFilesScopesTemplatesAcrossPackages(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	pagesPath := filepath.Join(inputDir, "pages.gpp")
+	mainPath := filepath.Join(inputDir, "main.gpp")
+
+	pagesSource := `package demo.pages
+
+import (
+    "bytes"
+    "gpp/tpl"
+)
+
+template Card(value string) {
+    <i>page:{{.}}</i>
+}
+
+func Render() string {
+    var output bytes.Buffer
+    if err := tpl.Execute(&output, "Card", "package"); err != nil { panic(err) }
+    return output.String()
+}
+`
+	mainSource := `package main
+
+import (
+    "bytes"
+    "fmt"
+    "gpp/tpl"
+    demo.pages
+)
+
+template Card(value string) {
+    <b>main:{{.}}</b>
+}
+
+func main() {
+    var output bytes.Buffer
+    if err := tpl.Execute(&output, "Card", "package"); err != nil { panic(err) }
+    fmt.Println(output.String())
+    fmt.Println(pages.Render())
+}
+`
+	if err := os.WriteFile(pagesPath, []byte(pagesSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainPath, []byte(mainSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{pagesPath, mainPath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated cross-package template program did not run: %v\n%s", err, output)
+	}
+	got := string(output)
+	for _, want := range []string{"<b>main:package</b>", "<i>page:package</i>"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("cross-package template output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestCompileFilesSupportsHTTPResponseHelpersAndErrorTemplates(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
