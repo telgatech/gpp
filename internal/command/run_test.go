@@ -66,6 +66,30 @@ func TestInitCreatesFormattedStarter(t *testing.T) {
 	}
 }
 
+func TestCopyNativeGoFilesSkipsFilesExcludedByBuildConstraints(t *testing.T) {
+	sourceDir := t.TempDir()
+	outputDir := t.TempDir()
+	source := filepath.Join(sourceDir, "main.gpp")
+	if err := os.WriteFile(source, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ignored := filepath.Join(sourceDir, "todo-app.go")
+	if err := os.WriteFile(ignored, []byte("//go:build ignore\n\npackage main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	generated := filepath.Join(outputDir, "todo-app.go")
+	if err := os.WriteFile(generated, []byte("package main\n// generated\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyNativeGoFiles([]string{source}, outputDir); err != nil {
+		t.Fatalf("ignored native Go example conflicted with generated output: %v", err)
+	}
+	if data, err := os.ReadFile(generated); err != nil || !bytes.Contains(data, []byte("generated")) {
+		t.Fatalf("generated output was changed: %q, %v", data, err)
+	}
+}
+
 func TestInitDoesNotCreateNestedGitRepository(t *testing.T) {
 	root := t.TempDir()
 	gitConfig := filepath.Join(t.TempDir(), "gitconfig")

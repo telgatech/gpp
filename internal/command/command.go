@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -537,6 +538,13 @@ func copyNativeGoFiles(sources []string, output string) error {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
 				continue
 			}
+			matches, err := nativeGoFileMatchesBuild(directory, entry.Name())
+			if err != nil {
+				return fmt.Errorf("inspect native Go file %s: %w", filepath.Join(directory, entry.Name()), err)
+			}
+			if !matches {
+				continue
+			}
 			source := filepath.Join(directory, entry.Name())
 			file, err := parser.ParseFile(token.NewFileSet(), source, nil, parser.PackageClauseOnly)
 			if err != nil {
@@ -589,6 +597,13 @@ func copyNativeGoTree(root, output string) error {
 		if filepath.Ext(path) != ".go" {
 			return nil
 		}
+		matches, err := nativeGoFileMatchesBuild(filepath.Dir(path), entry.Name())
+		if err != nil {
+			return fmt.Errorf("inspect native Go file %s: %w", path, err)
+		}
+		if !matches {
+			return nil
+		}
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
@@ -611,6 +626,17 @@ func copyNativeGoTree(root, output string) error {
 		}
 		return os.WriteFile(destination, data, 0644)
 	})
+}
+
+func nativeGoFileMatchesBuild(directory, name string) (bool, error) {
+	context := build.Default
+	if goos := os.Getenv("GOOS"); goos != "" {
+		context.GOOS = goos
+	}
+	if goarch := os.Getenv("GOARCH"); goarch != "" {
+		context.GOARCH = goarch
+	}
+	return context.MatchFile(directory, name)
 }
 
 type testSelectionResult struct {
