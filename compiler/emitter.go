@@ -704,9 +704,6 @@ func templatePath(template *TemplateDecl) string {
 }
 
 func transformStaticTemplateCalls(src string, context constructorContext) (string, error) {
-	if len(context.Templates) == 0 {
-		return src, nil
-	}
 	if transformed, handled, err := transformStaticTemplateCallsAST(src, context); handled {
 		return transformed, err
 	}

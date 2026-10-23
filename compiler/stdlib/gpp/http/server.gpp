@@ -575,6 +575,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 	if fallback {
 		return gppRegisterMuxHandler(mux, "/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			ctx := gppNewContext(w, r)
+			ctx.TemplateScope = gppTemplateScope(app)
 			gppCallError(app, ctx, stdhttp.StatusNotFound, nil)
 		})
 	}
