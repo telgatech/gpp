@@ -2,7 +2,17 @@ name: Compiler and examples
 
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '**/*.md'
+      - 'llms.txt'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '**/*.md'
+      - 'llms.txt'
   workflow_dispatch:
 
 permissions:

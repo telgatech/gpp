@@ -1,0 +1,39 @@
+# Go++
+
+> Go++ is a Go-compatible language that adds application-level syntax and compiles to ordinary Go. Source files use the `.gpp` extension; the command-line tool is `gpp`.
+
+Use the guides and examples below as the primary source for writing Go++ code. Go++ code can use Go packages and interoperate with Go code.
+
+## Start here
+
+- [README](README.md): project overview, installation, and command reference.
+- [Getting started](docs/guide/getting-started.md): create and run a Go++ project.
+- [Language guide](docs/guide/language.md): syntax and language behavior.
+- [Standard library guide](docs/guide/standard-library.md): Go++ library packages.
+- [Tooling guide](docs/guide/tooling.md): formatting, import repair, tests, docs, and LSP.
+
+## Features and examples
+
+- [Feature index](docs/features/index.md): supported language and runtime features.
+- [Examples index](examples/README.md): runnable examples.
+- [Mixed Go and Go++](docs/features/mixed-go.md): sharing a project with native Go files.
+- [Modules and packages](spec/modules.md): package and module behavior.
+
+## Common library guides
+
+- [HTTP](docs/guide/standard-library/http.md)
+- [Templates](docs/guide/standard-library/templates.md)
+- [ORM](docs/guide/standard-library/orm.md)
+- [JSON](docs/guide/standard-library/encoding/json.md)
+- [Testing](docs/guide/standard-library/testing.md)
+
+## Working with a Go++ project
+
+- Run `gpp doc --json <symbol>` to look up public API documentation.
+- Run `gpp lsp` to use compiler-backed editor diagnostics and language features.
+- Run `gpp fmt`, `gpp fiximports`, `gpp build`, and `gpp test` as appropriate for the project.
+
+## Documentation notes
+
+- Treat the guides, feature index, examples, and `gpp doc` output as descriptions of current behavior.
+- The [specification index](docs/reference/specifications.md) links to detailed specifications. A specification may describe behavior that is still planned; check the feature index and implementation-facing guides before relying on it.
