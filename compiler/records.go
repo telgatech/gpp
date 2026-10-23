@@ -546,10 +546,16 @@ func lowerRecordOnlyStatement(statement Stmt, context constructorContext) error 
 	return nil
 }
 
-func lowerRecordOnlyExpr(expression ExprNode, context constructorContext) (ExprNode, error) {
+func lowerRecordOnlyExpr(expression ExprNode, context constructorContext) (result ExprNode, resultErr error) {
 	if expression == nil {
 		return nil, nil
 	}
+	// This AST pass reports diagnostics against the narrowest expression span
+	// when a lowering or inference step fails. Keep location attachment here so
+	// individual record rules cannot accidentally return an unlocated error.
+	defer func() {
+		resultErr = sourceLineError(expression.Span(), resultErr)
+	}()
 	if call, ok := expression.(*CallExpr); ok {
 		if lowered, handled, err := lowerRecordCallExprNode(call, context); handled {
 			return lowered, err

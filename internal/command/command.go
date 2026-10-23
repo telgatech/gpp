@@ -77,6 +77,8 @@ func Run(args []string) int {
 		return runClean(commandArgs)
 	case "fmt":
 		return runFmt(commandArgs)
+	case "fiximports":
+		return runFixImports(commandArgs)
 	case "test":
 		return runTest(commandArgs)
 	case "doc":
@@ -122,6 +124,7 @@ func printHelp() {
 	fmt.Println("    run        build and run a Go++ program")
 	fmt.Println("    clean      remove generated build artifacts")
 	fmt.Println("    fmt        format Go++ source")
+	fmt.Println("    fiximports add imports and resolve package-name clashes")
 	fmt.Println("    test       run Go++ tests")
 	fmt.Println("    doc        show Go++ source documentation")
 	fmt.Println("    env        show environment information")
@@ -154,6 +157,10 @@ func commandHelp(name string) int {
 		fmt.Println("Usage: gpp fmt [--check] [--stdout] [file.gpp|file.gpp.tpl|directory ...]")
 		fmt.Println("  --check       report files that need formatting without changing them")
 		fmt.Println("  --stdout      write formatted output to stdout (exactly one file)")
+	case "fiximports":
+		fmt.Println("Usage: gpp fiximports [--check] [--stdout] [file.gpp|file.gpp.tpl|directory ...]")
+		fmt.Println("  --check       report files needing import fixes without changing them")
+		fmt.Println("  --stdout      write fixed output to stdout (exactly one file)")
 	case "test":
 		fmt.Println("Usage: gpp test [options] [directory|./...]")
 		printCompileFlags()
@@ -333,7 +340,6 @@ func runBuild(args []string) int {
 	if err := runGoCommand(options.output, "build", "-o", absoluteBinary, "."); err != nil {
 		return reportError(err)
 	}
-	fmt.Printf("built %s\n", binaryPath)
 	return 0
 }
 

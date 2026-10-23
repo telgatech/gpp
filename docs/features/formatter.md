@@ -29,3 +29,7 @@ gpp fmt --stdout main.gpp
 ```
 
 Formatting behavior is shared with the language server. See [formatting in the tooling guide](/guide/tooling#formatting) and the [formatter specification](/reference/specifications/fmt).
+
+Use [`gpp fiximports`](/guide/tooling#fixing-imports) to add resolvable missing
+imports separately from formatting. Go++ packages take priority; colliding
+standard-library packages use aliases such as `stdhttp`.

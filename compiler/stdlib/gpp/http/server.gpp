@@ -33,6 +33,18 @@ func gppServe(server *stdhttp.Server, listener net.Listener, ready chan bool, do
 	done <- server.Serve(&gppReadyListener{Listener: listener, ready: ready})
 }
 
+func gppHTTPListenerURL(address net.Addr) string {
+	tcpAddress, ok := address.(*net.TCPAddr)
+	if !ok {
+		return address.String()
+	}
+	host := tcpAddress.IP.String()
+	if tcpAddress.IP == nil || tcpAddress.IP.IsUnspecified() {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, fmt.Sprint(tcpAddress.Port))
+}
+
 func gppErrorResult(result []reflect.Value) error {
 	if len(result) == 0 || result[0].IsNil() {
 		return nil
@@ -870,10 +882,7 @@ class Server {
 			<-done
 			return err
 		}
-		listenerAddress := listener.Addr().String()
-		if listener.Addr().Network() == "tcp" || listener.Addr().Network() == "tcp4" || listener.Addr().Network() == "tcp6" {
-			listenerAddress = "http://" + listenerAddress
-		}
+		listenerAddress := gppHTTPListenerURL(listener.Addr())
 		log.Printf("gpp/http: listening on %s", listenerAddress)
 		if len(tpl.ManagedSourcePaths()) > 0 {
 			this.TemplateWatchStop = make(chan struct{})

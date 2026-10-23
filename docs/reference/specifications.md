@@ -13,6 +13,7 @@ before each docs development or production build.
 - [Compiler diagnostics](./specifications/compiler-diagnostics)
 - [Language server](./specifications/compiler.lsp)
 - [Formatting](./specifications/fmt)
+- [Import fixes](./specifications/fiximports)
 - [Type resolver](./specifications/type-resolver)
 - [Generic Go++ classes](./specifications/generic-classes)
 - [Generic containers](./specifications/std.container)

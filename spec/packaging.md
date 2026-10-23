@@ -577,6 +577,7 @@ Commands:
     run        build and run a Go++ program
     clean      remove generated build artifacts
     fmt        format Go++ source
+    fiximports add missing imports
     test       run tests
     env        show environment information
     doctor     diagnose the toolchain

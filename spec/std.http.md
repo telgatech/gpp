@@ -299,7 +299,9 @@ on port 0, allowing the operating system to assign an available ephemeral
 port. The bound address must be available through Server.HTTPServer.Addr
 before BeforeListen() runs. After the listener is ready, log its clickable
 `http://` URL for TCP listeners, including the actual assigned port; Unix-domain
-listeners should log their socket path without an HTTP scheme.
+listeners should log their socket path without an HTTP scheme. If a TCP listener
+is bound to all interfaces, log `localhost` as the clickable host instead of an
+unspecified address such as `[::]` or `0.0.0.0`.
 
 `Server.Listen()` must discover App routes/configuration.
 

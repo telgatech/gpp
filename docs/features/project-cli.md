@@ -19,6 +19,7 @@ cd hello
 gpp run
 gpp build
 gpp build -o ./hello
+gpp fiximports
 ```
 
 ```sh [Go]

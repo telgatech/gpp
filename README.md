@@ -125,7 +125,7 @@ go install github.com/telgatech/gpp@latest
 It provides one `gpp` executable with project commands:
 
 ```text
-gpp init|compile|build|run|clean|fmt|test|doc|env|doctor|version|lsp
+gpp init|compile|build|run|clean|fmt|fiximports|test|doc|env|doctor|version|lsp
 ```
 
 Create and run a starter project:
@@ -160,6 +160,11 @@ gpp fmt examples/hello.gpp
 gpp fmt --check ./...
 gpp fmt --stdout examples/hello.gpp
 ```
+
+Use `gpp fiximports` to add imports when a unique available package matches
+qualified names in Go++ source. It prefers bundled Go++ packages and uses
+`std`-prefixed aliases for colliding standard-library imports. It supports
+`--check` and `--stdout` modes.
 
 Pass `-emit-go` to `gpp build` when you want the generated Go workspace path
 reported for inspection.

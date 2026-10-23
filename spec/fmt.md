@@ -1000,7 +1000,8 @@ fix type errors
 reorganize declarations
 ```
 
-Those belong to linting, refactoring, or future `gpp fix` functionality.
+Those belong to linting, refactoring, or `gpp fiximports` when import
+resolution is unambiguous.
 
 ---
 

@@ -42,6 +42,8 @@ type callableSignature struct {
 	GoName     string
 	Parameters []parameterInfo
 	ResultAST  TypeNode
+	SourceFile string
+	SourceLine int
 }
 
 func (signature callableSignature) resultText() string {
@@ -417,7 +419,7 @@ func functionSignaturesForFile(file *File) (map[string][]callableSignature, erro
 		if len(raw.GoASTDecls) > 0 {
 			for _, declaration := range raw.GoASTDecls {
 				if function, ok := declaration.(*ast.FuncDecl); ok && function.Recv == nil {
-					result[function.Name.Name] = append(result[function.Name.Name], goCallableSignature(function))
+					result[function.Name.Name] = append(result[function.Name.Name], goCallableSignature(function, raw.GoASTFileSet, raw.SourceFile))
 				}
 			}
 			continue
@@ -438,11 +440,16 @@ func functionDeclSignature(function *FunctionDecl) (callableSignature, error) {
 		Name:       function.Name,
 		Parameters: parameters,
 		ResultAST:  methodResultTypeNode(function.Method),
+		SourceFile: function.SourceFile,
+		SourceLine: function.SourceLine,
 	}, nil
 }
 
-func goCallableSignature(function *ast.FuncDecl) callableSignature {
-	signature := callableSignature{Name: function.Name.Name}
+func goCallableSignature(function *ast.FuncDecl, fileSet *token.FileSet, filename string) callableSignature {
+	signature := callableSignature{Name: function.Name.Name, SourceFile: filename}
+	if fileSet != nil {
+		signature.SourceLine = fileSet.Position(function.Pos()).Line
+	}
 	if function.Type == nil || function.Type.Params == nil {
 		return signature
 	}
@@ -535,14 +542,14 @@ func configureFunctionOverloads(overloads *overloadContext, signatures map[strin
 		if len(candidates) < 2 {
 			continue
 		}
-		seen := map[string]bool{}
+		seen := map[string]callableSignature{}
 		arityCounts := map[int]int{}
 		for index := range candidates {
 			key := parameterSignatureKey(candidates[index].Parameters)
-			if seen[key] {
-				return fmt.Errorf("function %s is declared more than once with parameter types %s", name, key)
+			if previous, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("%s: function %s redeclared in this block\n\t%s: other declaration of %s", callableSignatureLocation(candidates[index]), name, callableSignatureLocation(previous), name)
 			}
-			seen[key] = true
+			seen[key] = candidates[index]
 			arityCounts[len(candidates[index].Parameters)]++
 		}
 		for index := range candidates {
@@ -567,6 +574,16 @@ func configureFunctionOverloads(overloads *overloadContext, signatures map[strin
 		signatures[name] = candidates
 	}
 	return nil
+}
+
+func callableSignatureLocation(signature callableSignature) string {
+	if signature.SourceFile == "" {
+		return "unknown source"
+	}
+	if signature.SourceLine > 0 {
+		return fmt.Sprintf("%s:%d", signature.SourceFile, signature.SourceLine)
+	}
+	return signature.SourceFile
 }
 
 func parseParameterInfos(params string) ([]parameterInfo, error) {

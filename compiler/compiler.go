@@ -202,7 +202,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		configureImportedEnums(&context, file, model, options.ModulePath)
 		configureEnumSignatures(&context)
 		if err := configureFunctionOverloads(&context.Overloads, context.FunctionSignatures); err != nil {
-			return fmt.Errorf("%s: %w", file.Name, err)
+			return err
 		}
 
 		dir := outputDir

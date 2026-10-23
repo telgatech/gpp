@@ -12,6 +12,21 @@ gpp fmt --check .
 gpp fmt --stdout app.gpp
 ```
 
+## Fixing imports
+
+`gpp fiximports` adds imports when a unique available package matches the
+qualified names used by a source file. It prefers bundled Go++ packages; if
+both Go++ and standard-library packages with the same package name are used,
+the standard package gets a `std`-prefixed alias such as `stdhttp`. It does
+not change dependencies or guess when multiple packages at the same priority
+match.
+
+```sh
+gpp fiximports app.gpp
+gpp fiximports --check ./...
+gpp fiximports --stdout app.gpp
+```
+
 Formatting is deterministic, comment-preserving, and shared with the language
 server. `--check` is suitable for CI.
 
