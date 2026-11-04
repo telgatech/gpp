@@ -46,3 +46,30 @@ tx.Commit()
 Model hooks such as validation and before/after create or update keep
 persistence rules near the model. Use direct SQL for specialized or
 performance-sensitive queries. See the [ORM specification](/reference/specifications/std.orm).
+
+## Select into structural records
+
+For one-off query results, use a Go++ record as the slice element type. The
+record fields define the scan destinations, and the SQL query supplies the
+table and selected columns:
+
+```go
+users := []record{
+    record(ID: int64(0), Name: ""),
+}[:0]
+
+if err := db.Select(
+    &users,
+    "SELECT id AS ID, name AS Name FROM users WHERE active = $1",
+    true,
+); err != nil {
+    return err
+}
+```
+
+Record targets take a complete `SELECT` (or `WITH ... SELECT`) query. Column
+labels match record field names case-insensitively and ignore underscores, so
+`display_name` can scan into `DisplayName`. Explicit SQL aliases are useful
+when a query expression or join makes a label ambiguous. Result columns with
+no matching record field are discarded. Class targets keep using their
+`@Table` and `@Column` annotations with a `WHERE` fragment.
