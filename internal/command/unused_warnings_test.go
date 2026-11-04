@@ -61,3 +61,30 @@ func TestSuppressUnusedLocalErrorsLeavesUsedVariablesAlone(t *testing.T) {
 		t.Fatalf("got warnings for used variable: %#v", warnings)
 	}
 }
+
+func TestSuppressUnusedLocalErrorsMapsCopiedGoFilesBackToSource(t *testing.T) {
+	directory := t.TempDir()
+	output := filepath.Join(t.TempDir(), "generated")
+	gppSource := filepath.Join(directory, "main.gpp")
+	if err := os.WriteFile(gppSource, []byte("package main\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeSource := filepath.Join(directory, "foo.go")
+	if err := os.WriteFile(nativeSource, []byte("package main\nfunc helper() {\n\tx := 10\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyNativeGoFiles([]string{gppSource}, output); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings, err := suppressUnusedLocalErrors(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("got %d warnings, want 1: %#v", len(warnings), warnings)
+	}
+	if got, want := warnings[0].String(), nativeSource+":3: warning: declared and not used: x"; got != want {
+		t.Fatalf("warning = %q, want %q", got, want)
+	}
+}

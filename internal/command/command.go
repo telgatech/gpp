@@ -509,15 +509,15 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	}); err != nil {
 		return err
 	}
+	if err := copyNativeGoFiles(sources, options.output); err != nil {
+		return err
+	}
 	warnings, err := suppressUnusedLocalErrors(options.output)
 	if err != nil {
 		return err
 	}
 	for _, warning := range warnings {
 		fmt.Fprintln(os.Stderr, warning)
-	}
-	if err := copyNativeGoFiles(sources, options.output); err != nil {
-		return err
 	}
 	if !includeTests {
 		return nil
@@ -566,7 +566,8 @@ func copyNativeGoFiles(sources []string, output string) error {
 			if compiledSources[absolute] {
 				continue
 			}
-			file, err := parser.ParseFile(token.NewFileSet(), source, nil, parser.PackageClauseOnly)
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, source, nil, parser.PackageClauseOnly)
 			if err != nil {
 				return fmt.Errorf("parse native Go file %s: %w", source, err)
 			}
@@ -587,7 +588,13 @@ func copyNativeGoFiles(sources []string, output string) error {
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(destination, data, 0644); err != nil {
+			packageOffset := fset.Position(file.Package).Offset
+			lineDirective := []byte(fmt.Sprintf("//line %s:1\n", filepath.ToSlash(source)))
+			mappedData := make([]byte, 0, len(data)+len(lineDirective))
+			mappedData = append(mappedData, data[:packageOffset]...)
+			mappedData = append(mappedData, lineDirective...)
+			mappedData = append(mappedData, data[packageOffset:]...)
+			if err := os.WriteFile(destination, mappedData, 0644); err != nil {
 				return err
 			}
 		}
