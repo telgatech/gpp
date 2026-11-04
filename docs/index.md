@@ -45,6 +45,11 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 </details>
 
 <details>
+<summary>Can I adopt Go++ gradually?</summary>
+<p>Yes. Start with familiar Go syntax and compile <code>.go</code> files with <code>gpp run</code>. Add Go++ features like classes or named arguments when they help, and keep existing Go code alongside it. See <a href="/features/mixed-go">how Go and Go++ work together</a>.</p>
+</details>
+
+<details>
 <summary>Is Go++ ready for production?</summary>
 <p>Go++ is still an experiment and has not yet received broad community review. Until then, please don’t adopt it casually for production systems.</p>
 </details>
