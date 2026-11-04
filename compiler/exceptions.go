@@ -2,13 +2,17 @@ package compiler
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -94,6 +98,7 @@ type catchClause struct {
 	value      string
 	errorAlias string
 	variable   string
+	line       int
 	body       *ast.BlockStmt
 }
 
@@ -366,7 +371,7 @@ func formatExceptionASTNode(node ast.Node) (string, error) {
 	if err := format.Node(&output, token.NewFileSet(), node); err != nil {
 		return "", err
 	}
-	return output.String(), nil
+	return stripExceptionSourceLineMarkers(output.String()), nil
 }
 
 func validateASTCatchClauses(statement *TryStmt, context constructorContext) error {
@@ -598,7 +603,7 @@ func lowerASTTryDirectNode(statement *TryStmt, context constructorContext, rethr
 		if bodyErr != nil {
 			return nil, false, nil
 		}
-		clauses = append(clauses, catchClause{typeNodes: types, variable: variable, body: body})
+		clauses = append(clauses, catchClause{typeNodes: types, variable: variable, line: parsed.Span().Line, body: body})
 	}
 	finallyBlock := &ast.BlockStmt{}
 	hasFinally := statement.Finally != nil
@@ -735,7 +740,7 @@ func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]ca
 				}
 			}
 		}
-		clauses = append(clauses, catchClause{typeNodes: types, value: value, errorAlias: errorAlias, variable: variable, body: body})
+		clauses = append(clauses, catchClause{typeNodes: types, value: value, errorAlias: errorAlias, variable: variable, line: parsed.Span().Line, body: body})
 	}
 	return clauses, nil
 }
@@ -1199,9 +1204,15 @@ func lowerExceptionGoBlockNode(block *BlockStmt, context constructorContext, ret
 	}
 	result := &ast.BlockStmt{}
 	for _, statement := range block.Statements {
+		sourceLine := exceptionStatementSourceLine(statement)
 		lowered, err := lowerExceptionGoStmtNode(statement, context, rethrowName)
 		if err != nil {
 			return nil, err
+		}
+		if _, isCase := statement.(*CaseStmt); !isCase {
+			if marker := exceptionSourceLineMarker(context, sourceLine); marker != nil {
+				result.List = append(result.List, marker)
+			}
 		}
 		result.List = append(result.List, lowered...)
 	}
@@ -1218,9 +1229,15 @@ func lowerFunctionGoBlockNode(block *BlockStmt, context constructorContext, reth
 	}
 	result := &ast.BlockStmt{}
 	for _, statement := range block.Statements {
+		sourceLine := exceptionStatementSourceLine(statement)
 		lowered, err := lowerFunctionGoStmtNode(statement, context, rethrowName)
 		if err != nil {
 			return nil, err
+		}
+		if _, isCase := statement.(*CaseStmt); !isCase {
+			if marker := exceptionSourceLineMarker(context, sourceLine); marker != nil {
+				result.List = append(result.List, marker)
+			}
 		}
 		result.List = append(result.List, lowered...)
 	}
@@ -2769,9 +2786,14 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 				if len(clause.typeNodes) > 1 {
 					value = call(identifier("error"), catchName)
 				}
-				caseBody = append([]ast.Stmt{&ast.AssignStmt{
+				binding := ast.Stmt(&ast.AssignStmt{
 					Lhs: []ast.Expr{identifier(clause.variable)}, Tok: token.DEFINE, Rhs: []ast.Expr{value},
-				}}, caseBody...)
+				})
+				if marker := exceptionSourceLineMarker(context, clause.line); marker != nil {
+					caseBody = append([]ast.Stmt{marker, binding}, caseBody...)
+				} else {
+					caseBody = append([]ast.Stmt{binding}, caseBody...)
+				}
 			}
 			switchStatement := &ast.TypeSwitchStmt{
 				Assign: &ast.AssignStmt{
@@ -2818,6 +2840,9 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 			value := ast.Expr(identifier("__gppCaught"))
 			if len(clause.typeNodes) > 1 {
 				value = call(identifier("error"), value)
+			}
+			if marker := exceptionSourceLineMarker(context, clause.line); marker != nil {
+				caseBody = append(caseBody, marker)
 			}
 			caseBody = append(caseBody, &ast.AssignStmt{
 				Lhs: []ast.Expr{identifier(clause.variable)},
@@ -3942,11 +3967,57 @@ func formatExceptionASTBody(body *ast.BlockStmt) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	text = stripExceptionSourceLineMarkers(text)
 	text = strings.TrimSpace(text)
 	if len(text) < 2 || text[0] != '{' || text[len(text)-1] != '}' {
 		return "", fmt.Errorf("formatted exception body is not a block")
 	}
 	return strings.TrimSpace(text[1 : len(text)-1]), nil
+}
+
+const exceptionSourceLineMarkerPrefix = "__gppSourceLine_"
+
+var exceptionSourceLineMarkerPattern = regexp.MustCompile(`(?m)^[\t ]*__gppSourceLine_([0-9a-f]+)_([0-9]+)\(\);?[\t ]*$`)
+
+func exceptionSourceLineMarker(context constructorContext, line int) ast.Stmt {
+	if context.SourceTokenFile == nil || line <= 0 {
+		return nil
+	}
+	file := filepath.ToSlash(context.SourceTokenFile.Name())
+	name := exceptionSourceLineMarkerPrefix + hex.EncodeToString([]byte(file)) + "_" + strconv.Itoa(line)
+	return &ast.ExprStmt{X: &ast.CallExpr{Fun: identifier(name)}}
+}
+
+func exceptionStatementSourceLine(statement Stmt) int {
+	if declaration, ok := statement.(*DeclarationStmt); ok && len(declaration.Values) > 0 {
+		if literal, ok := declaration.Values[0].(*CompositeLiteralExpr); ok && len(literal.Elements) > 0 && literal.Elements[0].Value != nil {
+			if line := literal.Elements[0].Value.Span().Line; line > 0 {
+				return line
+			}
+		}
+	}
+	if statement == nil {
+		return 0
+	}
+	return statement.Span().Line
+}
+
+func stripExceptionSourceLineMarkers(source string) string {
+	return exceptionSourceLineMarkerPattern.ReplaceAllStringFunc(source, func(marker string) string {
+		parts := exceptionSourceLineMarkerPattern.FindStringSubmatch(marker)
+		if len(parts) != 3 {
+			return marker
+		}
+		filename, err := hex.DecodeString(parts[1])
+		if err != nil {
+			return marker
+		}
+		line, err := strconv.Atoi(parts[2])
+		if err != nil || line <= 0 {
+			return marker
+		}
+		return "//line " + string(filename) + ":" + strconv.Itoa(line)
+	})
 }
 
 func exceptionVoidBoundaryBody(body, returnedName string, used map[string]bool) string {

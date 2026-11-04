@@ -91,6 +91,34 @@ func TestCopyNativeGoFilesSkipsFilesExcludedByBuildConstraints(t *testing.T) {
 	}
 }
 
+func TestCopyNativeGoFilesRefreshesPriorCopies(t *testing.T) {
+	sourceDir := t.TempDir()
+	outputDir := t.TempDir()
+	gppSource := filepath.Join(sourceDir, "main.gpp")
+	nativeSource := filepath.Join(sourceDir, "foo.go")
+	if err := os.WriteFile(gppSource, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nativeSource, []byte("package main\nfunc helper() {\n\tx := 1\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	previousCopy := "//line " + filepath.ToSlash(nativeSource) + ":1\npackage main\nfunc helper() {\n\tx := 1\n\t_ = x\n}\n"
+	if err := os.WriteFile(filepath.Join(outputDir, "foo.go"), []byte(previousCopy), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyNativeGoFiles([]string{gppSource}, outputDir); err != nil {
+		t.Fatalf("could not refresh previous native copy: %v", err)
+	}
+	updated, err := os.ReadFile(filepath.Join(outputDir, "foo.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(updated, []byte("_ = x")) {
+		t.Fatalf("previous warning suppression was retained in refreshed source:\n%s", updated)
+	}
+}
+
 func TestInitDoesNotCreateNestedGitRepository(t *testing.T) {
 	root := t.TempDir()
 	gitConfig := filepath.Join(t.TempDir(), "gitconfig")

@@ -579,8 +579,11 @@ func copyNativeGoFiles(sources []string, output string) error {
 				return err
 			}
 			destination := filepath.Join(destinationDir, entry.Name())
-			if _, err := os.Stat(destination); err == nil {
-				return fmt.Errorf("native Go file %s conflicts with generated output %s", source, destination)
+			if existing, err := os.ReadFile(destination); err == nil {
+				copyMarker := []byte("//line " + filepath.ToSlash(source) + ":1")
+				if !bytes.Contains(existing, copyMarker) {
+					return fmt.Errorf("native Go file %s conflicts with generated output %s", source, destination)
+				}
 			} else if !os.IsNotExist(err) {
 				return err
 			}

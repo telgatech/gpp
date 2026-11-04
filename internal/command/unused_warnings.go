@@ -19,7 +19,8 @@ type unusedLocalWarning struct {
 }
 
 func (warning unusedLocalWarning) String() string {
-	return fmt.Sprintf("%s:%d: warning: declared and not used: %s", warning.file, warning.line, warning.name)
+	diagnostic := fmt.Sprintf("%s:%d: warning: declared and not used: %s", warning.file, warning.line, warning.name)
+	return normalizeBackendLocation(diagnostic, "")
 }
 
 // suppressUnusedLocalErrors marks source-level local variables as used in the

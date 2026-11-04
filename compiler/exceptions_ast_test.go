@@ -4,10 +4,42 @@ import (
 	"bytes"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/token"
 	"strings"
 	"testing"
 )
+
+func TestExceptionSourceLineMarkersBecomeGoLineDirectives(t *testing.T) {
+	fset := token.NewFileSet()
+	sourceFile := fset.AddFile("example.gpp", -1, 0)
+	marker := exceptionSourceLineMarker(constructorContext{SourceTokenFile: sourceFile}, 27)
+	formattedMarker, err := formatNode(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := "package main\nfunc f() {\n" + formattedMarker + "\nprintln(\"ok\")\n}\n"
+	stripped := stripExceptionSourceLineMarkers(source)
+	if !strings.Contains(stripped, "//line example.gpp:27") {
+		t.Fatalf("source marker was not converted to a line directive:\n%s", stripped)
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "generated.go", stripped, parser.AllErrors); err != nil {
+		t.Fatalf("line directive output is invalid Go: %v\n%s", err, stripped)
+	}
+}
+
+func TestExceptionStatementSourceLineUsesFirstMultilineLiteralElement(t *testing.T) {
+	statement := &DeclarationStmt{
+		SpanValue: Span{Line: 897},
+		Values: []ExprNode{&CompositeLiteralExpr{
+			SpanValue: Span{Line: 897},
+			Elements:  []CompositeElement{{Value: &CallExpr{SpanValue: Span{Line: 898}}}},
+		}},
+	}
+	if got, want := exceptionStatementSourceLine(statement), 898; got != want {
+		t.Fatalf("statement source line = %d, want %d", got, want)
+	}
+}
 
 func TestTransformExceptionsUsesBodyAST(t *testing.T) {
 	source := `try {

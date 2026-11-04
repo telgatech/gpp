@@ -897,7 +897,9 @@ func formatDirectFunctionDecl(name string, receiver *ast.Field, typeParameters [
 		return "", true, err
 	}
 	formatted := output.String()
-	if context.SourceBodyLine > 0 && context.SourceTokenFile != nil {
+	if strings.Contains(formatted, exceptionSourceLineMarkerPrefix) {
+		formatted = stripExceptionSourceLineMarkers(formatted)
+	} else if context.SourceBodyLine > 0 && context.SourceTokenFile != nil {
 		formatted, err = addFunctionBodySourceDirective(formatted, context.SourceTokenFile.Name(), context.SourceBodyLine)
 		if err != nil {
 			return "", true, err
