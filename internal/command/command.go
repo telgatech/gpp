@@ -509,6 +509,13 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	}); err != nil {
 		return err
 	}
+	warnings, err := suppressUnusedLocalErrors(options.output)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		fmt.Fprintln(os.Stderr, warning)
+	}
 	if err := copyNativeGoFiles(sources, options.output); err != nil {
 		return err
 	}
