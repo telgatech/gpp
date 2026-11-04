@@ -246,6 +246,14 @@ Use `run` for the same generation and dependency setup followed by execution:
 gpp run examples/hello.gpp
 ```
 
+`gpp run` also accepts `.go` files and Go-only directories. Those files go
+through the Go++ compiler before the generated Go is built and run:
+
+```bash
+gpp run ./main.go -- program-argument
+gpp run ./cmd/server
+```
+
 During `gpp run`, external `.gpp.tpl` sources are watched when used with
 `gpp/http.Server`; valid edits reload automatically and invalid edits leave
 the previous templates active. Production `gpp build` uses the compiled

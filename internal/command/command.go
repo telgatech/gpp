@@ -149,7 +149,7 @@ func commandHelp(name string) int {
 		fmt.Println("  -emit-go         retain and report generated Go source")
 		printCompileFlags()
 	case "run":
-		fmt.Println("Usage: gpp run [options] [file.gpp|file.gpp.tpl|directory] [-- program arguments]")
+		fmt.Println("Usage: gpp run [options] [file.gpp|file.gpp.tpl|file.go|directory] [-- program arguments]")
 		fmt.Println("  defaults to the current directory when no source is given")
 		printCompileFlags()
 	case "clean":
@@ -371,7 +371,11 @@ func runRun(args []string) int {
 	if err := requireSupportedGo(); err != nil {
 		return reportError(err)
 	}
-	sources, err := discoverSources(positional)
+	programArgs := []string(nil)
+	if separator < len(args) {
+		programArgs = args[separator+1:]
+	}
+	sources, err := discoverRunSources(positional)
 	if err != nil {
 		return reportError(err)
 	}
@@ -383,10 +387,6 @@ func runRun(args []string) int {
 	}
 	if err := runGoCommand(options.output, "mod", "tidy"); err != nil {
 		return reportError(err)
-	}
-	programArgs := []string(nil)
-	if separator < len(args) {
-		programArgs = args[separator+1:]
 	}
 	if err := runGoProgram(options.output, programArgs); err != nil {
 		return reportError(err)
@@ -528,13 +528,19 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	return emitTestWrappers(selections[0], options.output)
 }
 
-// copyNativeGoFiles keeps ordinary Go helpers usable in a mixed project. The
-// compiler owns the generated workspace, so native files are copied there
-// only from directories that also contain a Go++ source file.
+// copyNativeGoFiles keeps uncompiled Go helpers usable beside compiled inputs.
+// The compiler owns the generated workspace, so native files are copied from
+// each source directory unless that file was already compiled by Go++.
 func copyNativeGoFiles(sources []string, output string) error {
 	directories := map[string]bool{}
+	compiledSources := map[string]bool{}
 	for _, source := range sources {
 		directories[filepath.Dir(source)] = true
+		absolute, err := filepath.Abs(source)
+		if err != nil {
+			return err
+		}
+		compiledSources[absolute] = true
 	}
 	for directory := range directories {
 		entries, err := os.ReadDir(directory)
@@ -553,6 +559,13 @@ func copyNativeGoFiles(sources []string, output string) error {
 				continue
 			}
 			source := filepath.Join(directory, entry.Name())
+			absolute, err := filepath.Abs(source)
+			if err != nil {
+				return err
+			}
+			if compiledSources[absolute] {
+				continue
+			}
 			file, err := parser.ParseFile(token.NewFileSet(), source, nil, parser.PackageClauseOnly)
 			if err != nil {
 				return fmt.Errorf("parse native Go file %s: %w", source, err)
@@ -1313,6 +1326,97 @@ func discoverSources(args []string) ([]string, error) {
 	sort.Strings(sources)
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("no .gpp or .gpp.tpl source files found")
+	}
+	return sources, nil
+}
+
+// discoverRunSources accepts Go++ inputs and Go files. For directories that
+// contain Go++ sources, ordinary Go files remain native helpers as in the
+// mixed-project workflow. A Go-only directory is compiled from its Go files.
+func discoverRunSources(args []string) ([]string, error) {
+	var goPlusSources, goSources, explicitGoSources []string
+	seenGoPlus := map[string]bool{}
+	seenGo := map[string]bool{}
+	add := func(path string, target *[]string, seen map[string]bool) error {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		if !seen[absolute] {
+			*target = append(*target, absolute)
+			seen[absolute] = true
+		}
+		return nil
+	}
+	for _, arg := range args {
+		info, err := os.Stat(arg)
+		if err != nil {
+			return nil, fmt.Errorf("source path %q: %w", arg, err)
+		}
+		if !info.IsDir() {
+			switch {
+			case isGoPlusSource(arg):
+				if err := add(arg, &goPlusSources, seenGoPlus); err != nil {
+					return nil, err
+				}
+			case filepath.Ext(arg) == ".go":
+				absolute, err := filepath.Abs(arg)
+				if err != nil {
+					return nil, err
+				}
+				explicitGoSources = append(explicitGoSources, absolute)
+				if err := add(arg, &goSources, seenGo); err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("source file %q is not a .gpp, .gpp.tpl, or .go file", arg)
+			}
+			continue
+		}
+		err = filepath.WalkDir(arg, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if path != arg && (entry.Name() == ".gpp" || entry.Name() == ".git" || entry.Name() == "vendor") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if isGoPlusSource(path) {
+				return add(path, &goPlusSources, seenGoPlus)
+			}
+			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			matches, err := nativeGoFileMatchesBuild(filepath.Dir(path), filepath.Base(path))
+			if err != nil || !matches {
+				return err
+			}
+			return add(path, &goSources, seenGo)
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	sources := goPlusSources
+	if len(goPlusSources) == 0 {
+		sources = goSources
+	} else if len(explicitGoSources) > 0 {
+		sources = append(sources, explicitGoSources...)
+	}
+	uniqueSources := make([]string, 0, len(sources))
+	seenSources := map[string]bool{}
+	for _, source := range sources {
+		if !seenSources[source] {
+			uniqueSources = append(uniqueSources, source)
+			seenSources[source] = true
+		}
+	}
+	sources = uniqueSources
+	sort.Strings(sources)
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("no .gpp, .gpp.tpl, or .go source files found")
 	}
 	return sources, nil
 }

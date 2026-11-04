@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,6 +170,69 @@ func main() {
 	if err := <-done; err != nil {
 		t.Fatalf("program failed: %v", err)
 	}
+}
+
+func TestRunAcceptsGoFile(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("GPP_CACHE", t.TempDir())
+	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module gofiletest\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package main
+import (
+	"fmt"
+	"os"
+)
+class CompilerMarker {}
+func main() { fmt.Println(os.Args[1]) }
+`
+	path := filepath.Join(directory, "main.go")
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := runCommandAndCaptureStdout(t, []string{"run", path, "--", "from-file"}); got != "from-file\n" {
+		t.Fatalf("gpp run output = %q, want %q", got, "from-file\n")
+	}
+}
+
+func TestRunAcceptsGoDirectoryWithoutGoPlusSources(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("GPP_CACHE", t.TempDir())
+	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module godirectorytest\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "main.go"), []byte("package main\nimport \"fmt\"\nclass CompilerMarker {}\nfunc main() { fmt.Println(\"directory\") }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := runCommandAndCaptureStdout(t, []string{"run", directory}); got != "directory\n" {
+		t.Fatalf("gpp run output = %q, want %q", got, "directory\n")
+	}
+}
+
+func runCommandAndCaptureStdout(t *testing.T, args []string) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousStdout := os.Stdout
+	os.Stdout = writer
+	code := Run(args)
+	os.Stdout = previousStdout
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("gpp %s failed with exit code %d", strings.Join(args, " "), code)
+	}
+	return string(output)
 }
 
 func TestCompileSubcommandUsesArgumentsAfterCommandName(t *testing.T) {
