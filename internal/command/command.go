@@ -288,7 +288,7 @@ func runCompile(args []string) int {
 	if err := setDefaultOutput(&options, sources); err != nil {
 		return reportError(err)
 	}
-	if err := compileSources(sources, options, false, false); err != nil {
+	if _, err := compileSources(sources, options, false, false); err != nil {
 		return reportError(err)
 	}
 	return 0
@@ -320,7 +320,8 @@ func runBuild(args []string) int {
 	if err := setDefaultOutput(&options, sources); err != nil {
 		return reportError(err)
 	}
-	if err := compileSources(sources, options, true, false); err != nil {
+	cache, err := compileSources(sources, options, true, false)
+	if err != nil {
 		return reportError(err)
 	}
 	if options.emitGo {
@@ -338,11 +339,24 @@ func runBuild(args []string) int {
 	if err := os.MkdirAll(filepath.Dir(absoluteBinary), 0755); err != nil {
 		return reportError(err)
 	}
-	if err := runGoCommand(options.output, "mod", "tidy"); err != nil {
+	if err := runGoModTidyCached(options.output, cache.Key); err != nil {
 		return reportError(err)
 	}
-	if err := runGoCommand(options.output, "build", "-o", absoluteBinary, "."); err != nil {
+	goIdentity, err := currentGoBuildIdentity()
+	if err != nil {
 		return reportError(err)
+	}
+	artifactKey, err := buildArtifactKey(cache.Key, options.output, absoluteBinary, goIdentity)
+	if err != nil {
+		return reportError(err)
+	}
+	if !cachedArtifact(options.output, absoluteBinary, artifactKey) {
+		if err := runGoCommand(options.output, "build", "-o", absoluteBinary, "."); err != nil {
+			return reportError(err)
+		}
+		if err := writeArtifactCache(options.output, absoluteBinary, artifactKey); err != nil {
+			return reportError(err)
+		}
 	}
 	return 0
 }
@@ -385,10 +399,11 @@ func runRun(args []string) int {
 	if err := setDefaultOutput(&options, sources); err != nil {
 		return reportError(err)
 	}
-	if err := compileSources(sources, options, true, false); err != nil {
+	cache, err := compileSources(sources, options, true, false)
+	if err != nil {
 		return reportError(err)
 	}
-	if err := runGoCommand(options.output, "mod", "tidy"); err != nil {
+	if err := runGoModTidyCached(options.output, cache.Key); err != nil {
 		return reportError(err)
 	}
 	if err := runGoProgram(options.output, programArgs); err != nil {
@@ -441,7 +456,8 @@ func runTest(args []string) int {
 		return reportError(err)
 	}
 	if options.test.list {
-		if err := compileSources(sources, options, true, true, selection); err != nil {
+		cache, err := compileSources(sources, options, true, true, selection)
+		if err != nil {
 			return reportError(err)
 		}
 		if nativeRoot != "" {
@@ -449,7 +465,7 @@ func runTest(args []string) int {
 				return reportError(err)
 			}
 		}
-		if err := runGoCommand(options.output, "mod", "tidy"); err != nil {
+		if err := runGoModTidyCached(options.output, cache.Key); err != nil {
 			return reportError(err)
 		}
 		printTestList(selection)
@@ -469,7 +485,8 @@ func runTest(args []string) int {
 		}
 		return 0
 	}
-	if err := compileSources(sources, options, true, true, selection); err != nil {
+	cache, err := compileSources(sources, options, true, true, selection)
+	if err != nil {
 		return reportError(err)
 	}
 	if nativeRoot != "" {
@@ -477,7 +494,7 @@ func runTest(args []string) int {
 			return reportError(err)
 		}
 	}
-	if err := runGoCommand(options.output, "mod", "tidy"); err != nil {
+	if err := runGoModTidyCached(options.output, cache.Key); err != nil {
 		return reportError(err)
 	}
 	goArgs := []string{"test"}
@@ -502,35 +519,70 @@ func runTest(args []string) int {
 	return 0
 }
 
-func compileSources(sources []string, options compileFlags, clean bool, includeTests bool, selections ...testSelectionResult) error {
-	if err := compiler.CompileFilesWithOptions(sources, options.output, compiler.CompileOptions{
-		ModulePath:  options.module,
-		Development: options.development,
-		NoPrelude:   options.noPrelude,
-		NoStdlib:    options.noStdlib,
-		CleanOutput: clean,
-	}); err != nil {
-		return err
+func compileSources(sources []string, options compileFlags, clean bool, includeTests bool, selections ...testSelectionResult) (buildCacheState, error) {
+	state := buildCacheState{}
+	cacheable := clean && !includeTests
+	if cacheable {
+		key, err := buildInputKey(sources, options, selections...)
+		if err != nil {
+			return state, err
+		}
+		if key != "" {
+			state.Key = key
+			manifest, hit, err := loadBuildCache(options.output, key)
+			if err != nil {
+				return state, err
+			}
+			state.Hit = hit
+			if hit {
+				state.Warn = manifest.Warnings
+			}
+		}
 	}
-	if err := copyNativeGoFiles(sources, options.output); err != nil {
-		return err
-	}
-	warnings, err := suppressUnusedLocalErrors(options.output)
-	if err != nil {
-		return err
+
+	var warnings []unusedLocalWarning
+	if !state.Hit {
+		if err := compiler.CompileFilesWithOptions(sources, options.output, compiler.CompileOptions{
+			ModulePath:        options.module,
+			Development:       options.development,
+			NoPrelude:         options.noPrelude,
+			NoStdlib:          options.noStdlib,
+			CleanOutput:       clean && !cacheable,
+			IncrementalOutput: cacheable,
+		}); err != nil {
+			return state, err
+		}
+		if err := copyNativeGoFiles(sources, options.output); err != nil {
+			return state, err
+		}
+		var err error
+		warnings, err = suppressUnusedLocalErrorsWithRescan(options.output, true)
+		if err != nil {
+			return state, err
+		}
+		for _, warning := range warnings {
+			state.Warn = append(state.Warn, warning.String())
+		}
 	}
 	if options.warnings {
-		for _, warning := range warnings {
+		for _, warning := range state.Warn {
 			fmt.Fprintln(os.Stderr, warning)
 		}
 	}
-	if !includeTests {
-		return nil
+	if includeTests {
+		if len(selections) != 1 {
+			return state, errors.New("internal error: missing Go++ test selection")
+		}
+		if err := emitTestWrappers(selections[0], options.output); err != nil {
+			return state, err
+		}
 	}
-	if len(selections) != 1 {
-		return errors.New("internal error: missing Go++ test selection")
+	if cacheable && state.Key != "" && !state.Hit {
+		if err := writeBuildCache(options.output, state.Key, warnings); err != nil {
+			return state, err
+		}
 	}
-	return emitTestWrappers(selections[0], options.output)
+	return state, nil
 }
 
 // copyNativeGoFiles keeps uncompiled Go helpers usable beside compiled inputs.
@@ -539,6 +591,11 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 func copyNativeGoFiles(sources []string, output string) error {
 	directories := map[string]bool{}
 	compiledSources := map[string]bool{}
+	currentCopies := map[string]bool{}
+	previousCopies, err := loadNativeGoFilesManifest(output)
+	if err != nil {
+		return err
+	}
 	for _, source := range sources {
 		directories[filepath.Dir(source)] = true
 		absolute, err := filepath.Abs(source)
@@ -584,6 +641,11 @@ func copyNativeGoFiles(sources []string, output string) error {
 				return err
 			}
 			destination := filepath.Join(destinationDir, entry.Name())
+			relative, err := filepath.Rel(output, destination)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+				return fmt.Errorf("native Go destination %s is outside generated output %s", destination, output)
+			}
+			currentCopies[filepath.ToSlash(relative)] = true
 			if existing, err := os.ReadFile(destination); err == nil {
 				copyMarker := []byte("//line " + filepath.ToSlash(source) + ":1")
 				if !bytes.Contains(existing, copyMarker) {
@@ -602,12 +664,25 @@ func copyNativeGoFiles(sources []string, output string) error {
 			mappedData = append(mappedData, data[:packageOffset]...)
 			mappedData = append(mappedData, lineDirective...)
 			mappedData = append(mappedData, data[packageOffset:]...)
+			if existing, err := os.ReadFile(destination); err == nil && bytes.Equal(existing, mappedData) {
+				continue
+			}
 			if err := os.WriteFile(destination, mappedData, 0644); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	for oldPath := range previousCopies {
+		if currentCopies[oldPath] {
+			continue
+		}
+		stale := filepath.Join(output, filepath.FromSlash(oldPath))
+		if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		removeEmptyCacheParents(filepath.Dir(stale), output)
+	}
+	return writeNativeGoFilesManifest(output, currentCopies)
 }
 
 func copyNativeGoTree(root, output string) error {

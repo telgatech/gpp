@@ -154,6 +154,12 @@ Compiler warnings are hidden by default. Pass `-warnings` to show them:
 gpp build -warnings examples/hello.gpp
 ```
 
+`gpp build` reuses generated Go and the executable while its inputs remain
+unchanged. After a Go++ source edit, the compiler reuses generated output for
+unaffected packages, and Go's build cache reuses unaffected Go packages. Native
+Go helper or embedded file changes are tracked as build inputs. `gpp clean`
+clears the generated workspace and its cache state.
+
 Use `gpp doctor` to check the Go toolchain and embedded standard library, and
 `gpp clean` to remove generated build artifacts.
 

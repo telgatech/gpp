@@ -215,15 +215,15 @@ func ParseFile(name, src string) (*File, error) {
 				if err != nil {
 					return nil, fmt.Errorf("%s:%d: invalid annotation use: %w", name, sourceLine(src, start), err)
 				}
-				bodyTokens, _ := LexSource(name, code)
-				bodyTokens = rebaseTokens(bodyTokens, src, start)
+				localTokens, tokenErr := LexSource(name, code)
+				bodyTokens := rebaseTokens(localTokens, src, start)
 				imports, importErr := importNodesFromTokens(bodyTokens)
 				if importErr != nil {
 					return nil, fmt.Errorf("%s:%d: invalid import declaration: %w", name, sourceLine(src, start), importErr)
 				}
 				file.Imports = append(file.Imports, imports...)
 				goASTDecls, goASTFileSet := parseGoDeclarations(name, file.Package, code)
-				functions, functionErr := parseTopLevelFunctionsChecked(name, file.Package, code, start, src, doc, declarationPos)
+				functions, functionErr := parseTopLevelFunctionsCheckedWithTokens(name, file.Package, code, start, src, doc, declarationPos, localTokens, tokenErr)
 				if functionErr != nil {
 					return nil, fmt.Errorf("%s:%d: invalid function body: %w", name, sourceLine(src, start), functionErr)
 				}
@@ -545,6 +545,10 @@ func parseTopLevelFunctions(filename, packageName, source string, sourceBase int
 	if err != nil {
 		return nil
 	}
+	return parseTopLevelFunctionsFromTokens(filename, packageName, source, sourceBase, fullSource, doc, declarationStart, tokens)
+}
+
+func parseTopLevelFunctionsFromTokens(filename, packageName string, source string, sourceBase int, fullSource, doc string, declarationStart int, tokens []Token) []*FunctionDecl {
 	functions := []*FunctionDecl{}
 	braceDepth := 0
 	for index := 0; index < len(tokens); index++ {
@@ -609,11 +613,15 @@ func parseTopLevelFunctions(filename, packageName, source string, sourceBase int
 // top-level function to MixedDecl. Once a top-level func token is found, every
 // such declaration must have a structured Method/BodyAST representation.
 func parseTopLevelFunctionsChecked(filename, packageName, source string, sourceBase int, fullSource, doc string, declarationStart int) ([]*FunctionDecl, error) {
-	functions := parseTopLevelFunctions(filename, packageName, source, sourceBase, fullSource, doc, declarationStart)
 	tokens, err := LexSource(filename, source)
-	if err != nil {
-		return nil, err
+	return parseTopLevelFunctionsCheckedWithTokens(filename, packageName, source, sourceBase, fullSource, doc, declarationStart, tokens, err)
+}
+
+func parseTopLevelFunctionsCheckedWithTokens(filename, packageName, source string, sourceBase int, fullSource, doc string, declarationStart int, tokens []Token, tokenErr error) ([]*FunctionDecl, error) {
+	if tokenErr != nil {
+		return nil, tokenErr
 	}
+	functions := parseTopLevelFunctionsFromTokens(filename, packageName, source, sourceBase, fullSource, doc, declarationStart, tokens)
 	topLevelFunctions := 0
 	braceDepth := 0
 	for index, current := range tokens {

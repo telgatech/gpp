@@ -1,23 +1,43 @@
 package compiler
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"unicode"
 )
 
 type CompileOptions struct {
-	ModulePath  string
-	ProjectRoot string
-	Development bool
-	NoPrelude   bool
-	NoStdlib    bool
-	CleanOutput bool
+	ModulePath        string
+	ProjectRoot       string
+	Development       bool
+	NoPrelude         bool
+	NoStdlib          bool
+	CleanOutput       bool
+	IncrementalOutput bool
+}
+
+const generatedFilesManifestName = ".gpp-generated-files.json"
+
+type generatedFilesManifest struct {
+	Files    []string                          `json:"files"`
+	Packages map[string]generatedPackageOutput `json:"packages,omitempty"`
+}
+
+type generatedPackageOutput struct {
+	Fingerprint string            `json:"fingerprint"`
+	Files       map[string]string `json:"files"`
 }
 
 func CompileFiles(files []string, outputDir string) error {
@@ -51,31 +71,49 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return err
 		}
 	}
+	previousGeneratedFiles := map[string]bool{}
+	previousPackages := map[string]generatedPackageOutput{}
+	if options.IncrementalOutput && !options.CleanOutput {
+		var found bool
+		var err error
+		previousGeneratedFiles, previousPackages, found, err = loadGeneratedFilesManifest(outputDir)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if err := cleanGeneratedOutput(outputDir); err != nil {
+				return err
+			}
+			previousGeneratedFiles = map[string]bool{}
+			previousPackages = map[string]generatedPackageOutput{}
+		}
+	}
+	currentGeneratedFiles := map[string]bool{}
+	trackGeneratedFile := func(path string) error {
+		if !options.IncrementalOutput {
+			return nil
+		}
+		relative, err := filepath.Rel(outputDir, path)
+		if err != nil {
+			return err
+		}
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return fmt.Errorf("generated file %s is outside output directory %s", path, outputDir)
+		}
+		currentGeneratedFiles[filepath.ToSlash(relative)] = true
+		return nil
+	}
 
 	program := &Program{}
-
-	for _, filename := range files {
-		data, err := os.ReadFile(filename)
-
-		if err != nil {
-			return err
-		}
-
-		file, err := ParseFile(
-			filepath.Base(filename),
-			string(data),
-		)
-
-		if err != nil {
-			return err
-		}
-		file.SourcePath, err = filepath.Abs(filename)
-		if err != nil {
-			return err
-		}
-
-		program.Files = append(program.Files, file)
+	parseCacheDir := ""
+	if options.IncrementalOutput {
+		parseCacheDir = outputDir
 	}
+	parsedFiles, err := parseInputFiles(files, parseCacheDir)
+	if err != nil {
+		return err
+	}
+	program.Files = parsedFiles
 	if !options.NoStdlib {
 		if err := appendOfficialStdlib(program); err != nil {
 			return err
@@ -130,10 +168,6 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return err
 		}
 	}
-	recordContexts := map[string]*recordContext{}
-	introspectionContexts := map[string]*introspectionContext{}
-	exceptionContexts := map[string]*exceptionContext{}
-	preludeEmitted := map[string]bool{}
 	preludeExtensionsNeeded := map[string]map[string]bool{}
 	if !options.NoPrelude {
 		for _, file := range program.Files {
@@ -150,116 +184,181 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		}
 	}
 	usesIntrospection := programUsesIntrospection(program)
+	packageFingerprints := generatedPackageFingerprints(program, model, options, atExit, usesIntrospection)
+	packageOutputs := make(map[string]generatedPackageOutput, len(packageFingerprints))
+	reusePackage := make(map[string]bool, len(packageFingerprints))
+	for packageName, fingerprint := range packageFingerprints {
+		previous, exists := previousPackages[packageName]
+		if exists && previous.Fingerprint == fingerprint && generatedPackageFilesMatch(outputDir, previous.Files, program.Files, outputNames, packageName) {
+			packageOutputs[packageName] = previous
+			reusePackage[packageName] = true
+		}
+	}
 	if usesIntrospection && options.ModulePath != "" {
 		if err := ensureSharedIntrospectionRuntime(outputDir); err != nil {
 			return err
 		}
-	}
-
-	for _, file := range program.Files {
-		context, err := constructorContextForFile(
-			file,
-			model,
-			options.ModulePath,
-		)
-		if err != nil {
-			return fmt.Errorf("%s: %w", file.Name, err)
-		}
-		if recordContexts[file.Package] == nil {
-			recordContexts[file.Package] = newRecordContext()
-		}
-		context.Records = recordContexts[file.Package]
-		if introspectionContexts[file.Package] == nil {
-			introspectionContexts[file.Package] = newIntrospectionContext(model.Packages[file.Package].Classes)
-		}
-		context.Introspection = introspectionContexts[file.Package]
-		context.Introspection.Enabled = usesIntrospection
-		if exceptionContexts[file.Package] == nil {
-			exceptionContexts[file.Package] = &exceptionContext{}
-		}
-		context.Exceptions = exceptionContexts[file.Package]
-		context.Annotations = model.Packages[file.Package].Annotations
-		context.Package = file.Package
-		context.AtExit = file.Package == "main" && atExit
-		context.ModulePath = options.ModulePath
-		context.Development = options.Development
-		context.AvailableImports = availableImportsForFile(file, model, options.ModulePath)
-		context.ImportedFunctionSignatures = map[string]map[string][]callableSignature{}
-		if packageSymbols := model.Packages[file.Package]; packageSymbols != nil {
-			for alias, importPath := range packageSymbols.Imports {
-				logical, ok := logicalPackageForImport(importPath, options.ModulePath, model)
-				if !ok || functionSignatures[logical] == nil {
-					continue
-				}
-				context.ImportedFunctionSignatures[alias] = functionSignatures[logical]
-			}
-		}
-		context.Templates = model.Packages[file.Package].Templates
-		if usesIntrospection && options.ModulePath != "" {
-			context.IntrospectionRuntimeImport = options.ModulePath + "/gpp/runtime"
-		}
-		if !options.NoPrelude {
-			context.EmitPrelude = !preludeEmitted[file.Package]
-			context.PreludeExtensionsNeeded = preludeExtensionsNeeded[file.Package]
-			preludeEmitted[file.Package] = true
-			if err := configurePrelude(&context, context.EmitPrelude); err != nil {
-				return fmt.Errorf("%s: %w", file.Name, err)
-			}
-		}
-		configureNativeExtensionMethods(&context, file)
-		context.FunctionSignatures = functionSignatures[file.Package]
-		context.Enums = model.Packages[file.Package].Enums
-		configureImportedEnums(&context, file, model, options.ModulePath)
-		configureEnumSignatures(&context)
-		if err := configureFunctionOverloads(&context.Overloads, context.FunctionSignatures); err != nil {
+		if err := trackGeneratedFile(filepath.Join(outputDir, "gpp", "runtime", "runtime.go")); err != nil {
 			return err
 		}
+	}
 
-		dir := outputDir
-
-		if file.Package != "main" {
-			for _, segment := range strings.Split(file.Package, ".") {
-				dir = filepath.Join(dir, segment)
-			}
-		}
+	fileEmbeds := make(map[*File][]compiledEmbed, len(program.Files))
+	fileOutputPaths := make(map[*File]string, len(program.Files))
+	for _, file := range program.Files {
+		dir := generatedPackageDirectory(outputDir, file.Package)
+		fileOutputPaths[file] = filepath.Join(dir, outputNames[file])
 		embeds, err := prepareEmbeds(file, dir, options.ProjectRoot)
 		if err != nil {
 			return fmt.Errorf("%s: %w", file.Name, err)
 		}
-		context.Embeds = embeds
-
-		code, err := emitFile(
-			file,
-			context,
-		)
-
-		if err != nil {
-			if isSourceLineDiagnostic(err) {
-				return fmt.Errorf("%s:%w", file.Name, err)
+		fileEmbeds[file] = embeds
+		for _, embed := range embeds {
+			path := filepath.Join(dir, filepath.FromSlash(embed.Path))
+			if embed.Directory {
+				if err := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					if entry.IsDir() {
+						return nil
+					}
+					return trackGeneratedFile(current)
+				}); err != nil {
+					return err
+				}
+			} else if err := trackGeneratedFile(path); err != nil {
+				return err
 			}
-			return fmt.Errorf(
-				"%s: %w",
-				file.Name,
-				err,
-			)
 		}
-
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := trackGeneratedFile(fileOutputPaths[file]); err != nil {
 			return err
 		}
+	}
 
-		name := outputNames[file]
-
-		if err := os.WriteFile(
-			filepath.Join(dir, name),
-			code,
-			0644,
-		); err != nil {
+	packageFiles := map[string][]*File{}
+	packageOrder := []string{}
+	for _, file := range program.Files {
+		if packageFiles[file.Package] == nil {
+			packageOrder = append(packageOrder, file.Package)
+		}
+		packageFiles[file.Package] = append(packageFiles[file.Package], file)
+	}
+	type packageEmission struct {
+		output generatedPackageOutput
+		err    error
+	}
+	emissions := make([]packageEmission, len(packageOrder))
+	workerCount := runtime.GOMAXPROCS(0)
+	if workerCount > len(packageOrder) {
+		workerCount = len(packageOrder)
+	}
+	jobs := make(chan int)
+	var emitters sync.WaitGroup
+	emitters.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer emitters.Done()
+			for index := range jobs {
+				packageName := packageOrder[index]
+				if reusePackage[packageName] {
+					emissions[index].output = packageOutputs[packageName]
+					continue
+				}
+				emissions[index].output, emissions[index].err = emitPackageFiles(
+					packageFiles[packageName],
+					outputDir,
+					options,
+					model,
+					functionSignatures,
+					usesIntrospection,
+					atExit,
+					preludeExtensionsNeeded[packageName],
+					fileEmbeds,
+					fileOutputPaths,
+					packageFingerprints[packageName],
+				)
+			}
+		}()
+	}
+	for index := range packageOrder {
+		jobs <- index
+	}
+	close(jobs)
+	emitters.Wait()
+	for index, packageName := range packageOrder {
+		if emissions[index].err != nil {
+			return emissions[index].err
+		}
+		packageOutputs[packageName] = emissions[index].output
+	}
+	if options.IncrementalOutput {
+		for oldPath := range previousGeneratedFiles {
+			if currentGeneratedFiles[oldPath] {
+				continue
+			}
+			path := filepath.Join(outputDir, filepath.FromSlash(oldPath))
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			removeEmptyGeneratedParents(filepath.Dir(path), outputDir)
+		}
+		if err := writeGeneratedFilesManifest(outputDir, currentGeneratedFiles, packageOutputs); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func parseInputFiles(filenames []string, cacheDir string) ([]*File, error) {
+	type result struct {
+		file *File
+		err  error
+	}
+	results := make([]result, len(filenames))
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(filenames) {
+		workers = len(filenames)
+	}
+	if workers < 1 {
+		return nil, nil
+	}
+	jobs := make(chan int)
+	var group sync.WaitGroup
+	group.Add(workers)
+	for range workers {
+		go func() {
+			defer group.Done()
+			for index := range jobs {
+				filename := filenames[index]
+				data, err := os.ReadFile(filename)
+				if err != nil {
+					results[index].err = err
+					continue
+				}
+				file, err := ParseFileWithCache(filepath.Base(filename), filename, string(data), cacheDir)
+				if err != nil {
+					results[index].err = err
+					continue
+				}
+				results[index].file = file
+			}
+		}()
+	}
+	for index := range filenames {
+		jobs <- index
+	}
+	close(jobs)
+	group.Wait()
+	files := make([]*File, len(results))
+	for index, result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		files[index] = result.file
+	}
+	return files, nil
 }
 
 // generatedOutputNames keeps source and external-template files from
@@ -312,6 +411,210 @@ func generatedOutputNames(files []*File) map[*File]string {
 		}
 	}
 	return result
+}
+
+func generatedPackageDirectory(outputDir, packageName string) string {
+	directory := outputDir
+	if packageName != "main" {
+		for _, segment := range strings.Split(packageName, ".") {
+			directory = filepath.Join(directory, segment)
+		}
+	}
+	return directory
+}
+
+func emitPackageFiles(files []*File, outputDir string, options CompileOptions, model *SemanticModel, functionSignatures map[string]map[string][]callableSignature, usesIntrospection, atExit bool, preludeExtensions map[string]bool, embeds map[*File][]compiledEmbed, outputPaths map[*File]string, fingerprint string) (generatedPackageOutput, error) {
+	packageName := files[0].Package
+	records := newRecordContext()
+	introspection := newIntrospectionContext(model.Packages[packageName].Classes)
+	introspection.Enabled = usesIntrospection
+	exceptions := &exceptionContext{}
+	preludeEmitted := false
+	output := generatedPackageOutput{Fingerprint: fingerprint, Files: make(map[string]string, len(files))}
+	for _, file := range files {
+		context, err := constructorContextForFile(file, model, options.ModulePath)
+		if err != nil {
+			return generatedPackageOutput{}, fmt.Errorf("%s: %w", file.Name, err)
+		}
+		context.Records = records
+		context.Introspection = introspection
+		context.Exceptions = exceptions
+		context.Annotations = model.Packages[packageName].Annotations
+		context.Package = packageName
+		context.AtExit = packageName == "main" && atExit
+		context.ModulePath = options.ModulePath
+		context.Development = options.Development
+		context.AvailableImports = availableImportsForFile(file, model, options.ModulePath)
+		context.ImportedFunctionSignatures = map[string]map[string][]callableSignature{}
+		if packageSymbols := model.Packages[packageName]; packageSymbols != nil {
+			for alias, importPath := range packageSymbols.Imports {
+				logical, ok := logicalPackageForImport(importPath, options.ModulePath, model)
+				if !ok || functionSignatures[logical] == nil {
+					continue
+				}
+				context.ImportedFunctionSignatures[alias] = functionSignatures[logical]
+			}
+		}
+		context.Templates = model.Packages[packageName].Templates
+		if usesIntrospection && options.ModulePath != "" {
+			context.IntrospectionRuntimeImport = options.ModulePath + "/gpp/runtime"
+		}
+		if !options.NoPrelude {
+			context.EmitPrelude = !preludeEmitted
+			context.PreludeExtensionsNeeded = preludeExtensions
+			preludeEmitted = true
+			if err := configurePrelude(&context, context.EmitPrelude); err != nil {
+				return generatedPackageOutput{}, fmt.Errorf("%s: %w", file.Name, err)
+			}
+		}
+		configureNativeExtensionMethods(&context, file)
+		context.FunctionSignatures = functionSignatures[packageName]
+		context.Enums = model.Packages[packageName].Enums
+		configureImportedEnums(&context, file, model, options.ModulePath)
+		configureEnumSignatures(&context)
+		if err := configureFunctionOverloads(&context.Overloads, context.FunctionSignatures); err != nil {
+			return generatedPackageOutput{}, err
+		}
+		context.Embeds = embeds[file]
+
+		code, err := emitFile(file, context)
+		if err != nil {
+			if isSourceLineDiagnostic(err) {
+				return generatedPackageOutput{}, fmt.Errorf("%s:%w", file.Name, err)
+			}
+			return generatedPackageOutput{}, fmt.Errorf("%s: %w", file.Name, err)
+		}
+
+		generatedPath := outputPaths[file]
+		if err := os.MkdirAll(filepath.Dir(generatedPath), 0755); err != nil {
+			return generatedPackageOutput{}, err
+		}
+		if err := writeFileIfChanged(generatedPath, code, 0644); err != nil {
+			return generatedPackageOutput{}, err
+		}
+		relative, err := filepath.Rel(outputDir, generatedPath)
+		if err != nil {
+			return generatedPackageOutput{}, err
+		}
+		digest, err := generatedFileDigest(generatedPath)
+		if err != nil {
+			return generatedPackageOutput{}, err
+		}
+		output.Files[filepath.ToSlash(relative)] = digest
+	}
+	return output, nil
+}
+
+func generatedPackageFingerprints(program *Program, model *SemanticModel, options CompileOptions, atExit, usesIntrospection bool) map[string]string {
+	filesByPackage := map[string][]*File{}
+	for _, file := range program.Files {
+		filesByPackage[file.Package] = append(filesByPackage[file.Package], file)
+	}
+	localFingerprints := make(map[string]string, len(filesByPackage))
+	for packageName, files := range filesByPackage {
+		h := sha256.New()
+		writePackageHashPart(h, "package-fingerprint-version=3")
+		writePackageHashPart(h, "package="+packageName)
+		for _, file := range files {
+			writePackageHashPart(h, "source-path="+file.SourcePath)
+			writePackageHashPart(h, "source-name="+file.Name)
+			writePackageHashPart(h, "source="+file.Source)
+			writePackageHashPart(h, "emission-order="+file.SourcePath)
+		}
+		if symbols := model.Packages[packageName]; symbols != nil {
+			aliases := make([]string, 0, len(symbols.Imports))
+			for alias := range symbols.Imports {
+				aliases = append(aliases, alias)
+			}
+			sort.Strings(aliases)
+			for _, alias := range aliases {
+				writePackageHashPart(h, "import="+alias+"="+symbols.Imports[alias])
+			}
+		}
+		localFingerprints[packageName] = hex.EncodeToString(h.Sum(nil))
+	}
+	fingerprints := make(map[string]string, len(filesByPackage))
+	for packageName := range filesByPackage {
+		reachable := map[string]bool{}
+		var visit func(string)
+		visit = func(current string) {
+			if reachable[current] {
+				return
+			}
+			reachable[current] = true
+			packageSymbols := model.Packages[current]
+			if packageSymbols == nil {
+				return
+			}
+			for _, importPath := range packageSymbols.Imports {
+				if logical, ok := logicalPackageForImport(importPath, options.ModulePath, model); ok {
+					visit(logical)
+				}
+			}
+		}
+		visit(packageName)
+		dependencies := make([]string, 0, len(reachable))
+		for dependency := range reachable {
+			dependencies = append(dependencies, dependency)
+		}
+		sort.Strings(dependencies)
+		h := sha256.New()
+		writePackageHashPart(h, "module="+options.ModulePath)
+		writePackageHashPart(h, "project-root="+options.ProjectRoot)
+		writePackageHashPart(h, fmt.Sprintf("development=%t", options.Development))
+		writePackageHashPart(h, fmt.Sprintf("no-prelude=%t", options.NoPrelude))
+		writePackageHashPart(h, fmt.Sprintf("no-stdlib=%t", options.NoStdlib))
+		writePackageHashPart(h, fmt.Sprintf("at-exit=%t", atExit))
+		writePackageHashPart(h, fmt.Sprintf("introspection=%t", usesIntrospection))
+		for _, dependency := range dependencies {
+			writePackageHashPart(h, "package="+dependency)
+			writePackageHashPart(h, "dependency-fingerprint="+localFingerprints[dependency])
+		}
+		fingerprints[packageName] = hex.EncodeToString(h.Sum(nil))
+	}
+	return fingerprints
+}
+
+func writePackageHashPart(h interface{ Write([]byte) (int, error) }, value string) {
+	_, _ = fmt.Fprintf(h, "%d:", len(value))
+	_, _ = h.Write([]byte(value))
+	_, _ = h.Write([]byte{0})
+}
+
+func generatedPackageFilesMatch(outputDir string, cachedFiles map[string]string, files []*File, outputNames map[*File]string, packageName string) bool {
+	expected := map[string]bool{}
+	for _, file := range files {
+		if file.Package != packageName {
+			continue
+		}
+		relative, err := filepath.Rel(outputDir, filepath.Join(generatedPackageDirectory(outputDir, packageName), outputNames[file]))
+		if err != nil {
+			return false
+		}
+		expected[filepath.ToSlash(relative)] = true
+	}
+	if len(expected) == 0 || len(expected) != len(cachedFiles) {
+		return false
+	}
+	for path := range expected {
+		if cachedFiles[path] == "" {
+			return false
+		}
+		digest, err := generatedFileDigest(filepath.Join(outputDir, filepath.FromSlash(path)))
+		if err != nil || digest != cachedFiles[path] {
+			return false
+		}
+	}
+	return true
+}
+
+func generatedFileDigest(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(stripUnusedSuppressionMarkers(data))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 type compiledEmbed struct {
@@ -470,10 +773,7 @@ func copyOfficialEmbedFile(source, destination string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(destination, data, 0644)
+	return writeFileIfChanged(destination, data, 0644)
 }
 
 func normalizeEmbedPath(value string) (string, error) {
@@ -582,14 +882,111 @@ func copyEmbedDirectory(source, destination string) error {
 }
 
 func copyEmbedFile(source, destination string, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
-		return err
-	}
 	data, err := os.ReadFile(source)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(destination, data, mode)
+	return writeFileIfChanged(destination, data, mode)
+}
+
+func writeFileIfChanged(path string, data []byte, mode os.FileMode) error {
+	if existing, err := os.ReadFile(path); err == nil && (bytes.Equal(existing, data) || (filepath.Ext(path) == ".go" && bytes.Equal(stripUnusedSuppressionMarkers(existing), data))) {
+		if info, statErr := os.Stat(path); statErr == nil {
+			if info.Mode().Perm() == mode.Perm() {
+				return nil
+			}
+			return os.Chmod(path, mode.Perm())
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, mode)
+}
+
+// stripUnusedSuppressionMarkers lets command-level warning suppression survive
+// incremental compiler writes when the underlying generated Go is unchanged.
+func stripUnusedSuppressionMarkers(source []byte) []byte {
+	const marker = "/*gpp:unused-suppression*/"
+	result := string(source)
+	for searchFrom := 0; ; {
+		markerAt := strings.Index(result[searchFrom:], marker)
+		if markerAt < 0 {
+			break
+		}
+		markerAt += searchFrom
+		assignmentAt := strings.LastIndex(result[:markerAt], "; _ = ")
+		if assignmentAt < 0 {
+			searchFrom = markerAt + len(marker)
+			continue
+		}
+		end := markerAt + len(marker)
+		result = result[:assignmentAt] + result[end:]
+		searchFrom = assignmentAt
+	}
+	return []byte(result)
+}
+
+func loadGeneratedFilesManifest(outputDir string) (map[string]bool, map[string]generatedPackageOutput, bool, error) {
+	path := filepath.Join(outputDir, generatedFilesManifestName)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, err
+	}
+	var manifest generatedFilesManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, nil, false, nil
+	}
+	files := make(map[string]bool, len(manifest.Files))
+	for _, name := range manifest.Files {
+		clean := filepath.Clean(filepath.FromSlash(name))
+		if clean == "." || clean == ".." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil, nil, false, nil
+		}
+		files[filepath.ToSlash(clean)] = true
+	}
+	for _, packageOutput := range manifest.Packages {
+		for name := range packageOutput.Files {
+			clean := filepath.Clean(filepath.FromSlash(name))
+			if clean == "." || clean == ".." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+				return nil, nil, false, nil
+			}
+		}
+	}
+	return files, manifest.Packages, true, nil
+}
+
+func writeGeneratedFilesManifest(outputDir string, files map[string]bool, packages map[string]generatedPackageOutput) error {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	data, err := json.Marshal(generatedFilesManifest{Files: names, Packages: packages})
+	if err != nil {
+		return err
+	}
+	return writeFileIfChanged(filepath.Join(outputDir, generatedFilesManifestName), data, 0644)
+}
+
+func removeEmptyGeneratedParents(directory, outputDir string) {
+	root, err := filepath.Abs(outputDir)
+	if err != nil {
+		return
+	}
+	for current, err := filepath.Abs(directory); err == nil && current != root && isWithinDirectory(root, current); current = filepath.Dir(current) {
+		if err := os.Remove(current); err != nil {
+			return
+		}
+	}
+}
+
+func isWithinDirectory(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
 }
 
 // cleanGeneratedOutput removes files from the compiler-owned output workspace
@@ -726,7 +1123,7 @@ func ensureGoModuleSums(outputDir, modulePath, version string) error {
 }
 
 func ensureGeneratedMarker(outputDir string) error {
-	return os.WriteFile(filepath.Join(outputDir, ".gpp-generated"), []byte("Go++ compiler output\n"), 0644)
+	return writeFileIfChanged(filepath.Join(outputDir, ".gpp-generated"), []byte("Go++ compiler output\n"), 0644)
 }
 
 func ensureSharedIntrospectionRuntime(outputDir string) error {
@@ -735,7 +1132,7 @@ func ensureSharedIntrospectionRuntime(outputDir string) error {
 		return err
 	}
 	source := "package runtime\n\nimport (\n\tgppFmt \"fmt\"\n\tgppReflect \"reflect\"\n\tgppStrconv \"strconv\"\n\tgppStrings \"strings\"\n)\n\n" + introspectionRuntimeDefinitions()
-	return os.WriteFile(filepath.Join(directory, "runtime.go"), []byte(source), 0644)
+	return writeFileIfChanged(filepath.Join(directory, "runtime.go"), []byte(source), 0644)
 }
 
 func isModulePath(modulePath string) bool {
