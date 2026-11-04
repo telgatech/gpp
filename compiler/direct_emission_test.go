@@ -31,6 +31,44 @@ func Add(value int) int {
 	}
 }
 
+func TestDirectFunctionEmissionPreservesStatementSourceLines(t *testing.T) {
+	file, err := ParseFile("direct-source-lines.gpp", `class Worker {
+    func First() {}
+
+    func Second() {
+        return
+    }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(output)
+	if !strings.Contains(generated, "//line ") ||
+		!strings.Contains(generated, "direct-source-lines.gpp:2\nfunc (this *Worker) First()") ||
+		!strings.Contains(generated, "direct-source-lines.gpp:4\nfunc (this *Worker) Second()") {
+		t.Fatalf("class methods did not retain their own source lines:\n%s", generated)
+	}
+}
+
+func TestDirectFunctionEmissionMapsInlineBodyStatements(t *testing.T) {
+	file, err := ParseFile("direct-inline-line.gpp", "func Start() { x := 10 }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := file.Decls[0].(*FunctionDecl)
+	output, handled, err := directFunctionSource(function, constructorContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || !strings.Contains(output, "direct-inline-line.gpp:1\n\tx := 10") {
+		t.Fatalf("inline statement lost its source line: handled=%v output=%s", handled, output)
+	}
+}
+
 func TestDirectValueDeclarationEmissionUsesStructuredAST(t *testing.T) {
 	file, err := ParseFile("direct-value.gpp", "let answer = 42\n")
 	if err != nil {

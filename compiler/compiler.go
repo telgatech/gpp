@@ -184,6 +184,16 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		context.ModulePath = options.ModulePath
 		context.Development = options.Development
 		context.AvailableImports = availableImportsForFile(file, model, options.ModulePath)
+		context.ImportedFunctionSignatures = map[string]map[string][]callableSignature{}
+		if packageSymbols := model.Packages[file.Package]; packageSymbols != nil {
+			for alias, importPath := range packageSymbols.Imports {
+				logical, ok := logicalPackageForImport(importPath, options.ModulePath, model)
+				if !ok || functionSignatures[logical] == nil {
+					continue
+				}
+				context.ImportedFunctionSignatures[alias] = functionSignatures[logical]
+			}
+		}
 		context.Templates = model.Packages[file.Package].Templates
 		if usesIntrospection && options.ModulePath != "" {
 			context.IntrospectionRuntimeImport = options.ModulePath + "/gpp/runtime"

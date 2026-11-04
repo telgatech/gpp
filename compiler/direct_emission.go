@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/token"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -22,6 +25,7 @@ func directFunctionSource(function *FunctionDecl, context constructorContext) (s
 	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(function.Method.ParameterAST)
 	methodContext.CurrentParameterAST = parameterTypeNodeMapFromNodes(function.Method.ParameterAST)
 	methodContext.CurrentResultAST = function.Method.ResultAST
+	configureSourcePositions(&methodContext, function.Method)
 	body, handled, err := directMethodBody(function.Method, methodContext)
 	if !handled {
 		return "", false, nil
@@ -46,6 +50,7 @@ func directMethodSource(class *ClassDecl, method Method, context constructorCont
 	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentParameterAST = parameterTypeNodeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentResultAST = method.ResultAST
+	configureSourcePositions(&methodContext, method)
 	body, handled, err := directMethodBody(method, methodContext)
 	if !handled {
 		return "", false, nil
@@ -74,6 +79,7 @@ func directStaticMethodSource(class *ClassDecl, method Method, context construct
 	methodContext.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentParameterAST = parameterTypeNodeMapFromNodes(method.ParameterAST)
 	methodContext.CurrentResultAST = method.ResultAST
+	configureSourcePositions(&methodContext, method)
 	body, handled, err := directMethodBody(method, methodContext)
 	if !handled {
 		return "", false, nil
@@ -890,7 +896,59 @@ func formatDirectFunctionDecl(name string, receiver *ast.Field, typeParameters [
 	if err := format.Node(&output, token.NewFileSet(), declaration); err != nil {
 		return "", true, err
 	}
-	return output.String(), true, nil
+	formatted := output.String()
+	if context.SourceBodyLine > 0 && context.SourceTokenFile != nil {
+		formatted, err = addFunctionBodySourceDirective(formatted, context.SourceTokenFile.Name(), context.SourceBodyLine)
+		if err != nil {
+			return "", true, err
+		}
+	}
+	return formatted, true, nil
+}
+
+func configureSourcePositions(context *constructorContext, method Method) {
+	if context == nil || method.Owner == nil || method.Owner.Source == "" {
+		return
+	}
+	filename := sourceDirectivePath(method.Owner)
+	if filename == "" {
+		filename = method.Owner.Name
+	}
+	fileSet := token.NewFileSet()
+	sourceFile := fileSet.AddFile(filename, -1, len(method.Owner.Source))
+	for offset := 0; offset < len(method.Owner.Source); offset++ {
+		if method.Owner.Source[offset] == '\n' {
+			sourceFile.AddLine(offset + 1)
+		}
+	}
+	context.SourceTokenFile = sourceFile
+	if method.BodyAST != nil && len(method.BodyAST.Statements) > 0 {
+		context.SourceBodyLine = method.BodyAST.Statements[0].Span().Line
+	}
+}
+
+func addFunctionBodySourceDirective(source, filename string, line int) (string, error) {
+	if filename == "" || line <= 0 {
+		return source, nil
+	}
+	fileSet := token.NewFileSet()
+	const packagePrefix = "package __gpp\n"
+	file, err := parser.ParseFile(fileSet, "generated.go", packagePrefix+source, parser.AllErrors)
+	if err != nil || len(file.Decls) == 0 {
+		return source, nil
+	}
+	function, ok := file.Decls[0].(*ast.FuncDecl)
+	if !ok || function.Body == nil || len(function.Body.List) == 0 {
+		return source, nil
+	}
+	position := fileSet.Position(function.Body.List[0].Pos())
+	position.Offset -= len(packagePrefix)
+	if !position.IsValid() || position.Offset >= len(source) {
+		return source, nil
+	}
+	prefix := strings.TrimRight(source[:position.Offset], " \t\n")
+	suffix := source[position.Offset:]
+	return prefix + "\n//line " + filepath.ToSlash(filename) + ":" + strconv.Itoa(line) + "\n\t" + suffix, nil
 }
 
 func directParameterFields(parameters []ParameterNode, context constructorContext) ([]*ast.Field, error) {

@@ -1459,6 +1459,13 @@ func inferRecordExprType(expression ExprNode, valueTypes map[string]string, cont
 	case *CallExpr:
 		return inferRecordCallExprResult(value, valueTypes, context)
 	case *SelectorExpr:
+		if packageName, ok := value.Receiver.(*NameExpr); ok {
+			for _, signature := range context.ImportedFunctionSignatures[packageName.Name][value.Name] {
+				if result := strings.TrimSpace(signature.resultText()); result != "" {
+					return result
+				}
+			}
+		}
 		base := inferRecordExprType(value.Receiver, valueTypes, context)
 		if context.Records != nil {
 			if shape := context.Records.recordByGoName(strings.TrimPrefix(base, "*")); shape != nil {
@@ -1495,6 +1502,13 @@ func inferRecordCallExprResult(call *CallExpr, valueTypes map[string]string, con
 			}
 		}
 	case *SelectorExpr:
+		if packageName, ok := function.Receiver.(*NameExpr); ok {
+			for _, signature := range context.ImportedFunctionSignatures[packageName.Name][function.Name] {
+				if result := strings.TrimSpace(signature.resultText()); result != "" {
+					return result
+				}
+			}
+		}
 		if receiver, ok := function.Receiver.(*NameExpr); ok {
 			className := strings.TrimPrefix(valueTypes[receiver.Name], "*")
 			if className == "" {
@@ -1601,9 +1615,6 @@ func collectRecordValueTypesStatement(statement Stmt, valueTypes map[string]stri
 	if statement == nil {
 		return
 	}
-	visitExpression := func(expression ExprNode) string {
-		return inferRecordExprType(expression, valueTypes, context)
-	}
 	switch value := statement.(type) {
 	case *TokenStmt:
 		collectRecordValueTypesBlock(value.Body, valueTypes, context)
@@ -1615,22 +1626,46 @@ func collectRecordValueTypesStatement(statement Stmt, valueTypes map[string]stri
 		if value.Type != nil {
 			declared, _ = typeNodeSource(value.Type)
 		}
+		if declared == "" && len(value.Values) == 1 && len(value.Names) > 1 {
+			inferred := inferRecordExprResultTypes(value.Values[0], valueTypes, context)
+			for index, name := range value.Names {
+				if index < len(inferred) && inferred[index] != "" {
+					valueTypes[name.Text] = inferred[index]
+				}
+			}
+			return
+		}
 		for index, name := range value.Names {
 			inferred := strings.TrimSpace(declared)
 			if inferred == "" && index < len(value.Values) {
-				inferred = visitExpression(value.Values[index])
+				results := inferRecordExprResultTypes(value.Values[index], valueTypes, context)
+				if len(results) > 0 {
+					inferred = results[0]
+				}
 			}
 			if inferred != "" {
 				valueTypes[name.Text] = inferred
 			}
 		}
 	case *AssignmentStmt:
+		if len(value.Right) == 1 && len(value.Left) > 1 {
+			inferred := inferRecordExprResultTypes(value.Right[0], valueTypes, context)
+			for index, left := range value.Left {
+				name, ok := left.(*NameExpr)
+				if ok && index < len(inferred) && inferred[index] != "" {
+					valueTypes[name.Name] = inferred[index]
+				}
+			}
+			return
+		}
 		for index, left := range value.Left {
 			name, ok := left.(*NameExpr)
 			if !ok || index >= len(value.Right) {
 				continue
 			}
-			if inferred := visitExpression(value.Right[index]); inferred != "" {
+			results := inferRecordExprResultTypes(value.Right[index], valueTypes, context)
+			if len(results) > 0 && results[0] != "" {
+				inferred := results[0]
 				valueTypes[name.Name] = inferred
 			}
 		}
@@ -1653,6 +1688,38 @@ func collectRecordValueTypesStatement(statement Stmt, valueTypes map[string]stri
 		}
 		collectRecordValueTypesBlock(value.Finally, valueTypes, context)
 	}
+}
+
+// inferRecordExprResultTypes returns the result types produced by an expression
+// when it is used as the sole right-hand side of a declaration or assignment.
+// In particular, a call returning (T, error) inside try binds T to a single
+// target because the error result is handled by try's implicit error path.
+func inferRecordExprResultTypes(expression ExprNode, valueTypes map[string]string, context constructorContext) []string {
+	inferred := strings.TrimSpace(inferRecordExprType(expression, valueTypes, context))
+	if inferred == "" {
+		return nil
+	}
+	tokens, err := LexSource("record result", inferred)
+	if err != nil {
+		return []string{inferred}
+	}
+	typeNode, err := ParseTypeTokens(tokens)
+	if err != nil {
+		return []string{inferred}
+	}
+	if tuple, ok := typeNode.(*TupleType); ok {
+		results := make([]string, 0, len(tuple.Elements))
+		for _, element := range tuple.Elements {
+			result, typeErr := typeNodeSource(element)
+			if typeErr != nil {
+				results = append(results, "")
+				continue
+			}
+			results = append(results, strings.TrimSpace(result))
+		}
+		return results
+	}
+	return []string{inferred}
 }
 
 func rewriteRecordFunctionResults(src string, context constructorContext) (string, error) {

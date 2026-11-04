@@ -111,6 +111,7 @@ type constructorContext struct {
 	Enums                      map[string]*EnumDecl
 	Overloads                  overloadContext
 	FunctionSignatures         map[string][]callableSignature
+	ImportedFunctionSignatures map[string]map[string][]callableSignature
 	MethodSignatures           map[string][]callableSignature
 	ClassMethodSignatures      map[string]map[string][]callableSignature
 	StaticMethodSignatures     map[string]map[string][]callableSignature
@@ -141,6 +142,8 @@ type constructorContext struct {
 	CurrentExtensionReceiver   string
 	CurrentParameterTypes      map[string]string
 	CurrentParameterAST        map[string]TypeNode
+	SourceTokenFile            *token.File
+	SourceBodyLine             int
 	CurrentIntrospectionKinds  map[string]int
 	RecordValueTypes           map[string]string
 	RecordOnlyLowering         bool
@@ -1638,7 +1641,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 			}
 			continue
 		}
-		emitSourceDirective(out, sourcePath, class.SourceLine)
+		emitSourceDirective(out, sourcePath, methodSourceLine(method, class))
 		methodName := methodOutputName(method)
 		exceptionContext := contextForMethod(context, class, method.Name)
 		if direct, handled, err := directMethodSource(class, method, exceptionContext); handled {
@@ -2159,12 +2162,22 @@ func isExportedGoPlusName(name string) bool {
 	return name != "" && name[0] >= 'A' && name[0] <= 'Z'
 }
 
+func methodSourceLine(method Method, class *ClassDecl) int {
+	if line := method.Span().Line; line > 0 {
+		return line
+	}
+	if class != nil {
+		return class.SourceLine
+	}
+	return 0
+}
+
 func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl, method Method, context constructorContext, interpolationName string) error {
 	if direct, handled, err := directStaticMethodSource(class, method, context); handled {
 		if err != nil {
 			return err
 		}
-		emitSourceDirective(out, sourcePath, class.SourceLine)
+		emitSourceDirective(out, sourcePath, methodSourceLine(method, class))
 		out.WriteString(direct)
 		out.WriteByte('\n')
 		return nil
@@ -2205,7 +2218,7 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 		return err
 	}
 
-	emitSourceDirective(out, sourcePath, class.SourceLine)
+	emitSourceDirective(out, sourcePath, methodSourceLine(method, class))
 	methodTypeParams, err := goTypeParameterNodesSource(method.TypeParamsAST)
 	if err != nil {
 		return err

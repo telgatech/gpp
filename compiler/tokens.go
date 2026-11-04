@@ -40,11 +40,15 @@ type Span struct {
 }
 
 type sourceLineDiagnostic struct {
-	line int
-	err  error
+	line   int
+	column int
+	err    error
 }
 
 func (diagnostic sourceLineDiagnostic) Error() string {
+	if diagnostic.column > 0 {
+		return fmt.Sprintf("%d:%d: %v", diagnostic.line, diagnostic.column, diagnostic.err)
+	}
 	return fmt.Sprintf("%d: %v", diagnostic.line, diagnostic.err)
 }
 
@@ -58,7 +62,7 @@ func sourceLineError(span Span, err error) error {
 	if errors.As(err, &located) {
 		return err
 	}
-	return sourceLineDiagnostic{line: span.Line, err: err}
+	return sourceLineDiagnostic{line: span.Line, column: span.Column, err: err}
 }
 
 func isSourceLineDiagnostic(err error) bool {

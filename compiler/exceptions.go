@@ -2233,7 +2233,12 @@ func lowerRecordCallExprNode(call *CallExpr, context constructorContext) (ExprNo
 		}
 		fieldType := strings.TrimSpace(inferRecordExprType(value, valueTypes, context))
 		if fieldType == "" {
-			return nil, true, fmt.Errorf("cannot infer type of record field %s", argument.Name)
+			valueSource, sourceErr := expressionNodeSource(value)
+			if sourceErr != nil || strings.TrimSpace(valueSource) == "" {
+				valueSource = "<expression>"
+			}
+			err := fmt.Errorf("cannot infer type of record field %s from %s", argument.Name, valueSource)
+			return nil, true, sourceLineError(value.Span(), err)
 		}
 		fields = append(fields, recordFieldType{Name: argument.Name, Type: fieldType})
 		elements = append(elements, CompositeElement{
