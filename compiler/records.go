@@ -1663,6 +1663,12 @@ func collectRecordValueTypesStatement(statement Stmt, valueTypes map[string]stri
 			if !ok || index >= len(value.Right) {
 				continue
 			}
+			// Assignment does not change a Go variable's declared type. In
+			// particular, assigning an untyped integer constant to an int64
+			// variable must not narrow its inferred type back to int.
+			if valueTypes[name.Name] != "" {
+				continue
+			}
 			results := inferRecordExprResultTypes(value.Right[index], valueTypes, context)
 			if len(results) > 0 && results[0] != "" {
 				inferred := results[0]

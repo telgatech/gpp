@@ -3721,6 +3721,7 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 	case *SelectorExpr:
 		actualType := staticExpressionTypeNode(function.Receiver, context, valueTypes)
 		if receiver, ok := function.Receiver.(*NameExpr); ok {
+			candidates = append(candidates, context.ImportedFunctionSignatures[receiver.Name][function.Name]...)
 			if _, isClass := context.Targets[receiver.Name]; isClass {
 				candidates = append(candidates, context.StaticMethodSignatures[receiver.Name][function.Name]...)
 			} else {

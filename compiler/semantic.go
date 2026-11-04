@@ -1143,15 +1143,20 @@ func globalValueTypesForFile(file *File) map[string]string {
 	for _, declaration := range file.Decls {
 		switch value := declaration.(type) {
 		case *ValueDecl:
-			if value.Type == nil {
-				continue
+			declaredType := ""
+			if value.Type != nil {
+				if typeName, err := typeNodeSource(value.Type); err == nil {
+					declaredType = strings.TrimSpace(typeName)
+				}
 			}
-			typeName, err := typeNodeSource(value.Type)
-			if err != nil {
-				continue
-			}
-			for _, name := range value.Names {
-				result[name.Text] = strings.TrimSpace(typeName)
+			for index, name := range value.Names {
+				typeName := declaredType
+				if typeName == "" && index < len(value.Values) {
+					typeName = staticExpressionTypeNode(value.Values[index], constructorContext{}, result)
+				}
+				if typeName != "" {
+					result[name.Text] = strings.TrimSpace(typeName)
+				}
 			}
 		case *MixedDecl:
 			collectGlobalValueTypesFromAST(value.GoASTDecls, result)

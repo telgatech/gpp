@@ -33,6 +33,7 @@ type compileFlags struct {
 	development bool
 	noPrelude   bool
 	noStdlib    bool
+	warnings    bool
 	emitGo      bool
 	binaryPath  string
 	test        testSelection
@@ -194,6 +195,7 @@ func printCompileFlags() {
 	fmt.Println("  GPP_CACHE         environment variable for the cache root")
 	fmt.Println("  -no-prelude       disable the implicit Go++ prelude")
 	fmt.Println("  -no-stdlib        disable bundled official Go++ packages")
+	fmt.Println("  -warnings         show compiler warnings")
 }
 
 func parseCompileFlags(name string, args []string, allowOutputBinary bool) (compileFlags, []string, []string, int) {
@@ -205,6 +207,7 @@ func parseCompileFlags(name string, args []string, allowOutputBinary bool) (comp
 	flags.StringVar(&result.output, "output", "", "directory for generated Go code (defaults to the system cache)")
 	flags.BoolVar(&result.noPrelude, "no-prelude", false, "disable the implicit Go++ prelude")
 	flags.BoolVar(&result.noStdlib, "no-stdlib", false, "disable bundled official Go++ packages")
+	flags.BoolVar(&result.warnings, "warnings", false, "show compiler warnings")
 	if allowOutputBinary {
 		flags.StringVar(&result.binaryPath, "o", "", "output executable path")
 		flags.BoolVar(&result.emitGo, "emit-go", false, "retain and report generated Go source")
@@ -242,7 +245,7 @@ func reorderCompileArgs(args []string, allowOutputBinary, testing bool) []string
 		}
 		name := strings.TrimPrefix(arg, "--")
 		name = strings.TrimPrefix(name, "-")
-		known := name == "module" || name == "output" || name == "no-prelude" || name == "no-stdlib" || (allowOutputBinary && (name == "o" || name == "emit-go"))
+		known := name == "module" || name == "output" || name == "no-prelude" || name == "no-stdlib" || name == "warnings" || (allowOutputBinary && (name == "o" || name == "emit-go"))
 		if testing {
 			known = known || name == "suite" || name == "tag" || name == "tags-all" || name == "priority" || name == "run" || name == "list" || name == "fail-fast" || name == "cover" || name == "race"
 		}
@@ -516,8 +519,10 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	if err != nil {
 		return err
 	}
-	for _, warning := range warnings {
-		fmt.Fprintln(os.Stderr, warning)
+	if options.warnings {
+		for _, warning := range warnings {
+			fmt.Fprintln(os.Stderr, warning)
+		}
 	}
 	if !includeTests {
 		return nil

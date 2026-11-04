@@ -158,18 +158,31 @@ func collectGlobalValueTypesFromAST(declarations []ast.Decl, output map[string]s
 		}
 		for _, spec := range group.Specs {
 			value, ok := spec.(*ast.ValueSpec)
-			if !ok || value.Type == nil {
+			if !ok {
 				continue
 			}
-			typeName := strings.TrimSpace(safeASTTypeName(value.Type))
-			if typeName == "" {
-				continue
-			}
-			for _, name := range value.Names {
-				output[name.Name] = typeName
+			for index, name := range value.Names {
+				typeName := ""
+				if value.Type != nil {
+					typeName = strings.TrimSpace(safeASTTypeName(value.Type))
+				} else if index < len(value.Values) {
+					typeName = safeASTInitializerTypeName(value.Values[index])
+				}
+				if typeName != "" {
+					output[name.Name] = typeName
+				}
 			}
 		}
 	}
+}
+
+func safeASTInitializerTypeName(expression ast.Expr) string {
+	if address, ok := expression.(*ast.UnaryExpr); ok && address.Op == token.AND {
+		if typeName := safeASTTypeName(address.X); typeName != "" {
+			return "*" + typeName
+		}
+	}
+	return safeASTTypeName(expression)
 }
 
 func (context constructorContext) currentResultText() string {

@@ -148,6 +148,12 @@ compiler workspace rather than beside the Go++ source:
 gpp build examples/hello.gpp -o ./hello
 ```
 
+Compiler warnings are hidden by default. Pass `-warnings` to show them:
+
+```bash
+gpp build -warnings examples/hello.gpp
+```
+
 Use `gpp doctor` to check the Go toolchain and embedded standard library, and
 `gpp clean` to remove generated build artifacts.
 

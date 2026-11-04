@@ -49,6 +49,22 @@ func TestCollectRecordValueTypesUsesImportedFunctionResults(t *testing.T) {
 	}
 }
 
+func TestCollectRecordValueTypesPreservesDeclaredTypeAcrossAssignment(t *testing.T) {
+	source := `func payment() {
+    amount := int64(9900)
+    amount = 4900
+    _ = record(amount: amount)
+}`
+
+	valueTypes, handled := collectRecordValueTypesAST(source, constructorContext{})
+	if !handled {
+		t.Fatal("expected structured record value collection")
+	}
+	if got := valueTypes["amount"]; got != "int64" {
+		t.Fatalf("assignment changed amount's inferred type: got %q, want int64", got)
+	}
+}
+
 func TestCollectRecordValueTypesUnwrapsTryHandledTupleAssignment(t *testing.T) {
 	source := `func main() {
     var user *SessionUser
