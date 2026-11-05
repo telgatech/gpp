@@ -22,7 +22,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <footer class="catalog-footer latest-change-card">
 <div class="catalog-footer-copy">
-<p class="catalog-footer-eyebrow"><span class="latest-change-ribbon">What's new</span> v0.2.0 · 2026-11-05</p>
+<p class="catalog-footer-eyebrow"><span class="latest-change-ribbon">What's new</span> 2026-11-05</p>
 <h2>Typed database queries</h2>
 <p>Use <code>db.Get[T]</code> and <code>db.Select[T]</code> for models, scalars, or inline record shapes.</p>
 </div>
@@ -83,7 +83,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>How can I try Go++?</summary>
-<p>Install the CLI with <code>go install github.com/telgatech/gpp@latest</code>, then create and run a starter project with <code>gpp init hello</code> and <code>gpp run</code>. The <a href="/guide/getting-started">getting started guide</a> walks through the setup.</p>
+<p>Install the CLI with <code>go install github.com/telgatech/gpp@main</code>, then create and run a starter project with <code>gpp init hello</code> and <code>gpp run</code>. The <a href="/guide/getting-started">getting started guide</a> walks through the setup.</p>
 </details>
 
 </div>

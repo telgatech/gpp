@@ -59,7 +59,7 @@ type buildCacheState struct {
 func buildInputKey(sources []string, options compileFlags, selections ...testSelectionResult) (string, error) {
 	h := sha256.New()
 	writeHashPart(h, fmt.Sprintf("schema=%d", buildCacheSchema))
-	writeHashPart(h, "compiler="+Version)
+	writeHashPart(h, "compiler="+gppVersion())
 	writeHashPart(h, "module="+options.module)
 	writeHashPart(h, fmt.Sprintf("no-prelude=%t", options.noPrelude))
 	writeHashPart(h, fmt.Sprintf("no-stdlib=%t", options.noStdlib))

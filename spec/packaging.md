@@ -13,7 +13,7 @@ The executable should contain the full Go++ command-line interface and dispatch 
 The preferred installation command is:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 After installation, the user should have:
@@ -87,7 +87,7 @@ This keeps:
 To support:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 the Go module root should itself be an installable:
@@ -161,7 +161,7 @@ Only the executable entry point needs to be available from the module root.
 After this change:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 should install:
@@ -641,7 +641,7 @@ The installation should be self-contained apart from the Go toolchain.
 This should work:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 gpp run hello.gpp
 ```
 
@@ -871,7 +871,7 @@ Go++ should generate additional Go source and compile the combined package.
 Primary source installation:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 Specific version:
@@ -918,25 +918,12 @@ Do not hard-code `~/go/bin` as the only valid installation location.
 
 ---
 
-# Release Versioning
+# Development Versioning
 
-Use semantic version tags.
-
-Examples:
-
-```text
-v0.1.0
-v0.2.0
-v0.2.1
-```
-
-Initial development should remain within:
-
-```text
-v0.x
-```
-
-while language compatibility is still evolving.
+During rapid development, record changes in a dated changelog and install the
+latest default branch with `go install github.com/telgatech/gpp@main`. Avoid
+manual version bumps for each API change. If the project publishes a tagged
+release later, use a semantic version tag and keep that published tag immutable.
 
 Release:
 
@@ -1113,7 +1100,7 @@ New commands should be added only when they represent a distinct workflow.
 The target first-run experience is:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 
 gpp version
 
@@ -1164,7 +1151,7 @@ gpp version
 The preferred installation contract is:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 and that should be sufficient to install the Go++ toolchain frontend.

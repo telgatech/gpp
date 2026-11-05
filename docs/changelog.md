@@ -2,7 +2,9 @@
 
 Notable Go++ changes, with links to the documentation for each update.
 
-## v0.2.0
+## 2026-11-05
+
+- <time datetime="2026-11-05T16:29:06+05:30">2026-11-05 16:29 IST</time> — **Pointer results for typed queries.** `db.Get[*Model]` returns a model pointer, and `db.Select[*Model]` returns a slice of pointers. Pointer records work the same way. [Details](/features/orm#typed-queries-with-structural-records)
 
 - <time datetime="2026-11-05T13:54:46+05:30">2026-11-05 13:54 IST</time> — **Typed database queries.** Generic `Get[T]` and `Select[T]` queries now return model values, scalars, or inline structural records. [Details](/features/orm#typed-queries-with-structural-records)
 - <time datetime="2026-11-05T13:54:46+05:30">2026-11-05 13:54 IST</time> — **Model query and persistence helpers.** ORM models inherit find, order, and cursor paging helpers; instances support `Insert`, `Update`, and `Destroy`. [Details](/features/orm#common-model-operations)

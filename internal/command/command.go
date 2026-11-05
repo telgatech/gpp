@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,9 +22,13 @@ import (
 	"github.com/telgatech/gpp/compiler"
 )
 
-// Version is overridden by release builds when desired. Keeping a stable
-// development value makes `gpp version` useful from source checkouts too.
-var Version = "0.2.0"
+func gppVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "development"
+	}
+	return info.Main.Version
+}
 
 const minimumGoMinor = 26
 
@@ -2076,7 +2081,7 @@ func runEnv(args []string) int {
 		version = "<unknown>"
 	}
 	fmt.Printf("GPP_VERSION=%q\nGPP_CACHE=%q\nGO=%q\nGO_VERSION=%q\nGOOS=%q\nGOARCH=%q\n",
-		Version, cache, goPath, version, runtime.GOOS, runtime.GOARCH)
+		gppVersion(), cache, goPath, version, runtime.GOOS, runtime.GOARCH)
 	if goPath != "<not found>" {
 		if output, err := exec.Command(goPath, "env", "GOPATH", "GOROOT").Output(); err == nil {
 			values := strings.Fields(string(output))
@@ -2095,7 +2100,7 @@ func runDoctor(args []string) int {
 		}
 		return reportError(errors.New("doctor does not accept arguments"))
 	}
-	fmt.Printf("Go++ %s\n", Version)
+	fmt.Printf("Go++ %s\n", gppVersion())
 	failed := false
 	goPath, err := findGo()
 	if err != nil {
@@ -2164,10 +2169,10 @@ func runVersion(args []string) int {
 	}
 	version, err := goVersion()
 	if err != nil {
-		fmt.Printf("gpp %s\n", Version)
+		fmt.Printf("gpp %s\n", gppVersion())
 		return 0
 	}
-	fmt.Printf("gpp %s\ngo %s\n%s/%s\n", Version, version, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("gpp %s\ngo %s\n%s/%s\n", gppVersion(), version, runtime.GOOS, runtime.GOARCH)
 	return 0
 }
 

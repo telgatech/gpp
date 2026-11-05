@@ -12,7 +12,7 @@ resolution, building, and execution to the Go toolchain.
 Install the CLI from the repository module:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 Try the command:

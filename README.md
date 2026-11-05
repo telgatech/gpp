@@ -119,7 +119,7 @@ generic instance methods are not yet supported end to end.
 The repository root is the installable Go++ CLI:
 
 ```bash
-go install github.com/telgatech/gpp@latest
+go install github.com/telgatech/gpp@main
 ```
 
 It provides one `gpp` executable with project commands:
