@@ -346,6 +346,9 @@ Record and scalar result types require a complete `SELECT` (or `WITH ... SELECT`
 Result columns match record fields by name; extra columns are discarded and
 missing fields retain their zero values. Scalar result types require a
 one-column query; `Get[T]` reads one row and `Select[T]` returns all rows.
+Pointer type arguments preserve pointer-shaped results: `Get[*Employee]`
+returns `*Employee`, and `Select[*Employee]` returns `[]*Employee`. Pointer
+records and scalar types are supported the same way.
 
 Model classes also inherit static `Get` and `Select` methods from `Model`:
 

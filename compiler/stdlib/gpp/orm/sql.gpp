@@ -45,6 +45,29 @@ func gppORMScalarScanTarget(target any) bool {
 	return value.Elem().Kind() != reflect.Struct || !gppORMCanScanRecord(target)
 }
 
+func gppORMPrepareGetTarget(target any) (any, any, error) {
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() {
+		return nil, nil, fmt.Errorf("Get target must be a non-nil pointer")
+	}
+	result := value.Elem()
+	if result.Kind() != reflect.Ptr {
+		return target, nil, nil
+	}
+	if result.Type().Elem().Kind() == reflect.Ptr {
+		return nil, nil, fmt.Errorf("orm: Get supports one pointer level in the result type")
+	}
+	allocated := reflect.New(result.Type().Elem())
+	return allocated.Interface(), allocated.Interface(), nil
+}
+
+func gppORMStoreGetTarget(target any, allocated any) {
+	if allocated == nil {
+		return
+	}
+	reflect.ValueOf(target).Elem().Set(reflect.ValueOf(allocated))
+}
+
 func gppORMRecordScanTargets(target any, columnNames []string) ([]any, error) {
 	value := reflect.ValueOf(target)
 	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() || value.Elem().Kind() != reflect.Struct {
@@ -548,17 +571,21 @@ func gppORMSelectWhere(exec SQLExecutor, target any, where string, args ...any) 
 }
 
 func gppORMGetQuery(exec SQLExecutor, target any, query string, args ...any) error {
-	targetValue := reflect.ValueOf(target)
-	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() {
-		return fmt.Errorf("Get target must be a non-nil pointer")
+	scanTarget, allocatedTarget, err := gppORMPrepareGetTarget(target)
+	if err != nil {
+		return err
 	}
 	query = strings.TrimSpace(query)
 	if !gppORMIsSelectQuery(query) {
 		return fmt.Errorf("orm: Get requires a full SELECT query")
 	}
-	descriptor := gppORMRuntimeClass(target)
-	if descriptor == nil && gppORMScalarScanTarget(target) {
-		return exec.QueryRow(query, args...).Scan(target)
+	descriptor := gppORMRuntimeClass(scanTarget)
+	if descriptor == nil && gppORMScalarScanTarget(scanTarget) {
+		if err := exec.QueryRow(query, args...).Scan(scanTarget); err != nil {
+			return err
+		}
+		gppORMStoreGetTarget(target, allocatedTarget)
+		return nil
 	}
 	rows, err := exec.Query(query, args...)
 	if err != nil {
@@ -581,9 +608,9 @@ func gppORMGetQuery(exec SQLExecutor, target any, query string, args ...any) err
 		if err != nil {
 			return err
 		}
-		scanValues, err = gppORMModelScanTargets(target, columnNames, columns)
+		scanValues, err = gppORMModelScanTargets(scanTarget, columnNames, columns)
 	} else {
-		scanValues, err = gppORMRecordScanTargets(target, columnNames)
+		scanValues, err = gppORMRecordScanTargets(scanTarget, columnNames)
 	}
 	if err != nil {
 		return err
@@ -591,7 +618,11 @@ func gppORMGetQuery(exec SQLExecutor, target any, query string, args ...any) err
 	if err := rows.Scan(scanValues...); err != nil {
 		return err
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	gppORMStoreGetTarget(target, allocatedTarget)
+	return nil
 }
 
 func gppORMSelectQuery(exec SQLExecutor, target any, query string, args ...any) error {
@@ -604,6 +635,13 @@ func gppORMSelectQuery(exec SQLExecutor, target any, query string, args ...any) 
 		return fmt.Errorf("orm: Select requires a full SELECT query")
 	}
 	elementType := targetValue.Elem().Type().Elem()
+	elementIsPointer := elementType.Kind() == reflect.Ptr
+	if elementIsPointer {
+		elementType = elementType.Elem()
+		if elementType.Kind() == reflect.Ptr {
+			return fmt.Errorf("orm: Select supports one pointer level in the result type")
+		}
+	}
 	prototype := reflect.New(elementType).Interface()
 	descriptor := gppORMRuntimeClass(prototype)
 	if descriptor == nil && gppORMScalarScanTarget(prototype) {
@@ -617,7 +655,11 @@ func gppORMSelectQuery(exec SQLExecutor, target any, query string, args ...any) 
 			if err := rows.Scan(item.Interface()); err != nil {
 				return err
 			}
-			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), item.Elem()))
+			if elementIsPointer {
+				targetValue.Elem().Set(reflect.Append(targetValue.Elem(), item))
+			} else {
+				targetValue.Elem().Set(reflect.Append(targetValue.Elem(), item.Elem()))
+			}
 		}
 		return rows.Err()
 	}
@@ -655,7 +697,11 @@ func gppORMSelectQuery(exec SQLExecutor, target any, query string, args ...any) 
 		if err := rows.Scan(scanValues...); err != nil {
 			return err
 		}
-		targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+		if elementIsPointer {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue))
+		} else {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+		}
 	}
 	return rows.Err()
 }

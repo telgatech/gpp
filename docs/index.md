@@ -20,35 +20,17 @@ hero:
 import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 </script>
 
-<section class="home-updates" aria-labelledby="home-updates-title">
-<div class="home-updates-heading">
-<p class="home-updates-eyebrow">Project updates</p>
-<h2 id="home-updates-title">Recent changes</h2>
-<p>Recent improvements to database work, error handling, and the build workflow.</p>
+<footer class="catalog-footer latest-change-card">
+<div class="catalog-footer-copy">
+<p class="catalog-footer-eyebrow"><span class="latest-change-ribbon">What's new</span> v0.2.0 · 2026-11-05</p>
+<h2>Typed database queries</h2>
+<p>Use <code>db.Get[T]</code> and <code>db.Select[T]</code> for models, scalars, or inline record shapes.</p>
 </div>
-<div class="home-updates-grid">
-<article>
-<h3>Typed database results</h3>
-<p><code>db.Get[T]</code> and <code>db.Select[T]</code> can return scalars, inline records, or models from full SQL queries.</p>
+<div class="latest-change-actions">
 <a href="/features/orm#typed-queries-with-structural-records">Explore typed queries <span aria-hidden="true">→</span></a>
-</article>
-<article>
-<h3>More ORM model helpers</h3>
-<p>Models inherit query and paging helpers, and instances provide <code>Insert</code>, <code>Update</code>, and <code>Destroy</code>.</p>
-<a href="/features/orm#common-model-operations">Explore the ORM API <span aria-hidden="true">→</span></a>
-</article>
-<article>
-<h3>Exception handling bug fixes</h3>
-<p>Fixed error promotion for generic calls and imported methods that return a trailing error.</p>
-<a href="/features/exceptions">Explore exception handling <span aria-hidden="true">→</span></a>
-</article>
-<article>
-<h3>Faster repeat builds</h3>
-<p>Incremental compilation reuses generated output for unchanged packages, while Go's build cache reuses compiled packages.</p>
-<a href="/features/project-cli">Explore the project CLI <span aria-hidden="true">→</span></a>
-</article>
+<a class="latest-change-changelog" href="/changelog">See changelog</a>
 </div>
-</section>
+</footer>
 
 <FeatureCatalog />
 

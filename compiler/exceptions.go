@@ -2166,18 +2166,45 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 // general; library APIs do not need record-specific compiler lowering.
 func lowerGenericRecordTypeArguments(callee ExprNode, context constructorContext) (ExprNode, bool, error) {
 	convert := func(expression ExprNode) (ExprNode, bool, error) {
+		original := expression
+		pointer := false
+		if unary, ok := expression.(*UnaryExpr); ok && unary.Operator == "*" {
+			expression = unary.Operand
+			pointer = true
+		}
 		call, ok := expression.(*CallExpr)
 		if !ok {
-			return expression, false, nil
+			return original, false, nil
 		}
+		recordCall := call
 		if name, ok := call.Callee.(*NameExpr); !ok || name.Name != "record" {
-			return expression, false, nil
+			typeExpression, ok := call.Callee.(*TypeExpr)
+			if !ok {
+				return original, false, nil
+			}
+			pointerType, ok := typeExpression.Type.(*PointerType)
+			if !ok {
+				return original, false, nil
+			}
+			namedType, ok := pointerType.Element.(*NamedType)
+			if !ok || len(namedType.Parts) != 1 || namedType.Parts[0] != "record" {
+				return original, false, nil
+			}
+			pointer = true
+			recordCall = &CallExpr{
+				Callee:    &NameExpr{Name: "record", SpanValue: call.Span()},
+				Arguments: call.Arguments,
+				SpanValue: call.Span(),
+			}
 		}
-		recordType := extensionASTTypeArgument(call, context)
+		recordType := extensionASTTypeArgument(recordCall, context)
 		if recordType == nil {
 			return nil, false, fmt.Errorf("record type arguments require named fields with valid types")
 		}
-		return &TypeExpr{Type: recordType, SpanValue: call.Span()}, true, nil
+		if pointer {
+			recordType = &PointerType{Element: recordType, SpanValue: original.Span()}
+		}
+		return &TypeExpr{Type: recordType, SpanValue: original.Span()}, true, nil
 	}
 	switch value := callee.(type) {
 	case *IndexExpr:

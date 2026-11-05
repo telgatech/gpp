@@ -1,4 +1,6 @@
 <script setup>
+import { onMounted, ref } from 'vue'
+
 const sections = [
   {
     title: 'The changes that matter most',
@@ -43,7 +45,8 @@ const sections = [
       { title: 'HTTP servers and routes', description: 'Build handlers with route annotations, request context, lifecycle hooks, and typed responses.', code: `class App : http.Server {\n    func Health(ctx *http.Context) error\n        @{http.GET("/health")} {\n        return ctx.JSON(record(ok: true))\n    }\n}`, link: '/features/http', linkText: 'Explore HTTP' },
       { title: 'Websockets', description: 'Adding a WebSocket endpoint is as simple as adding an http.WebSocket annotation to a handler.', code: `class App : http.Server {\n    func Echo(ctx *http.Context) error\n        @{http.WebSocket("/echo")} {\n        for {\n            var message string\n            ctx.Conn.Read(&message)\n            ctx.Conn.Write("echo: " + message)\n        }\n    }\n}`, link: '/guide/standard-library/http#websocket-handlers', linkText: 'Explore WebSockets' },
       { title: 'OpenAPI, Swagger, and OAuth', description: 'Generate API docs and serve Swagger UI; configure OAuth/OIDC providers on the server.', code: `class App : http.Server @{\n    http.Prefix("/api"), http.OpenAPI,\n    http.Swagger, http.OAuth(http.OAuthProvider.Google),\n} {}`, link: '/features/api-documentation', linkText: 'Explore API documentation' },
-      { title: 'ORM and SQL', description: 'Map annotated models to SQL with CRUD operations, transactions, and lifecycle hooks.', code: `class Employee : orm.Model @{orm.Table("employees")} {\n    Id int64 @{orm.Column("id"), orm.PK}\n    Name string @{orm.Column("name")}\n}\n\nemployee := Employee(42, "Ada")\nemployee.Insert(db)\nemployee = Employee.Find(db, employee.Id)`, link: '/features/orm', linkText: 'Explore the ORM' },
+      { title: 'Typed SQL queries', description: 'Get strongly typed results from ad hoc SQL using inline record shapes, without defining a model for every query.', code: `users := db.Select[record(ID: int64, Name: string)](\n    "SELECT id, name FROM users WHERE active = $1",\n    true,\n)\n\nuser := db.Get[record(ID: int64, Name: string)](\n    "SELECT id, name FROM users WHERE id = $1",\n    42,\n)\n\ncount := db.Get[int64]("SELECT COUNT(*) FROM users")`, link: '/features/orm#typed-queries-with-structural-records', linkText: 'Explore typed queries' },
+      { title: 'ORM and SQL', description: 'Go beyond inline records with models mapped to tables, complete with CRUD operations, transactions, and lifecycle hooks.', code: `class Employee : orm.Model @{orm.Table("employees")} {\n    Id int64 @{orm.Column("id"), orm.PK}\n    Name string @{orm.Column("name")}\n}\n\nemployee := Employee(42, "Ada")\nemployee.Insert(db)\nemployee = Employee.Find(db, employee.Id)`, link: '/features/orm', linkText: 'Explore the ORM' },
       { title: 'Suite-based tests', description: 'Organize tests into suites with setup, assertions, tags, and priority filters.', code: `class UserTest : test.Suite @{test.Tag("crud")} {\n    func Create() {\n        Equal("Ada", user.Name)\n    }\n}\n\ngpp test --tag crud .`, link: '/features/testing', linkText: 'Explore testing' },
       { title: 'External template reloads', description: 'Keep templates in .gpp.tpl files and reload valid edits during gpp run with gpp/http.Server.', code: `// page.gpp.tpl\ntemplate Page(name string) {\n    <h1>Hello, {{.}}</h1>\n}\n\ngpp run .`, link: '/features/template-reload', linkText: 'Explore template reloads' }
     ]
@@ -60,6 +63,30 @@ const sections = [
     ]
   }
 ]
+
+const highlightedCode = ref(new Map())
+
+onMounted(async () => {
+  try {
+    const { createHighlighter } = await import('shiki')
+    const highlighter = await createHighlighter({
+      themes: ['github-light', 'github-dark'],
+      langs: ['go'],
+    })
+    highlightedCode.value = new Map(
+      sections.flatMap(section => section.features.map(feature => [
+        feature.code,
+        highlighter.codeToHtml(feature.code, {
+          lang: 'go',
+          themes: { light: 'github-light', dark: 'github-dark' },
+          defaultColor: false,
+        }),
+      ])),
+    )
+  } catch (error) {
+    console.warn('Could not apply Go syntax highlighting to feature cards.', error)
+  }
+})
 </script>
 
 <template>
@@ -79,7 +106,8 @@ const sections = [
             </div>
             <p>{{ feature.description }}</p>
           </div>
-          <pre><code>{{ feature.code }}</code></pre>
+          <div v-if="highlightedCode.has(feature.code)" class="feature-code" v-html="highlightedCode.get(feature.code)"></div>
+          <pre v-else><code>{{ feature.code }}</code></pre>
           <a v-if="feature.link" :href="feature.link">{{ feature.linkText || 'Learn more' }} <span aria-hidden="true">→</span></a>
         </article>
       </div>
@@ -108,6 +136,11 @@ const sections = [
 .feature-copy p { min-height: 3.2em; margin: 9px 0 18px; font-size: 0.94rem; }
 .feature-card pre { flex: 1; overflow-x: auto; margin: 0 0 16px; padding: 16px; border: 1px solid var(--vp-c-divider); border-radius: 9px; background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); font-size: 0.82rem; line-height: 1.6; tab-size: 4; }
 .feature-card code { font-family: var(--vp-font-family-mono); }
+.feature-card .feature-code { display: flex; min-width: 0; flex: 1; }
+.feature-card :deep(.feature-code pre) { width: 100%; overflow-x: auto; margin: 0 0 16px; padding: 16px; border: 1px solid var(--vp-c-divider); border-radius: 9px; background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); font-size: 0.82rem; line-height: 1.6; tab-size: 4; }
+.feature-card :deep(.feature-code code) { font-family: var(--vp-font-family-mono); }
+.feature-card :deep(.feature-code .shiki) { background: var(--vp-c-bg-soft) !important; }
+.feature-card :deep(.feature-code .shiki span) { color: var(--shiki-light); }
 .feature-card a { align-self: flex-start; color: var(--vp-c-brand-1); font-size: 0.92rem; font-weight: 600; text-decoration: none; }
 .feature-card a:hover { text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 760px) {

@@ -167,3 +167,9 @@ makes a label ambiguous. Result columns with no matching record field are
 discarded. Scalar types can be used when the query returns one column, and
 `Get[T]` reads one row while `Select[T]` returns all rows. A named model type
 can also be used as `T` when you want to write the complete `SELECT` yourself.
+::: info
+Use a pointer type argument when you want pointer-shaped results:
+`db.Get[*Employee](...)` returns `*Employee`, and
+`db.Select[*Employee](...)` returns `[]*Employee`. Pointer records and scalar
+types work the same way.
+:::

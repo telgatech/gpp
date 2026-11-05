@@ -9,6 +9,7 @@
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
+    "shiki": "2.5.0",
     "vitepress": "1.6.4"
   }
 }

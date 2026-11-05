@@ -32,6 +32,7 @@ export default defineConfig({
       { text: 'Standard library', link: '/guide/standard-library' },
       { text: 'Tooling', link: '/guide/tooling' },
       { text: 'Specifications', link: '/reference/specifications' },
+      { text: 'Changelog', link: '/changelog' },
       { text: 'About', link: '/about' }
     ],
     sidebar: {

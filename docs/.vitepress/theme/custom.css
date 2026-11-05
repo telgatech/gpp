@@ -359,6 +359,43 @@ html.dark .VPHomeHero .container .image-container::after {
   text-transform: uppercase;
 }
 
+.VPHome .latest-change-ribbon {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 4px 12px;
+  clip-path: polygon(0 0, 100% 0, 92% 50%, 100% 100%, 0 100%);
+  background: #c62828;
+  color: #fff;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+
+.VPHome .latest-change-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.VPHome .latest-change-actions .latest-change-changelog {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--vp-c-brand-1);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.VPHome .latest-change-actions .latest-change-changelog:hover {
+  background: transparent;
+  color: var(--vp-c-brand-2);
+  transform: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .VPHome .catalog-footer h2 {
   margin: 0;
   padding: 0;
@@ -486,4 +523,7 @@ html.dark .VPHomeHero .container .image-container::after {
     height: 68px;
     flex-basis: 68px;
   }
+}
+.dark .feature-card .feature-code .shiki span {
+  color: var(--shiki-dark);
 }
