@@ -6,7 +6,9 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"path"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -40,8 +42,11 @@ func (parameter parameterInfo) defaultText() string {
 type callableSignature struct {
 	Name       string
 	GoName     string
+	Qualifier  string
+	ImportPath string
 	Parameters []parameterInfo
 	ResultAST  TypeNode
+	StaticSelf bool
 	SourceFile string
 	SourceLine int
 }
@@ -341,6 +346,7 @@ func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassD
 			GoName:     staticMethodGoName(class, method),
 			Parameters: parameters,
 			ResultAST:  methodResultTypeNode(method),
+			StaticSelf: method.ContextualSelf,
 		})
 	}
 	for _, parentName := range classParentNames(class) {
@@ -348,11 +354,21 @@ func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassD
 		if !ok {
 			continue
 		}
+		qualifier := ""
+		if dot := strings.LastIndex(parentName, "."); dot > 0 {
+			qualifier = parentName[:dot]
+		}
 		for name, signatures := range staticMethodSignaturesForClass(parent, classes, visiting) {
 			if localNames[name] {
 				continue
 			}
-			result[name] = append(result[name], signatures...)
+			for _, signature := range signatures {
+				if signature.Qualifier == "" {
+					signature.Qualifier = qualifier
+					signature.ImportPath = importPathForAlias(class.Owner, qualifier)
+				}
+				result[name] = append(result[name], signature)
+			}
 		}
 	}
 	return result
@@ -1076,8 +1092,16 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 		if !staticCall || signature.GoName == "" {
 			return call, false, nil
 		}
+		callee := staticCallCalleeForSignature(call.Callee, signature, context)
+		if signature.StaticSelf {
+			var err error
+			callee, err = bindStaticSelfCall(callee, call.Callee)
+			if err != nil {
+				return nil, false, err
+			}
+		}
 		return &CallExpr{
-			Callee:    staticCallCallee(call.Callee, signature.GoName),
+			Callee:    callee,
 			Arguments: append([]CallArg(nil), call.Arguments...),
 			SpanValue: call.SpanValue,
 		}, true, nil
@@ -1143,9 +1167,32 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 	}
 	callee := call.Callee
 	if staticCall && signature.GoName != "" {
-		callee = staticCallCallee(call.Callee, signature.GoName)
+		callee = staticCallCalleeForSignature(call.Callee, signature, context)
+		if signature.StaticSelf {
+			var err error
+			callee, err = bindStaticSelfCall(callee, call.Callee)
+			if err != nil {
+				return nil, true, err
+			}
+		}
 	}
 	return &CallExpr{Callee: callee, Arguments: arguments, SpanValue: call.SpanValue}, true, nil
+}
+
+func bindStaticSelfCall(loweredCallee ExprNode, originalCallee ExprNode) (ExprNode, error) {
+	selector, ok := originalCallee.(*SelectorExpr)
+	if !ok {
+		return loweredCallee, nil
+	}
+	typeSource, ok := directSelectorPath(selector.Receiver)
+	if !ok || typeSource == "" {
+		return nil, fmt.Errorf("static self call requires a class name as its receiver")
+	}
+	return &IndexExpr{
+		Receiver:  loweredCallee,
+		Index:     &TypeExpr{Type: parseTypeText(typeSource)},
+		SpanValue: selector.Span(),
+	}, nil
 }
 
 func staticCallCallee(original ExprNode, goName string) ExprNode {
@@ -1170,6 +1217,60 @@ func staticCallCallee(original ExprNode, goName string) ExprNode {
 		result = &SelectorExpr{Receiver: result, Name: part, SpanValue: original.Span()}
 	}
 	return &SelectorExpr{Receiver: result, Name: goName, SpanValue: original.Span()}
+}
+
+func staticCallCalleeForSignature(original ExprNode, signature callableSignature, context constructorContext) ExprNode {
+	if signature.Qualifier == "" {
+		return staticCallCallee(original, signature.GoName)
+	}
+	qualifier := staticSignatureQualifier(signature, context)
+	parts := append(strings.Split(qualifier, "."), signature.GoName)
+	var result ExprNode = &NameExpr{Name: parts[0], SpanValue: original.Span()}
+	for _, part := range parts[1:] {
+		result = &SelectorExpr{Receiver: result, Name: part, SpanValue: original.Span()}
+	}
+	return result
+}
+
+func staticSignatureQualifier(signature callableSignature, context constructorContext) string {
+	qualifier := signature.Qualifier
+	if signature.ImportPath != "" && context.AvailableImports[qualifier] != signature.ImportPath {
+		qualifier = generatedStaticImportAlias(context.AvailableImports, "gpporm")
+		importPath := signature.ImportPath
+		if context.ModulePath != "" && strings.HasPrefix(importPath, "gpp/") {
+			importPath = context.ModulePath + "/" + importPath
+		}
+		context.AvailableImports[qualifier] = importPath
+	}
+	return qualifier
+}
+
+func importPathForAlias(file *File, alias string) string {
+	if file == nil || alias == "" {
+		return ""
+	}
+	for _, imported := range file.Imports {
+		importAlias := imported.Alias
+		if importAlias == "" {
+			importAlias = path.Base(imported.Path)
+		}
+		if importAlias == alias {
+			return imported.Path
+		}
+	}
+	return ""
+}
+
+func generatedStaticImportAlias(imports map[string]string, base string) string {
+	if imports[base] == "" {
+		return base
+	}
+	for index := 2; ; index++ {
+		candidate := base + strconv.Itoa(index)
+		if imports[candidate] == "" {
+			return candidate
+		}
+	}
 }
 
 func staticMethodReceiverKey(receiver ExprNode, methodName string, context constructorContext) string {
@@ -1585,8 +1686,13 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 					return callableCallRewrite{}, false, resolveErr
 				}
 				functionName := goName
-				if dot := strings.LastIndex(receiver, "."); dot > 0 {
+				if signature, ok := staticSignatureForGoName(goName, signatures); ok && signature.Qualifier != "" {
+					functionName = staticSignatureQualifier(signature, context) + "." + goName
+				} else if dot := strings.LastIndex(receiver, "."); dot > 0 {
 					functionName = receiver[:dot] + "." + goName
+				}
+				if staticMethodUsesSelf(goName, signatures) {
+					functionName += "[" + receiver + "]"
 				}
 				replacement = functionName + "(" + strings.Join(resolved, ", ") + ")"
 				changed = true
@@ -1669,6 +1775,24 @@ func resolveStaticMethodCall(
 		return "", nil, fmt.Errorf("ambiguous static method %s.%s", className, methodName)
 	}
 	return "", nil, fmt.Errorf("no matching static method %s.%s", className, methodName)
+}
+
+func staticMethodUsesSelf(goName string, signatures []callableSignature) bool {
+	for _, signature := range signatures {
+		if signature.GoName == goName && signature.StaticSelf {
+			return true
+		}
+	}
+	return false
+}
+
+func staticSignatureForGoName(goName string, signatures []callableSignature) (callableSignature, bool) {
+	for _, signature := range signatures {
+		if signature.GoName == goName {
+			return signature, true
+		}
+	}
+	return callableSignature{}, false
 }
 
 func parseStaticArgumentNode(source string) (ExprNode, error) {
@@ -1838,6 +1962,9 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 		if receiverKey := staticMethodReceiverKey(callee.Receiver, callee.Name, context); receiverKey != "" {
 			for _, signature := range context.StaticMethodSignatures[receiverKey][callee.Name] {
 				if result := strings.TrimSpace(signature.resultText()); result != "" {
+					if signature.StaticSelf {
+						return substituteLambdaType(result, map[string]string{"self": receiverKey})
+					}
 					return result
 				}
 			}

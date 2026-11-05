@@ -3785,6 +3785,10 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: methodResultTypeNode(extension.Method)})
 			}
 		}
+	case *IndexExpr:
+		candidates = append(candidates, promotedCandidatesForLoweredExpr(function.Receiver, context)...)
+	case *IndexListExpr:
+		candidates = append(candidates, promotedCandidatesForLoweredExpr(function.Receiver, context)...)
 	case *SelectorExpr:
 		actualType := staticExpressionTypeNode(function.Receiver, context, valueTypes)
 		if receiver, ok := function.Receiver.(*NameExpr); ok {
@@ -3825,6 +3829,46 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 		}
 	}
 	return promotedCall{}, false
+}
+
+func promotedCandidatesForLoweredName(name string, context constructorContext) []callableSignature {
+	var candidates []callableSignature
+	candidates = append(candidates, context.FunctionSignatures[name]...)
+	for _, signatures := range context.StaticMethodSignatures {
+		for _, methods := range signatures {
+			for _, candidate := range methods {
+				if candidate.GoName == name {
+					candidates = append(candidates, candidate)
+				}
+			}
+		}
+	}
+	for _, extension := range context.Extensions {
+		if extension.GoName == name {
+			candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: methodResultTypeNode(extension.Method)})
+		}
+	}
+	return candidates
+}
+
+func promotedCandidatesForLoweredExpr(expression ExprNode, context constructorContext) []callableSignature {
+	switch value := expression.(type) {
+	case *NameExpr:
+		return promotedCandidatesForLoweredName(value.Name, context)
+	case *SelectorExpr:
+		return promotedCandidatesForLoweredName(value.Name, context)
+	}
+	return nil
+}
+
+func promotedCandidatesForLoweredGoExpr(expression ast.Expr, context constructorContext) []callableSignature {
+	switch value := expression.(type) {
+	case *ast.Ident:
+		return promotedCandidatesForLoweredName(value.Name, context)
+	case *ast.SelectorExpr:
+		return promotedCandidatesForLoweredName(value.Sel.Name, context)
+	}
+	return nil
 }
 
 func promotedNativePackageCall(function *SelectorExpr, call *CallExpr, context constructorContext) (promotedCall, bool) {
@@ -4474,6 +4518,10 @@ func promotedCallFor(call *ast.CallExpr, context constructorContext, valueTypes 
 				})
 			}
 		}
+	case *ast.IndexExpr:
+		candidates = append(candidates, promotedCandidatesForLoweredGoExpr(function.X, context)...)
+	case *ast.IndexListExpr:
+		candidates = append(candidates, promotedCandidatesForLoweredGoExpr(function.X, context)...)
 	case *ast.SelectorExpr:
 		if receiver, ok := function.X.(*ast.Ident); ok {
 			if _, isClass := context.Targets[receiver.Name]; isClass {

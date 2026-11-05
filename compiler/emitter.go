@@ -297,8 +297,8 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 	body = insertAfterImports(body, templateImports)
 	body = rewriteLogicalPackageImports(body, file.Imports, context.ModulePath)
-	body = rewriteOfficialImports(body, context.ModulePath)
 	body = ensureGeneratedImports(body, context)
+	body = rewriteOfficialImports(body, context.ModulePath)
 	enumErrorAlias, enumNeedsErrorImport := enumErrorImport(file)
 	enumJSONAlias, enumNeedsJSONImport := enumJSONImport(file)
 	enumDriverAlias, enumNeedsDriverImport := enumDriverImport(file)

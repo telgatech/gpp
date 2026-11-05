@@ -101,6 +101,52 @@ func gppORMRecordScanTargets(target any, columnNames []string) ([]any, error) {
 	return targets, nil
 }
 
+func gppORMModelScanTargets(target any, columnNames []string, columns []gppORMColumn) ([]any, error) {
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() || value.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("orm: model target must be a non-nil pointer to a model")
+	}
+	byName := map[string]gppORMColumn{}
+	ambiguous := map[string]bool{}
+	for _, column := range columns {
+		name := gppORMNormalizeFieldName(column.Name)
+		if _, exists := byName[name]; exists {
+			ambiguous[name] = true
+		}
+		byName[name] = column
+		field := reflect.ValueOf(column.Field)
+		if field.Kind() == reflect.Pointer {
+			field = field.Elem()
+		}
+		fieldName := gppORMNormalizeFieldName(fmt.Sprint(field.FieldByName("Name").Interface()))
+		if fieldName != name {
+			if _, exists := byName[fieldName]; exists {
+				ambiguous[fieldName] = true
+			}
+			byName[fieldName] = column
+		}
+	}
+	targets := make([]any, len(columnNames))
+	used := map[string]string{}
+	for index, name := range columnNames {
+		normalized := gppORMNormalizeFieldName(name)
+		column, exists := byName[normalized]
+		if !exists {
+			targets[index] = new(any)
+			continue
+		}
+		if ambiguous[normalized] {
+			return nil, fmt.Errorf("orm: result column %q matches multiple model columns", name)
+		}
+		if previous, duplicate := used[normalized]; duplicate {
+			return nil, fmt.Errorf("orm: result columns %q and %q both map to the same model column", previous, name)
+		}
+		targets[index] = gppORMFieldAddr(column.Field, target)
+		used[normalized] = name
+	}
+	return targets, nil
+}
+
 func gppORMNormalizeFieldName(value string) string {
 	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", ""))
 }
@@ -325,7 +371,7 @@ func gppORMInsert(exec SQLExecutor, entity any) error {
 	return gppORMCallHook(entity, "AfterCreate", exec)
 }
 
-func gppORMGet(exec SQLExecutor, target any, where string, args ...any) error {
+func gppORMGetWhere(exec SQLExecutor, target any, where string, args ...any) error {
 	targetValue := reflect.ValueOf(target)
 	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() {
 		return fmt.Errorf("Get target must be a non-nil pointer")
@@ -380,12 +426,17 @@ func gppORMGet(exec SQLExecutor, target any, where string, args ...any) error {
 	return exec.QueryRow(query, args...).Scan(scanValues...)
 }
 
-func gppORMSelect(exec SQLExecutor, target any, where string, args ...any) error {
+func gppORMSelectWhere(exec SQLExecutor, target any, where string, args ...any) error {
 	targetValue := reflect.ValueOf(target)
 	if targetValue.Kind() != reflect.Ptr || targetValue.IsNil() || targetValue.Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("Select target must be a non-nil pointer to a model or record slice")
 	}
-	elementType := targetValue.Elem().Type().Elem()
+	sliceElementType := targetValue.Elem().Type().Elem()
+	elementType := sliceElementType
+	elementIsPointer := elementType.Kind() == reflect.Ptr
+	if elementIsPointer {
+		elementType = elementType.Elem()
+	}
 	prototype := reflect.New(elementType).Interface()
 	descriptor := gppORMRuntimeClass(prototype)
 	if descriptor == nil {
@@ -437,7 +488,11 @@ func gppORMSelect(exec SQLExecutor, target any, where string, args ...any) error
 			if err := rows.Scan(scanValues...); err != nil {
 				return err
 			}
-			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+			if elementIsPointer {
+				targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue))
+			} else {
+				targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+			}
 		}
 		return rows.Err()
 	}
@@ -460,15 +515,148 @@ func gppORMSelect(exec SQLExecutor, target any, where string, args ...any) error
 		if err := rows.Scan(scanValues...); err != nil {
 			return err
 		}
+		if elementIsPointer {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue))
+		} else {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+		}
+	}
+	return rows.Err()
+}
+
+func gppORMGetQuery(exec SQLExecutor, target any, query string, args ...any) error {
+	targetValue := reflect.ValueOf(target)
+	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() {
+		return fmt.Errorf("Get target must be a non-nil pointer")
+	}
+	query = strings.TrimSpace(query)
+	if !gppORMIsSelectQuery(query) {
+		return fmt.Errorf("orm: Get requires a full SELECT query")
+	}
+	descriptor := gppORMRuntimeClass(target)
+	if descriptor == nil && gppORMScalarScanTarget(target) {
+		return exec.QueryRow(query, args...).Scan(target)
+	}
+	rows, err := exec.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
+	var scanValues []any
+	if descriptor != nil {
+		columns, err := gppORMColumns(descriptor)
+		if err != nil {
+			return err
+		}
+		scanValues, err = gppORMModelScanTargets(target, columnNames, columns)
+	} else {
+		scanValues, err = gppORMRecordScanTargets(target, columnNames)
+	}
+	if err != nil {
+		return err
+	}
+	if err := rows.Scan(scanValues...); err != nil {
+		return err
+	}
+	return rows.Err()
+}
+
+func gppORMSelectQuery(exec SQLExecutor, target any, query string, args ...any) error {
+	targetValue := reflect.ValueOf(target)
+	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() || targetValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("Select target must be a non-nil pointer to a result slice")
+	}
+	query = strings.TrimSpace(query)
+	if !gppORMIsSelectQuery(query) {
+		return fmt.Errorf("orm: Select requires a full SELECT query")
+	}
+	elementType := targetValue.Elem().Type().Elem()
+	prototype := reflect.New(elementType).Interface()
+	descriptor := gppORMRuntimeClass(prototype)
+	if descriptor == nil && gppORMScalarScanTarget(prototype) {
+		rows, err := exec.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			item := reflect.New(elementType)
+			if err := rows.Scan(item.Interface()); err != nil {
+				return err
+			}
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), item.Elem()))
+		}
+		return rows.Err()
+	}
+	if descriptor == nil && (elementType.Kind() != reflect.Struct || !gppORMCanScanRecord(prototype)) {
+		return fmt.Errorf("Select target slice must contain models, records, or scalar values")
+	}
+	rows, err := exec.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	var columns []gppORMColumn
+	if descriptor != nil {
+		columns, err = gppORMColumns(descriptor)
+		if err != nil {
+			return err
+		}
+	}
+	for rows.Next() {
+		itemValue := reflect.New(elementType)
+		item := itemValue.Interface()
+		var scanValues []any
+		if descriptor != nil {
+			scanValues, err = gppORMModelScanTargets(item, columnNames, columns)
+		} else {
+			scanValues, err = gppORMRecordScanTargets(item, columnNames)
+		}
+		if err != nil {
+			return err
+		}
+		if err := rows.Scan(scanValues...); err != nil {
+			return err
+		}
 		targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
 	}
 	return rows.Err()
 }
 
+func GetModel[T any](exec SQLExecutor, where string, args ...any) (*T, error) {
+	target := new(T)
+	if err := gppORMGetWhere(exec, target, where, args...); err != nil {
+		return target, err
+	}
+	return target, nil
+}
+
+func SelectModel[T any](exec SQLExecutor, where string, args ...any) ([]*T, error) {
+	var target []*T
+	if err := gppORMSelectWhere(exec, &target, where, args...); err != nil {
+		return target, err
+	}
+	return target, nil
+}
+
 extend *sql.DB, *sql.Tx {
 	func Get[T any](query string, args ...any) (T, error) {
 		var target T
-		if err := gppORMGet(this, &target, query, args...); err != nil {
+		if err := gppORMGetQuery(this, &target, query, args...); err != nil {
 			return target, err
 		}
 		return target, nil
@@ -477,12 +665,12 @@ extend *sql.DB, *sql.Tx {
 	func Get(target any, where string, args ...any) error @{
 		std.Deprecated("Use Get[T](query, args...) instead")
 	} {
-		return gppORMGet(this, target, where, args...)
+		return gppORMGetWhere(this, target, where, args...)
 	}
 
 	func Select[T any](query string, args ...any) ([]T, error) {
 		var target []T
-		if err := gppORMSelect(this, &target, query, args...); err != nil {
+		if err := gppORMSelectQuery(this, &target, query, args...); err != nil {
 			return target, err
 		}
 		return target, nil
@@ -491,7 +679,7 @@ extend *sql.DB, *sql.Tx {
 	func Select(target any, where string, args ...any) error @{
 		std.Deprecated("Use Select[T](query, args...) instead")
 	} {
-		return gppORMSelect(this, target, where, args...)
+		return gppORMSelectWhere(this, target, where, args...)
 	}
 
 	func Insert(entity Model) error {

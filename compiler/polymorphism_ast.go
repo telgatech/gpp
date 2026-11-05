@@ -568,6 +568,7 @@ func polymorphismCallResultType(call *CallExpr, context constructorContext, valu
 		return ""
 	}
 	var candidates []callableSignature
+	staticReceiverType := ""
 	switch callee := call.Callee.(type) {
 	case *NameExpr:
 		if target, ok := context.Targets[callee.Name]; ok && target.Class != nil {
@@ -576,6 +577,7 @@ func polymorphismCallResultType(call *CallExpr, context constructorContext, valu
 		candidates = context.FunctionSignatures[callee.Name]
 	case *SelectorExpr:
 		receiverType := strings.TrimPrefix(strings.TrimSpace(polymorphismExpressionType(callee.Receiver, context, valueTypes)), "*")
+		staticReceiverType = receiverType
 		if receiverName, isName := callee.Receiver.(*NameExpr); isName {
 			if _, isStaticClass := context.Targets[receiverName.Name]; isStaticClass && valueTypes[receiverName.Name] == "" {
 				receiverType = receiverName.Name
@@ -591,7 +593,11 @@ func polymorphismCallResultType(call *CallExpr, context constructorContext, valu
 		if len(call.Arguments) < requiredParameterCount(candidate) || len(call.Arguments) > len(candidate.Parameters) {
 			continue
 		}
-		return transformPolymorphicResultType(candidate.resultText(), context)
+		result := transformPolymorphicResultType(candidate.resultText(), context)
+		if candidate.StaticSelf {
+			return substituteLambdaType(result, map[string]string{"self": staticReceiverType})
+		}
+		return result
 	}
 	return ""
 }

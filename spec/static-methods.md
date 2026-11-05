@@ -259,7 +259,37 @@ to resolve to the inherited `A.Version()` implementation.
 
 The implementation remains statically bound to `A`.
 
-No late-bound `Self` semantics should be introduced in v1.
+---
+
+# Contextual `self` Type
+
+In a static method, lowercase `self` names the type selected at the call site.
+This lets a base class declare a static method that accepts or returns the
+concrete subclass type without declaring a separate method for every subclass.
+
+```go
+class EntityFactory {
+    static func New() *self {
+        return new(self)
+    }
+}
+
+class User : EntityFactory {
+    Name string
+}
+
+user := User.New()
+user.Name = "Ada"
+```
+
+`New` is defined once on `EntityFactory`; the call through `User` makes `self`
+resolve to `User`, so `user` has type `*User`. The compiler treats `self` as an
+implicit generic type parameter and supplies the call-site class. It can appear
+in static method parameter and result types, and in the method body as a type
+argument, as in `Helper[self](...)`.
+
+`self` is a type, while `this` is an instance value. Using `self` does not add
+runtime dispatch: the method implementation is still selected statically.
 
 ---
 
@@ -545,7 +575,6 @@ Do not add in this feature:
 * static fields
 * static constructors
 * checked factory semantics
-* implicit `Self` type
 * Java/C#-style static initialization blocks
 
 These can be considered separately if needed.

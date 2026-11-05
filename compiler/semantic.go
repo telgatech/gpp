@@ -1119,6 +1119,12 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		context.Extensions = append(context.Extensions, importedExtensions...)
 	}
 
+	for _, class := range localClasses {
+		if err := addClassParentTargets(&context, class, model, modulePath); err != nil {
+			return context, err
+		}
+	}
+
 	for name, class := range localClasses {
 		context.ClassMethodSignatures[name] = methodSignaturesForClass(
 			class,
@@ -1133,6 +1139,51 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 	}
 
 	return context, nil
+}
+
+func addClassParentTargets(context *constructorContext, class *ClassDecl, model *SemanticModel, modulePath string) error {
+	if context == nil || class == nil || class.Owner == nil || model == nil {
+		return nil
+	}
+	for _, parentName := range classParentNames(class) {
+		dot := strings.IndexByte(parentName, '.')
+		if dot <= 0 || dot == len(parentName)-1 {
+			continue
+		}
+		alias := parentName[:dot]
+		className := parentName[dot+1:]
+		if _, exists := context.Targets[parentName]; exists {
+			continue
+		}
+		importPath := importPathForAlias(class.Owner, alias)
+		if importPath == "" {
+			continue
+		}
+		logicalPackage, ok := logicalPackageForImport(importPath, modulePath, model)
+		if !ok {
+			continue
+		}
+		pkg := model.Packages[logicalPackage]
+		if pkg == nil {
+			continue
+		}
+		parent := pkg.Classes[className]
+		if parent == nil {
+			continue
+		}
+		for importedName, importedClass := range pkg.Classes {
+			key := alias + "." + importedName
+			context.Targets[key] = constructorTarget{
+				Class:         importedClass,
+				Classes:       pkg.Classes,
+				Qualifier:     alias,
+				InterfaceName: "Gpp" + importedName,
+			}
+			context.ClassMethodSignatures[key] = methodSignaturesForClass(importedClass, pkg.Classes, map[string]bool{})
+			context.StaticMethodSignatures[key] = staticMethodSignaturesForClass(importedClass, pkg.Classes, map[string]bool{})
+		}
+	}
+	return nil
 }
 
 func globalValueTypesForFile(file *File) map[string]string {

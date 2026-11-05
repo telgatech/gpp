@@ -287,7 +287,7 @@ func functionDeclDocumentationSignature(function *FunctionDecl) string {
 		return ""
 	}
 	method := function.Method
-	return "func " + function.Name + methodTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
+	return "func " + function.Name + documentationTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
 }
 
 func documentationMethod(packageName, parent string, method Method, sourceFile string, sourceLine int) DocSymbol {
@@ -368,7 +368,27 @@ func methodSignature(parent string, method Method) string {
 	if method.IsStatic {
 		prefix = "static func " + parent + "."
 	}
-	return prefix + method.Name + methodTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
+	return prefix + method.Name + documentationTypeParamsSource(method) + "(" + methodParametersSource(method) + ")" + resultSuffix(methodResultSource(method))
+}
+
+func documentationTypeParamsSource(method Method) string {
+	if !method.ContextualSelf {
+		return methodTypeParamsSource(method)
+	}
+	parameters := make([]TypeParameterNode, 0, len(method.TypeParamsAST))
+	for _, parameter := range method.TypeParamsAST {
+		if parameter.Name != "self" {
+			parameters = append(parameters, parameter)
+		}
+	}
+	if len(parameters) == 0 {
+		return ""
+	}
+	source, err := typeParameterNodesSource(parameters)
+	if err != nil {
+		return ""
+	}
+	return source
 }
 
 func extensionSignature(target string, method Method) string {

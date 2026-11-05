@@ -16,13 +16,18 @@ class Employee : orm.Model @{orm.Table("employees")} {
     Name string @{orm.Column("name")}
 }
 
-employee := db.Get[Employee]("id = $1", employeeID)
+employee := Employee.Get(db, "id = $1", employeeID)
 ```
 
 ```go [Go]
-row := db.QueryRow("SELECT name FROM employees WHERE id = ?", id)
-var name string
-if err := row.Scan(&name); err != nil {
+type Employee struct {
+    ID int
+    Name string
+}
+
+var employee Employee
+row := db.QueryRow("SELECT id, name FROM employees WHERE id = $1", employeeID)
+if err := row.Scan(&employee.ID, &employee.Name); err != nil {
     return err
 }
 ```
@@ -30,20 +35,21 @@ if err := row.Scan(&name); err != nil {
 
 ## Query into ORM models
 
-Use the model type as the generic result type to load one model or a slice.
-The ORM builds the model query and applies the supplied SQL condition:
+Use static methods on the model class to load one model or a slice. The ORM
+builds the query from the model mapping and applies the supplied SQL condition:
 
 ```gpp
-employee := db.Get[Employee]("id = $1", employeeID)
-employees := db.Select[Employee]("name LIKE $1 ORDER BY name", "A%")
+employee := Employee.Get(db, "id = $1", employeeID)
+employees := Employee.Select(db, "name LIKE $1 ORDER BY name", "A%")
 ```
 
-`Get[Employee]` returns one `Employee`; `Select[Employee]` returns
+`Employee.Get` returns one `Employee`; `Employee.Select` returns
 `[]Employee`. Both accept parameterized conditions and work with `*sql.DB` and
 `*sql.Tx`.
 
-The SQL argument depends on the result type: ORM model types take a condition
-fragment, while record and scalar types take a complete `SELECT` statement.
+The model methods take a SQL condition fragment. The generic `db.Get[T]` and
+`db.Select[T]` methods take a complete `SELECT` statement for records, scalars,
+and model result types.
 
 ## Use transactions and lifecycle hooks
 
@@ -96,6 +102,5 @@ case-insensitively and ignore underscores, so `display_name` can scan into
 `DisplayName`. Explicit SQL aliases are useful when a query expression or join
 makes a label ambiguous. Result columns with no matching record field are
 discarded. Scalar types can be used when the query returns one column, and
-`Get[T]` reads one row while `Select[T]` returns all rows. Named model types
-are also supported: the ORM generates the model query and applies the supplied
-SQL condition, as shown above.
+`Get[T]` reads one row while `Select[T]` returns all rows. A named model type
+can also be used as `T` when you want to write the complete `SELECT` yourself.

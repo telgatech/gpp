@@ -21,7 +21,7 @@ class Employee : orm.Model @{orm.Table("employees")} {
 
 employee := Employee(ID: 42, Name: "Ada", Email: "ada@example.com")
 db.Insert(employee)
-employee = db.Get[Employee]("id = $1", employee.ID)
+employee = Employee.Get(db, "id = $1", employee.ID)
 ```
 
 ```go [Go]
@@ -39,7 +39,7 @@ err = row.Scan(&employee.ID, &employee.Name, &employee.Email)
 
 Only fields marked with `orm.Column` participate in persistence. The primary-key field also carries `orm.PK`, as shown above.
 
-For ORM model types, `Get[Employee]` and `Select[Employee]` generate the
+For ORM model types, `Employee.Get` and `Employee.Select` generate the
 `SELECT` from the model mapping. Their first argument is a SQL condition
 fragment, such as `"id = $1"`, followed by its parameter values. By contrast,
 when the result type is a record or scalar, pass a complete `SELECT` statement;
@@ -51,7 +51,7 @@ The Go++ calls omit the trailing `error` result. A database failure propagates t
 
 ```gpp
 func ActiveEmployees(db *sql.DB) []Employee {
-	return db.Select[Employee]("id > $1 ORDER BY name", 0)
+	return Employee.Select(db, "id > $1 ORDER BY name", 0)
 }
 
 func SaveEmployee(db *sql.DB, employee *Employee) {

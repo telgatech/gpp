@@ -1,6 +1,14 @@
 package gpp.orm
 
 class Model {
+	static func Get(exec SQLExecutor, where string, args ...any) (*self, error) {
+		return GetModel[self](exec, where, args...)
+	}
+
+	static func Select(exec SQLExecutor, where string, args ...any) ([]*self, error) {
+		return SelectModel[self](exec, where, args...)
+	}
+
 	func Validate(exec SQLExecutor) error {
 		return nil
 	}

@@ -3148,6 +3148,115 @@ func main() {
 	}
 }
 
+func TestCompileFilesBindsStaticSelfToCallingSubclass(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+class Base {
+    static func Identity(value *self) *self {
+        return value
+    }
+}
+
+class Child : Base {
+    Name string
+}
+
+func main() {
+    child := Child.Identity(Child(Name: "Ada"))
+    if child.Name != "Ada" {
+        panic("static Self did not bind to Child")
+    }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "GppStatic_Base_Identity[Child]") {
+		t.Fatalf("inherited static Self call was not specialized to Child:\n%s", generated)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("static Self output did not compile and run: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesGeneratesStaticORMModelQueries(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	modelPath := filepath.Join(inputDir, "model.gpp")
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	modelSource := `
+package main
+
+import orm "gpp/orm"
+
+class Employee : orm.Model @{orm.Table("employees")} {
+    Id int64 @{orm.Column("id"), orm.PK}
+    Name string @{orm.Column("name")}
+}
+`
+	source := `
+package main
+
+import (
+    "database/sql"
+    orm "gpp/orm"
+)
+
+func LoadEmployee(db *sql.DB, id int64) {
+    employee := Employee.Get(db, "id = $1", id)
+    _ = employee
+}
+
+func LoadEmployees(db *sql.DB, prefix string) {
+    employees := Employee.Select(db, "name LIKE $1 ORDER BY name", prefix + "%")
+    _ = employees
+}
+
+func RawEmployee(db *sql.DB, id int64) {
+    employee := db.Get[Employee]("SELECT id, name FROM employees WHERE id = $1", id)
+    _ = employee
+}
+
+func RawEmployees(db *sql.DB, prefix string) {
+    employees := db.Select[Employee]("SELECT id, name FROM employees WHERE name LIKE $1", prefix + "%")
+    _ = employees
+}
+
+func main() {}
+`
+	if err := os.WriteFile(modelPath, []byte(modelSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{modelPath, sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "test", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("ORM static and full-query APIs did not compile: %v\n%s\nGenerated source:\n%s", err, output, generated)
+	}
+}
+
 func TestCompileFilesSupportsExportedImportedAnnotations(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

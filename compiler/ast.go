@@ -315,6 +315,7 @@ type Method struct {
 	TypeParamsAST        []TypeParameterNode
 	GoName               string
 	IsStatic             bool
+	ContextualSelf       bool
 	Generated            bool
 	ParametersSpan       Span
 	ParameterAST         []ParameterNode

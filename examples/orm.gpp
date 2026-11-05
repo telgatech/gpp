@@ -90,17 +90,17 @@ func main() {
 		tx.Insert(second)
 		employee.Email = " ADA@ANALYTICAL.EXAMPLE "
 		tx.Update(employee)
-		employees := tx.Select[Employee]("email LIKE $1", "%example.com")
-		target := tx.Get[Employee]("name = $1", "Ada Lovelace")
+		employees := Employee.Select(tx, "email LIKE $1", "%example.com")
+		target := Employee.Get(tx, "name = $1", "Ada Lovelace")
 		tx.Commit()
 		fmt.Println("transaction:", len(employees), "selected, get:", target.Name)
 
-		loaded := db.Get[Employee]("id = $1", employee.Id)
+		loaded := Employee.Get(db, "id = $1", employee.Id)
 		tx = db.Begin()
 		defer tx.Rollback()
 		tx.Delete(loaded)
 		tx.Commit()
-		deleted := len(db.Select[Employee]("id = $1", employee.Id)) == 0
+		deleted := len(Employee.Select(db, "id = $1", employee.Id)) == 0
 
 		fmt.Println("loaded after update:", loaded.Name, loaded.Email)
 		fmt.Println("deleted:", deleted)

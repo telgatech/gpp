@@ -176,6 +176,9 @@ Provide:
 
 ```go
 class Model {
+    static func Get(exec SQLExecutor, where string, args ...any) (*self, error)
+    static func Select(exec SQLExecutor, where string, args ...any) ([]*self, error)
+
     func Validate(exec SQLExecutor) error {
         return nil
     }
@@ -292,8 +295,8 @@ extend *sql.DB, *sql.Tx {
 ```
 
 The generic overloads return typed results directly. `Get[T]` returns one
-value and `Select[T]` returns a slice. `T` may be a named model or an inline
-Go++ record shape:
+value and `Select[T]` returns a slice. They always take a complete SQL query,
+whether `T` is a model, record, or scalar:
 
 ```go
 user, err := db.Get[record(ID: int64, Name: string)](
@@ -305,12 +308,22 @@ users, err := db.Select[record(ID: int64, Name: string)](
 count, err := db.Get[int64]("SELECT COUNT(*) FROM users")
 ```
 
-Record result types require a complete `SELECT` (or `WITH ... SELECT`) query.
+Record and scalar result types require a complete `SELECT` (or `WITH ... SELECT`) query.
 Result columns match record fields by name; extra columns are discarded and
-missing fields retain their zero values. The target-parameter overloads remain
-available for existing code and model-oriented `WHERE` queries. Scalar result
-types require a one-column query; `Get[T]` reads one row and `Select[T]`
-returns all rows.
+missing fields retain their zero values. Scalar result types require a
+one-column query; `Get[T]` reads one row and `Select[T]` returns all rows.
+
+Model classes also inherit static `Get` and `Select` methods from `Model`:
+
+```go
+employee, err := Employee.Get(db, "id = $1", 42)
+employees, err := Employee.Select(db, "active = $1", true)
+```
+
+These methods generate the selected columns and table from the model mapping.
+Their SQL argument is a condition fragment, followed by its parameter values.
+The destination-parameter extension overloads remain available for
+compatibility and are deprecated.
 
 The destination-parameter overloads are deprecated. Use the generic overloads
 for new code.

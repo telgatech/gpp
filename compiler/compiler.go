@@ -119,6 +119,9 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return err
 		}
 	}
+	if err := bindStaticSelfTypes(program); err != nil {
+		return err
+	}
 
 	model, err := ResolveProgram(program)
 	if err != nil {
