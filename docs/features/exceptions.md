@@ -118,10 +118,11 @@ exception form keeps the successful path together and moves recovery into
 handlers. Both styles use Go's `error` type and can call the same Go functions;
 the choice belongs to the code that handles the failure.
 
-## Promote trailing errors inside `try`
+## Automatic trailing-error promotion
 
-When a call inside a `try` omits a function's trailing `error` result, a
-non-nil error enters the catch flow:
+Go++ automatically raises an uncaptured trailing `error` as an exception. If
+the current function does not handle it, the exception propagates to its caller.
+Add `try`/`catch` where you want to handle it.
 
 ```go
 try {
@@ -135,9 +136,30 @@ try {
 }
 ```
 
-Each operation can keep its normal Go signature. `try` groups the success path,
-and catch clauses handle the failures where the caller has enough context to
-respond.
+Each operation keeps its normal Go signature. The following functions let the
+exception propagate through both calls before `main` catches it:
+
+```go
+func ReadGreeting(path string) string {
+    // This call raises *os.PathError if the file can't be opened.
+    data := os.ReadFile(path)
+    return string(data)
+}
+
+func ShowGreeting(path string) {
+    fmt.Println(ReadGreeting(path))
+}
+
+func main() {
+    try {
+        ShowGreeting("settings.json")
+    } catch *os.PathError e {
+        fmt.Println("could not read", e.Path, ":", e)
+    } catch e {
+        fmt.Println("could not show greeting:", e)
+    }
+}
+```
 
 ## Keep explicit error values when useful
 
