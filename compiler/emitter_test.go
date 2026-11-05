@@ -1836,6 +1836,101 @@ func main() {}
 	}
 }
 
+func TestEmitPromotesGenericVariadicExtensionErrorWithoutTry(t *testing.T) {
+	file, err := ParseFile("generic_extension_error.gpp", `
+class DB {}
+
+extend *DB {
+    func Select[T any](query string, args ...any) ([]T, error) {
+        return nil, nil
+    }
+}
+
+func main() {
+    db := DB()
+    rows := db.Select[int]("SELECT 1")
+    _ = rows
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "__gppUnwrap(GppExt_ptr_DB_Select_") {
+		t.Fatalf("generic extension trailing error was not promoted without try:\n%s", generated)
+	}
+}
+
+func TestEmitSliceHelpersForPointerElements(t *testing.T) {
+	file, err := ParseFile("pointer_slice_helpers.gpp", `
+class Model {
+    static func Page() ([]*self, error) {
+        return nil, nil
+    }
+}
+
+class Employee : Model {}
+
+func main() {
+	page := Employee.Page()
+    if page.NotEmpty() {
+        last := page.Last()
+        _ = last
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, name := range []string{"GppPreludeExt___T_NotEmpty_", "GppPreludeExt___T_Last_"} {
+		if !strings.Contains(generated, name) {
+			t.Fatalf("pointer slice helper %s was not lowered:\n%s", name, generated)
+		}
+	}
+}
+
+func TestInferSliceTypeFromImportedSelfMethod(t *testing.T) {
+	ormFile, err := ParseFile("orm_model.gpp", `package orm
+class Model {
+    static func Page() ([]*self, error) { return nil, nil }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appFile, err := ParseFile("app.gpp", `package main
+class Employee : orm.Model {}
+func main() {
+    page := Employee.Page()
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bindStaticSelfTypes(&Program{Files: []*File{ormFile, appFile}}); err != nil {
+		t.Fatal(err)
+	}
+	model := ormFile.Decls[0].(*ClassDecl)
+	employee := appFile.Decls[0].(*ClassDecl)
+	context := localConstructorContext(map[string]*ClassDecl{"Employee": employee})
+	context.Targets["orm.Model"] = constructorTarget{Class: model, Classes: map[string]*ClassDecl{"Model": model}, Qualifier: "orm"}
+	context.StaticMethodSignatures["orm.Model"] = staticMethodSignaturesForClass(model, map[string]*ClassDecl{"Model": model}, map[string]bool{})
+	function := appFile.Decls[1].(*FunctionDecl)
+	got := lambdaValueTypesAST([]*BlockStmt{function.Method.BodyAST}, context)["page"]
+	if got != "[]*Employee" {
+		call := function.Method.BodyAST.Statements[0].(*DeclarationStmt).Values[0].(*CallExpr)
+		signature, receiver, found := staticMethodSignatureForCall(call.Callee.(*SelectorExpr).Receiver, "Page", context)
+		t.Fatalf("inferred page type = %q, want []*Employee (signature=%#v receiver=%q found=%v result=%q)", got, signature, receiver, found, staticCallResultTypeNode(call, context, nil))
+	}
+}
+
 func TestEmitAutomaticallyDefersAtExitFromMain(t *testing.T) {
 	file, err := ParseFile("at_exit.gpp", `
 func main() {

@@ -280,7 +280,8 @@ func collectExtensionStatementType(statement Stmt, types map[string]string, cont
 		for index, name := range value.Names {
 			inferred := strings.TrimSpace(declared)
 			if inferred == "" && index < len(value.Values) {
-				inferred = extensionASTStaticType(value.Values[index], context, types)
+				singleTarget := len(value.Names) == 1 && len(value.Values) == 1
+				inferred = lambdaAssignedValueType(value.Values[index], context, types, singleTarget)
 			}
 			if inferred != "" {
 				types[name.Text] = inferred
@@ -293,7 +294,8 @@ func collectExtensionStatementType(statement Stmt, types map[string]string, cont
 				continue
 			}
 			if types[name.Name] == "" {
-				if inferred := extensionASTStaticType(value.Right[index], context, types); inferred != "" {
+				singleTarget := len(value.Left) == 1 && len(value.Right) == 1
+				if inferred := lambdaAssignedValueType(value.Right[index], context, types, singleTarget); inferred != "" {
 					types[name.Name] = inferred
 				}
 			}

@@ -888,6 +888,18 @@ func lambdaValueTypesAST(blocks []*BlockStmt, context constructorContext) map[st
 	return result
 }
 
+func lambdaAssignedValueType(expression ExprNode, context constructorContext, valueTypes map[string]string, singleTarget bool) string {
+	typeName := staticExpressionTypeNode(expression, context, valueTypes)
+	if !singleTarget {
+		return typeName
+	}
+	results := resultTypesFromText(typeName)
+	if len(results) == 2 && isErrorLikeType(results[1], context) {
+		return results[0]
+	}
+	return typeName
+}
+
 func lambdaCollectValueTypesBlock(block *BlockStmt, types *map[string]string, context constructorContext) {
 	if block == nil {
 		return
@@ -914,7 +926,8 @@ func lambdaCollectValueTypesStatement(statement Stmt, types *map[string]string, 
 				continue
 			}
 			if index < len(value.Values) {
-				if typeName := staticExpressionTypeNode(value.Values[index], context, *types); typeName != "" {
+				singleTarget := len(value.Names) == 1 && len(value.Values) == 1
+				if typeName := lambdaAssignedValueType(value.Values[index], context, *types, singleTarget); typeName != "" {
 					(*types)[name.Text] = typeName
 				}
 			}
@@ -929,7 +942,8 @@ func lambdaCollectValueTypesStatement(statement Stmt, types *map[string]string, 
 				continue
 			}
 			if (*types)[name.Name] == "" {
-				if typeName := staticExpressionTypeNode(value.Right[index], context, *types); typeName != "" {
+				singleTarget := len(value.Left) == 1 && len(value.Right) == 1
+				if typeName := lambdaAssignedValueType(value.Right[index], context, *types, singleTarget); typeName != "" {
 					(*types)[name.Name] = typeName
 				}
 			}

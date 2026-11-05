@@ -4,6 +4,29 @@ The Go++ ORM maps annotated classes to database tables and supplies common
 CRUD operations. It is designed around `database/sql`, so database handles,
 transactions, and SQL remain part of the familiar Go ecosystem.
 
+## What's new in the ORM API
+
+Queries can now return typed models, scalars, or inline record shapes. Use
+`db.Get[T]` for one result and `db.Select[T]` for a slice; these take a complete
+SQL query. ORM model classes also inherit helpers such as `Find`, `First`,
+`Last`, and cursor-based `Page`, while model instances provide `Insert`,
+`Update`, and `Destroy`.
+
+```gpp
+count := db.Get[int64]("SELECT COUNT(*) FROM employees")
+event := db.Get[record(employee_id: int64, event: string)](
+    "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
+    employeeID,
+)
+
+employee := Employee.Find(db, employeeID)
+employee.Update(db)
+```
+
+Generic DB queries use full SQL. Model-class queries such as
+`Employee.Get(db, "id = $1", employeeID)` use a condition fragment, with SQL
+built from the model mapping.
+
 ## Compare handwritten queries with a model
 
 Handwritten SQL gives direct control. The ORM reduces repeated column mapping
@@ -16,7 +39,7 @@ class Employee : orm.Model @{orm.Table("employees")} {
     Name string @{orm.Column("name")}
 }
 
-employee := Employee.Get(db, "id = $1", employeeID)
+employee := Employee.Find(db, employeeID)
 ```
 
 ```go [Go]
@@ -43,13 +66,53 @@ employee := Employee.Get(db, "id = $1", employeeID)
 employees := Employee.Select(db, "name LIKE $1 ORDER BY name", "A%")
 ```
 
-`Employee.Get` returns one `Employee`; `Employee.Select` returns
-`[]Employee`. Both accept parameterized conditions and work with `*sql.DB` and
-`*sql.Tx`.
+`Employee.Get` returns one `*Employee`; `Employee.Select` returns
+`[]*Employee`. Both accept parameterized conditions and work with `*sql.DB`
+and `*sql.Tx`.
 
 The model methods take a SQL condition fragment. The generic `db.Get[T]` and
 `db.Select[T]` methods take a complete `SELECT` statement for records, scalars,
 and model result types.
+
+## Common model operations
+
+The base `orm.Model` also provides helpers that use the model's table and
+primary-key annotations:
+
+```gpp
+employee := Employee.Find(db, employeeID)
+allEmployees := Employee.All(db)
+employeesByName := Employee.All(db, "name")
+firstPage := Employee.Page(db)
+if firstPage.NotEmpty() {
+    nextPage := Employee.Page(db, 50, firstPage.Last().ID)
+}
+firstEmployee := Employee.First(db)
+lastEmployee := Employee.Last(db)
+
+employee.Destroy(db)
+Employee.Truncate(db)
+```
+
+`Find` loads by primary key and requires one declared primary key. `All` sorts
+by the primary key ascending by default. `First` and `Last` use that default
+order, ascending and descending, respectively. These three helpers accept an
+optional `sortBy` field or annotated column name, for example
+`Employee.All(db, "name")`. A custom sort field removes the primary-key
+requirement for `All`, `First`, and `Last`. The ORM resolves the name against
+persisted model fields instead of inserting it as raw SQL.
+
+`Page` returns up to 50 rows by default, ordered by primary key. Pass the last
+row's primary-key value on subsequent calls to continue paging. Paging requires
+a primary key and is sequential; it does not jump to arbitrary page numbers.
+We use this cursor approach instead of `LIMIT`/`OFFSET` because large offsets
+can make the database compute and skip many rows. The [PostgreSQL documentation
+on `LIMIT` and `OFFSET`](https://www.postgresql.org/docs/current/queries-limit.html)
+describes this cost.
+
+`Destroy` deletes one instance and runs its delete hooks. `Truncate` removes
+every row from the table without per-instance hooks. It uses `DELETE FROM` for
+database portability and does not reset auto-increment sequences.
 
 ## Use transactions and lifecycle hooks
 
@@ -58,11 +121,11 @@ transaction executor:
 
 ```gpp
 employee := Employee(Name: "Ada")
-db.Insert(employee)
+employee.Insert(db)
 
 tx := db.Begin()
 defer tx.Rollback()
-tx.Insert(employee)
+employee.Update(tx)
 tx.Commit()
 ```
 

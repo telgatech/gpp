@@ -1278,7 +1278,7 @@ Explicit capture prevents automatic promotion.
 func Register(user User) User {
     Validate(user)
 
-    db.Insert(&user)
+    SaveUser(user)
 
     SendWelcomeEmail(user)
 

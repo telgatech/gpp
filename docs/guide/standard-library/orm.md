@@ -20,8 +20,8 @@ class Employee : orm.Model @{orm.Table("employees")} {
 }
 
 employee := Employee(ID: 42, Name: "Ada", Email: "ada@example.com")
-db.Insert(employee)
-employee = Employee.Get(db, "id = $1", employee.ID)
+employee.Insert(db)
+employee = Employee.Find(db, employee.ID)
 ```
 
 ```go [Go]
@@ -41,27 +41,51 @@ Only fields marked with `orm.Column` participate in persistence. The primary-key
 
 For ORM model types, `Employee.Get` and `Employee.Select` generate the
 `SELECT` from the model mapping. Their first argument is a SQL condition
-fragment, such as `"id = $1"`, followed by its parameter values. By contrast,
+fragment, such as `"id = $1"`, followed by its parameter values. `Find` looks
+up a model by its annotated primary key. `All`, `First`, and `Last` sort by the
+primary key by default; `All` and `First` use ascending order, while `Last` uses
+descending order. They accept an optional persisted field or column name to
+sort by. `Find` requires a primary key; a custom sort field lets the other
+three work without one. By contrast,
 when the result type is a record or scalar, pass a complete `SELECT` statement;
 see [typed queries](/features/orm#typed-queries-with-structural-records).
+
+`Page` returns the first 50 rows in primary-key order. Pass the last row's
+primary-key value on subsequent calls to continue paging. Paging is sequential
+and requires a primary key.
+
+Cursor paging avoids large `OFFSET` values, which can require the database to
+compute and skip many rows. See PostgreSQL's [`LIMIT` and `OFFSET`
+documentation](https://www.postgresql.org/docs/current/queries-limit.html).
 
 The Go++ calls omit the trailing `error` result. A database failure propagates through Go++'s exception behavior; add a `try`/`catch` at a boundary when you need to recover or add context, and otherwise let it reach a higher-level handler.
 
 ## More examples
 
 ```gpp
-func ActiveEmployees(db *sql.DB) []Employee {
+func ActiveEmployees(db *sql.DB) []*Employee {
 	return Employee.Select(db, "id > $1 ORDER BY name", 0)
 }
 
 func SaveEmployee(db *sql.DB, employee *Employee) {
-	db.Update(employee)
+	employee.Update(db)
 }
 
 func RemoveEmployee(db *sql.DB, employee *Employee) {
-	db.Delete(employee)
+	employee.Destroy(db)
 }
 ```
+
+`Destroy` deletes one model by primary key and runs its delete hooks.
+`Employee.Truncate(db)` removes every row from the model's table without
+per-instance hooks. It uses `DELETE FROM` for database portability and does not
+reset auto-increment sequences.
+
+Models persist themselves with `employee.Insert(db)` and
+`employee.Update(db)`.
+
+These methods require an ORM model. For a plain struct, use `db.Exec` with
+explicit SQL and values.
 
 For ORM model types, the query condition is passed as a SQL fragment and
 values remain parameterized. For multi-step changes, a transaction can be
@@ -71,8 +95,8 @@ used anywhere a database handle is accepted:
 func SaveChanges(db *sql.DB, employee *Employee, account *Account) {
 	tx := db.Begin()
 	defer tx.Rollback()
-	tx.Insert(employee)
-	tx.Update(account)
+	employee.Update(tx)
+	account.Update(tx)
 	tx.Commit()
 }
 ```
@@ -80,10 +104,8 @@ func SaveChanges(db *sql.DB, employee *Employee, account *Account) {
 The package also supports validation and lifecycle hooks on models. Use hooks when a model needs to validate or react to create, update, or delete operations; use explicit SQL for joins, reporting queries, and database-specific behavior.
 
 Hooks receive the active `SQLExecutor`, which can be either a database connection
-or a transaction. Use `orm.Insert(exec, event)` to insert another model from a
-hook while keeping that write on the same connection or transaction. The
-equivalent `db.Insert(model)` and `tx.Insert(model)` methods remain available
-when you have a concrete database handle.
+or a transaction. Call `event.Insert(exec)` to insert another model from a
+hook while keeping that write on the same connection or transaction.
 
 ## Further reading
 

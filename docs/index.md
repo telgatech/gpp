@@ -20,6 +20,36 @@ hero:
 import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 </script>
 
+<section class="home-updates" aria-labelledby="home-updates-title">
+<div class="home-updates-heading">
+<p class="home-updates-eyebrow">Project updates</p>
+<h2 id="home-updates-title">Recent changes</h2>
+<p>Recent improvements to database work, error handling, and the build workflow.</p>
+</div>
+<div class="home-updates-grid">
+<article>
+<h3>Typed database results</h3>
+<p><code>db.Get[T]</code> and <code>db.Select[T]</code> can return scalars, inline records, or models from full SQL queries.</p>
+<a href="/features/orm#typed-queries-with-structural-records">Explore typed queries <span aria-hidden="true">→</span></a>
+</article>
+<article>
+<h3>More ORM model helpers</h3>
+<p>Models inherit query and paging helpers, and instances provide <code>Insert</code>, <code>Update</code>, and <code>Destroy</code>.</p>
+<a href="/features/orm#common-model-operations">Explore the ORM API <span aria-hidden="true">→</span></a>
+</article>
+<article>
+<h3>Exception handling bug fixes</h3>
+<p>Fixed error promotion for generic calls and imported methods that return a trailing error.</p>
+<a href="/features/exceptions">Explore exception handling <span aria-hidden="true">→</span></a>
+</article>
+<article>
+<h3>Faster repeat builds</h3>
+<p>Incremental compilation reuses generated output for unchanged packages, while Go's build cache reuses compiled packages.</p>
+<a href="/features/project-cli">Explore the project CLI <span aria-hidden="true">→</span></a>
+</article>
+</div>
+</section>
+
 <FeatureCatalog />
 
 <div class="home-faq-heading">

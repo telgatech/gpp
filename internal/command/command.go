@@ -23,7 +23,7 @@ import (
 
 // Version is overridden by release builds when desired. Keeping a stable
 // development value makes `gpp version` useful from source checkouts too.
-var Version = "0.1.0"
+var Version = "0.2.0"
 
 const minimumGoMinor = 26
 

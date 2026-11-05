@@ -9,6 +9,42 @@ class Model {
 		return SelectModel[self](exec, where, args...)
 	}
 
+	static func All(exec SQLExecutor, sortBy string = "") ([]*self, error) {
+		return AllModel[self](exec, sortBy)
+	}
+
+	static func Page(exec SQLExecutor, limit int = 50, afterID any = nil) ([]*self, error) {
+		return PageModel[self](exec, limit, afterID)
+	}
+
+	static func Find(exec SQLExecutor, id any) (*self, error) {
+		return FindModel[self](exec, id)
+	}
+
+	static func First(exec SQLExecutor, sortBy string = "") (*self, error) {
+		return FirstModel[self](exec, sortBy)
+	}
+
+	static func Last(exec SQLExecutor, sortBy string = "") (*self, error) {
+		return LastModel[self](exec, sortBy)
+	}
+
+	static func Truncate(exec SQLExecutor) error {
+		return TruncateModel[self](exec)
+	}
+
+	func Destroy(exec SQLExecutor) error {
+		return gppORMDelete(exec, this)
+	}
+
+	func Insert(exec SQLExecutor) error {
+		return gppORMInsert(exec, this)
+	}
+
+	func Update(exec SQLExecutor) error {
+		return gppORMUpdate(exec, this)
+	}
+
 	func Validate(exec SQLExecutor) error {
 		return nil
 	}

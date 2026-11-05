@@ -193,6 +193,43 @@ func TestPromotedCallRecognizesSelectorExtensionWithoutReceiverArgument(t *testi
 	}
 }
 
+func TestPromotedCallRecognizesLoweredGenericExtensionCall(t *testing.T) {
+	file, err := ParseFile("orm_extension.gpp", `
+package orm
+extend *DB {
+    func Select[T any](query string, args ...any) ([]T, error) {
+        return nil, nil
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expression, err := ParseExpressionTokens(expressionTokens(t, `db.Select[int]("SELECT 1")`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, ok := expression.(*CallExpr)
+	if !ok {
+		t.Fatalf("expected call expression, got %T", expression)
+	}
+	context := constructorContext{
+		CurrentParameterTypes: map[string]string{"db": "*DB"},
+		Extensions:            extensionMethodsForDeclarations([]*ExtendDecl{file.Decls[0].(*ExtendDecl)}, "orm"),
+	}
+	lowered, handled, err := lowerExceptionExtensionCallNode(call, context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("expected generic extension call to lower")
+	}
+	result, found := promotedCallForExpr(lowered.(*CallExpr), context, context.CurrentParameterTypes)
+	if !found || !result.trailingError {
+		t.Fatalf("lowered generic extension call was not recognized for promotion: found=%v result=%#v", found, result)
+	}
+}
+
 func TestLowerTryUsesGoASTWrapper(t *testing.T) {
 	catchTokens, err := LexSource("catch-body", `println(err)`)
 	if err != nil {

@@ -1292,6 +1292,54 @@ func staticMethodReceiverKey(receiver ExprNode, methodName string, context const
 	return ""
 }
 
+func staticMethodSignatureForCall(receiver ExprNode, methodName string, context constructorContext) (callableSignature, string, bool) {
+	if receiver == nil {
+		return callableSignature{}, "", false
+	}
+	name, ok := receiver.(*NameExpr)
+	if !ok {
+		key := staticMethodReceiverKey(receiver, methodName, context)
+		if key == "" {
+			return callableSignature{}, "", false
+		}
+		signatures := context.StaticMethodSignatures[key][methodName]
+		if len(signatures) == 0 {
+			return callableSignature{}, "", false
+		}
+		return signatures[0], key, true
+	}
+	if signatures := context.StaticMethodSignatures[name.Name][methodName]; len(signatures) > 0 {
+		return signatures[0], name.Name, true
+	}
+	return inheritedStaticMethodSignature(name.Name, name.Name, methodName, context, map[string]bool{})
+}
+
+func inheritedStaticMethodSignature(classKey, concreteName, methodName string, context constructorContext, visited map[string]bool) (callableSignature, string, bool) {
+	if visited[classKey] {
+		return callableSignature{}, "", false
+	}
+	visited[classKey] = true
+	target, ok := context.Targets[classKey]
+	if !ok || target.Class == nil {
+		return callableSignature{}, "", false
+	}
+	for _, parentName := range classParentNames(target.Class) {
+		parentKey := parentName
+		if target.Qualifier != "" && !strings.Contains(parentName, ".") {
+			parentKey = target.Qualifier + "." + parentName
+		}
+		if signatures := context.StaticMethodSignatures[parentKey][methodName]; len(signatures) > 0 {
+			return signatures[0], concreteName, true
+		}
+		if _, ok := context.Targets[parentKey]; ok {
+			if signature, receiver, found := inheritedStaticMethodSignature(parentKey, concreteName, methodName, context, visited); found {
+				return signature, receiver, true
+			}
+		}
+	}
+	return callableSignature{}, "", false
+}
+
 // lowerOverloadCallNode applies the semantic Go name chosen for an overloaded
 // call without using a source-span edit. The overload resolver already works
 // from typed call arguments and local type information; this adapter only
@@ -1347,7 +1395,12 @@ func callableName(call *CallExpr) string {
 
 func requiredParameterCount(signature callableSignature) int {
 	count := 0
-	for _, parameter := range signature.Parameters {
+	for index, parameter := range signature.Parameters {
+		if index == len(signature.Parameters)-1 {
+			if _, variadic := parameter.TypeAST.(*VariadicType); variadic {
+				continue
+			}
+		}
 		if !parameter.HasDefault {
 			count++
 		}
@@ -1959,14 +2012,12 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 				return qualified
 			}
 		}
-		if receiverKey := staticMethodReceiverKey(callee.Receiver, callee.Name, context); receiverKey != "" {
-			for _, signature := range context.StaticMethodSignatures[receiverKey][callee.Name] {
-				if result := strings.TrimSpace(signature.resultText()); result != "" {
-					if signature.StaticSelf {
-						return substituteLambdaType(result, map[string]string{"self": receiverKey})
-					}
-					return result
+		if signature, concreteReceiver, ok := staticMethodSignatureForCall(callee.Receiver, callee.Name, context); ok {
+			if result := strings.TrimSpace(signature.resultText()); result != "" {
+				if signature.StaticSelf {
+					return substituteLambdaType(result, map[string]string{"self": concreteReceiver})
 				}
+				return result
 			}
 		}
 		if receiver, ok := callee.Receiver.(*NameExpr); ok {

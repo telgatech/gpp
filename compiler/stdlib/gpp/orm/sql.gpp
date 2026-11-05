@@ -180,6 +180,32 @@ func gppORMRuntimeClass(value any) any {
 	return result[0].Interface()
 }
 
+func gppORMDynamicObject(value any) any {
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return value
+	}
+	if reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return value
+		}
+		reflected = reflected.Elem()
+	}
+	if reflected.Kind() != reflect.Struct {
+		return value
+	}
+	dynamicObject := reflected.FieldByName("GppDynamicObject")
+	if !dynamicObject.IsValid() || !dynamicObject.CanInterface() {
+		return value
+	}
+	if dynamicObject.Kind() == reflect.Interface || dynamicObject.Kind() == reflect.Pointer {
+		if dynamicObject.IsNil() {
+			return value
+		}
+	}
+	return dynamicObject.Interface()
+}
+
 func gppORMAnnotationArgs(owner any, name string) []any {
 	if owner == nil {
 		return nil
@@ -337,11 +363,8 @@ func gppORMQuery(descriptor any, where string, limit string) (string, []gppORMCo
 	return query, columns, nil
 }
 
-func Insert(exec SQLExecutor, entity any) error {
-	return gppORMInsert(exec, entity)
-}
-
 func gppORMInsert(exec SQLExecutor, entity any) error {
+	entity = gppORMDynamicObject(entity)
 	if err := gppORMCallHook(entity, "Validate", exec); err != nil {
 		return err
 	}
@@ -653,6 +676,160 @@ func SelectModel[T any](exec SQLExecutor, where string, args ...any) ([]*T, erro
 	return target, nil
 }
 
+func gppORMPrimaryKey(descriptor any) (string, error) {
+	table, err := gppORMTable(descriptor)
+	if err != nil {
+		return "", err
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return "", err
+	}
+	primaryKey := ""
+	for _, column := range columns {
+		if !gppORMHasPK(column.Field) {
+			continue
+		}
+		if primaryKey != "" {
+			return "", fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
+		}
+		primaryKey = column.Name
+	}
+	if primaryKey == "" {
+		return "", fmt.Errorf("orm: %s has no primary key", table)
+	}
+	return primaryKey, nil
+}
+
+func gppORMOrderColumn(descriptor any, sortBy string) (string, error) {
+	if strings.TrimSpace(sortBy) == "" {
+		return gppORMPrimaryKey(descriptor)
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return "", err
+	}
+	wanted := gppORMNormalizeFieldName(strings.TrimSpace(sortBy))
+	matched := ""
+	for _, column := range columns {
+		field := reflect.ValueOf(column.Field)
+		if field.Kind() == reflect.Pointer {
+			field = field.Elem()
+		}
+		fieldName := fmt.Sprint(field.FieldByName("Name").Interface())
+		if wanted != gppORMNormalizeFieldName(column.Name) && wanted != gppORMNormalizeFieldName(fieldName) {
+			continue
+		}
+		if matched != "" {
+			return "", fmt.Errorf("orm: sort field %q is ambiguous", sortBy)
+		}
+		matched = column.Name
+	}
+	if matched == "" {
+		return "", fmt.Errorf("orm: sort field %q is not a persisted model field", sortBy)
+	}
+	return matched, nil
+}
+
+func FindModel[T any](exec SQLExecutor, id any) (*T, error) {
+	target := new(T)
+	descriptor := gppORMRuntimeClass(target)
+	primaryKey, err := gppORMPrimaryKey(descriptor)
+	if err != nil {
+		return target, err
+	}
+	if err := gppORMGetWhere(exec, target, primaryKey+" = $1", id); err != nil {
+		return target, err
+	}
+	return target, nil
+}
+
+func gppORMSelectModels[T any](exec SQLExecutor, query string, args ...any) ([]*T, error) {
+	var values []T
+	if err := gppORMSelectQuery(exec, &values, query, args...); err != nil {
+		return nil, err
+	}
+	result := make([]*T, len(values))
+	for index := range values {
+		result[index] = &values[index]
+	}
+	return result, nil
+}
+
+func AllModel[T any](exec SQLExecutor, sortBy string) ([]*T, error) {
+	descriptor := gppORMRuntimeClass(new(T))
+	orderColumn, err := gppORMOrderColumn(descriptor, sortBy)
+	if err != nil {
+		return nil, err
+	}
+	query, _, err := gppORMQuery(descriptor, "", "ORDER BY "+orderColumn+" ASC")
+	if err != nil {
+		return nil, err
+	}
+	return gppORMSelectModels[T](exec, query)
+}
+
+func PageModel[T any](exec SQLExecutor, limit int, afterID any) ([]*T, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("orm: page limit must be positive")
+	}
+	descriptor := gppORMRuntimeClass(new(T))
+	primaryKey, err := gppORMPrimaryKey(descriptor)
+	if err != nil {
+		return nil, err
+	}
+	where := ""
+	var args []any
+	if afterID != nil {
+		where = primaryKey + " > $1"
+		args = append(args, afterID)
+	}
+	query, _, err := gppORMQuery(descriptor, where, fmt.Sprintf("ORDER BY %s ASC LIMIT %d", primaryKey, limit))
+	if err != nil {
+		return nil, err
+	}
+	return gppORMSelectModels[T](exec, query, args...)
+}
+
+func gppORMFirstOrLast[T any](exec SQLExecutor, sortBy string, direction string) (*T, error) {
+	target := new(T)
+	descriptor := gppORMRuntimeClass(target)
+	orderColumn, err := gppORMOrderColumn(descriptor, sortBy)
+	if err != nil {
+		return target, err
+	}
+	query, columns, err := gppORMQuery(descriptor, "", "ORDER BY "+orderColumn+" "+direction+" LIMIT 1")
+	if err != nil {
+		return target, err
+	}
+	scanValues := make([]any, 0, len(columns))
+	for _, column := range columns {
+		scanValues = append(scanValues, gppORMFieldAddr(column.Field, target))
+	}
+	if err := exec.QueryRow(query).Scan(scanValues...); err != nil {
+		return target, err
+	}
+	return target, nil
+}
+
+func FirstModel[T any](exec SQLExecutor, sortBy string) (*T, error) {
+	return gppORMFirstOrLast[T](exec, sortBy, "ASC")
+}
+
+func LastModel[T any](exec SQLExecutor, sortBy string) (*T, error) {
+	return gppORMFirstOrLast[T](exec, sortBy, "DESC")
+}
+
+func TruncateModel[T any](exec SQLExecutor) error {
+	descriptor := gppORMRuntimeClass(new(T))
+	table, err := gppORMTable(descriptor)
+	if err != nil {
+		return err
+	}
+	_, err = exec.Exec(fmt.Sprintf("DELETE FROM %s", table))
+	return err
+}
+
 extend *sql.DB, *sql.Tx {
 	func Get[T any](query string, args ...any) (T, error) {
 		var target T
@@ -682,85 +859,80 @@ extend *sql.DB, *sql.Tx {
 		return gppORMSelectWhere(this, target, where, args...)
 	}
 
-	func Insert(entity Model) error {
-		return gppORMInsert(this, entity)
-	}
+}
 
-	func Update(entity Model) error {
-		if err := gppORMCallHook(entity, "Validate", this); err != nil {
-			return err
-		}
-		if err := gppORMCallHook(entity, "BeforeUpdate", this); err != nil {
-			return err
-		}
-		descriptor := gppORMRuntimeClass(entity)
-		table, err := gppORMTable(descriptor)
-		if err != nil {
-			return err
-		}
-		columns, err := gppORMColumns(descriptor)
-		if err != nil {
-			return err
-		}
-		primaryKey := ""
-		var primaryValue any
-		assignments := []string{}
-		values := []any{}
-		for _, column := range columns {
-			if gppORMHasPK(column.Field) {
-				if primaryKey != "" {
-					return fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
-				}
-				primaryKey = column.Name
-				primaryValue = gppORMFieldGet(column.Field, entity)
-				continue
-			}
-			assignments = append(assignments, column.Name+" = $"+fmt.Sprint(len(values)+1))
-			values = append(values, gppORMFieldGet(column.Field, entity))
-		}
-		if primaryKey == "" {
-			return fmt.Errorf("orm: %s has no primary key", table)
-		}
-		values = append(values, primaryValue)
-		query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = $%d", table, strings.Join(assignments, ", "), primaryKey, len(values))
-		if _, err := this.Exec(query, values...); err != nil {
-			return err
-		}
-		return gppORMCallHook(entity, "AfterUpdate", this)
+func gppORMUpdate(exec SQLExecutor, entity any) error {
+	entity = gppORMDynamicObject(entity)
+	if err := gppORMCallHook(entity, "Validate", exec); err != nil {
+		return err
 	}
-
-	func Delete(entity Model) error {
-		if err := gppORMCallHook(entity, "BeforeDelete", this); err != nil {
-			return err
-		}
-		descriptor := gppORMRuntimeClass(entity)
-		table, err := gppORMTable(descriptor)
-		if err != nil {
-			return err
-		}
-		columns, err := gppORMColumns(descriptor)
-		if err != nil {
-			return err
-		}
-		primaryKey := ""
-		var primaryValue any
-		for _, column := range columns {
-			if !gppORMHasPK(column.Field) {
-				continue
-			}
+	if err := gppORMCallHook(entity, "BeforeUpdate", exec); err != nil {
+		return err
+	}
+	descriptor := gppORMRuntimeClass(entity)
+	table, err := gppORMTable(descriptor)
+	if err != nil {
+		return err
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return err
+	}
+	primaryKey := ""
+	var primaryValue any
+	assignments := []string{}
+	values := []any{}
+	for _, column := range columns {
+		if gppORMHasPK(column.Field) {
 			if primaryKey != "" {
 				return fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
 			}
 			primaryKey = column.Name
 			primaryValue = gppORMFieldGet(column.Field, entity)
+			continue
 		}
-		if primaryKey == "" {
-			return fmt.Errorf("orm: %s has no primary key", table)
-		}
-		query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", table, primaryKey)
-		if _, err := this.Exec(query, primaryValue); err != nil {
-			return err
-		}
-		return gppORMCallHook(entity, "AfterDelete", this)
+		assignments = append(assignments, column.Name+" = $"+fmt.Sprint(len(values)+1))
+		values = append(values, gppORMFieldGet(column.Field, entity))
 	}
+	if primaryKey == "" {
+		return fmt.Errorf("orm: %s has no primary key", table)
+	}
+	values = append(values, primaryValue)
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = $%d", table, strings.Join(assignments, ", "), primaryKey, len(values))
+	if _, err := exec.Exec(query, values...); err != nil {
+		return err
+	}
+	return gppORMCallHook(entity, "AfterUpdate", exec)
+}
+
+func gppORMDelete(exec SQLExecutor, entity any) error {
+	entity = gppORMDynamicObject(entity)
+	if err := gppORMCallHook(entity, "BeforeDelete", exec); err != nil {
+		return err
+	}
+	descriptor := gppORMRuntimeClass(entity)
+	table, err := gppORMTable(descriptor)
+	if err != nil {
+		return err
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return err
+	}
+	primaryKey, err := gppORMPrimaryKey(descriptor)
+	if err != nil {
+		return err
+	}
+	var primaryValue any
+	for _, column := range columns {
+		if column.Name == primaryKey {
+			primaryValue = gppORMFieldGet(column.Field, entity)
+			break
+		}
+	}
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", table, primaryKey)
+	if _, err := exec.Exec(query, primaryValue); err != nil {
+		return err
+	}
+	return gppORMCallHook(entity, "AfterDelete", exec)
 }

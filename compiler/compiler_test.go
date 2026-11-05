@@ -2230,7 +2230,6 @@ func TestCompileFilesBuildsBundledORMModelBoundary(t *testing.T) {
 package main
 
 import (
-    "database/sql"
     orm "gpp/orm"
 )
 
@@ -2239,12 +2238,8 @@ class Employee : orm.Model @{orm.Table("employees")} {
 }
 
 func useORM(exec orm.SQLExecutor) error {
-    db, ok := exec.(*sql.DB)
-    if !ok {
-        return nil
-    }
     employee := Employee()
-    return db.Insert(employee)
+    return employee.Insert(exec)
 }
 
 func main() {}
@@ -3222,6 +3217,30 @@ func LoadEmployee(db *sql.DB, id int64) {
 func LoadEmployees(db *sql.DB, prefix string) {
     employees := Employee.Select(db, "name LIKE $1 ORDER BY name", prefix + "%")
     _ = employees
+}
+
+func LoadByPrimaryKey(db *sql.DB, id int64) {
+    employee := Employee.Find(db, id)
+    _ = employee
+    _ = Employee.All(db)
+    _ = Employee.All(db, "name")
+    _ = Employee.Page(db)
+    _ = Employee.Page(db, 25)
+    _ = Employee.Page(db, 50, id)
+    _ = Employee.Page(exec: db, afterID: id)
+    _ = Employee.First(db)
+    _ = Employee.First(db, "name")
+    _ = Employee.Last(db)
+}
+
+func DeleteModels(db *sql.DB, employee *Employee) {
+    employee.Destroy(db)
+    Employee.Truncate(db)
+}
+
+func PersistModel(db *sql.DB, employee *Employee) {
+    employee.Insert(db)
+    employee.Update(db)
 }
 
 func RawEmployee(db *sql.DB, id int64) {

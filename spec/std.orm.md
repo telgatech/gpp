@@ -178,6 +178,16 @@ Provide:
 class Model {
     static func Get(exec SQLExecutor, where string, args ...any) (*self, error)
     static func Select(exec SQLExecutor, where string, args ...any) ([]*self, error)
+    static func All(exec SQLExecutor, sortBy string = "") ([]*self, error)
+    static func Page(exec SQLExecutor, limit int = 50, afterID any = nil) ([]*self, error)
+    static func Find(exec SQLExecutor, id any) (*self, error)
+    static func First(exec SQLExecutor, sortBy string = "") (*self, error)
+    static func Last(exec SQLExecutor, sortBy string = "") (*self, error)
+    static func Truncate(exec SQLExecutor) error
+
+    func Insert(exec SQLExecutor) error
+    func Update(exec SQLExecutor) error
+    func Destroy(exec SQLExecutor) error
 
     func Validate(exec SQLExecutor) error {
         return nil
@@ -216,6 +226,33 @@ The base implementation returns `nil`.
 Derived models override whichever hooks they require.
 
 Because Go++ methods are polymorphic, calling a hook through a `Model` parameter must dispatch to the concrete model implementation.
+
+`All` selects every model row, ordered ascending by the primary key by default.
+`Find` selects one row by the model's annotated primary key and requires exactly
+one such column. `First` and `Last` select one row ordered by primary key
+ascending and descending, respectively. `All`, `First`, and `Last` accept an
+optional `sortBy` field or annotated column name; the ORM resolves it against
+persisted model fields and rejects unknown or ambiguous names. `All` and
+`First` use ascending order, while `Last` uses descending order. Supplying
+`sortBy` removes the primary-key requirement for these three ordered helpers.
+
+`Page` returns rows with a positive limit (default 50), ordered by primary key
+ascending. It does not accept an offset. With no `afterID`, it returns the
+first batch; with an `afterID`, it selects rows whose primary key is greater
+than that value. The optional limit is the first argument after the executor,
+so it can be set positionally. It requires a declared primary key; invalid
+limits return an error. It supports sequential traversal, not arbitrary page
+jumps.
+
+`Destroy` deletes the receiver by primary key and runs `BeforeDelete` and
+`AfterDelete` around the SQL operation. `Truncate` removes every row from the
+model table without running per-instance hooks. It uses `DELETE FROM` so the
+operation works across supported SQL drivers; it does not reset generated
+identity or sequence values.
+
+The instance methods `Insert`, `Update`, and `Destroy` use the supplied
+executor for SQL and lifecycle hooks. A hook can insert another model with
+`event.Insert(exec)` to keep the write on the same executor.
 
 ---
 
@@ -288,9 +325,6 @@ extend *sql.DB, *sql.Tx {
     func Select[T any](query string, args ...any) ([]T, error)
     func Get(target any, where string, args ...any) error
     func Select(target any, where string, args ...any) error
-    func Insert(entity Model) error
-    func Update(entity Model) error
-    func Delete(entity Model) error
 }
 ```
 
@@ -328,11 +362,11 @@ compatibility and are deprecated.
 The destination-parameter overloads are deprecated. Use the generic overloads
 for new code.
 
-This allows identical code with databases and transactions:
+Model instance methods accept either a database or transaction executor:
 
 ```go
-db.Insert(employee)
-tx.Insert(employee)
+employee.Insert(db)
+employee.Insert(tx)
 
 db.Get(employee, ...)
 tx.Get(employee, ...)
@@ -616,14 +650,14 @@ rows.Err()
 Signature:
 
 ```go
-func Insert(entity Model) error
+func Insert(exec SQLExecutor) error
 ```
 
 Typical usage:
 
 ```go
 employee := Employee(...)
-err := db.Insert(employee)
+err := employee.Insert(db)
 ```
 
 Because `Employee` derives from `Model`, it may be passed polymorphically while retaining its concrete runtime class metadata.
@@ -713,7 +747,7 @@ Return SQL errors directly.
 Signature:
 
 ```go
-func Update(entity Model) error
+func Update(exec SQLExecutor) error
 ```
 
 Lifecycle:
@@ -802,12 +836,12 @@ entity.AfterUpdate(this)
 
 ---
 
-# Delete
+# Destroy
 
 Signature:
 
 ```go
-func Delete(entity Model) error
+func Destroy(exec SQLExecutor) error
 ```
 
 Lifecycle:
@@ -877,7 +911,7 @@ class Employee : Model {
 when passed to:
 
 ```go
-Insert(entity Model)
+employee.Insert(exec)
 ```
 
 the runtime class must still resolve to:
@@ -956,7 +990,7 @@ class Employee : Model {
 Calling:
 
 ```go
-db.Insert(employee)
+employee.Insert(db)
 ```
 
 must result in:
@@ -988,12 +1022,12 @@ Example:
 ```go
 tx, err := db.Begin()
 
-if err := tx.Insert(employee); err != nil {
+if err := employee.Insert(tx); err != nil {
     tx.Rollback()
     return err
 }
 
-if err := tx.Update(other); err != nil {
+if err := other.Update(tx); err != nil {
     tx.Rollback()
     return err
 }
@@ -1070,7 +1104,7 @@ employee := Employee(
     "ada@example.com",
 )
 
-if err := db.Insert(employee); err != nil {
+if err := employee.Insert(db); err != nil {
     return err
 }
 
@@ -1086,7 +1120,7 @@ if err := db.Get(
 
 loaded.Email = "new@example.com"
 
-if err := db.Update(loaded); err != nil {
+if err := loaded.Update(db); err != nil {
     return err
 }
 
@@ -1100,7 +1134,7 @@ if err := db.Select(
     return err
 }
 
-if err := db.Delete(loaded); err != nil {
+if err := loaded.Destroy(db); err != nil {
     return err
 }
 ```
@@ -1354,6 +1388,22 @@ Verify:
 * PK is used in WHERE
 * BeforeDelete runs before SQL
 * AfterDelete runs after SQL
+* instance `Destroy` runs the documented delete hooks around SQL DELETE
+
+---
+
+## Model convenience methods
+
+Verify:
+
+* `All` selects every model column ordered by primary key ascending by default
+* `Page` applies a positive limit, defaulting to 50, and orders by primary key
+* `Page` continues after a supplied primary-key value in ascending order
+* `Find` uses the single annotated primary key and propagates `sql.ErrNoRows`
+* `First` orders by primary key ascending and limits to one row
+* `Last` orders by primary key descending and limits to one row
+* `Truncate` deletes all rows without running model hooks
+* `Truncate` does not reset identity or sequence values
 
 ---
 
@@ -1400,10 +1450,10 @@ class Employee : Model {
 }
 ```
 
-passing `&employee` to:
+calling the model instance method:
 
 ```go
-db.Insert(...)
+employee.Insert(db)
 ```
 
 must use:

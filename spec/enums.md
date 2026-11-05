@@ -937,7 +937,7 @@ enum Status string {
 then:
 
 ```go
-db.Insert(&user)
+db.Exec("INSERT INTO users (status) VALUES ($1)", user.Status)
 ```
 
 for:

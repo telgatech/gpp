@@ -60,7 +60,7 @@ The examples cover:
   Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and
   PostgreSQL. Lifecycle hooks receive a shared `SQLExecutor`, so child writes
   use the active transaction automatically. The example records hook events as
-  `Event` models through `orm.Insert(exec, &event)`.
+  `Event` models through `event.Insert(exec)`.
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.

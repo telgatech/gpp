@@ -160,6 +160,89 @@ html.dark .VPHomeHero .container .image-container::after {
   border-radius: 14px;
 }
 
+.VPHome .home-updates {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 0 24px 56px;
+}
+
+.VPHome .home-updates-heading {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.VPHome .home-updates-eyebrow {
+  margin: 0 0 8px;
+  color: var(--vp-c-brand-1);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.VPHome .home-updates-heading h2 {
+  margin: 0;
+  color: var(--vp-c-text-1);
+  font-size: clamp(1.8rem, 4vw, 2.65rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.VPHome .home-updates-heading > p:last-child {
+  margin: 8px 0 0;
+  color: var(--vp-c-text-2);
+  line-height: 1.65;
+}
+
+.home-updates-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.home-updates-grid article {
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  padding: 22px 24px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 14px;
+  background: var(--vp-c-bg-soft);
+}
+
+.home-updates-grid h3 {
+  margin: 0;
+  color: var(--vp-c-text-1);
+  font-size: 1.12rem;
+  font-weight: 650;
+}
+
+.home-updates-grid p {
+  margin: 10px 0 16px;
+  color: var(--vp-c-text-2);
+  line-height: 1.65;
+}
+
+.home-updates-grid a {
+  margin-top: auto;
+  color: var(--vp-c-brand-1);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.home-updates-grid a:hover {
+  color: var(--vp-c-brand-2);
+}
+
+.home-updates-grid a:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 3px;
+}
+
 .VPHome .home-faq-heading {
   margin-bottom: 24px;
   padding-bottom: 16px;
@@ -238,6 +321,16 @@ html.dark .VPHomeHero .container .image-container::after {
   padding: 0 46px 20px 6px;
   color: var(--vp-c-text-2);
   line-height: 1.7;
+}
+
+@media (max-width: 720px) {
+  .home-updates-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .VPHome .home-updates {
+    padding-bottom: 40px;
+  }
 }
 
 .VPHome .catalog-footer {

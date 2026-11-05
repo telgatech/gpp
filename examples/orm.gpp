@@ -1,141 +1,71 @@
 package main
 
 import (
-	"database/sql"
-	"fmt"
-	_ "modernc.org/sqlite"
-	orm "gpp/orm"
+    "database/sql"
+    "fmt"
+    _ "modernc.org/sqlite"
+    orm "gpp/orm"
 )
 
-class Event : orm.Model @{orm.Table("employee_events")} {
-	EmployeeId int64 @{orm.Column("employee_id")}
-	Action     string @{orm.Column("event")}
+class Employee : orm.Model @{orm.Table("employees")} {
+    Id int64 @{orm.Column("id"), orm.PK}
+    Name string @{orm.Column("name")}
+    Email string @{orm.Column("email")}
 }
 
-class Employee : orm.Model @{orm.Table("employees")} {
-	Id int64 @{orm.Column("id"), orm.PK}
-	Name string @{orm.Column("name")}
-	Email string @{orm.Column("email")}
+func ModelAPIExample(db *sql.DB) {
+    ada := Employee(1, "Ada Lovelace", "ada@example.com")
+    grace := Employee(2, "Grace Hopper", "grace@example.com")
+    ada.Insert(db)
+    grace.Insert(db)
 
-	func RecordEvent(exec orm.SQLExecutor, action string) error {
-		event := Event(this.Id, action)
-		return orm.Insert(exec, event)
-	}
+    ada.Email = "ada@analytical.example"
+    ada.Update(db)
 
-	func Validate(exec orm.SQLExecutor) error {
-		if this.Name.IsBlank() {
-			return fmt.Errorf("employee name is required")
-		}
-		if this.Email.IsBlank() {
-			return fmt.Errorf("employee email is required")
-		}
-		return nil
-	}
+    // Model queries use conditions while SQL is built from model metadata.
+    employees := Employee.Select(db, "name LIKE $1", "A%")
+    target := Employee.Get(db, "id = $1", ada.Id)
+    fmt.Println("model queries:", len(employees), "selected, get:", target.Name)
 
-	func BeforeCreate(exec orm.SQLExecutor) error {
-		this.Email = this.Email.TrimSpace().ToLower()
-		return this.RecordEvent(exec, "before_create")
-	}
+    first := Employee.First(db)
+    last := Employee.Last(db)
+    var page []*Employee = Employee.Page(db, 1)
+    fmt.Println("first/last:", first.Name, last.Name)
+    if page.NotEmpty() {
+        nextPage := Employee.Page(db, 1, page.Last().Id)
+        fmt.Println("next page:", len(nextPage))
+    }
 
-	func BeforeUpdate(exec orm.SQLExecutor) error {
-		this.Email = this.Email.TrimSpace().ToLower()
-		return this.RecordEvent(exec, "before_update")
-	}
+    // Delete through the model so the ORM builds the statement from its metadata.
+    target.Destroy(db)
+}
 
-	func AfterCreate(exec orm.SQLExecutor) error {
-		fmt.Println("created:", this.Name)
-		return this.RecordEvent(exec, "after_create")
-	}
+func GenericDBExample(db *sql.DB) {
+    // Use Exec for raw SQL writes, and generic queries when you want typed results.
+    db.Exec("INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)", int64(2), "selected")
 
-	func AfterUpdate(exec orm.SQLExecutor) error {
-		fmt.Println("updated:", this.Name)
-		return this.RecordEvent(exec, "after_update")
-	}
-
-	func AfterDelete(exec orm.SQLExecutor) error {
-		fmt.Println("deleted employee:", this.Name)
-		return this.RecordEvent(exec, "after_delete")
-	}
-
-	func BeforeDelete(exec orm.SQLExecutor) error {
-		return this.RecordEvent(exec, "before_delete")
-	}
+    employeeCount := db.Get[int64]("SELECT COUNT(*) FROM employees")
+    event := db.Get[record(employee_id: int64, event: string)](
+        "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
+        int64(2),
+    )
+    employee := db.Get[Employee]("SELECT id, name, email FROM employees WHERE id = $1", int64(2))
+    employees := db.Select[Employee]("SELECT id, name, email FROM employees ORDER BY id")
+    fmt.Println("scalar query:", employeeCount)
+    fmt.Println("record query:", event.employee_id, event.event)
+    fmt.Println("full SQL model queries:", employee.Name, len(employees))
 }
 
 func main() {
-	try {
-		db := sql.Open("sqlite", ":memory:")
-		defer db.Close()
+    try {
+        db := sql.Open("sqlite", ":memory:")
+        defer db.Close()
+        db.Exec(`CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)`)
+        db.Exec(`CREATE TABLE employee_events (employee_id INTEGER NOT NULL, event TEXT NOT NULL)`)
 
-		db.Exec(`
-		CREATE TABLE employees (
-			id INTEGER PRIMARY KEY,
-			name TEXT NOT NULL,
-			email TEXT NOT NULL
-		)
-	`)
-		db.Exec(`
-		CREATE TABLE employee_events (
-			employee_id INTEGER NOT NULL,
-			event TEXT NOT NULL
-		)
-	`)
-
-		employee := Employee(1, "Ada Lovelace", "ada@example.com")
-		db.Insert(employee)
-
-		second := Employee(2, "Grace Hopper", "grace@example.com")
-		tx := db.Begin()
-		defer tx.Rollback()
-		tx.Insert(second)
-		employee.Email = " ADA@ANALYTICAL.EXAMPLE "
-		tx.Update(employee)
-		employees := Employee.Select(tx, "email LIKE $1", "%example.com")
-		target := Employee.Get(tx, "name = $1", "Ada Lovelace")
-		tx.Commit()
-		fmt.Println("transaction:", len(employees), "selected, get:", target.Name)
-
-		loaded := Employee.Get(db, "id = $1", employee.Id)
-		tx = db.Begin()
-		defer tx.Rollback()
-		tx.Delete(loaded)
-		tx.Commit()
-		deleted := len(Employee.Select(db, "id = $1", employee.Id)) == 0
-
-		fmt.Println("loaded after update:", loaded.Name, loaded.Email)
-		fmt.Println("deleted:", deleted)
-
-		db.Exec("INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)", int64(99), "record_scan")
-		events, err := db.Select[record(employee_id: int64, event: string)]("SELECT employee_id, event, 'discarded' AS ignored FROM employee_events WHERE employee_id = $1", int64(99))
-		if err != nil {
-			panic(err)
-		}
-		if len(events) != 1 || events[0].employee_id != 99 || events[0].event != "record_scan" {
-			panic("record Select did not scan query results")
-		}
-		fmt.Println("record select:", events[0].employee_id, events[0].event)
-		event, err := db.Get[record(employee_id: int64, event: string)]("SELECT employee_id, event, 'discarded' AS ignored FROM employee_events WHERE employee_id = $1", int64(99))
-		if err != nil {
-			panic(err)
-		}
-		if event.employee_id != 99 || event.event != "record_scan" {
-			panic("record Get did not scan query result")
-		}
-		eventName, err := db.Get[string]("SELECT event FROM employee_events WHERE employee_id = $1", int64(99))
-		if err != nil {
-			panic(err)
-		}
-		if eventName != "record_scan" {
-			panic("scalar Get did not scan one column")
-		}
-		eventNames, err := db.Select[string]("SELECT event FROM employee_events WHERE employee_id = $1", int64(99))
-		if err != nil {
-			panic(err)
-		}
-		if len(eventNames) != 1 || eventNames[0] != "record_scan" {
-			panic("scalar Select did not scan one column per row")
-		}
-	} catch err {
-		fmt.Println("ORM example:", err)
-	}
+        ModelAPIExample(db)
+        GenericDBExample(db)
+    } catch err {
+        fmt.Println("ORM example:", err)
+    }
 }

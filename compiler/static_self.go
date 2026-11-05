@@ -5,8 +5,8 @@ import (
 )
 
 // bindStaticSelfTypes makes self an implicit generic type parameter on static
-// methods that mention it in their signature. Calls through a subclass bind
-// that parameter to the class used at the call site.
+// methods that use it. Calls through a subclass bind that parameter to the
+// class used at the call site.
 func bindStaticSelfTypes(program *Program) error {
 	for _, file := range program.Files {
 		for _, declaration := range file.Decls {
@@ -22,6 +22,14 @@ func bindStaticSelfTypes(program *Program) error {
 				usesSelf, err := methodSignatureUsesType(method, "self")
 				if err != nil {
 					return fmt.Errorf("%s: %w", classLocation(class), err)
+				}
+				if !usesSelf {
+					for _, token := range method.BodyTokens {
+						if token.Kind == TokenIdentifier && token.Text == "self" {
+							usesSelf = true
+							break
+						}
+					}
 				}
 				if !usesSelf {
 					continue
