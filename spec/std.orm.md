@@ -281,6 +281,8 @@ with the same methods:
 
 ```go
 extend *sql.DB, *sql.Tx {
+    func Get[T any](query string, args ...any) (T, error)
+    func Select[T any](query string, args ...any) ([]T, error)
     func Get(target any, where string, args ...any) error
     func Select(target any, where string, args ...any) error
     func Insert(entity Model) error
@@ -288,6 +290,30 @@ extend *sql.DB, *sql.Tx {
     func Delete(entity Model) error
 }
 ```
+
+The generic overloads return typed results directly. `Get[T]` returns one
+value and `Select[T]` returns a slice. `T` may be a named model or an inline
+Go++ record shape:
+
+```go
+user, err := db.Get[record(ID: int64, Name: string)](
+    "SELECT id, name FROM users WHERE id = $1", 42,
+)
+users, err := db.Select[record(ID: int64, Name: string)](
+    "SELECT id, name FROM users WHERE active = $1", true,
+)
+count, err := db.Get[int64]("SELECT COUNT(*) FROM users")
+```
+
+Record result types require a complete `SELECT` (or `WITH ... SELECT`) query.
+Result columns match record fields by name; extra columns are discarded and
+missing fields retain their zero values. The target-parameter overloads remain
+available for existing code and model-oriented `WHERE` queries. Scalar result
+types require a one-column query; `Get[T]` reads one row and `Select[T]`
+returns all rows.
+
+The destination-parameter overloads are deprecated. Use the generic overloads
+for new code.
 
 This allows identical code with databases and transactions:
 

@@ -1807,12 +1807,16 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 	if name, _, ok := constructorTargetForCallee(call.Callee, context); ok {
 		return "*" + name
 	}
-	if receiver, name, typeArguments, ok := extensionASTCallParts(call); ok {
+	if receiver, name, typeArguments, ok := extensionASTCallPartsWithContext(call, context); ok {
 		actualType := extensionASTStaticType(receiver, context, valueTypes)
 		candidates := applicableExtensionASTs(name, actualType, call.Arguments, typeArguments, valueTypes, context)
 		if len(candidates) == 1 && !realMethodAppliesAST(actualType, name, call.Arguments, context) {
 			result := strings.TrimSpace(methodResultSource(candidates[0].Method.Method))
-			return substituteLambdaType(result, extensionTargetBindings(candidates[0].Method.Target, actualType))
+			bindings := extensionTargetBindings(candidates[0].Method.Target, actualType)
+			for parameter, value := range extensionTypeArgumentBindings(candidates[0].Method.Method, typeArguments) {
+				bindings[parameter] = value
+			}
+			return substituteLambdaType(result, bindings)
 		}
 	}
 	switch callee := call.Callee.(type) {

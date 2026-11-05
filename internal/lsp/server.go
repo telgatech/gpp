@@ -1280,7 +1280,11 @@ func identifierSpanWithin(file *compiler.File, bounds compiler.Span, name string
 
 func deprecated(symbol compiler.DocSymbol) bool {
 	for _, annotation := range symbol.Annotations {
-		if strings.HasPrefix(annotation, "@Deprecated") {
+		name := strings.TrimPrefix(annotation, "@")
+		if open := strings.IndexByte(name, '('); open >= 0 {
+			name = name[:open]
+		}
+		if name == "Deprecated" || strings.HasSuffix(name, ".Deprecated") {
 			return true
 		}
 	}

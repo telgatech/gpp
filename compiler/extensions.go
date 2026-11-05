@@ -535,6 +535,10 @@ func collectExtensionASTExpression(expression ExprNode, visit func(*CallExpr) bo
 }
 
 func extensionASTCallParts(call *CallExpr) (ExprNode, string, []TypeNode, bool) {
+	return extensionASTCallPartsWithContext(call, constructorContext{})
+}
+
+func extensionASTCallPartsWithContext(call *CallExpr, context constructorContext) (ExprNode, string, []TypeNode, bool) {
 	if call == nil || call.Callee == nil {
 		return nil, "", nil, false
 	}
@@ -546,7 +550,7 @@ func extensionASTCallParts(call *CallExpr) (ExprNode, string, []TypeNode, bool) 
 		if !ok {
 			return nil, "", nil, false
 		}
-		return selector.Receiver, selector.Name, []TypeNode{extensionASTTypeArgument(callee.Index)}, true
+		return selector.Receiver, selector.Name, []TypeNode{extensionASTTypeArgument(callee.Index, context)}, true
 	case *IndexListExpr:
 		selector, ok := callee.Receiver.(*SelectorExpr)
 		if !ok {
@@ -554,7 +558,7 @@ func extensionASTCallParts(call *CallExpr) (ExprNode, string, []TypeNode, bool) 
 		}
 		arguments := make([]TypeNode, 0, len(callee.Indices))
 		for _, index := range callee.Indices {
-			arguments = append(arguments, extensionASTTypeArgument(index))
+			arguments = append(arguments, extensionASTTypeArgument(index, context))
 		}
 		return selector.Receiver, selector.Name, arguments, true
 	default:
@@ -562,9 +566,38 @@ func extensionASTCallParts(call *CallExpr) (ExprNode, string, []TypeNode, bool) 
 	}
 }
 
-func extensionASTTypeArgument(expression ExprNode) TypeNode {
+func extensionASTTypeArgument(expression ExprNode, context constructorContext) TypeNode {
 	if typeExpr, ok := expression.(*TypeExpr); ok {
 		return typeExpr.Type
+	}
+	if call, ok := expression.(*CallExpr); ok {
+		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "record" {
+			if context.Records == nil {
+				return nil
+			}
+			if len(call.Arguments) == 0 {
+				return nil
+			}
+			fields := make([]recordFieldType, 0, len(call.Arguments))
+			seen := map[string]bool{}
+			for _, argument := range call.Arguments {
+				if argument.Name == "" || !isIdentifier(argument.Name) || seen[argument.Name] {
+					return nil
+				}
+				seen[argument.Name] = true
+				fieldType := extensionASTTypeArgument(argument.Value, context)
+				if fieldType == nil {
+					return nil
+				}
+				typeText, err := typeNodeSource(fieldType)
+				if err != nil || strings.TrimSpace(typeText) == "" {
+					return nil
+				}
+				fields = append(fields, recordFieldType{Name: argument.Name, Type: strings.TrimSpace(typeText)})
+			}
+			shape := context.Records.register(fields)
+			return &NamedType{Parts: []string{shape.GoName}, SpanValue: call.Span()}
+		}
 	}
 	text, err := expressionNodeSource(expression)
 	if err != nil {
@@ -592,7 +625,7 @@ func renderExtensionASTCall(call *CallExpr, context constructorContext, valueTyp
 			return formatted, true, formatErr
 		}
 	}
-	receiver, methodName, typeArguments, ok := extensionASTCallParts(call)
+	receiver, methodName, typeArguments, ok := extensionASTCallPartsWithContext(call, context)
 	if ok {
 		actualType := extensionASTStaticType(receiver, context, valueTypes)
 		candidates := applicableExtensionASTs(methodName, actualType, call.Arguments, typeArguments, valueTypes, context)
@@ -753,7 +786,7 @@ func extensionASTStaticType(expression ExprNode, context constructorContext, val
 	if !ok {
 		return staticExpressionTypeNode(expression, context, valueTypes)
 	}
-	receiver, name, typeArguments, ok := extensionASTCallParts(call)
+	receiver, name, typeArguments, ok := extensionASTCallPartsWithContext(call, context)
 	if !ok {
 		return staticExpressionTypeNode(expression, context, valueTypes)
 	}
@@ -766,7 +799,25 @@ func extensionASTStaticType(expression ExprNode, context constructorContext, val
 	if result == "" {
 		return ""
 	}
-	return substituteLambdaType(result, extensionTargetBindings(candidates[0].Method.Target, actualType))
+	bindings := extensionTargetBindings(candidates[0].Method.Target, actualType)
+	for name, value := range extensionTypeArgumentBindings(candidates[0].Method.Method, typeArguments) {
+		bindings[name] = value
+	}
+	return substituteLambdaType(result, bindings)
+}
+
+func extensionTypeArgumentBindings(method Method, arguments []TypeNode) map[string]string {
+	parameters := parseTypeParameterNodes(methodTypeParamsSource(method))
+	if len(parameters) == 0 || len(parameters) != len(arguments) {
+		return nil
+	}
+	bindings := make(map[string]string, len(parameters))
+	for index, parameter := range parameters {
+		if value, err := typeNodeSource(arguments[index]); err == nil && strings.TrimSpace(value) != "" {
+			bindings[parameter.Name] = value
+		}
+	}
+	return bindings
 }
 
 func realMethodAppliesAST(actualType, methodName string, args []CallArg, context constructorContext) bool {

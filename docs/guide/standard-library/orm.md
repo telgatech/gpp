@@ -12,7 +12,7 @@ The Go++ version declares the mapping once on a class and uses ORM methods for i
 
 ::: code-group
 
-```go [Go++]
+```gpp [Go++]
 class Employee : orm.Model @{orm.Table("employees")} {
 	ID int @{orm.Column("id"), orm.PK}
 	Name string @{orm.Column("name")}
@@ -21,7 +21,7 @@ class Employee : orm.Model @{orm.Table("employees")} {
 
 employee := Employee(ID: 42, Name: "Ada", Email: "ada@example.com")
 db.Insert(employee)
-db.Get(employee, "id = $1", employee.ID)
+employee = db.Get[Employee]("id = $1", employee.ID)
 ```
 
 ```go [Go]
@@ -39,15 +39,19 @@ err = row.Scan(&employee.ID, &employee.Name, &employee.Email)
 
 Only fields marked with `orm.Column` participate in persistence. The primary-key field also carries `orm.PK`, as shown above.
 
+For ORM model types, `Get[Employee]` and `Select[Employee]` generate the
+`SELECT` from the model mapping. Their first argument is a SQL condition
+fragment, such as `"id = $1"`, followed by its parameter values. By contrast,
+when the result type is a record or scalar, pass a complete `SELECT` statement;
+see [typed queries](/features/orm#typed-queries-with-structural-records).
+
 The Go++ calls omit the trailing `error` result. A database failure propagates through Go++'s exception behavior; add a `try`/`catch` at a boundary when you need to recover or add context, and otherwise let it reach a higher-level handler.
 
 ## More examples
 
-```go
+```gpp
 func ActiveEmployees(db *sql.DB) []Employee {
-	var employees []Employee
-	db.Select(&employees, "active = $1 ORDER BY name", true)
-	return employees
+	return db.Select[Employee]("id > $1 ORDER BY name", 0)
 }
 
 func SaveEmployee(db *sql.DB, employee *Employee) {
@@ -59,7 +63,9 @@ func RemoveEmployee(db *sql.DB, employee *Employee) {
 }
 ```
 
-The query condition is passed as a SQL fragment and values remain parameterized. For multi-step changes, a transaction can be used anywhere a database handle is accepted:
+For ORM model types, the query condition is passed as a SQL fragment and
+values remain parameterized. For multi-step changes, a transaction can be
+used anywhere a database handle is accepted:
 
 ```go
 func SaveChanges(db *sql.DB, employee *Employee, account *Account) {

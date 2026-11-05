@@ -187,11 +187,16 @@ annotation (
 
 If `on` is omitted, the annotation is valid on every annotation-capable declaration.
 
-Example:
+The standard library provides `Deprecated(message string)` from `gpp/std`. It
+may be used anywhere annotations are supported, without packages declaring
+their own copy:
 
-annotation Deprecated(message string)
+```gpp
+import std "gpp/std"
 
-may be used anywhere annotations are supported.
+func OldAPI() @{std.Deprecated("Use NewAPI instead")} {
+}
+```
 
 ## 7. Initial annotation target vocabulary
 

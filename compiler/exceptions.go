@@ -2095,6 +2095,11 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 		if lowered, handled, err := lowerExceptionExtensionCallNode(value, context); handled {
 			return lowered, err
 		}
+		if lowered, changed, err := lowerGenericRecordTypeArguments(value.Callee, context); err != nil {
+			return nil, err
+		} else if changed {
+			value.Callee = lowered
+		}
 		if lowered, handled, err := lowerCallableCallNode(value, context); handled {
 			if err != nil {
 				return nil, err
@@ -2154,6 +2159,63 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 	default:
 		return expression, nil
 	}
+}
+
+// lowerGenericRecordTypeArguments turns inline record shapes used as generic
+// type arguments into generated Go types. This applies to generic calls in
+// general; library APIs do not need record-specific compiler lowering.
+func lowerGenericRecordTypeArguments(callee ExprNode, context constructorContext) (ExprNode, bool, error) {
+	convert := func(expression ExprNode) (ExprNode, bool, error) {
+		call, ok := expression.(*CallExpr)
+		if !ok {
+			return expression, false, nil
+		}
+		if name, ok := call.Callee.(*NameExpr); !ok || name.Name != "record" {
+			return expression, false, nil
+		}
+		recordType := extensionASTTypeArgument(call, context)
+		if recordType == nil {
+			return nil, false, fmt.Errorf("record type arguments require named fields with valid types")
+		}
+		return &TypeExpr{Type: recordType, SpanValue: call.Span()}, true, nil
+	}
+	switch value := callee.(type) {
+	case *IndexExpr:
+		if _, ok := value.Receiver.(*SelectorExpr); !ok {
+			if _, nameOK := value.Receiver.(*NameExpr); !nameOK {
+				return callee, false, nil
+			}
+		}
+		index, changed, err := convert(value.Index)
+		if err != nil || !changed {
+			return callee, changed, err
+		}
+		copy := *value
+		copy.Index = index
+		return &copy, true, nil
+	case *IndexListExpr:
+		if _, ok := value.Receiver.(*SelectorExpr); !ok {
+			if _, nameOK := value.Receiver.(*NameExpr); !nameOK {
+				return callee, false, nil
+			}
+		}
+		copy := *value
+		changed := false
+		for index := range copy.Indices {
+			converted, didConvert, err := convert(copy.Indices[index])
+			if err != nil {
+				return callee, false, err
+			}
+			if didConvert {
+				copy.Indices[index] = converted
+				changed = true
+			}
+		}
+		if changed {
+			return &copy, true, nil
+		}
+	}
+	return callee, false, nil
 }
 
 func validateCallArgumentStyle(call *CallExpr) error {
@@ -2275,9 +2337,14 @@ func lowerRecordCallExprNode(call *CallExpr, context constructorContext) (ExprNo
 // explicit type arguments must not be rendered to source and reparsed just to
 // call the generated extension function.
 func lowerExceptionExtensionCallNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
-	receiver, methodName, typeArguments, ok := extensionASTCallParts(call)
+	receiver, methodName, typeArguments, ok := extensionASTCallPartsWithContext(call, context)
 	if !ok || len(context.Extensions) == 0 {
 		return nil, false, nil
+	}
+	for _, typeArgument := range typeArguments {
+		if typeArgument == nil {
+			return nil, true, fmt.Errorf("invalid generic type argument")
+		}
 	}
 	actualType := extensionASTStaticType(receiver, context, context.CurrentParameterTypes)
 	candidates := applicableExtensionASTs(methodName, actualType, call.Arguments, typeArguments, context.CurrentParameterTypes, context)

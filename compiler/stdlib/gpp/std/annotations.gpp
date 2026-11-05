@@ -1,0 +1,3 @@
+package gpp.std
+
+annotation Deprecated(message string)

@@ -662,6 +662,11 @@ func lowerRecordOnlyExpr(expression ExprNode, context constructorContext) (resul
 		return value, err
 	case *CallExpr:
 		var err error
+		if loweredCallee, changed, lowerErr := lowerGenericRecordTypeArguments(value.Callee, context); lowerErr != nil {
+			return nil, lowerErr
+		} else if changed {
+			value.Callee = loweredCallee
+		}
 		value.Callee, err = lower(value.Callee)
 		if err != nil {
 			return nil, err

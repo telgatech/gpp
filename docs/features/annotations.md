@@ -36,6 +36,8 @@ type Employee struct {
 The target rule prevents applying `Column` to a class, and the string argument
 is checked against the declared parameter type. Annotations can be declared
 once in a package and reused from other packages with qualification.
+Go++ provides shared annotations such as `std.Deprecated` from `gpp/std`.
+See the [`gpp/std` guide](/guide/standard-library/std).
 
 ## Keep annotations beside their declaration
 
