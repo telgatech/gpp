@@ -23,7 +23,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.OAuth(http.OAuthProvider.Go
 func main() {
 	try {
 		app := App()
-		app.Listen()
+		app.Listen(0)
 	} catch err {
 		if err != stdhttp.ErrServerClosed {
 			fmt.Println("OAuth example:", err)

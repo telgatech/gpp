@@ -231,25 +231,25 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 		methodSet := methodOverloadsForClass(
 			class,
 			classes,
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 		context.Overloads.ClassMethods[class.Name] = methodSet
 		context.Overloads.ClassMethods["__gpp_"+class.Name] = methodSet
-		typeSet := methodOverloadTypesForClass(class, classes, map[string]bool{})
+		typeSet := methodOverloadTypesForClass(class, classes, map[*ClassDecl]bool{})
 		context.Overloads.ClassMethodTypes[class.Name] = typeSet
 		context.Overloads.ClassMethodTypes["__gpp_"+class.Name] = typeSet
-		fieldTypes := classFieldTypesForClass(class, classes, map[string]bool{})
+		fieldTypes := classFieldTypesForClass(class, classes, map[*ClassDecl]bool{})
 		context.Overloads.ClassFieldTypes[class.Name] = fieldTypes
 		context.Overloads.ClassFieldTypes["__gpp_"+class.Name] = fieldTypes
 		context.ClassMethodSignatures[class.Name] = methodSignaturesForClass(
 			class,
 			classes,
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 		context.StaticMethodSignatures[class.Name] = staticMethodSignaturesForClass(
 			class,
 			classes,
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 		for _, method := range class.Methods {
 			if method.GoName == "" || method.IsStatic {
@@ -1449,6 +1449,10 @@ func transformGoDeclSource(source string, context constructorContext, interpolat
 	if err != nil {
 		return "", err
 	}
+	code, err = transformImplicitErrorPromotion(code, context)
+	if err != nil {
+		return "", err
+	}
 	code, err = transformConstructors(code, context)
 	if err != nil {
 		return "", err
@@ -1534,6 +1538,10 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 		return "", err
 	}
 	code, err = transformCallableCalls(code, context)
+	if err != nil {
+		return "", err
+	}
+	code, err = transformImplicitErrorPromotion(code, context)
 	if err != nil {
 		return "", err
 	}
@@ -1625,7 +1633,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	}
 
 	classes := classesForClass(context, class)
-	methods, err := interfaceMethods(class, classes, map[string]bool{})
+	methods, err := interfaceMethods(class, classes, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
 	}
@@ -1726,6 +1734,10 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		if err != nil {
 			return err
 		}
+		body, err = transformImplicitErrorPromotion(body, methodContext)
+		if err != nil {
+			return err
+		}
 		body, err = transformConstructors(body, context)
 		if err != nil {
 			return err
@@ -1762,12 +1774,12 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		methodContext.Overloads.Methods = methodOverloadsForClass(
 			class,
 			classesForClass(context, class),
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 		methodContext.Overloads.MethodTypes = methodOverloadTypesForClass(
 			class,
 			classesForClass(context, class),
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 		methodContext.Overloads.CurrentClass = class.Name
 		methodContext.Overloads.LocalTypes = parameterTypeMapFromNodes(method.ParameterAST)
@@ -1873,7 +1885,7 @@ func importedParentForMethod(class *ClassDecl, method Method, classes map[string
 		if parent == nil {
 			continue
 		}
-		parentMethods, err := interfaceMethods(parent, classes, map[string]bool{})
+		parentMethods, err := interfaceMethods(parent, classes, map[*ClassDecl]bool{})
 		if err != nil {
 			continue
 		}
@@ -2104,13 +2116,13 @@ func transformParameterList(params string, context constructorContext) (string, 
 	return strings.Join(parts, ", "), nil
 }
 
-func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]Method, error) {
-	if visiting[class.Name] {
+func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) ([]Method, error) {
+	if visiting[class] {
 		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
 	}
 
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	methods := []Method{}
 	seen := map[string]bool{}
@@ -2260,6 +2272,10 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 	if err != nil {
 		return err
 	}
+	body, err = transformImplicitErrorPromotion(body, methodContext)
+	if err != nil {
+		return err
+	}
 	body, err = transformConstructors(body, context)
 	if err != nil {
 		return err
@@ -2308,8 +2324,8 @@ func contextForMethod(context constructorContext, class *ClassDecl, methodName s
 	methodContext.CurrentMethod = methodName
 	methodContext.CurrentResultAST = nil
 	methodContext.MethodSignatures = context.ClassMethodSignatures[class.Name]
-	methodContext.Overloads.Methods = methodOverloadsForClass(class, classesForClass(context, class), map[string]bool{})
-	methodContext.Overloads.MethodTypes = methodOverloadTypesForClass(class, classesForClass(context, class), map[string]bool{})
+	methodContext.Overloads.Methods = methodOverloadsForClass(class, classesForClass(context, class), map[*ClassDecl]bool{})
+	methodContext.Overloads.MethodTypes = methodOverloadTypesForClass(class, classesForClass(context, class), map[*ClassDecl]bool{})
 	methodContext.Overloads.CurrentClass = class.Name
 	return methodContext
 }
@@ -2339,12 +2355,12 @@ func classesForClass(context constructorContext, class *ClassDecl) map[string]*C
 	return classes
 }
 
-func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string]map[int]string {
-	if visiting[class.Name] {
+func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) map[string]map[int]string {
+	if visiting[class] {
 		return map[string]map[int]string{}
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	overloads := map[string]map[int]string{}
 	for _, method := range class.Methods {
@@ -2381,12 +2397,12 @@ func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 	return overloads
 }
 
-func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string]map[string]string {
-	if visiting[class.Name] {
+func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) map[string]map[string]string {
+	if visiting[class] {
 		return map[string]map[string]string{}
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	overloads := map[string]map[string]string{}
 	for _, method := range class.Methods {
@@ -2421,12 +2437,12 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 	return overloads
 }
 
-func classFieldTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string]string {
-	if class == nil || visiting[class.Name] {
+func classFieldTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) map[string]string {
+	if class == nil || visiting[class] {
 		return map[string]string{}
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	fields := map[string]string{}
 	for _, parentName := range classParentNames(class) {
@@ -2809,7 +2825,7 @@ func shouldPointerCoerce(expectedType string, argument ast.Expr, context constru
 	if !ok || !sameConstructorPackage(base, actual) {
 		return false
 	}
-	return actual.Class == base.Class || classInherits(actual.Class, base.Class, actual.Classes, map[string]bool{})
+	return actual.Class == base.Class || classInherits(actual.Class, base.Class, actual.Classes, map[*ClassDecl]bool{})
 }
 
 func dispatchTargetForType(expr ast.Expr, context constructorContext) (constructorTarget, bool) {
@@ -2874,7 +2890,7 @@ func sameConstructorPackage(base, derived constructorTarget) bool {
 
 func classHasDerived(base *ClassDecl, classes map[string]*ClassDecl) bool {
 	for _, class := range classes {
-		if class != base && classInherits(class, base, classes, map[string]bool{}) {
+		if class != base && classInherits(class, base, classes, map[*ClassDecl]bool{}) {
 			return true
 		}
 	}
@@ -3611,12 +3627,12 @@ func astTypeName(expr ast.Expr) (string, bool) {
 	}
 }
 
-func classInherits(class, base *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) bool {
-	if visiting[class.Name] {
+func classInherits(class, base *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) bool {
+	if visiting[class] {
 		return false
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	for _, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
@@ -4174,13 +4190,13 @@ type constructorField struct {
 	Annotations []AnnotationUse
 }
 
-func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix []string, visiting map[string]bool) ([]constructorField, error) {
-	if visiting[class.Name] {
+func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix []string, visiting map[*ClassDecl]bool) ([]constructorField, error) {
+	if visiting[class] {
 		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
 	}
 
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	fields := []constructorField{}
 	for _, parentName := range classParentNames(class) {

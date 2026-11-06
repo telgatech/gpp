@@ -268,12 +268,21 @@ func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handle
 			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
 			return
 		}
-		ctx := gppNewContext(w, r)
-		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
-			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
-			return
+		ctx, state := gppContextForRequest(w, r, app)
+		if state == nil {
+			if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+				gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+				return
+			}
 		}
 		routeErr := handler(ctx)
+		if state != nil {
+			if routeErr != nil && !ctx.Written {
+				state.FailureCode = stdhttp.StatusInternalServerError
+				state.Failure = routeErr
+			}
+			return
+		}
 		afterErr := gppCallHook(app, "AfterRequest", ctx)
 		if routeErr != nil && !ctx.Written {
 			gppCallError(app, ctx, stdhttp.StatusInternalServerError, routeErr)

@@ -24,11 +24,11 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 <div class="catalog-footer-copy">
 <p class="catalog-footer-eyebrow"><span class="latest-change-ribbon">What's new</span> 2026-11-05</p>
 <h2>Typed database queries</h2>
-<p>Use <code>db.Get[T]</code> and <code>db.Select[T]</code> for models, scalars, or inline record shapes.</p>
+<p>Use <code>gpp/sql</code> with <code>db.Get[T]</code> and <code>db.Select[T]</code> for models, scalars, or inline record shapes.</p>
 </div>
 <div class="latest-change-actions">
-<a href="/features/orm#typed-queries-with-structural-records">Explore typed queries <span aria-hidden="true">→</span></a>
-<a class="latest-change-changelog" href="/changelog">See changelog</a>
+<a href="/features/sql">Explore typed queries <span aria-hidden="true">→</span></a>
+<a class="latest-change-changelog" href="https://github.com/telgatech/gpp/blob/main/CHANGELOG.md">See changelog</a>
 </div>
 </footer>
 

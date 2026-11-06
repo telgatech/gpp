@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	stdhttp "net/http"
 	"reflect"
@@ -12,6 +13,30 @@ import (
 )
 
 const gppDefaultMaxBodyBytes int64 = 1 << 20
+
+type gppHTTPRecordFieldProvider interface {
+	GppRecordField(index int) any
+}
+
+func gppBindRequestAs[T any](request *stdhttp.Request, response stdhttp.ResponseWriter) (T, error) {
+	var result T
+	resultValue := reflect.ValueOf(&result).Elem()
+	target := any(&result)
+	if resultValue.Kind() == reflect.Ptr {
+		if resultValue.Type().Elem().Kind() != reflect.Struct {
+			return result, fmt.Errorf("http: bind type must be a struct or pointer to struct")
+		}
+		allocated := reflect.New(resultValue.Type().Elem())
+		resultValue.Set(allocated)
+		target = allocated.Interface()
+	} else if resultValue.Kind() != reflect.Struct {
+		return result, fmt.Errorf("http: bind type must be a struct or pointer to struct")
+	}
+	if err := gppBindRequest(request, response, target); err != nil {
+		return result, err
+	}
+	return result, nil
+}
 
 func gppBindRequest(request *stdhttp.Request, response stdhttp.ResponseWriter, target any) error {
 	if request.Method == stdhttp.MethodGet || request.Method == stdhttp.MethodHead {
@@ -36,6 +61,9 @@ func gppBindJSON(request *stdhttp.Request, response stdhttp.ResponseWriter, targ
 		return err
 	}
 	request.Body = stdhttp.MaxBytesReader(response, request.Body, gppDefaultMaxBodyBytes)
+	if _, ok := target.(gppHTTPRecordFieldProvider); ok {
+		return gppBindJSONRecord(request.Body, target)
+	}
 	if err := json.NewDecoder(request.Body).Decode(target); err != nil {
 		return fmt.Errorf("http: decode JSON request body: %w", err)
 	}
@@ -59,10 +87,17 @@ func gppBindValues(values map[string][]string, target any, tagName string) error
 		return fmt.Errorf("http: bind target must point to a struct, got %s", value.Kind())
 	}
 	typeOf := value.Type()
+	provider, hasProvider := target.(gppHTTPRecordFieldProvider)
 	for index := 0; index < value.NumField(); index++ {
 		fieldType := typeOf.Field(index)
 		fieldValue := value.Field(index)
-		if fieldType.PkgPath != "" || !fieldValue.CanSet() {
+		if hasProvider {
+			fieldTarget := provider.GppRecordField(index)
+			if fieldTarget == nil {
+				return fmt.Errorf("http: could not access record field %q", fieldType.Name)
+			}
+			fieldValue = reflect.ValueOf(fieldTarget).Elem()
+		} else if fieldType.PkgPath != "" || !fieldValue.CanSet() {
 			continue
 		}
 		name := gppBindFieldName(fieldType, tagName)
@@ -75,6 +110,37 @@ func gppBindValues(values map[string][]string, target any, tagName string) error
 		}
 		if err := gppSetBindField(fieldValue, fieldValues); err != nil {
 			return fmt.Errorf("http: bind field %s: %w", fieldType.Name, err)
+		}
+	}
+	return nil
+}
+
+func gppBindJSONRecord(body io.Reader, target any) error {
+	provider, ok := target.(gppHTTPRecordFieldProvider)
+	if !ok {
+		return fmt.Errorf("http: JSON record target does not expose its fields")
+	}
+	var values map[string]json.RawMessage
+	if err := json.NewDecoder(body).Decode(&values); err != nil {
+		return fmt.Errorf("http: decode JSON request body: %w", err)
+	}
+	value := reflect.ValueOf(target).Elem()
+	typeOf := value.Type()
+	for inputName, raw := range values {
+		for index := 0; index < value.NumField(); index++ {
+			fieldType := typeOf.Field(index)
+			name := gppBindFieldName(fieldType, "json")
+			if name == "" || !strings.EqualFold(name, inputName) {
+				continue
+			}
+			fieldTarget := provider.GppRecordField(index)
+			if fieldTarget == nil {
+				return fmt.Errorf("http: could not access record field %q", fieldType.Name)
+			}
+			if err := json.Unmarshal(raw, fieldTarget); err != nil {
+				return fmt.Errorf("http: bind field %s: %w", fieldType.Name, err)
+			}
+			break
 		}
 	}
 	return nil

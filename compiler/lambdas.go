@@ -206,6 +206,16 @@ func lambdaParameterTypeNodes(parameters []ParameterNode) map[string]TypeNode {
 	return result
 }
 
+func lambdaParameterTypeTexts(parameters map[string]TypeNode) map[string]string {
+	result := make(map[string]string, len(parameters))
+	for name, typeNode := range parameters {
+		if typeName, err := typeNodeSource(typeNode); err == nil {
+			result[name] = strings.TrimSpace(typeName)
+		}
+	}
+	return result
+}
+
 // lambdaResultTypeNodeAST keeps direct lambda lowering typed. The older
 // lambdaResultTypeAST helper remains for the source compatibility rewriter,
 // whose overload candidates are still represented as rendered type text.
@@ -251,6 +261,9 @@ func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode
 	if call, ok := expression.(*CallExpr); ok {
 		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "len" {
 			return lambdaNamedType("int")
+		}
+		if result := staticCallResultTypeNode(call, context, lambdaParameterTypeTexts(parameters)); result != "" {
+			return parseTypeText(result)
 		}
 	}
 	if index, ok := expression.(*IndexExpr); ok {
@@ -1649,6 +1662,9 @@ func lambdaExpressionTypeNode(expression ExprNode, parameters map[string]string,
 	if call, ok := expression.(*CallExpr); ok {
 		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "len" {
 			return "int"
+		}
+		if result := staticCallResultTypeNode(call, context, parameters); result != "" {
+			return result
 		}
 	}
 	if index, ok := expression.(*IndexExpr); ok {

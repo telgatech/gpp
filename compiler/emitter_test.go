@@ -936,7 +936,15 @@ class Holder {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), "Value __gpp_Person") {
+	fieldWasLowered := false
+	for _, line := range strings.Split(string(code), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Value ") && strings.Contains(trimmed, "__gpp_Person") {
+			fieldWasLowered = true
+			break
+		}
+	}
+	if !fieldWasLowered {
 		t.Fatalf("polymorphic field was not lowered to the dispatch interface:\n%s", code)
 	}
 }
@@ -1876,11 +1884,12 @@ class Model {
 class Employee : Model {}
 
 func main() {
-	page := Employee.Page()
+	var page []*Employee = Employee.Page()
     if page.NotEmpty() {
         last := page.Last()
         _ = last
     }
+    page.Each(func(employee *Employee) error { return nil })
 }
 `)
 	if err != nil {
@@ -1895,6 +1904,9 @@ func main() {
 		if !strings.Contains(generated, name) {
 			t.Fatalf("pointer slice helper %s was not lowered:\n%s", name, generated)
 		}
+	}
+	if strings.Contains(generated, "page.Each(") || strings.Count(generated, "GppPreludeExt___T_Each_") < 2 {
+		t.Fatalf("Each callback for a pointer slice from an inherited static Self result was not lowered:\n%s", generated)
 	}
 }
 
@@ -1921,7 +1933,7 @@ func main() {
 	employee := appFile.Decls[0].(*ClassDecl)
 	context := localConstructorContext(map[string]*ClassDecl{"Employee": employee})
 	context.Targets["orm.Model"] = constructorTarget{Class: model, Classes: map[string]*ClassDecl{"Model": model}, Qualifier: "orm"}
-	context.StaticMethodSignatures["orm.Model"] = staticMethodSignaturesForClass(model, map[string]*ClassDecl{"Model": model}, map[string]bool{})
+	context.StaticMethodSignatures["orm.Model"] = staticMethodSignaturesForClass(model, map[string]*ClassDecl{"Model": model}, map[*ClassDecl]bool{})
 	function := appFile.Decls[1].(*FunctionDecl)
 	got := lambdaValueTypesAST([]*BlockStmt{function.Method.BodyAST}, context)["page"]
 	if got != "[]*Employee" {

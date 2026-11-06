@@ -117,6 +117,12 @@ class Context {
 	}
 }
 
+extend *Context {
+	func Bind[T any]() (T, error) {
+		return gppBindRequestAs[T](this.Request, this.Response)
+	}
+}
+
 func gppNewContext(response stdhttp.ResponseWriter, request *stdhttp.Request) *Context {
 	ctx := Context(Response: response, Request: request, Values: map[string]any{})
 	ctx.SSE = SSEStream(Context: ctx)

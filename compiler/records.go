@@ -108,7 +108,7 @@ func (context *recordContext) definitions() string {
 			fmt.Fprintf(&output, "\t%s %s\n", field.Name, field.Type)
 		}
 		output.WriteString("}\n\n")
-		fmt.Fprintf(&output, "func (value *%s) GppORMRecordField(index int) any {\n", shape.GoName)
+		fmt.Fprintf(&output, "func (value *%s) GppRecordField(index int) any {\n", shape.GoName)
 		output.WriteString("\tswitch index {\n")
 		for index, field := range shape.Fields {
 			fmt.Fprintf(&output, "\tcase %d: return &value.%s\n", index, field.Name)

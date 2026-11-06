@@ -32,7 +32,7 @@ export default defineConfig({
       { text: 'Standard library', link: '/guide/standard-library' },
       { text: 'Tooling', link: '/guide/tooling' },
       { text: 'Specifications', link: '/reference/specifications' },
-      { text: 'Changelog', link: '/changelog' },
+      { text: 'Changelog', link: 'https://github.com/telgatech/gpp/blob/main/CHANGELOG.md' },
       { text: 'About', link: '/about' }
     ],
     sidebar: {
@@ -67,7 +67,8 @@ export default defineConfig({
             { text: 'Embedded assets', link: '/features/embedded-assets' },
             { text: 'HTTP servers and routes', link: '/features/http' },
             { text: 'OpenAPI, Swagger, and OAuth', link: '/features/api-documentation' },
-            { text: 'ORM and SQL', link: '/features/orm' },
+            { text: 'Typed SQL queries', link: '/features/sql' },
+            { text: 'ORM models', link: '/features/orm' },
             { text: 'Suite-based tests', link: '/features/testing' },
             { text: 'External template reloads', link: '/features/template-reload' }
           ]
@@ -91,6 +92,7 @@ export default defineConfig({
             { text: 'Overview', link: '/guide/standard-library' },
             { text: 'Prelude (implicit)', link: '/guide/standard-library/prelude' },
             { text: 'gpp/cron', link: '/guide/standard-library/cron' },
+            { text: 'gpp/sql', link: '/guide/standard-library/sql' },
             { text: 'gpp/orm', link: '/guide/standard-library/orm' },
             {
               text: 'gpp/http',

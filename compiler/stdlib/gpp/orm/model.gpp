@@ -1,12 +1,36 @@
 package gpp.orm
 
 class Model {
+	func GppSQLGetQuery(where string) (string, error) {
+		entity := gppORMDynamicObject(this)
+		descriptor := gppORMRuntimeClass(entity)
+		query, _, err := gppORMQuery(descriptor, where, "LIMIT 1")
+		return query, err
+	}
+
+	func GppSQLSelectQuery(where string) (string, error) {
+		entity := gppORMDynamicObject(this)
+		descriptor := gppORMRuntimeClass(entity)
+		query, _, err := gppORMQuery(descriptor, where, "")
+		return query, err
+	}
+
+	func GppSQLScanTargets(columnNames []string) ([]any, error) {
+		entity := gppORMDynamicObject(this)
+		descriptor := gppORMRuntimeClass(entity)
+		columns, err := gppORMColumns(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		return gppORMModelScanTargets(entity, columnNames, columns)
+	}
+
 	static func Get(exec SQLExecutor, where string, args ...any) (*self, error) {
-		return GetModel[self](exec, where, args...)
+		return gppORMGetModel[self](exec, where, args...)
 	}
 
 	static func Select(exec SQLExecutor, where string, args ...any) ([]*self, error) {
-		return SelectModel[self](exec, where, args...)
+		return gppORMSelectModel[self](exec, where, args...)
 	}
 
 	static func All(exec SQLExecutor, sortBy string = "") ([]*self, error) {

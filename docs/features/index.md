@@ -32,7 +32,8 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Embedded assets](./embedded-assets)
 - [HTTP servers and routes](./http)
 - [OpenAPI, Swagger, and OAuth](./api-documentation)
-- [ORM and SQL](./orm)
+- [Typed SQL queries](./sql)
+- [ORM models](./orm)
 - [Suite-based tests](./testing)
 - [External template reloads](./template-reload)
 

@@ -64,7 +64,7 @@ func safeCoalescePlan(expression ExprNode, context constructorContext, valueType
 	if !safeReceiverCanBeNil(receiverText, target) {
 		return nil, false, fmt.Errorf("safe access receiver must be a pointer or interface")
 	}
-	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[string]bool{})
+	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[*ClassDecl]bool{})
 	if err != nil {
 		return nil, false, err
 	}

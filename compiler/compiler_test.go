@@ -475,14 +475,31 @@ class App : http.Server @{http.IP("127.0.0.1")} {
         return nil
     }
 
+    func Handle(ctx *http.Context) (bool, error) {
+        events = append(events, "handle")
+        ctx.Set("front-controller", "shared")
+        if ctx.Request.URL.Path == "/handled" {
+            return true, ctx.Text("handled")
+        }
+        if ctx.Request.URL.Path == "/handle-error" {
+            return false, fmt.Errorf("front controller failed")
+        }
+        return false, nil
+    }
+
     func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
         events = append(events, "route")
-        return ctx.Text(fmt.Sprintf("%s %s", ctx.Get("marker"), ctx.Param("name")))
+        return ctx.Text(fmt.Sprintf("%s %s %s", ctx.Get("marker"), ctx.Get("front-controller"), ctx.Param("name")))
     }
 
     func AfterRequest(ctx *http.Context) error {
         events = append(events, "after-request")
         return nil
+    }
+
+    func Error(ctx *http.Context, code int, cause error) error {
+        events = append(events, "error")
+        return ctx.Text(code, fmt.Sprint(code))
     }
 
     func BeforeShutdown() error {
@@ -499,7 +516,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 func main() {
     app := App()
     done := make(chan error, 1)
-    go func() { done <- app.Listen() }()
+    go func() { done <- app.Listen(0) }()
 
     var response *stdhttp.Response
     var err error
@@ -515,6 +532,20 @@ func main() {
         if response == nil { time.Sleep(time.Millisecond) }
     }
     body, err := io.ReadAll(response.Body)
+    if err != nil { panic(err) }
+    response.Body.Close()
+    fmt.Println(response.StatusCode, string(body))
+
+    response, err = stdhttp.Get("http://" + app.HTTPServer.Addr + "/handled")
+    if err != nil { panic(err) }
+    body, err = io.ReadAll(response.Body)
+    if err != nil { panic(err) }
+    response.Body.Close()
+    fmt.Println(response.StatusCode, string(body))
+
+    response, err = stdhttp.Get("http://" + app.HTTPServer.Addr + "/handle-error")
+    if err != nil { panic(err) }
+    body, err = io.ReadAll(response.Body)
     if err != nil { panic(err) }
     response.Body.Close()
     fmt.Println(response.StatusCode, string(body))
@@ -546,8 +577,104 @@ func main() {
 	if !strings.Contains(result, "gpp/http: listening on 127.0.0.1:") {
 		t.Fatalf("server did not report its actual listener address:\n%s", output)
 	}
-	if !strings.Contains(result, "200 shared Go\nbefore-listen,after-listen,before-request,route,after-request,before-shutdown,after-shutdown\n") {
+	if !strings.Contains(result, "200 shared shared Go\n200 handled\n500 500\nbefore-listen,after-listen,before-request,handle,route,after-request,before-request,handle,after-request,before-request,handle,after-request,error,before-shutdown,after-shutdown\n") {
 		t.Fatalf("unexpected HTTP response:\n%s", output)
+	}
+}
+
+func TestCompileFilesBindsHTTPIntoGenericTypes(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+	"fmt"
+	"net/http/httptest"
+	"strings"
+	http "gpp/http"
+)
+
+class ClassInput {
+	Name string
+	Age int
+}
+
+class App : http.Server {
+	func Ping(ctx *http.Context) error @{http.GET("/ping")} {
+		return ctx.Text("pong")
+	}
+}
+
+type GoInput struct {
+	Name string
+	Age int
+}
+
+func newContext(method string, target string, contentType string, body string) *http.Context {
+	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	request.Header.Set("Content-Type", contentType)
+	response := httptest.NewRecorder()
+	return &http.Context{
+		Response: response,
+		Request: request,
+		Values: map[string]any{},
+	}
+}
+
+func main() {
+	classContext := newContext("POST", "/class", "application/json", "{\"name\":\"Ada\",\"age\":37,\"extra\":true}")
+	classValue := classContext.Bind[ClassInput]()
+	if classValue.Name != "Ada" || classValue.Age != 37 { panic("class JSON binding failed") }
+
+	pointerContext := newContext("POST", "/class-pointer", "application/json", "{\"name\":\"Lin\",\"age\":42}")
+	pointerValue := pointerContext.Bind[*ClassInput]()
+	if pointerValue.Name != "Lin" || pointerValue.Age != 42 { panic("pointer class JSON binding failed") }
+
+	structContext := newContext("POST", "/struct", "application/json", "{\"name\":\"Grace\",\"age\":85}")
+	structValue := structContext.Bind[GoInput]()
+	if structValue.Name != "Grace" || structValue.Age != 85 { panic("Go struct JSON binding failed") }
+
+	recordContext := newContext("POST", "/record", "application/json", "{\"name\":\"Margaret\",\"age\":86,\"ignored\":\"field\"}")
+	recordValue := recordContext.Bind[record(name: string, age: int)]()
+	if recordValue.name != "Margaret" || recordValue.age != 86 { panic("record JSON binding failed") }
+
+	pointerRecordContext := newContext("POST", "/record-pointer", "application/json", "{\"name\":\"Lin\",\"age\":42}")
+	pointerRecord := pointerRecordContext.Bind[*record(name: string, age: int)]()
+	if pointerRecord.name != "Lin" || pointerRecord.age != 42 { panic("pointer record JSON binding failed") }
+
+	queryContext := newContext("GET", "/query?name=Katherine&age=101", "", "")
+	queryValue := queryContext.Bind[record(name: string, age: int)]()
+	if queryValue.name != "Katherine" || queryValue.age != 101 { panic("record query binding failed") }
+
+	formContext := newContext("POST", "/form", "application/x-www-form-urlencoded", "name=Frances&age=68")
+	formValue := formContext.Bind[ClassInput]()
+	if formValue.Name != "Frances" || formValue.Age != 68 { panic("class form binding failed") }
+
+	badContext := newContext("POST", "/bad", "application/json", "{\"name\":\"bad\",\"age\":\"not an integer\"}")
+	_, bindErr := badContext.Bind[record(name: string, age: int)]()
+	if bindErr == nil { panic("expected invalid record field to return an error") }
+
+	fmt.Println("generic HTTP binding passed")
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generic HTTP binding program did not run: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "generic HTTP binding passed") {
+		t.Fatalf("generic HTTP binding checks did not finish:\n%s", output)
 	}
 }
 
@@ -746,7 +873,7 @@ func requestAsset(base string, path string, contentType string, marker string) {
 func main() {
 	app := App()
 	done := make(chan error, 1)
-	go func() { done <- app.Listen() }()
+	go func() { done <- app.Listen(0) }()
 	for app.HTTPServer == nil {
 		select {
 		case err := <-done:
@@ -1061,7 +1188,7 @@ func main() {
     if err := tpl.Execute(io.Discard, "Page", "hello"); err != nil { panic(err) }
     app := App()
     done := make(chan error, 1)
-    go func() { done <- app.Listen() }()
+    go func() { done <- app.Listen(0) }()
     for app.HTTPServer == nil {
         select {
         case err := <-done:
@@ -2300,6 +2427,36 @@ func NewPerson() *Person {
 	}
 }
 
+func TestCompileFilesAllowsClassNameMatchingImportedParent(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import http "gpp/http"
+
+class Server : http.Server {}
+
+func main() {
+	app := Server()
+	_ = app
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("class name matching imported parent should compile: %v", err)
+	}
+	command := exec.Command("go", "test", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generated class with imported name collision did not build: %v\n%s", err, output)
+	}
+}
+
 func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3186,6 +3343,84 @@ func main() {
 	}
 }
 
+func TestCompileFilesLowersSliceMethodsOnInferredStaticSelfResults(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+class Base {
+    static func Select() ([]*self, error) { return nil, nil }
+}
+
+class Child : Base {
+    func Validate() error { return nil }
+}
+
+func main() {
+    children := Child.Select()
+    children.Each(func(child *Child) error { return nil })
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "build", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("slice method on inferred static Self result did not compile: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesInfersSliceTypeForStaticSelfResults(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+import "errors"
+
+class Base {
+    static func Select() ([]*self, error) { return nil, nil }
+}
+
+class Child : Base {
+    func Validate() error { return errors.New("callback failed") }
+}
+
+func run() error {
+    children := Child.Select()
+    children = append(children, Child())
+    children.Each(child => println("visited"))
+    children.Each(child => child.Validate())
+    return nil
+}
+
+func main() {
+    err := run()
+    if err == nil || err.Error() != "callback failed" {
+        panic("Each did not propagate the callback error")
+    }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("ignored Each error was not promoted to an exception: %v\n%s", err, output)
+	} else if string(output) != "visited\n" {
+		t.Fatalf("Each did not run the non-error callback for every element: %q", output)
+	}
+}
+
 func TestCompileFilesGeneratesStaticORMModelQueries(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3207,6 +3442,7 @@ package main
 import (
     "database/sql"
     orm "gpp/orm"
+    gppsql "gpp/sql"
 )
 
 func LoadEmployee(db *sql.DB, id int64) {
@@ -3267,6 +3503,9 @@ func main() {}
 	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(string(generated), "employees := orm.GppStatic_Model_Select[Employee]") {
+		t.Fatalf("static query error was not promoted:\n%s", generated)
 	}
 	command := exec.Command("go", "test", "./...")
 	command.Dir = outputDir

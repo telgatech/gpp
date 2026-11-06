@@ -67,6 +67,11 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         return ctx.JSON(201, input)
     }
 
+    func CreateUserFromRecord(ctx *http.Context) error @{http.POST("/users/record")} {
+        input := ctx.Bind[record(Name: string, Email: string)]()
+        return ctx.JSON(201, input)
+    }
+
     func Echo(ctx *http.Context) error @{http.WebSocket("/ws/echo")} {
         for {
             var message string
@@ -117,7 +122,7 @@ func main() {
     try {
         app := App()
         app.Mount(AdminRoutes(), "/admin", "admin.localhost")
-        app.Listen()
+        app.Listen(0)
     } catch err {
         if err != stdhttp.ErrServerClosed {
             fmt.Println("HTTP example:", err)

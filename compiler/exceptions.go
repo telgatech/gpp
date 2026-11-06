@@ -424,7 +424,7 @@ func isCatchTypeName(name string, context constructorContext) bool {
 	}
 	base := strings.TrimPrefix(name, "*")
 	if target, ok := context.Targets[base]; ok {
-		return classHasErrorMethod(target.Class, context, map[string]bool{})
+		return classHasErrorMethod(target.Class, context, map[*ClassDecl]bool{})
 	}
 	catchType, ok := nativeCatchNamedType(base, context)
 	if !ok {
@@ -1030,7 +1030,8 @@ func lowerExceptionPromotionStatement(statement Stmt, context constructorContext
 	case *DeclarationStmt:
 		if len(value.Values) == 1 {
 			if call, ok := value.Values[0].(*CallExpr); ok {
-				if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found && result.trailingError && len(value.Names) == len(result.types)-1 {
+				result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes)
+				if found && result.trailingError && len(value.Names) == len(result.types)-1 {
 					lowered, err := wrap(call, false)
 					if err != nil {
 						return err
@@ -3224,7 +3225,7 @@ func validateThrowExpression(expression string, context constructorContext) erro
 			return fmt.Errorf("cannot throw bool; thrown value must implement error")
 		}
 		if open := skipSpace(expression, length); open < len(expression) && expression[open] == '(' {
-			if target, ok := context.Targets[name]; ok && !classHasErrorMethod(target.Class, context, map[string]bool{}) {
+			if target, ok := context.Targets[name]; ok && !classHasErrorMethod(target.Class, context, map[*ClassDecl]bool{}) {
 				return fmt.Errorf("cannot throw %s; thrown value must implement error", name)
 			}
 		}
@@ -3253,7 +3254,7 @@ func validateThrowExpressionNode(expression ExprNode, context constructorContext
 		return validateThrowExpressionNode(value.Inner, context)
 	case *CallExpr:
 		if name, ok := value.Callee.(*NameExpr); ok {
-			if target, found := context.Targets[name.Name]; found && !classHasErrorMethod(target.Class, context, map[string]bool{}) {
+			if target, found := context.Targets[name.Name]; found && !classHasErrorMethod(target.Class, context, map[*ClassDecl]bool{}) {
 				return fmt.Errorf("cannot throw %s; thrown value must implement error", name.Name)
 			}
 		}
@@ -3261,12 +3262,12 @@ func validateThrowExpressionNode(expression ExprNode, context constructorContext
 	return nil
 }
 
-func classHasErrorMethod(class *ClassDecl, context constructorContext, visiting map[string]bool) bool {
-	if class == nil || visiting[class.Name] {
+func classHasErrorMethod(class *ClassDecl, context constructorContext, visiting map[*ClassDecl]bool) bool {
+	if class == nil || visiting[class] {
 		return false
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 	for _, method := range class.Methods {
 		if !method.IsStatic && method.Name == "Error" && methodParametersSource(method) == "" && strings.TrimSpace(methodResultSource(method)) == "string" {
 			return true
@@ -3794,6 +3795,12 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 	if call == nil {
 		return promotedCall{}, false
 	}
+	if result, ok := generatedStaticSelfResultType(call.Callee, context); ok {
+		resultTypes := resultTypesFromText(result)
+		if len(resultTypes) > 0 && isErrorLikeType(resultTypes[len(resultTypes)-1], context) {
+			return promotedCall{types: resultTypes, trailingError: true}, true
+		}
+	}
 	candidates := []callableSignature{}
 	switch function := call.Callee.(type) {
 	case *NameExpr:
@@ -3830,14 +3837,11 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 				candidates = append(candidates, context.ClassMethodSignatures[className][function.Name]...)
 			}
 		}
-		for _, extension := range context.Extensions {
-			if extension.Method.Name == function.Name && extensionTargetMatches(extension.Target, extension.ReceiverType, actualType, context) {
-				// Selector syntax supplies the receiver separately. The generated
-				// function signature includes `this`, but the source call's
-				// argument list does not.
-				parameters := methodCallParameters(extension.Method)
-				candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: methodResultTypeNode(extension.Method)})
-			}
+		// Resolve extension overloads with their arguments so promotion uses the
+		// selected signature when callback overloads have different results.
+		for _, extension := range applicableExtensionASTs(function.Name, actualType, call.Arguments, nil, valueTypes, context) {
+			parameters := methodCallParameters(extension.Method.Method)
+			candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: methodResultTypeNode(extension.Method.Method)})
 		}
 		if native, ok := promotedNativePackageCall(function, call, context); ok {
 			return native, true
@@ -4632,7 +4636,7 @@ func isErrorLikeType(typeName string, context constructorContext) bool {
 	}
 	base := strings.TrimPrefix(typeName, "*")
 	if target, ok := context.Targets[base]; ok {
-		return classHasErrorMethod(target.Class, context, map[string]bool{})
+		return classHasErrorMethod(target.Class, context, map[*ClassDecl]bool{})
 	}
 	return false
 }

@@ -33,6 +33,84 @@ func gppServe(server *stdhttp.Server, listener net.Listener, ready chan bool, do
 	done <- server.Serve(&gppReadyListener{Listener: listener, ready: ready})
 }
 
+type gppHTTPRequestContextKey struct{}
+
+type gppHTTPRequestState struct {
+	Context     *Context
+	FailureCode int
+	Failure     error
+	AfterHandled bool
+}
+
+func gppHTTPRequestStateFor(request *stdhttp.Request) *gppHTTPRequestState {
+	if request == nil {
+		return nil
+	}
+	state, _ := request.Context().Value(gppHTTPRequestContextKey{}).(*gppHTTPRequestState)
+	return state
+}
+
+func gppContextForRequest(response stdhttp.ResponseWriter, request *stdhttp.Request, router any) (*Context, *gppHTTPRequestState) {
+	state := gppHTTPRequestStateFor(request)
+	if state != nil && state.Context != nil {
+		state.Context.Response = response
+		state.Context.Request = request
+		state.Context.TemplateScope = gppTemplateScope(router)
+		return state.Context, state
+	}
+	ctx := gppNewContext(response, request)
+	ctx.TemplateScope = gppTemplateScope(router)
+	return ctx, nil
+}
+
+func gppCallHandle(app any, ctx *Context) (bool, error) {
+	handler := reflect.ValueOf(app).MethodByName("Handle")
+	if !handler.IsValid() || handler.Type().NumIn() != 1 || handler.Type().In(0) != reflect.TypeOf((*Context)(nil)) || handler.Type().NumOut() != 2 || handler.Type().Out(0).Kind() != reflect.Bool || handler.Type().Out(1) != reflect.TypeOf((*error)(nil)).Elem() {
+		return false, fmt.Errorf("http: Handle must have signature Handle(*http.Context) (bool, error)")
+	}
+	result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
+	return result[0].Bool(), gppErrorResult(result[1:])
+}
+
+func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(response stdhttp.ResponseWriter, request *stdhttp.Request) {
+		ctx := gppNewContext(response, request)
+		ctx.TemplateScope = gppTemplateScope(app)
+		state := &gppHTTPRequestState{Context: ctx}
+		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+			return
+		}
+
+		handled, handleErr := gppCallHandle(app, ctx)
+		if handleErr != nil {
+			state.FailureCode = stdhttp.StatusInternalServerError
+			state.Failure = handleErr
+		} else if !handled && ctx.Written {
+			log.Printf("http: Handle returned false after writing a response; skipping route dispatch")
+		} else if !handled {
+			routedRequest := ctx.Request
+			if routedRequest == nil {
+				routedRequest = request
+			}
+			requestContext := context.WithValue(routedRequest.Context(), gppHTTPRequestContextKey{}, state)
+			routes.ServeHTTP(response, routedRequest.WithContext(requestContext))
+		}
+
+		var afterErr error
+		if !state.AfterHandled {
+			afterErr = gppCallHook(app, "AfterRequest", ctx)
+		}
+		if state.FailureCode != 0 {
+			gppCallError(app, ctx, state.FailureCode, state.Failure)
+			return
+		}
+		if afterErr != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, afterErr)
+		}
+	})
+}
+
 func gppHTTPListenerAddress(address net.Addr) string {
 	tcpAddress, ok := address.(*net.TCPAddr)
 	if !ok {
@@ -128,30 +206,48 @@ func gppCallError(app any, ctx *Context, code int, cause error) {
 
 func gppRouteHandler(router any, app any, methodName string, methodMetadata any, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	handler := reflect.ValueOf(router).MethodByName(methodName)
-	ctx := gppNewContext(w, r)
-	ctx.TemplateScope = gppTemplateScope(router)
+	ctx, state := gppContextForRequest(w, r, router)
 	if !handler.IsValid() {
+		if state != nil {
+			state.FailureCode = stdhttp.StatusInternalServerError
+			state.Failure = fmt.Errorf("route handler not found")
+			return
+		}
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, fmt.Errorf("route handler not found"))
 		return
 	}
-	if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
-		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
-		return
+	if state == nil {
+		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+			return
+		}
 	}
 	arguments, err := gppRouteArguments(handler, methodMetadata, ctx)
 	if err != nil {
+		if state != nil {
+			state.FailureCode = stdhttp.StatusBadRequest
+			state.Failure = err
+			return
+		}
 		gppCallError(app, ctx, stdhttp.StatusBadRequest, err)
 		return
 	}
 	result := handler.Call(arguments)
 	routeErr := gppErrorResult(result)
-	afterErr := gppCallHook(app, "AfterRequest", ctx)
 	if routeErr != nil {
+		if state != nil {
+			state.FailureCode = stdhttp.StatusInternalServerError
+			state.Failure = routeErr
+			return
+		}
+		_ = gppCallHook(app, "AfterRequest", ctx)
 		gppCallError(app, ctx, stdhttp.StatusInternalServerError, routeErr)
 		return
 	}
-	if afterErr != nil {
-		gppCallError(app, ctx, stdhttp.StatusInternalServerError, afterErr)
+	if state == nil {
+		if afterErr := gppCallHook(app, "AfterRequest", ctx); afterErr != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, afterErr)
+		}
 	}
 }
 
@@ -274,11 +370,12 @@ func gppValidateRouteSignature(handler reflect.Value, methodMetadata any) error 
 }
 
 func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	ctx := gppNewContext(w, r)
-	ctx.TemplateScope = gppTemplateScope(router)
-	if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
-		gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
-		return
+	ctx, state := gppContextForRequest(w, r, router)
+	if state == nil {
+		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+			return
+		}
 	}
 	wsHandler := gppwebsocket.Handler(func(connection *gppwebsocket.Conn) {
 		defer connection.Close()
@@ -292,9 +389,15 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		}
 		result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
 		routeErr := gppErrorResult(result)
+		if state != nil {
+			state.AfterHandled = true
+		}
 		afterErr := gppCallHook(app, "AfterRequest", ctx)
 		if routeErr != nil {
 			log.Printf("http: websocket handler %s failed: %v", methodName, routeErr)
+			if afterErr != nil {
+				log.Printf("http: after-request hook failed after websocket handler %s: %v", methodName, afterErr)
+			}
 			_ = connection.Close()
 			return
 		}
@@ -574,8 +677,11 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 	}
 	if fallback {
 		return gppRegisterMuxHandler(mux, "/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-			ctx := gppNewContext(w, r)
-			ctx.TemplateScope = gppTemplateScope(app)
+			ctx, state := gppContextForRequest(w, r, app)
+			if state != nil {
+				state.FailureCode = stdhttp.StatusNotFound
+				return
+			}
 			gppCallError(app, ctx, stdhttp.StatusNotFound, nil)
 		})
 	}
@@ -743,6 +849,10 @@ class Server {
 		return nil
 	}
 
+	func Handle(ctx *Context) (bool, error) {
+		return false, nil
+	}
+
 	func AfterRequest(ctx *Context) error {
 		return nil
 	}
@@ -774,22 +884,20 @@ class Server {
 		return nil
 	}
 
-	func Listen() error {
+	func Listen(port int) error {
 		app := any(this)
 		if this.GppDynamicObject != nil {
 			app = this.GppDynamicObject
 		}
 		descriptor := gppRuntimeClass(app)
 		network := "tcp"
-		address := ":0"
+		address := ":" + fmt.Sprint(port)
 		if args := gppAnnotationArgs(descriptor, "gpp.http.Unix"); len(args) > 0 {
 			network = "unix"
 			address = fmt.Sprint(args[0])
 		}
-		if network == "tcp" {
-			if args := gppAnnotationArgs(descriptor, "gpp.http.Port"); len(args) > 0 {
-				address = ":" + fmt.Sprint(args[0])
-			}
+		if network == "unix" && port != 0 {
+			return fmt.Errorf("http: cannot pass a port when using a Unix socket")
 		}
 		if network == "tcp" {
 			if args := gppAnnotationArgs(descriptor, "gpp.http.IP"); len(args) > 0 {
@@ -865,7 +973,7 @@ class Server {
 			_ = listener.Close()
 			return err
 		}
-		this.HTTPServer = &stdhttp.Server{Handler: mux, Addr: listener.Addr().String()}
+		this.HTTPServer = &stdhttp.Server{Handler: gppDispatchRequests(app, mux), Addr: listener.Addr().String()}
 		if err := gppCallHook(app, "SetupShutdownHandler", nil); err != nil {
 			_ = listener.Close()
 			return err

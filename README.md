@@ -69,8 +69,10 @@ feature with comparisons and examples.
   annotated routing, request binding, middleware, and lifecycle hooks.
 - **[OpenAPI, Swagger, and OAuth](docs/features/api-documentation.md)** —
   Generate API documentation and interactive Swagger UI, with OAuth/OIDC support.
-- **[ORM and SQL](docs/features/orm.md)** — Map annotated models to SQL and use
-  database operations that invoke validation and lifecycle hooks.
+- **[Typed SQL queries](docs/features/sql.md)** — Return scalars, inline records,
+  structs, or models from full SQL statements.
+- **[ORM models](docs/features/orm.md)** — Map annotated models to tables and
+  use model-oriented queries and persistence hooks.
 - **[Typed templates](docs/features/templates.md)** — Define HTML/XML templates
   as functions and render them with Go's `html/template` protections.
 - **[External template reloads](docs/features/template-reload.md)** — Reload

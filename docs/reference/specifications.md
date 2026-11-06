@@ -38,6 +38,7 @@ before each docs development or production build.
 - [HTTP WebSockets](./specifications/std.http.websocket)
 - [HTTP lifecycle](./specifications/std.http.lifecycle)
 - [OAuth](./specifications/http.oauth)
+- [Typed SQL queries](./specifications/std.sql)
 - [ORM](./specifications/std.orm)
 - [OpenAPI and Swagger](./specifications/openapi-swagger)
 - [Swagger UI](./specifications/swagger-ui)

@@ -1033,7 +1033,7 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 	}
 	class := target.Class
 	classes := classesForClass(context, class)
-	fields, err := constructorFields(class, classes, nil, map[string]bool{})
+	fields, err := constructorFields(class, classes, nil, map[*ClassDecl]bool{})
 	if err != nil {
 		return nil, true, err
 	}
@@ -1066,7 +1066,7 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		}
 		if base, dispatch := dispatchTargetForTypeName(field.Type, context); dispatch {
 			if concreteName, concreteOK := expressionTypeName(value); concreteOK {
-				if concrete, exists := context.Targets[concreteName]; exists && sameConstructorPackage(base, concrete) && (concrete.Class == base.Class || classInherits(concrete.Class, base.Class, concrete.Classes, map[string]bool{})) {
+				if concrete, exists := context.Targets[concreteName]; exists && sameConstructorPackage(base, concrete) && (concrete.Class == base.Class || classInherits(concrete.Class, base.Class, concrete.Classes, map[*ClassDecl]bool{})) {
 					if _, pointer := value.(*UnaryExpr); !pointer {
 						value = &UnaryExpr{Operator: "&", Operand: value}
 					}

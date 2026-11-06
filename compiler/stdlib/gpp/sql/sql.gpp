@@ -1,0 +1,320 @@
+package gpp.sql
+
+import (
+	"database/sql"
+	"fmt"
+	"reflect"
+	"strings"
+	std "gpp/std"
+)
+
+type gppSQLExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+type gppSQLModelScanner interface {
+	GppSQLScanTargets(columnNames []string) ([]any, error)
+}
+
+type gppSQLModelQueryBuilder interface {
+	GppSQLGetQuery(where string) (string, error)
+	GppSQLSelectQuery(where string) (string, error)
+}
+
+type gppSQLRecordFieldProvider interface {
+	GppRecordField(index int) any
+}
+
+func gppSQLNormalizeFieldName(value string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", ""))
+}
+
+func gppSQLIsSelectQuery(query string) bool {
+	query = strings.ToUpper(strings.TrimSpace(query))
+	for _, keyword := range []string{"SELECT", "WITH"} {
+		if query == keyword || strings.HasPrefix(query, keyword+" ") || strings.HasPrefix(query, keyword+"\n") || strings.HasPrefix(query, keyword+"\t") {
+			return true
+		}
+	}
+	return false
+}
+
+func gppSQLScalarScanTarget(target any) bool {
+	if _, ok := target.(sql.Scanner); ok {
+		return true
+	}
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() {
+		return false
+	}
+	return value.Elem().Kind() != reflect.Struct
+}
+
+func gppSQLPrepareGetTarget(target any) (any, any, error) {
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() {
+		return nil, nil, fmt.Errorf("Get target must be a non-nil pointer")
+	}
+	result := value.Elem()
+	if result.Kind() != reflect.Ptr {
+		return target, nil, nil
+	}
+	if result.Type().Elem().Kind() == reflect.Ptr {
+		return nil, nil, fmt.Errorf("sql: Get supports one pointer level in the result type")
+	}
+	allocated := reflect.New(result.Type().Elem())
+	return allocated.Interface(), allocated.Interface(), nil
+}
+
+func gppSQLStoreGetTarget(target any, allocated any) {
+	if allocated == nil {
+		return
+	}
+	reflect.ValueOf(target).Elem().Set(reflect.ValueOf(allocated))
+}
+
+func gppSQLRecordScanTargets(target any, columnNames []string) ([]any, error) {
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() || value.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("sql: result target must be a non-nil pointer to a struct or record")
+	}
+	provider, hasProvider := target.(gppSQLRecordFieldProvider)
+	typeOfRecord := value.Elem().Type()
+	exactFields := make(map[string]int, typeOfRecord.NumField())
+	normalizedFields := make(map[string]int, typeOfRecord.NumField())
+	ambiguousFields := map[string]bool{}
+	for index := 0; index < typeOfRecord.NumField(); index++ {
+		field := typeOfRecord.Field(index)
+		if field.PkgPath != "" && !hasProvider {
+			continue
+		}
+		name := field.Name
+		exactFields[name] = index
+		normalized := gppSQLNormalizeFieldName(name)
+		if previous, exists := normalizedFields[normalized]; exists && previous != index {
+			ambiguousFields[normalized] = true
+		} else {
+			normalizedFields[normalized] = index
+		}
+	}
+	targets := make([]any, len(columnNames))
+	usedFields := map[int]string{}
+	for columnIndex, columnName := range columnNames {
+		fieldIndex, exists := exactFields[columnName]
+		if !exists {
+			normalized := gppSQLNormalizeFieldName(columnName)
+			if ambiguousFields[normalized] {
+				return nil, fmt.Errorf("sql: result column %q matches multiple fields; use an explicit SQL alias", columnName)
+			}
+			fieldIndex, exists = normalizedFields[normalized]
+		}
+		if !exists {
+			targets[columnIndex] = new(any)
+			continue
+		}
+		if previous, duplicate := usedFields[fieldIndex]; duplicate {
+			return nil, fmt.Errorf("sql: result columns %q and %q both map to the same field", previous, columnName)
+		}
+		var fieldTarget any
+		if hasProvider {
+			fieldTarget = provider.GppRecordField(fieldIndex)
+		} else {
+			field := value.Elem().Field(fieldIndex)
+			if field.CanAddr() && field.CanInterface() {
+				fieldTarget = field.Addr().Interface()
+			}
+		}
+		if fieldTarget == nil {
+			return nil, fmt.Errorf("sql: could not access result field %q", typeOfRecord.Field(fieldIndex).Name)
+		}
+		targets[columnIndex] = fieldTarget
+		usedFields[fieldIndex] = columnName
+	}
+	return targets, nil
+}
+
+func gppSQLScanTargets(target any, columnNames []string) ([]any, error) {
+	if scanner, ok := target.(gppSQLModelScanner); ok {
+		return scanner.GppSQLScanTargets(columnNames)
+	}
+	return gppSQLRecordScanTargets(target, columnNames)
+}
+
+func gppSQLGetQuery(exec gppSQLExecutor, target any, query string, args ...any) error {
+	scanTarget, allocatedTarget, err := gppSQLPrepareGetTarget(target)
+	if err != nil {
+		return err
+	}
+	query = strings.TrimSpace(query)
+	if !gppSQLIsSelectQuery(query) {
+		return fmt.Errorf("sql: Get requires a full SELECT query")
+	}
+	if gppSQLScalarScanTarget(scanTarget) {
+		if err := exec.QueryRow(query, args...).Scan(scanTarget); err != nil {
+			return err
+		}
+		gppSQLStoreGetTarget(target, allocatedTarget)
+		return nil
+	}
+	rows, err := exec.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
+	scanValues, err := gppSQLScanTargets(scanTarget, columnNames)
+	if err != nil {
+		return err
+	}
+	if err := rows.Scan(scanValues...); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	gppSQLStoreGetTarget(target, allocatedTarget)
+	return nil
+}
+
+func gppSQLSelectQuery(exec gppSQLExecutor, target any, query string, args ...any) error {
+	targetValue := reflect.ValueOf(target)
+	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() || targetValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("sql: Select target must be a non-nil pointer to a result slice")
+	}
+	query = strings.TrimSpace(query)
+	if !gppSQLIsSelectQuery(query) {
+		return fmt.Errorf("sql: Select requires a full SELECT query")
+	}
+	elementType := targetValue.Elem().Type().Elem()
+	elementIsPointer := elementType.Kind() == reflect.Ptr
+	if elementIsPointer {
+		elementType = elementType.Elem()
+		if elementType.Kind() == reflect.Ptr {
+			return fmt.Errorf("sql: Select supports one pointer level in the result type")
+		}
+	}
+	prototype := reflect.New(elementType).Interface()
+	if !gppSQLScalarScanTarget(prototype) && elementType.Kind() != reflect.Struct {
+		return fmt.Errorf("sql: Select result type must be a struct, record, or scalar")
+	}
+	rows, err := exec.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if gppSQLScalarScanTarget(prototype) {
+		for rows.Next() {
+			item := reflect.New(elementType)
+			if err := rows.Scan(item.Interface()); err != nil {
+				return err
+			}
+			if elementIsPointer {
+				targetValue.Elem().Set(reflect.Append(targetValue.Elem(), item))
+			} else {
+				targetValue.Elem().Set(reflect.Append(targetValue.Elem(), item.Elem()))
+			}
+		}
+		return rows.Err()
+	}
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		itemValue := reflect.New(elementType)
+		scanValues, err := gppSQLScanTargets(itemValue.Interface(), columnNames)
+		if err != nil {
+			return err
+		}
+		if err := rows.Scan(scanValues...); err != nil {
+			return err
+		}
+		if elementIsPointer {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue))
+		} else {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+		}
+	}
+	return rows.Err()
+}
+
+func gppSQLDestinationGet(exec gppSQLExecutor, target any, query string, args ...any) error {
+	query = strings.TrimSpace(query)
+	if !gppSQLIsSelectQuery(query) {
+		builder, ok := target.(gppSQLModelQueryBuilder)
+		if !ok {
+			return fmt.Errorf("sql: Get requires a full SELECT query")
+		}
+		var err error
+		query, err = builder.GppSQLGetQuery(query)
+		if err != nil {
+			return err
+		}
+	}
+	return gppSQLGetQuery(exec, target, query, args...)
+}
+
+func gppSQLDestinationSelect(exec gppSQLExecutor, target any, query string, args ...any) error {
+	query = strings.TrimSpace(query)
+	if !gppSQLIsSelectQuery(query) {
+		targetValue := reflect.ValueOf(target)
+		if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() || targetValue.Elem().Kind() != reflect.Slice {
+			return fmt.Errorf("sql: Select target must be a non-nil pointer to a result slice")
+		}
+		elementType := targetValue.Elem().Type().Elem()
+		if elementType.Kind() == reflect.Ptr {
+			elementType = elementType.Elem()
+		}
+		builder, ok := reflect.New(elementType).Interface().(gppSQLModelQueryBuilder)
+		if !ok {
+			return fmt.Errorf("sql: Select requires a full SELECT query")
+		}
+		var err error
+		query, err = builder.GppSQLSelectQuery(query)
+		if err != nil {
+			return err
+		}
+	}
+	return gppSQLSelectQuery(exec, target, query, args...)
+}
+
+extend *sql.DB, *sql.Tx {
+	func Get[T any](query string, args ...any) (T, error) {
+		var target T
+		if err := gppSQLGetQuery(this, &target, query, args...); err != nil {
+			return target, err
+		}
+		return target, nil
+	}
+
+	func Get(target any, query string, args ...any) error @{
+		std.Deprecated("Use Get[T](query, args...) or the ORM model Get method instead")
+	} {
+		return gppSQLDestinationGet(this, target, query, args...)
+	}
+
+	func Select[T any](query string, args ...any) ([]T, error) {
+		var target []T
+		if err := gppSQLSelectQuery(this, &target, query, args...); err != nil {
+			return target, err
+		}
+		return target, nil
+	}
+
+	func Select(target any, query string, args ...any) error @{
+		std.Deprecated("Use Select[T](query, args...) or the ORM model Select method instead")
+	} {
+		return gppSQLDestinationSelect(this, target, query, args...)
+	}
+}

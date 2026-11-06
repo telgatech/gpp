@@ -289,12 +289,12 @@ func astArgumentSignatureKey(call *ast.CallExpr, types map[string]string) string
 	return strings.Join(parts, ",")
 }
 
-func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string][]callableSignature {
-	if visiting[class.Name] {
+func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) map[string][]callableSignature {
+	if visiting[class] {
 		return map[string][]callableSignature{}
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	result := map[string][]callableSignature{}
 	for _, method := range class.Methods {
@@ -323,12 +323,12 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 	return result
 }
 
-func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) map[string][]callableSignature {
-	if visiting[class.Name] {
+func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) map[string][]callableSignature {
+	if visiting[class] {
 		return map[string][]callableSignature{}
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	result := map[string][]callableSignature{}
 	localNames := map[string]bool{}
@@ -374,12 +374,12 @@ func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassD
 	return result
 }
 
-func staticMethodsForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]Method, error) {
-	if visiting[class.Name] {
+func staticMethodsForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) ([]Method, error) {
+	if visiting[class] {
 		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	methods := []Method{}
 	localNames := map[string]bool{}
@@ -1878,10 +1878,10 @@ func staticExpressionTypeNode(expression ExprNode, context constructorContext, v
 		}
 	case *NameExpr:
 		if valueTypes != nil && valueTypes[value.Name] != "" {
-			return valueTypes[value.Name]
+			return promotedResultValueType(valueTypes[value.Name], context)
 		}
 		if context.GlobalValueTypes != nil && context.GlobalValueTypes[value.Name] != "" {
-			return context.GlobalValueTypes[value.Name]
+			return promotedResultValueType(context.GlobalValueTypes[value.Name], context)
 		}
 		return value.Name
 	case *InterpolatedStringExpr:
@@ -1977,9 +1977,26 @@ func staticExpressionTypeNode(expression ExprNode, context constructorContext, v
 	return ""
 }
 
+func promotedResultValueType(typeName string, context constructorContext) string {
+	results := resultTypesFromText(typeName)
+	if len(results) == 2 && isErrorLikeType(results[1], context) {
+		return results[0]
+	}
+	return typeName
+}
+
 func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueTypes map[string]string) string {
 	if call == nil || call.Callee == nil {
 		return ""
+	}
+	if callee, ok := call.Callee.(*NameExpr); ok && callee.Name == "__gppUnwrap" && len(call.Arguments) == 1 {
+		if inner, ok := call.Arguments[0].Value.(*CallExpr); ok {
+			return staticCallResultTypeNode(inner, context, valueTypes)
+		}
+		return staticExpressionTypeNode(call.Arguments[0].Value, context, valueTypes)
+	}
+	if result, ok := generatedStaticSelfResultType(call.Callee, context); ok {
+		return result
 	}
 	if name, _, ok := constructorTargetForCallee(call.Callee, context); ok {
 		return "*" + name
@@ -2050,6 +2067,58 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 		}
 	}
 	return ""
+}
+
+func generatedStaticSelfResultType(callee ExprNode, context constructorContext) (string, bool) {
+	base := callee
+	arguments := []ExprNode{}
+	switch value := callee.(type) {
+	case *IndexExpr:
+		base = value.Receiver
+		arguments = append(arguments, value.Index)
+	case *IndexListExpr:
+		base = value.Receiver
+		arguments = append(arguments, value.Indices...)
+	default:
+		return "", false
+	}
+	path, ok := directSelectorPath(base)
+	if !ok || len(arguments) != 1 {
+		return "", false
+	}
+	typeName, err := typeNodeSource(expressionTypeNode(arguments[0]))
+	if err != nil || strings.TrimSpace(typeName) == "" {
+		return "", false
+	}
+	for _, methods := range context.StaticMethodSignatures {
+		for _, signatures := range methods {
+			for _, signature := range signatures {
+				if !signature.StaticSelf || signature.GoName == "" {
+					continue
+				}
+				signaturePath := signature.GoName
+				if signature.Qualifier != "" {
+					signaturePath = signature.Qualifier + "." + signaturePath
+				}
+				if signaturePath != path {
+					continue
+				}
+				return substituteLambdaType(signature.resultText(), map[string]string{"self": strings.TrimSpace(typeName)}), true
+			}
+		}
+	}
+	return "", false
+}
+
+func expressionTypeNode(expression ExprNode) TypeNode {
+	if value, ok := expression.(*TypeExpr); ok {
+		return value.Type
+	}
+	text, err := expressionNodeSource(expression)
+	if err != nil {
+		return nil
+	}
+	return parseTypeText(text)
 }
 
 func nativeSelectorFieldTypeNode(selector *SelectorExpr, context constructorContext, valueTypes map[string]string) string {

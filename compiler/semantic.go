@@ -1033,24 +1033,24 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 			context.ClassMethodSignatures[methodKey] = methodSignaturesForClass(
 				class,
 				pkg.Classes,
-				map[string]bool{},
+				map[*ClassDecl]bool{},
 			)
 			context.StaticMethodSignatures[methodKey] = staticMethodSignaturesForClass(
 				class,
 				pkg.Classes,
-				map[string]bool{},
+				map[*ClassDecl]bool{},
 			)
 			context.Overloads.ClassMethods[methodKey] = methodOverloadsForClass(
 				class,
 				pkg.Classes,
-				map[string]bool{},
+				map[*ClassDecl]bool{},
 			)
 			context.Overloads.ClassMethodTypes[methodKey] = methodOverloadTypesForClass(
 				class,
 				pkg.Classes,
-				map[string]bool{},
+				map[*ClassDecl]bool{},
 			)
-			fieldTypes := classFieldTypesForClass(class, pkg.Classes, map[string]bool{})
+			fieldTypes := classFieldTypesForClass(class, pkg.Classes, map[*ClassDecl]bool{})
 			if qualifier != "" {
 				importedTypes := map[string]map[string]bool{qualifier: pkg.Types}
 				for fieldName, typeName := range fieldTypes {
@@ -1129,12 +1129,12 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		context.ClassMethodSignatures[name] = methodSignaturesForClass(
 			class,
 			classesForClass(context, class),
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 		context.StaticMethodSignatures[name] = staticMethodSignaturesForClass(
 			class,
 			classesForClass(context, class),
-			map[string]bool{},
+			map[*ClassDecl]bool{},
 		)
 	}
 
@@ -1179,8 +1179,8 @@ func addClassParentTargets(context *constructorContext, class *ClassDecl, model 
 				Qualifier:     alias,
 				InterfaceName: "Gpp" + importedName,
 			}
-			context.ClassMethodSignatures[key] = methodSignaturesForClass(importedClass, pkg.Classes, map[string]bool{})
-			context.StaticMethodSignatures[key] = staticMethodSignaturesForClass(importedClass, pkg.Classes, map[string]bool{})
+			context.ClassMethodSignatures[key] = methodSignaturesForClass(importedClass, pkg.Classes, map[*ClassDecl]bool{})
+			context.StaticMethodSignatures[key] = staticMethodSignaturesForClass(importedClass, pkg.Classes, map[*ClassDecl]bool{})
 		}
 	}
 	return nil
@@ -1534,7 +1534,7 @@ func officialLogicalPackage(importPath string) (string, bool) {
 }
 
 func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error {
-	ambiguous, err := ambiguousMembers(pkg, class, map[string]map[string][]string{}, map[string]bool{})
+	ambiguous, err := ambiguousMembers(pkg, class, map[*ClassDecl]map[string][]string{}, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
 	}
@@ -1574,7 +1574,7 @@ func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error 
 	return nil
 }
 
-func ambiguousMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]map[string][]string, visiting map[string]bool) (map[string][]string, error) {
+func ambiguousMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
 	members, err := classMembers(pkg, class, cache, visiting)
 	if err != nil {
 		return nil, err
@@ -1590,11 +1590,11 @@ func ambiguousMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]ma
 	return ambiguous, nil
 }
 
-func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]map[string][]string, visiting map[string]bool) (map[string][]string, error) {
-	if members, ok := cache[class.Name]; ok {
+func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
+	if members, ok := cache[class]; ok {
 		return members, nil
 	}
-	if visiting[class.Name] {
+	if visiting[class] {
 		return nil, fmt.Errorf(
 			"%s: inheritance cycle involving class %s",
 			classLocation(class),
@@ -1602,8 +1602,8 @@ func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]map[st
 		)
 	}
 
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	members := map[string][]string{}
 	direct := map[string]bool{}
@@ -1643,7 +1643,7 @@ func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[string]map[st
 		}
 	}
 
-	cache[class.Name] = members
+	cache[class] = members
 	return members, nil
 }
 

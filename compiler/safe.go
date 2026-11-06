@@ -162,7 +162,7 @@ func lowerSafeAccessExprNode(selector *SelectorExpr, call *CallExpr, context con
 	if !ok {
 		return nil, fmt.Errorf("safe access receiver %s has no known class type", receiver.Name)
 	}
-	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[string]bool{})
+	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[*ClassDecl]bool{})
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +495,7 @@ func safeAccessEditForSelector(selector *SelectorExpr, call *CallExpr, src strin
 	if !ok {
 		return safeAccessEdit{}, fmt.Errorf("safe access receiver %s has no known class type", receiverName)
 	}
-	memberType, isMethod, err := safeMemberType(target.Class, target.Classes, selector.Name, map[string]bool{})
+	memberType, isMethod, err := safeMemberType(target.Class, target.Classes, selector.Name, map[*ClassDecl]bool{})
 	if err != nil {
 		return safeAccessEdit{}, err
 	}
@@ -681,7 +681,7 @@ func safeReceiverCanBeNil(typeName string, target constructorTarget) bool {
 	return strings.HasPrefix(name, "*") || name == target.InterfaceName || name == "__gpp_"+target.Class.Name || name == "Gpp"+target.Class.Name
 }
 
-func safeMemberType(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[string]bool) (string, bool, error) {
+func safeMemberType(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[*ClassDecl]bool) (string, bool, error) {
 	memberType, isMethod, err := safeMemberTypeNode(class, classes, name, visiting)
 	if err != nil || memberType == nil {
 		return "", isMethod, err
@@ -696,15 +696,15 @@ func safeMemberType(class *ClassDecl, classes map[string]*ClassDecl, name string
 // safeMemberTypeNode is the typed counterpart used by direct AST lowering.
 // The source-returning safeMemberType above remains for the compatibility
 // rewriter, which still edits source spans in an already-rendered function.
-func safeMemberTypeNode(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[string]bool) (TypeNode, bool, error) {
+func safeMemberTypeNode(class *ClassDecl, classes map[string]*ClassDecl, name string, visiting map[*ClassDecl]bool) (TypeNode, bool, error) {
 	if class == nil {
 		return nil, false, nil
 	}
-	if visiting[class.Name] {
+	if visiting[class] {
 		return nil, false, nil
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	for _, field := range class.Fields {
 		if field.Name == name {

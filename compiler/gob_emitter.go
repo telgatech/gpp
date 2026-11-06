@@ -79,7 +79,7 @@ func serializationQualifierForClass(class *ClassDecl) string {
 }
 
 func gobSerializationFields(class *ClassDecl, context constructorContext) ([]gobSerializationField, error) {
-	fields, err := constructorFields(class, classesForClass(context, class), nil, map[string]bool{})
+	fields, err := constructorFields(class, classesForClass(context, class), nil, map[*ClassDecl]bool{})
 	if err != nil {
 		return nil, err
 	}

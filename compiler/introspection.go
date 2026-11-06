@@ -36,6 +36,9 @@ func fileUsesIntrospection(file *File) bool {
 				return true
 			}
 		case *ClassDecl:
+			if len(classParentNames(value)) > 0 {
+				return true
+			}
 			if len(value.Annotations) > 0 {
 				return true
 			}
@@ -292,7 +295,7 @@ func ensureIntrospectionRuntimeImport(body, importPath string) string {
 }
 
 func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[string]*ClassDecl, context constructorContext) error {
-	fields, err := constructorFields(class, classes, nil, map[string]bool{})
+	fields, err := constructorFields(class, classes, nil, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
 	}
@@ -310,14 +313,14 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		parents = "[]*GppClass{" + strings.Join(parentReferences, ", ") + "}"
 	}
 	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Package: %q, Parents: %s, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, templatePackageScope(context.ModulePath, context.Package), parents, annotationUsesLiteral(class.Annotations, context))
-	methods, err := effectiveMethodDescriptors(class, classes, map[string]bool{})
+	methods, err := effectiveMethodDescriptors(class, classes, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
 	}
 	for _, descriptor := range methods {
 		fmt.Fprintf(out, "\t{Name: %q, Parameters: %s, Result: %s, Annotations: %s},\n", descriptor.Method.Name, methodParametersLiteral(descriptor.Method, context), methodResultLiteral(descriptor.Method), annotationUsesLiteral(descriptor.Method.Annotations, context))
 	}
-	staticMethods, err := effectiveStaticMethodDescriptors(class, classes, map[string]bool{})
+	staticMethods, err := effectiveStaticMethodDescriptors(class, classes, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
 	}
@@ -413,12 +416,12 @@ type methodDescriptor struct {
 	Owner  string
 }
 
-func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]methodDescriptor, error) {
-	if visiting[class.Name] {
+func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) ([]methodDescriptor, error) {
+	if visiting[class] {
 		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	result := []methodDescriptor{}
 	seen := map[string]bool{}
@@ -461,12 +464,12 @@ func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl,
 	return result, nil
 }
 
-func effectiveStaticMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl, visiting map[string]bool) ([]methodDescriptor, error) {
-	if visiting[class.Name] {
+func effectiveStaticMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) ([]methodDescriptor, error) {
+	if visiting[class] {
 		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
 	}
-	visiting[class.Name] = true
-	defer delete(visiting, class.Name)
+	visiting[class] = true
+	defer delete(visiting, class)
 
 	result := []methodDescriptor{}
 	localNames := map[string]bool{}

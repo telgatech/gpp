@@ -967,7 +967,6 @@ No path-variable syntax translation is required.
 
 ```gpp
 class App : http.Server @{
-    http.Port(9000)
     http.OpenAPI
     http.Swagger
 } {

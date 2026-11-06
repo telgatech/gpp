@@ -18,7 +18,6 @@ import http "gpp/http"
 
 class App : http.Server @{
 	http.IP("0.0.0.0"),
-	http.Port(8080),
 	http.Prefix("/api"),
 	http.Files("/static/", "./public"),
 	http.OpenAPI,
@@ -48,7 +47,7 @@ class App : http.Server @{
 
 func main() {
 	app := App()
-	app.Listen()
+	app.Listen(8080)
 }
 ```
 
@@ -84,7 +83,7 @@ return server.ListenAndServe()
 ```
 :::
 
-`Listen()` creates the listener from the class configuration and runs the server. Once it is ready, `gpp/http` logs a clickable HTTP URL, including the assigned port when `Port(0)` (or the default ephemeral port) asks the OS to choose one. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the log uses `http://localhost:8080` instead of an unspecified wildcard address. The resolved socket address is also available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`.
+`Listen(port)` creates the listener and runs the server. Pass `0` to let the operating system choose an available port; the assigned port is available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the log uses `http://localhost:8080` instead of an unspecified wildcard address.
 
 The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
 
@@ -97,7 +96,6 @@ These are the annotations declared by `gpp/http`. The first group is read by the
 | Annotation | Applies to | What it configures | Ceremony it removes |
 | --- | --- | --- | --- |
 | `http.IP(addr)` | Server class | TCP bind address | Avoids setting up a listener just to choose the interface. |
-| `http.Port(port)` | Server class | TCP port | Avoids passing a separate address into listener setup. |
 | `http.Unix(path)` | Server class | Unix-domain socket path | Selects a local socket without writing custom `net.Listen` setup. |
 | `http.Prefix(path)` | Server or mountable class | Prefix for its routes | Keeps a common `/api` or `/v1` prefix out of every route declaration. |
 | `http.Mountable` | Class | Marks a class as eligible for `Server.Mount`. | Makes the class's annotated routes available as a reusable module. |
@@ -284,7 +282,7 @@ class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
 
 app := App()
 app.Mount(AdminRoutes(), "/admin", "admin.example.com")
-app.Listen()
+app.Listen(0)
 ```
 
 `http.Mountable` is a marker annotation; the class does not need to inherit from a router base type. Each mount address sends requests to the same class instance. A leading slash mounts by path; a hostname mounts by the request host, and `host/path` combines both. For the example above, the route is available at `/api/admin/v1/status` and at `admin.example.com/api/v1/status` when the server also has `http.Prefix("/api")`. Host mounts select requests by hostname; configure the listener port on `http.Server` as usual. Pass several addresses to expose a mountable class at local and deployed entry points.
@@ -341,7 +339,7 @@ func SearchUsers(ctx *http.Context) error @{http.GET("/users")} {
 
 ## Shared request behavior and middleware
 
-For common app-wide work, the server calls `BeforeRequest(ctx)` before a matched route and `AfterRequest(ctx)` after it. These hooks are useful for request-scoped values, metrics, auditing, and application checks:
+For common app-wide work, the server calls `BeforeRequest(ctx)` before request handling and `AfterRequest(ctx)` after the request is handled. The inherited `Handle(ctx)` method runs between those hooks and route dispatch; it returns `false` by default so annotated routes work as before. Override it to handle a request centrally or return `false` to continue to annotated routes. These hooks are useful for request-scoped values, metrics, auditing, and application checks:
 
 ```go
 class App : http.Server {
@@ -452,7 +450,7 @@ class App : http.Server {
 
 ## HTTPS and deployment boundaries
 
-The `IP` and `Port` annotations configure a plain TCP listener; `gpp/http` does not currently provide a certificate or TLS annotation. Deployments commonly terminate TLS at a reverse proxy or load balancer. If the Go++ process must serve TLS itself, pass a TLS listener to `Serve`:
+The `IP` annotation configures the TCP bind address, while `Listen(port)` selects the port. `gpp/http` does not currently provide a certificate or TLS annotation. Deployments commonly terminate TLS at a reverse proxy or load balancer. If the Go++ process must serve TLS itself, pass a TLS listener to `Serve`:
 
 ```go
 cert := tls.LoadX509KeyPair("server.crt", "server.key")

@@ -5,6 +5,7 @@ import (
     "fmt"
     _ "modernc.org/sqlite"
     orm "gpp/orm"
+    gppsql "gpp/sql"
 )
 
 class Employee : orm.Model @{orm.Table("employees")} {

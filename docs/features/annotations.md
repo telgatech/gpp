@@ -56,7 +56,6 @@ import http "gpp/http"
 
 class App @{
     http.IP("127.0.0.1"),
-    http.Port(8080),
     http.Swagger,
 } {}
 ```
@@ -142,7 +141,6 @@ authorization metadata.
 | Annotation | Target | Example |
 | --- | --- | --- |
 | `IP(addr)` | Class | `@{http.IP("127.0.0.1")}` |
-| `Port(port)` | Class | `@{http.Port(8080)}` |
 | `Unix(path)` | Class | `@{http.Unix("/var/run/app.sock")}` |
 | `Prefix(path)` | Class | `@{http.Prefix("/api")}` |
 | `Files(path, dir)` | Class | `@{http.Files("/static/", "./public")}` |
@@ -166,7 +164,6 @@ import http "gpp/http"
 
 class App : http.Server @{
     http.IP("127.0.0.1"),
-    http.Port(8080),
     http.Prefix("/api"),
     http.OpenAPI,
     http.Swagger,
@@ -186,7 +183,7 @@ class App : http.Server @{
 `OpenAPI` defaults to `/openapi.json` and `Swagger` defaults to `/swagger`;
 both accept an optional path. `OAuth` accepts provider options. `NoAuth` can
 mark a method that should be exempt from class-level authentication policy.
-Use either `IP` with `Port`, or `Unix`, to choose the listener address.
+Use `IP` and pass the port to `Listen(port)`, or use `Unix` to choose a Unix-domain socket.
 
 ### `gpp/test`
 

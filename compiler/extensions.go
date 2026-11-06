@@ -735,6 +735,7 @@ func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, 
 		parameters[index].TypeAST = parseTypeText(substituteLambdaType(parameters[index].typeText(), bindings))
 	}
 	argumentText := make([]string, len(args))
+	generic := extensionTypeParameterNames(methodTypeParamsSource(extension.Method))
 	for index, argument := range args {
 		text, sourceErr := expressionNodeSource(argument.Value)
 		if sourceErr != nil {
@@ -756,7 +757,9 @@ func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, 
 		if strings.HasPrefix(strings.TrimSpace(expected), "...") {
 			expected = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expected), "..."))
 		}
-		generic := extensionTypeParameterNames(methodTypeParamsSource(extension.Method))
+		if !extensionFunctionArgumentMatches(argument.Value, parameters[parameterIndex].TypeAST, context, generic) {
+			return nil, false
+		}
 		if actual != "" && !generic[expected] && !extensionArgumentMatches(actual, expected, text, context) && !genericExtensionArgumentMatches(actual, expected, generic) {
 			return nil, false
 		}
@@ -781,6 +784,74 @@ func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, 
 		return nil, false
 	}
 	return resolved, true
+}
+
+func extensionFunctionArgumentMatches(argument ExprNode, expected TypeNode, context constructorContext, generic map[string]bool) bool {
+	expectedFunction, ok := expected.(*FunctionType)
+	if !ok {
+		return true
+	}
+	var parameterTypes map[string]TypeNode
+	var resultType string
+	switch value := argument.(type) {
+	case *LambdaExpr:
+		lambdaParameters, err := lambdaParametersFromTokens(value.Parameters)
+		if err != nil || len(lambdaParameters) != len(expectedFunction.Parameters) {
+			return false
+		}
+		for index := range lambdaParameters {
+			if lambdaParameters[index].Type != nil {
+				actual, _ := typeNodeSource(lambdaParameters[index].Type)
+				want, _ := typeNodeSource(expectedFunction.Parameters[index].Type)
+				if strings.TrimSpace(actual) != strings.TrimSpace(want) {
+					return false
+				}
+			} else {
+				lambdaParameters[index].Type = expectedFunction.Parameters[index].Type
+			}
+		}
+		parameterTypes = lambdaParameterTypeNodes(lambdaParameters)
+		actualResult, err := typeNodeSource(lambdaResultTypeNodeAST(value, parameterTypes, context))
+		if err == nil {
+			resultType = actualResult
+		}
+	case *FunctionLiteralExpr:
+		actualFunction := value.Type
+		if actualFunction == nil || len(actualFunction.Parameters) != len(expectedFunction.Parameters) {
+			return true
+		}
+		for index := range actualFunction.Parameters {
+			actual, _ := typeNodeSource(actualFunction.Parameters[index].Type)
+			want, _ := typeNodeSource(expectedFunction.Parameters[index].Type)
+			if strings.TrimSpace(actual) != strings.TrimSpace(want) && !generic[strings.TrimSpace(want)] {
+				return false
+			}
+		}
+		resultType = functionTypeResultText(actualFunction)
+	default:
+		return true
+	}
+	expectedResult := strings.TrimSpace(functionTypeResultText(expectedFunction))
+	if containsGenericTypeParameter(expectedResult, generic) {
+		return true
+	}
+	return lambdaResultMatches(resultType, expectedResult, context)
+}
+
+func containsGenericTypeParameter(typeName string, generic map[string]bool) bool {
+	if len(generic) == 0 || strings.TrimSpace(typeName) == "" {
+		return false
+	}
+	tokens, err := LexSource("generic callback type", typeName)
+	if err != nil {
+		return false
+	}
+	for _, token := range tokens {
+		if (token.Kind == TokenIdentifier || token.Kind == TokenKeyword) && generic[token.Text] {
+			return true
+		}
+	}
+	return false
 }
 
 func extensionASTStaticType(expression ExprNode, context constructorContext, valueTypes map[string]string) string {
@@ -1444,6 +1515,10 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 		return err
 	}
 	body, err = transformCallableCalls(body, methodContext)
+	if err != nil {
+		return err
+	}
+	body, err = transformImplicitErrorPromotion(body, methodContext)
 	if err != nil {
 		return err
 	}

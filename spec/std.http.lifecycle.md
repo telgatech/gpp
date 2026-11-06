@@ -9,7 +9,7 @@ Define lifecycle behavior for `gpp/http.Server` covering both:
 
 The design should preserve these principles:
 
-* `Listen()` remains the main blocking server entry point.
+* `Listen(port)` remains the main blocking server entry point; port `0` asks the OS for an available port.
 * graceful shutdown on `SIGINT` / `SIGTERM` works by default.
 * shutdown infrastructure is separate from application startup hooks.
 * overriding `BeforeListen()` must not disable default signal handling.
@@ -54,7 +54,7 @@ class Server {
         return nil
     }
 
-    func Listen() error {
+    func Listen(port int) error {
         ...
     }
 
@@ -192,7 +192,7 @@ BeforeListen
 
 # Listen Lifecycle
 
-Recommended `Listen()` sequence:
+Recommended `Listen(port)` sequence:
 
 ```text
 inspect server annotations
@@ -220,7 +220,7 @@ shutdown / serve termination
 return
 ```
 
-`Listen()` remains blocking.
+`Listen(port)` remains blocking.
 
 Calling `Shutdown()` concurrently should cause the blocking serve operation to return.
 
@@ -806,7 +806,7 @@ Typical application:
 
 ```go
 func main() {
-    if err := App().Listen(); err != nil {
+    if err := App().Listen(0); err != nil {
         panic(err)
     }
 }
@@ -817,7 +817,7 @@ No signal-handling boilerplate should be required.
 Default behavior:
 
 ```text
-App().Listen()
+App().Listen(0)
 ↓
 startup
 ↓
@@ -982,7 +982,7 @@ App.AfterRequest
 
 through normal runtime dispatch.
 
-Likewise inherited `Listen()` must dispatch to overridden server lifecycle methods.
+Likewise inherited `Listen(port)` must dispatch to overridden server lifecycle methods.
 
 ---
 
@@ -1062,7 +1062,6 @@ import (
 
 class App : http.Server @{
     http.IP("0.0.0.0"),
-    http.Port(8080)
 } {
     func BeforeListen() error {
         fmt.Println("starting application")
@@ -1110,7 +1109,7 @@ class App : http.Server @{
 }
 
 func main() {
-    if err := App().Listen(); err != nil {
+    if err := App().Listen(0); err != nil {
         panic(err)
     }
 }
@@ -1319,7 +1318,7 @@ Verify shutdown hooks run only once.
 
 ## Blocking Listen
 
-Verify `Listen()` blocks while serving and returns after shutdown completes.
+Verify `Listen(port)` blocks while serving and returns after shutdown completes.
 
 ---
 
@@ -1362,7 +1361,7 @@ Go interop
 The intended model is:
 
 ```text
-                    Server.Listen()
+                    Server.Listen(0)
                            |
             +--------------+--------------+
             |                             |

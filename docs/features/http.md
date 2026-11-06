@@ -19,7 +19,7 @@ class App : http.Server {
 }
 
 app := App()
-app.Listen()
+app.Listen(0)
 ```
 
 ```go [Go]
@@ -52,6 +52,70 @@ class App : http.Server {
 Optional hooks can run before listening, around requests, and during shutdown.
 Handlers return errors for the server boundary to handle. See the [HTTP specification](/reference/specifications/std.http)
 and [lifecycle guide](/reference/specifications/std.http.lifecycle).
+
+## Handle requests before route dispatch
+
+`http.Server` provides a default `Handle(ctx)` method that returns
+`(false, nil)`, so existing annotated routes work unchanged. Override it when
+one entry point should inspect every request before the server tries annotated
+routes:
+
+```go
+class App : http.Server {
+    func Handle(ctx *http.Context) (bool, error) {
+        if ctx.Request.URL.Path == "/healthz" {
+            return true, ctx.Text("ok")
+        }
+        return false, nil
+    }
+
+    func Hello(ctx *http.Context) error @{http.GET("/hello")} {
+        return ctx.Text("hello")
+    }
+}
+```
+
+Return `true` when `Handle` has responded to the request. Return `false` to
+continue to annotated routes; do not write a response before continuing. An
+error goes through the server's normal error handler. The same context reaches
+the selected route, and request hooks run once around the whole request.
+
+## Bind into a typed value
+
+`ctx.Bind[T]()` returns the request data as the type you ask for. `T` can be a
+Go++ class, a Go struct, or a structural record. The request method and content
+type select query, JSON, or form binding:
+
+::: info
+Use a pointer type argument when you want a pointer result:
+`ctx.Bind[*UpdateUserRequest]()` returns `*UpdateUserRequest`.
+:::
+
+```go
+func Create(ctx *http.Context) error @{http.POST("/users")} {
+    input := ctx.Bind[record(name: string, age: int)]()
+    return ctx.JSON(201, record(Name: input.name, Age: input.age))
+}
+
+func Update(ctx *http.Context) error @{http.PUT("/users/{id}")} {
+    input := ctx.Bind[*UpdateUserRequest]()
+    return ctx.JSON(200, input)
+}
+```
+
+Go structs and classes use their exported fields and `form`/`json` tags.
+Records bind through their generated field accessors, including lowercase
+field names. Missing fields keep their zero or initial values; unknown input
+fields are ignored. The existing destination-based forms remain available
+when a value must be initialized before binding:
+
+```go
+input := CreateUserRequest{Name: "guest"}
+ctx.Bind(&input)
+```
+
+An uncaptured binding error propagates automatically and can be caught at a
+request boundary when local recovery is needed.
 
 ## WebSocket handlers
 
@@ -134,7 +198,7 @@ class BillingRoutes @{http.Mountable} {
 
 app := App()
 app.Mount(BillingRoutes(), "/billing", "billing.example.com")
-app.Listen()
+app.Listen(0)
 ```
 
 `http.Mountable` is a marker annotation; no router base class is required. Path

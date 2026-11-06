@@ -12,19 +12,18 @@ The package should use existing Go++ features such as:
 * annotations
 * runtime class introspection
 * field introspection
-* extension methods
-* multiple-target extensions
+* static methods
 
 It must not replace `database/sql`, introduce a custom database engine, or require a separate query/runtime abstraction.
 
-The primary API should remain usable with both:
+Model methods should accept both:
 
 ```go
 *sql.DB
 *sql.Tx
 ```
 
-through the same extension methods.
+through the same `SQLExecutor` interface.
 
 ---
 
@@ -41,6 +40,7 @@ Suggested implementation files:
 ```text
 gpp/orm/
     annotations.gpp
+    executor.gpp
     model.gpp
     sql.gpp
 ```
@@ -62,7 +62,8 @@ import (
 )
 ```
 
-`reflect` is currently required by `Select` for constructing arbitrary slice element types.
+`reflect` is currently required to inspect model metadata and materialize model
+query results.
 
 The implementation may later remove reflection if Go++ generics and static class introspection make that possible.
 
@@ -176,6 +177,10 @@ Provide:
 
 ```go
 class Model {
+    func GppSQLGetQuery(where string) (string, error)
+    func GppSQLSelectQuery(where string) (string, error)
+    func GppSQLScanTargets(columnNames []string) ([]any, error)
+
     static func Get(exec SQLExecutor, where string, args ...any) (*self, error)
     static func Select(exec SQLExecutor, where string, args ...any) ([]*self, error)
     static func All(exec SQLExecutor, sortBy string = "") ([]*self, error)
@@ -308,345 +313,21 @@ Do not add validation to deletion unless deliberately changing the API.
 
 ---
 
-# Extensions
+# Model Query Helpers
 
-Extend both:
-
-```go
-*sql.DB
-*sql.Tx
-```
-
-with the same methods:
-
-```go
-extend *sql.DB, *sql.Tx {
-    func Get[T any](query string, args ...any) (T, error)
-    func Select[T any](query string, args ...any) ([]T, error)
-    func Get(target any, where string, args ...any) error
-    func Select(target any, where string, args ...any) error
-}
-```
-
-The generic overloads return typed results directly. `Get[T]` returns one
-value and `Select[T]` returns a slice. They always take a complete SQL query,
-whether `T` is a model, record, or scalar:
-
-```go
-user, err := db.Get[record(ID: int64, Name: string)](
-    "SELECT id, name FROM users WHERE id = $1", 42,
-)
-users, err := db.Select[record(ID: int64, Name: string)](
-    "SELECT id, name FROM users WHERE active = $1", true,
-)
-count, err := db.Get[int64]("SELECT COUNT(*) FROM users")
-```
-
-Record and scalar result types require a complete `SELECT` (or `WITH ... SELECT`) query.
-Result columns match record fields by name; extra columns are discarded and
-missing fields retain their zero values. Scalar result types require a
-one-column query; `Get[T]` reads one row and `Select[T]` returns all rows.
-Pointer type arguments preserve pointer-shaped results: `Get[*Employee]`
-returns `*Employee`, and `Select[*Employee]` returns `[]*Employee`. Pointer
-records and scalar types are supported the same way.
-
-Model classes also inherit static `Get` and `Select` methods from `Model`:
+`orm.Model` provides static `Get` and `Select` methods that accept a SQL
+condition fragment and build the full query from the model's table and column
+annotations:
 
 ```go
 employee, err := Employee.Get(db, "id = $1", 42)
 employees, err := Employee.Select(db, "active = $1", true)
 ```
 
-These methods generate the selected columns and table from the model mapping.
-Their SQL argument is a condition fragment, followed by its parameter values.
-The destination-parameter extension overloads remain available for
-compatibility and are deprecated.
-
-The destination-parameter overloads are deprecated. Use the generic overloads
-for new code.
-
-Model instance methods accept either a database or transaction executor:
-
-```go
-employee.Insert(db)
-employee.Insert(tx)
-
-db.Get(employee, ...)
-tx.Get(employee, ...)
-```
-
-No wrapper around `sql.DB` or `sql.Tx` should be introduced.
-
----
-
-# Get
-
-Signature:
-
-```go
-func Get(target any, where string, args ...any) error
-```
-
-Usage:
-
-```go
-employee := Employee()
-
-err := db.Get(
-    &employee,
-    "id = $1",
-    id,
-)
-```
-
-`target` must be a pointer to a Go++ class instance that provides runtime class metadata.
-
-Conceptually, it must satisfy:
-
-```go
-interface {
-    GppRuntimeClass() *GppClass
-}
-```
-
-If not:
-
-```text
-Get target must be a Go++ model pointer
-```
-
-should be returned.
-
----
-
-## Get Metadata Resolution
-
-Obtain the actual runtime descriptor:
-
-```go
-descriptor := entity.GppRuntimeClass()
-```
-
-Read table metadata:
-
-```go
-table := descriptor.annotations.find(Table)
-```
-
-Enumerate fields:
-
-```go
-for field := range descriptor.fields {
-}
-```
-
-For every field with:
-
-```go
-field.annotations.find(Column)
-```
-
-collect:
-
-* the SQL column name
-* the actual field address via `field.addr(...)`
-
----
-
-## Get Query
-
-Build:
-
-```sql
-SELECT <columns>
-FROM <table>
-```
-
-If:
-
-```go
-strings.TrimSpace(where) != ""
-```
-
-append:
-
-```sql
-WHERE <where>
-```
-
-Always append:
-
-```sql
-LIMIT 1
-```
-
-Then execute:
-
-```go
-this.QueryRow(query, args...).Scan(scanValues...)
-```
-
-Return the `Scan` error directly.
-
-This means a missing row naturally returns:
-
-```go
-sql.ErrNoRows
-```
-
----
-
-# Select
-
-Signature:
-
-```go
-func Select(target any, where string, args ...any) error
-```
-
-Usage:
-
-```go
-employees := []Employee{}
-
-err := db.Select(
-    &employees,
-    "email LIKE $1",
-    "%example.com",
-)
-```
-
-`target` must be:
-
-```text
-non-nil pointer
-    ↓
-slice
-    ↓
-Go++ class values
-```
-
-Example valid target:
-
-```go
-&[]Employee{}
-```
-
----
-
-## Select Target Validation
-
-Using reflection, verify:
-
-```go
-targetValue.Kind() == reflect.Ptr
-targetValue != nil
-targetValue.Elem().Kind() == reflect.Slice
-```
-
-Otherwise return:
-
-```text
-Select target must be a non-nil pointer to a model slice
-```
-
-The slice element type must currently be a struct.
-
-Otherwise:
-
-```text
-Select target slice must contain Go++ model values
-```
-
----
-
-## Select Descriptor Discovery
-
-Determine:
-
-```go
-elementType := targetValue.Elem().Type().Elem()
-```
-
-Construct a prototype:
-
-```go
-prototypeValue := reflect.New(elementType)
-```
-
-The pointer to that prototype must provide:
-
-```go
-GppRuntimeClass() *GppClass
-```
-
-Otherwise return:
-
-```text
-Select target slice must contain a Go++ class
-```
-
-Use the prototype's runtime class descriptor for table and field metadata.
-
----
-
-## Select Query
-
-Gather all fields carrying `Column`.
-
-Build:
-
-```sql
-SELECT <columns>
-FROM <table>
-```
-
-Append optional:
-
-```sql
-WHERE <where>
-```
-
-when `where` is not blank.
-
-Do not append `LIMIT`.
-
-Execute using:
-
-```go
-rows, err := this.Query(query, args...)
-```
-
-Always:
-
-```go
-defer rows.Close()
-```
-
----
-
-## Select Row Materialization
-
-For every row:
-
-1. Create a new instance of the slice element type.
-2. Obtain its runtime class interface.
-3. Build scan destinations using `field.addr(...)`.
-4. Call:
-
-```go
-rows.Scan(scanValues...)
-```
-
-5. Append the populated value to the target slice.
-
-After iteration return:
-
-```go
-rows.Err()
-```
-
----
+These methods work with `*sql.DB` and `*sql.Tx`. `Get` returns one model and
+`Select` returns a slice of model pointers. They are distinct from the generic
+full-SQL query methods provided by `gpp/sql`; see
+[the SQL package specification](./std.sql.md).
 
 # Insert
 
@@ -1111,13 +792,8 @@ if err := employee.Insert(db); err != nil {
     return err
 }
 
-loaded := Employee()
-
-if err := db.Get(
-    loaded,
-    "id = $1",
-    employee.Id,
-); err != nil {
+loaded, err := Employee.Get(db, "id = $1", employee.Id)
+if err != nil {
     return err
 }
 
@@ -1127,13 +803,8 @@ if err := loaded.Update(db); err != nil {
     return err
 }
 
-employees := []Employee{}
-
-if err := db.Select(
-    &employees,
-    "email LIKE $1",
-    "%example.com",
-); err != nil {
+employees, err := Employee.Select(db, "email LIKE $1", "%example.com")
+if err != nil {
     return err
 }
 
@@ -1146,39 +817,10 @@ if err := loaded.Destroy(db); err != nil {
 
 # SQL Philosophy
 
-`gpp/orm` is intentionally small.
-
-It should NOT attempt to become a query-language abstraction.
-
-The caller supplies ordinary SQL fragments:
-
-```go
-db.Get(
-    &employee,
-    "name = $1",
-    "Ada",
-)
-
-db.Select(
-    &employees,
-    "email LIKE $1",
-    "%example.com",
-)
-```
-
-The ORM handles:
-
-* table names
-* selected column lists
-* scan destinations
-* inserts
-* updates
-* deletes
-* lifecycle hooks
-
-The user retains direct control over SQL conditions and arguments.
-
----
+`gpp/orm` supplies model-oriented helpers and persistence behavior; it is not a
+query-language abstraction. Model helpers accept ordinary SQL condition
+fragments. Full SQL queries with typed scalar, record, struct, or model results
+belong to `gpp/sql`; see [the SQL package specification](./std.sql.md).
 
 # Database Compatibility
 
@@ -1247,28 +889,13 @@ Add these validations without changing normal successful behavior.
 
 # Reflection
 
-`Select` currently uses Go reflection because it receives:
+ORM model operations use reflection to inspect class fields and annotations and
+to dispatch lifecycle hooks. Full-SQL result scanning is implemented by
+`gpp/sql` and documented in [its package specification](./std.sql.md).
 
-```go
-target any
-```
-
-and must construct arbitrary values of the destination slice's element type.
-
-This is acceptable for the current implementation.
-
-Do not rewrite it merely for style.
-
-If Go++ later supports sufficient generic static class introspection, a future implementation may use:
-
-```text
-T.class
-T()
-```
-
-and remove most or all reflection.
-
-That should be a later optimization/refactor, not part of this initial package extraction.
+If Go++ later supports sufficient static class introspection, a future
+implementation may remove some reflection from both packages. This is a later
+optimization, not part of the package split.
 
 ---
 
@@ -1410,26 +1037,16 @@ Verify:
 
 ---
 
-## Get
+## Model Get and Select
 
 Verify:
 
 * only Column fields are selected
-* fields scan into correct concrete object
-* blank where is allowed
-* LIMIT 1 is added
-* `sql.ErrNoRows` propagates
-
----
-
-## Select
-
-Verify:
-
-* pointer-to-slice required
-* rows append to destination
+* fields scan into the concrete model
+* condition fragments are parameterized
+* `Get` adds `LIMIT 1`
+* missing rows and `rows.Err()` propagate
 * inherited model fields scan correctly
-* `rows.Err()` is propagated
 
 ---
 

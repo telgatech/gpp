@@ -602,6 +602,7 @@ This includes, where applicable:
 ```text
 prelude
 gpp/http
+gpp/sql
 gpp/orm
 gpp/encoding
 runtime templates
@@ -679,6 +680,7 @@ Official libraries such as:
 
 ```text
 gpp/http
+gpp/sql
 gpp/orm
 gpp/encoding
 gpp/collections
@@ -957,6 +959,7 @@ ships with the matching:
 ```text
 prelude
 gpp/http
+gpp/sql
 gpp/orm
 gpp/encoding
 runtime

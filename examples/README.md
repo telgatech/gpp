@@ -51,7 +51,8 @@ The examples cover:
 - `annotation_inheritance.gpp` — direct class annotations, inherited field and
   method metadata, original owners, parameter annotations, and unannotated
   overrides.
-- `orm.gpp` — a mini in-memory SQLite app using the bundled `gpp/orm` package,
+- `orm.gpp` — a mini in-memory SQLite app using `gpp/sql` typed queries and
+  `gpp/orm` model helpers,
   annotated models, runtime metadata inspection, model validation, lifecycle
   hooks, and ordinary `database/sql`, including `Get` for one model and
   `Select` for model slices on both `*sql.DB` and `*sql.Tx`.

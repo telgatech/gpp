@@ -124,7 +124,7 @@ func main() {
     try {
         cron.Start()
         app := App()
-        app.Listen()
+        app.Listen(0)
     } catch err {
         if errors.Is(err, cron.ErrInvalidSchedule) {
             fmt.Println("cron configuration is invalid")
@@ -147,7 +147,7 @@ import (
 func main() {
 	cron.Start()
 	app := App()
-	app.Listen()
+	app.Listen(0)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

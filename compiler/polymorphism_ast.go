@@ -206,7 +206,7 @@ func polymorphismFunctionResultEdits(method Method, body *BlockStmt, valueTypes 
 		}
 		derived, ok := context.Targets[derivedName]
 		if dispatchResult && (!ok || !sameConstructorPackage(base, derived) ||
-			(derived.Class != base.Class && !classInherits(derived.Class, base.Class, derived.Classes, map[string]bool{}))) {
+			(derived.Class != base.Class && !classInherits(derived.Class, base.Class, derived.Classes, map[*ClassDecl]bool{}))) {
 			return
 		}
 		if dispatchResult || pointerResult != resultText {
@@ -672,7 +672,7 @@ func polymorphismShouldPointerCoerce(expected string, argument ExprNode, context
 	if !ok || !sameConstructorPackage(base, actual) {
 		return false
 	}
-	return actual.Class == base.Class || classInherits(actual.Class, base.Class, actual.Classes, map[string]bool{})
+	return actual.Class == base.Class || classInherits(actual.Class, base.Class, actual.Classes, map[*ClassDecl]bool{})
 }
 
 func polymorphismCompatibleDerived(name string, base constructorTarget, context constructorContext) bool {
@@ -680,7 +680,7 @@ func polymorphismCompatibleDerived(name string, base constructorTarget, context 
 	if !ok || !sameConstructorPackage(base, derived) {
 		return false
 	}
-	return derived.Class == base.Class || classInherits(derived.Class, base.Class, derived.Classes, map[string]bool{})
+	return derived.Class == base.Class || classInherits(derived.Class, base.Class, derived.Classes, map[*ClassDecl]bool{})
 }
 
 // lowerPolymorphismBlockNode applies the dispatch adjustments that were

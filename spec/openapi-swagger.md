@@ -1168,7 +1168,6 @@ Application routing remains defined entirely by Go++ HTTP routes.
 
 ```gpp
 class App : http.Server @{
-    http.Port(8080)
     http.OpenAPI
     http.Swagger
 } {
@@ -1548,7 +1547,6 @@ Typical API server:
 
 ```gpp
 class App : http.Server @{
-    http.Port(8080)
     http.OpenAPI
     http.Swagger
 }

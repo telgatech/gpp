@@ -4,7 +4,7 @@ import "fmt"
 import "time"
 import http "gpp/http"
 
-class App : http.Server @{http.IP("127.0.0.1"), http.Port(8080)} {
+class App : http.Server @{http.IP("127.0.0.1")} {
 	func Events(ctx *http.Context) error @{
 		http.GET("/events"),
 		http.SSE
@@ -28,7 +28,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Port(8080)} {
 func main() {
 	try {
 		app := App()
-		app.Listen()
+		app.Listen(8080)
 	} catch err {
 		fmt.Println("SSE example:", err)
 	}

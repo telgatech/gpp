@@ -44,6 +44,19 @@ class Todo : orm.Model @{orm.Table("todos")} {
         this.Title = strings.TrimSpace(this.Title)
         return nil
     }
+
+    func Complete(exec orm.SQLExecutor) error {
+        this.Completed = true
+        this.CompletedAt = time.Now().Unix()
+        return this.Update(exec)
+    }
+
+    func Activate(exec orm.SQLExecutor) error {
+        this.Completed = false
+        this.CompletedAt = 0
+        return this.Update(exec)
+    }
+
 }
 
 class CreateTodoRequest {
@@ -51,14 +64,14 @@ class CreateTodoRequest {
 }
 
 class TodoList {
-    Items []Todo
+    Items []*Todo
 }
 
 class APIError {
     Error string
 }
 
-template TodoHome(todos []Todo) @{tpl.Path("/")} {
+template TodoHome(todos []*Todo) @{tpl.Path("/")} {
     <!doctype html>
     <html lang="en">
     <head>
@@ -115,57 +128,22 @@ template TodoHome(todos []Todo) @{tpl.Path("/")} {
 
 
 extend *sql.DB, *sql.Tx {
-    func Todos() ([]Todo, error) {
-        todos := []Todo{}
-        err := this.Select(&todos, "1=1")
-        return todos, err
+    func Todos() ([]*Todo, error) {
+        return Todo.All(this)
     }
 
-    func CompletedTodos() ([]Todo, error) {
-        todos := []Todo{}
-        err := this.Select(&todos, "completed = $1", true)
-        return todos, err
+    func CompletedTodos() ([]*Todo, error) {
+        return Todo.Select(this, "completed = $1", true)
     }
 
     func FindTodo(id int64) (*Todo, error) {
-        todo := Todo()
-        return todo, this.Get(todo, "id = $1", id)
+        return Todo.Get(this, "id = $1", id)
     }
 
     func CreateTodo(todo *Todo) error {
         return todo.Insert(this)
     }
 
-    func MarkTodoCompleted(id int64, completedAt int64) error {
-        todo := Todo()
-        if err := this.Get(todo, "id = $1", id); err != nil {
-            return err
-        }
-        todo.Completed = true
-        todo.CompletedAt = completedAt
-        return todo.Update(this)
-    }
-
-    func MarkTodoActive(id int64) (*Todo, error) {
-        todo := Todo()
-        if err := this.Get(todo, "id = $1", id); err != nil {
-            return nil, err
-        }
-        todo.Completed = false
-        todo.CompletedAt = 0
-        if err := todo.Update(this); err != nil {
-            return nil, err
-        }
-        return todo, nil
-    }
-
-    func DeleteTodo(id int64) error {
-        todo := Todo()
-        if err := this.Get(todo, "id = $1", id); err != nil {
-            return err
-        }
-        return todo.Destroy(this)
-    }
 }
 
 func PruneCompletedTodos(ctx context.Context) error @{cron.Every(time.Minute)} {
@@ -176,16 +154,13 @@ func PruneCompletedTodos(ctx context.Context) error @{cron.Every(time.Minute)} {
         return nil
     }
     cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
-    todos := []Todo{}
-    if err := db.Select(&todos, "completed = $1 AND completed_at < $2 AND completed_at > 0", true, cutoff); err != nil {
-        return err
-    }
+    todos := Todo.Select(db, "completed = $1 AND completed_at < $2 AND completed_at > 0", true, cutoff)
 
-    err := todos.Each(todo => db.DeleteTodo(todo.Id))
+    todos.Each(todo => todo.Destroy(db))
     if len(todos) > 0 {
         log.Printf("todo-app: pruned %d completed todos", len(todos))
     }
-    return err
+    return nil
 }
 
 func atExit() {
@@ -203,7 +178,6 @@ func atExit() {
 
 class TodoApp : http.Server @{
     http.IP("127.0.0.1"),
-    http.Port(8080),
     http.OpenAPI("/api/openapi.json"),
     http.Swagger("/api/swagger")
 } {
@@ -247,10 +221,7 @@ class TodoApp : http.Server @{
             return nil
         }
         if !todo.Completed {
-            todo.Completed = true
-            completedAt := time.Now().Unix()
-            todo.CompletedAt = completedAt
-            db.MarkTodoCompleted(id, completedAt)
+            todo.Complete(db)
         }
         ctx.Redirect("/", 303)
         return nil
@@ -265,7 +236,8 @@ class TodoApp : http.Server @{
             return err
         }
         try {
-            db.DeleteTodo(id)
+            todo := db.FindTodo(id)
+            todo.Destroy(db)
         } catch sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
@@ -283,7 +255,8 @@ class TodoApp : http.Server @{
             return err
         }
         try {
-            db.MarkTodoActive(id)
+            todo := db.FindTodo(id)
+            todo.Activate(db)
         } catch sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
@@ -378,10 +351,7 @@ class TodoApp : http.Server @{
         try {
             todo = db.FindTodo(id)
             if !todo.Completed {
-                todo.Completed = true
-                completedAt := time.Now().Unix()
-                todo.CompletedAt = completedAt
-                db.MarkTodoCompleted(id, completedAt)
+                todo.Complete(db)
             }
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
@@ -403,13 +373,13 @@ class TodoApp : http.Server @{
         if err != nil {
             return ctx.JSON(400, APIError{Error: "invalid todo ID"})
         }
-        var todo *Todo
         try {
-            todo = db.MarkTodoActive(id)
+            todo := db.FindTodo(id)
+            todo.Activate(db)
+            return ctx.JSON(todo)
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
         }
-        return ctx.JSON(todo)
     }
 
     func DeleteTodo(ctx *http.Context) error @{
@@ -427,11 +397,11 @@ class TodoApp : http.Server @{
             return ctx.JSON(400, APIError{Error: "invalid todo ID"})
         }
         try {
-            db.FindTodo(id)
+            todo := db.FindTodo(id)
+            todo.Destroy(db)
         } catch sql.ErrNoRows {
             return ctx.JSON(404, APIError{Error: "todo not found"})
         }
-        db.DeleteTodo(id)
         return ctx.Text(204, "")
     }
 }
@@ -453,7 +423,7 @@ func main() {
         cron.Start()
         log.Println("todo-app: cleanup job scheduled")
         app := TodoApp()
-        app.Listen()
+        app.Listen(8080)
     } catch err {
         fmt.Println("todo app:", err)
     }

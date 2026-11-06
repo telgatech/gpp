@@ -183,7 +183,6 @@ import "gpp/http"
 
 class App : http.Server @{
     http.IP("0.0.0.0"),
-    http.Port(8080),
     http.Files("/static/", "./public")
 } {
     func Home(ctx *http.Context) error @{http.GET("/")} {
@@ -197,7 +196,7 @@ class App : http.Server @{
 
 func main() {
     app := App()
-    app.Listen()
+    app.Listen(0)
 }
 
 Implementation should use ordinary:
@@ -215,7 +214,6 @@ Potential declarations:
 
 annotation (
     IP(addr string) on class
-    Port(port int) on class
     Unix(path string) on class
 
     Prefix(path string) on class
@@ -248,11 +246,16 @@ HTTP behavior.
 Conceptual API:
 
 class Server {
-    func Listen() error
+    func Listen(port int) error
     func Serve(listener net.Listener) error
     func Mount(mountable any, addresses ...string) error
     func Shutdown(ctx context.Context) error
 }
+
+`Listen(port)` binds the TCP listener to the supplied port. Passing `0` asks
+the operating system to choose an available port. The `IP` annotation can
+still select the local interface, while `Unix` selects a Unix-domain socket
+and requires `Listen(0)`.
 
 `Mount` accepts an instance of a Go++ class marked with the `Mountable`
 annotation and one or more mount addresses. Its methods use the same HTTP
@@ -278,32 +281,39 @@ OpenAPI and OAuth route generation currently use annotations on the server
 class itself. Mounted class methods are routed normally but are not included
 in the server's generated OpenAPI document.
 
-`Listen()` should introspect:
+`Listen(port)` should introspect:
 
 this.class.annotations
 this.class.methods
 method.annotations
 
-Because inherited methods execute with runtime class identity, `Server.Listen()` sees the actual subclass metadata.
+Because inherited methods execute with runtime class identity, `Server.Listen(port)` sees the actual subclass metadata.
 
 Example:
 
-class App : http.Server @{http.Port(8080)} {
     ...
 }
 
-App().Listen()
+App().Listen(0)
 
-If neither Port nor Unix is specified, Listen() must bind a TCP listener
-on port 0, allowing the operating system to assign an available ephemeral
-port. The bound address must be available through Server.HTTPServer.Addr
+If Unix is not specified, Listen(port) must bind a TCP listener on the
+supplied port. A port value of 0 allows the operating system to assign an
+available ephemeral port. The bound address must be available through Server.HTTPServer.Addr
 before BeforeListen() runs. After the listener is ready, log its clickable
 `http://` URL for TCP listeners, including the actual assigned port; Unix-domain
 listeners should log their socket path without an HTTP scheme. If a TCP listener
 is bound to all interfaces, log `localhost` as the clickable host instead of an
 unspecified address such as `[::]` or `0.0.0.0`.
 
-`Server.Listen()` must discover App routes/configuration.
+`Server.Listen(port)` must discover App routes/configuration.
+
+Every request passes through the server's `Handle(*Context) (bool, error)`
+method before route dispatch. The default implementation returns `(false, nil)`.
+An override that returns `true` marks the request handled; `false` continues to
+the annotated, mounted, or generated routes. A returned error is sent through
+the server error handler. The same Context is passed to the selected route, and
+`BeforeRequest` and `AfterRequest` run once around the request. Returning false
+after writing a response must stop route dispatch and log a warning.
 
 For ordinary HTTP route methods, the first parameter is `*http.Context`.
 Additional parameters must each have exactly one request-binding annotation:
@@ -722,7 +732,6 @@ import (
 )
 
 class App : http.Server @{
-    http.Port(8080),
     http.Files("/static/", "./public")
 } {
     func Home(ctx *http.Context) error @{
@@ -742,7 +751,7 @@ class App : http.Server @{
 
 func main() {
     app := App()
-    app.Listen()
+    app.Listen(0)
 }
 
 Underneath:

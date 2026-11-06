@@ -1,31 +1,25 @@
-# ORM and SQL
+# ORM models
 
 The Go++ ORM maps annotated classes to database tables and supplies common
 CRUD operations. It is designed around `database/sql`, so database handles,
 transactions, and SQL remain part of the familiar Go ecosystem.
 
-## What's new in the ORM API
+## Model queries and persistence
 
-Queries can now return typed models, scalars, or inline record shapes. Use
-`db.Get[T]` for one result and `db.Select[T]` for a slice; these take a complete
-SQL query. ORM model classes also inherit helpers such as `Find`, `First`,
-`Last`, and cursor-based `Page`, while model instances provide `Insert`,
-`Update`, and `Destroy`.
+ORM model classes inherit helpers such as `Find`, `First`, `Last`, and
+cursor-based `Page`, while model instances provide `Insert`, `Update`, and
+`Destroy`.
 
 ```gpp
-count := db.Get[int64]("SELECT COUNT(*) FROM employees")
-event := db.Get[record(employee_id: int64, event: string)](
-    "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
-    employeeID,
-)
-
 employee := Employee.Find(db, employeeID)
+employees := Employee.Select(db, "active = $1", true)
 employee.Update(db)
 ```
 
-Generic DB queries use full SQL. Model-class queries such as
-`Employee.Get(db, "id = $1", employeeID)` use a condition fragment, with SQL
-built from the model mapping.
+Model-class queries such as `Employee.Get(db, "id = $1", employeeID)` use a
+condition fragment, with SQL built from the model mapping. For full SQL queries
+that return scalars, inline records, structs, or models, use the separate
+[`gpp/sql` package](/guide/standard-library/sql).
 
 ## Compare handwritten queries with a model
 
@@ -70,9 +64,8 @@ employees := Employee.Select(db, "name LIKE $1 ORDER BY name", "A%")
 `[]*Employee`. Both accept parameterized conditions and work with `*sql.DB`
 and `*sql.Tx`.
 
-The model methods take a SQL condition fragment. The generic `db.Get[T]` and
-`db.Select[T]` methods take a complete `SELECT` statement for records, scalars,
-and model result types.
+The model methods take a SQL condition fragment. The `gpp/sql` package's
+`db.Get[T]` and `db.Select[T]` methods take a complete `SELECT` statement.
 
 ## Common model operations
 
@@ -133,43 +126,7 @@ Model hooks such as validation and before/after create or update keep
 persistence rules near the model. Use direct SQL for specialized or
 performance-sensitive queries. See the [ORM specification](/reference/specifications/std.orm).
 
-## Typed queries with structural records
+## Full SQL queries
 
-Database queries are a common source of type explosion. Each projection,
-join, or aggregate can produce a different result shape, and defining a named
-struct for every one adds declarations that may only be used once. Go++ lets
-you put that shape beside the query as an inline record type argument. The
-compiler generates a concrete type for it, without losing static field names
-or types.
-
-`Select[T]` returns a slice of `T`, and `Get[T]` returns one `T`:
-
-```go
-users := db.Select[record(ID: int64, Name: string)](
-    "SELECT id, name FROM users WHERE active = $1",
-    true,
-)
-
-user := db.Get[record(ID: int64, Name: string)](
-    "SELECT id, name FROM users WHERE id = $1",
-    42,
-)
-
-count := db.Get[int64]("SELECT COUNT(*) FROM users")
-```
-
-Inline record shapes provide field names and types, so no prototype values or
-slice initialization are needed. Record and scalar targets take a complete
-`SELECT` (or `WITH ... SELECT`) query. Column labels match record field names
-case-insensitively and ignore underscores, so `display_name` can scan into
-`DisplayName`. Explicit SQL aliases are useful when a query expression or join
-makes a label ambiguous. Result columns with no matching record field are
-discarded. Scalar types can be used when the query returns one column, and
-`Get[T]` reads one row while `Select[T]` returns all rows. A named model type
-can also be used as `T` when you want to write the complete `SELECT` yourself.
-::: info
-Use a pointer type argument when you want pointer-shaped results:
-`db.Get[*Employee](...)` returns `*Employee`, and
-`db.Select[*Employee](...)` returns `[]*Employee`. Pointer records and scalar
-types work the same way.
-:::
+Use [`gpp/sql`](/features/sql) for typed full-SQL queries. This keeps ad hoc
+query result types and model-mapping operations in separate packages.

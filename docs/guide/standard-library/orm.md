@@ -47,8 +47,9 @@ primary key by default; `All` and `First` use ascending order, while `Last` uses
 descending order. They accept an optional persisted field or column name to
 sort by. `Find` requires a primary key; a custom sort field lets the other
 three work without one. By contrast,
-when the result type is a record or scalar, pass a complete `SELECT` statement;
-see [typed queries](/features/orm#typed-queries-with-structural-records).
+when the result type is a record or scalar, use the separate
+[`gpp/sql` package](/guide/standard-library/sql) and pass a complete `SELECT`
+statement.
 
 `Page` returns the first 50 rows in primary-key order. Pass the last row's
 primary-key value on subsequent calls to continue paging. Paging is sequential
