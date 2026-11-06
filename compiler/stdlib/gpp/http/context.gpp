@@ -6,6 +6,7 @@ import (
 	"fmt"
 	stdhttp "net/http"
 	"golang.org/x/net/websocket"
+	std "gpp/std"
 	tpl "gpp/tpl"
 )
 
@@ -88,16 +89,17 @@ class Context {
 		return this.commit(status, "application/json", body.Bytes())
 	}
 
-	func Template(key string, args ...any) error {
-		return this.renderTemplate(200, key, args...)
+	func HTML(status int = 200, data any = nil, key string = "") error {
+		if key == "" {
+			key = this.Request.URL.Path
+		}
+		return this.renderTemplate(status, key, data)
 	}
 
-	func Template(data any) error {
-		return this.renderTemplate(200, this.Request.URL.Path, data)
-	}
-
-	func Template(status int, key string, args ...any) error {
-		return this.renderTemplate(status, key, args...)
+	func Template(status int = 200, data any = nil, key string = "") error @{
+		std.Deprecated("Use HTML(status, data, key) instead")
+	} {
+		return this.HTML(status, data, key)
 	}
 
 	func renderTemplate(status int, key string, args ...any) error {

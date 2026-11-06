@@ -187,7 +187,7 @@ class TodoApp : http.Server @{
 
     func Home(ctx *http.Context) error @{ http.GET("/")} {
         todos := db.Todos()
-        return ctx.Template(todos)
+        return ctx.HTML(200, todos)
     }
 
     func CreateTodoFromForm(ctx *http.Context) error @{

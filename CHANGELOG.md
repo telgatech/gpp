@@ -2,8 +2,12 @@
 
 ## 2026-11-06
 
+- Added `ctx.HTML` for HTML responses from named, path-matched, or inline templates; `ctx.Template` remains as an obsolete alias.
+- Added class `init()` hooks that run after constructor fields are populated, in base-to-derived order; initializer errors participate in normal error promotion.
 - Added the generic return-value form `ctx.Bind[T]()` alongside the existing destination-based binding. It supports Go++ classes, Go structs, and structural records, including pointer result types; query, JSON, and form input are selected from the request method and content type.
-- Added an overridable `http.Server.Handle(ctx)` front controller. It can handle a request or return `false` to continue to annotated routes.
+- Added `http.Server.Handle(ctx) error` as a procedural handler; a response skips route dispatch, while an unwritten response falls through to annotated routes (if any).
+- Added `http.Server.PublicDir` for root static files and made `http.Files` mounts run before procedural handlers and routes. Both prefer `index.html` then `index.htm`, disable directory listings by default, and use a five-minute cache policy with gzip for compressible responses.
+- Simplified `http.Context.Template` to one call with optional status, data, and key arguments; an omitted key uses the request path.
 - Split generic typed SQL queries into the new `gpp/sql` package; model mapping and model operations remain in `gpp/orm`.
 - `http.Server.Listen(port)` now takes the TCP port directly; pass `0` to let the OS choose an available port. This replaces the `http.Port` annotation.
 - Fixed automatic exception promotion for ignored errors returned by lowered calls, including extension calls with callback overloads; added runtime regression coverage.

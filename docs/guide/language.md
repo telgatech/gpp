@@ -32,10 +32,11 @@ These forms have deliberately different roles:
 - `Person{...}` is an ordinary Go composite literal and remains available
   unchanged and does not run class construction hooks.
 
-The constructor specification reserves a class `init()` method for setup and
-validation after constructor fields are assigned. The current compiler does
-not yet invoke this hook; use a static factory when construction needs extra
-work today:
+Classes can define one instance `init()` method for setup and validation after
+constructor fields are assigned. Constructor-style calls run it after
+initializing fields; ordinary `User{...}` composite literals bypass it. The
+initializer can return an error, which construction returns or promotes using
+the normal trailing-error rules:
 
 ```go
 class User {
@@ -235,7 +236,7 @@ template Page(title string) {
 
 class App : http.Server @{http.GET("/hello/{name}")} {
     func Hello(ctx *http.Context) error {
-        return ctx.Template("Page", ctx.Param("name"))
+        return ctx.HTML(200, ctx.Param("name"), "Page")
     }
 }
 ```

@@ -1076,7 +1076,84 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		setConstructorASTValue(root, field.Path, field.Name, value)
 	}
 	value := constructorASTLiteralExpr(name, class, root, classes, target.Qualifier)
-	return &UnaryExpr{Operator: "&", Operand: value}, true, nil
+	instance := &UnaryExpr{Operator: "&", Operand: value}
+	initializers := constructorInitializers(class, classes, nil, map[*ClassDecl]bool{})
+	if len(initializers) == 0 {
+		return instance, true, nil
+	}
+	return constructorInitializationExpr(name, instance, initializers), true, nil
+}
+
+type constructorInitializer struct {
+	Path       []string
+	ReturnsErr bool
+}
+
+func constructorInitializers(class *ClassDecl, classes map[string]*ClassDecl, path []string, visiting map[*ClassDecl]bool) []constructorInitializer {
+	if class == nil || visiting[class] {
+		return nil
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+	var result []constructorInitializer
+	for _, parentName := range classParentNames(class) {
+		parent := classes[parentName]
+		result = append(result, constructorInitializers(parent, classes, append(append([]string(nil), path...), classParentFieldName(parentName)), visiting)...)
+	}
+	if initializer := classInitializer(class); initializer != nil {
+		result = append(result, constructorInitializer{
+			Path:       append([]string(nil), path...),
+			ReturnsErr: strings.TrimSpace(methodResultSource(*initializer)) != "",
+		})
+	}
+	return result
+}
+
+func constructorInitializationExpr(typeName string, instance ExprNode, initializers []constructorInitializer) ExprNode {
+	valueName := "__gpp_instance"
+	errName := "__gpp_initErr"
+	statements := []Stmt{&DeclarationStmt{
+		Keyword: ":=",
+		Names:   []Token{{Text: valueName, Kind: TokenIdentifier}},
+		Values:  []ExprNode{instance},
+	}}
+	returnsError := false
+	for _, initializer := range initializers {
+		returnsError = returnsError || initializer.ReturnsErr
+		call := ExprNode(&NameExpr{Name: valueName})
+		for _, part := range initializer.Path {
+			call = &SelectorExpr{Receiver: call, Name: part}
+		}
+		call = &SelectorExpr{Receiver: call, Name: "GppInitialize"}
+		call = &CallExpr{Callee: call}
+		if initializer.ReturnsErr {
+			statements = append(statements, &IfStmt{
+				Init: &AssignmentExpr{
+					Left:     []ExprNode{&NameExpr{Name: errName}},
+					Operator: ":=",
+					Right:    []ExprNode{call},
+				},
+				Condition: &BinaryExpr{Left: &NameExpr{Name: errName}, Operator: "!=", Right: &NameExpr{Name: "nil"}},
+				Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{
+					&NameExpr{Name: "nil"}, &NameExpr{Name: errName},
+				}}}},
+			})
+		} else {
+			statements = append(statements, &ExpressionStmt{Expression: call})
+		}
+	}
+	results := []TypeNode{parseTypeText("*" + typeName)}
+	returnValues := []ExprNode{&NameExpr{Name: valueName}}
+	if returnsError {
+		results = append(results, parseTypeText("error"))
+		returnValues = append(returnValues, &NameExpr{Name: "nil"})
+	}
+	statements = append(statements, &ReturnStmt{Values: returnValues})
+	literal := &FunctionLiteralExpr{
+		Type: &FunctionType{Results: results},
+		Body: &BlockStmt{Statements: statements},
+	}
+	return &CallExpr{Callee: literal}
 }
 
 func setConstructorASTValue(root *constructorASTLiteral, path []string, fieldName string, value ExprNode) {

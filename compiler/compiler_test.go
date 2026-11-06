@@ -333,6 +333,10 @@ func main() {
 	output.Reset()
 	if err := tpl.Execute(&output, "/legacy/7", "old"); err != nil { panic(err) }
 	fmt.Println(output.String())
+	output.Reset()
+	if err := tpl.Execute(&output, "/missing/42", "unused"); err == nil || !strings.Contains(err.Error(), "no template matches path") {
+		panic("expected an unmatched template path to return an error")
+	}
 
 	if "  hello  ".TrimSpace().ToUpper() != "HELLO" ||
 		!"hello".Contains("ell") ||
@@ -475,16 +479,16 @@ class App : http.Server @{http.IP("127.0.0.1")} {
         return nil
     }
 
-    func Handle(ctx *http.Context) (bool, error) {
+    func Handle(ctx *http.Context) error {
         events = append(events, "handle")
         ctx.Set("front-controller", "shared")
         if ctx.Request.URL.Path == "/handled" {
-            return true, ctx.Text("handled")
+            return ctx.Text("handled")
         }
         if ctx.Request.URL.Path == "/handle-error" {
-            return false, fmt.Errorf("front controller failed")
+            return fmt.Errorf("front controller failed")
         }
-        return false, nil
+        return nil
     }
 
     func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
@@ -1142,7 +1146,8 @@ class App : http.Server @{http.IP("127.0.0.1")} {
     }
 
     func Root(ctx *http.Context) error @{http.GET("/")} {
-        return ctx.Template(Post(Title: "selected by root path"))
+        post := Post(Title: "selected by root path")
+        return ctx.HTML(200, post)
     }
 
     func Created(ctx *http.Context) error @{http.GET("/created")} {
@@ -1154,11 +1159,17 @@ class App : http.Server @{http.IP("127.0.0.1")} {
     }
 
     func View(ctx *http.Context) error @{http.GET("/view")} {
-        return ctx.Template("Page", "hello")
+        return ctx.Template(202, "hello", "Page")
     }
 
     func PathView(ctx *http.Context) error @{http.GET("/path-view/{id}")} {
-        return ctx.Template(Post(Title: "selected by request path"))
+        post := Post(Title: "selected by request path")
+        // Keep the obsolete alias covered while callers migrate to HTML.
+        return ctx.Template(200, post)
+    }
+
+    func MissingTemplate(ctx *http.Context) error @{http.GET("/no-template")} {
+        return ctx.HTML(201)
     }
 
     func Broken(ctx *http.Context) error @{http.GET("/broken")} {
@@ -1203,6 +1214,7 @@ func main() {
     request(base, "/accepted")
     request(base, "/view")
     request(base, "/path-view/42")
+    request(base, "/no-template")
     request(base, "/missing")
     request(base, "/broken")
     if err := app.Shutdown(context.Background()); err != nil { panic(err) }
@@ -1236,8 +1248,9 @@ func main() {
 		"/ 200 false false true",
 		"/created 201 true false false",
 		"/accepted 202 false true false",
-		"/view 200 false false true",
+		"/view 202 false false true",
 		"/path-view/42 200 false false true",
+		"/no-template 500 false false true false false true",
 		"/missing 404 false false true false true false",
 		"/broken 500 false false true false false true",
 		"<p>hello</p>",

@@ -143,7 +143,7 @@ authorization metadata.
 | `IP(addr)` | Class | `@{http.IP("127.0.0.1")}` |
 | `Unix(path)` | Class | `@{http.Unix("/var/run/app.sock")}` |
 | `Prefix(path)` | Class | `@{http.Prefix("/api")}` |
-| `Files(path, dir)` | Class | `@{http.Files("/static/", "./public")}` |
+| `Files(path, dir, DirListing = false)` | Class | `@{http.Files("/static/", "./public")}` or `@{http.Files("/static/", "./public", DirListing: true)}` |
 | `OpenAPI(path)` | Class | `@{http.OpenAPI("/openapi.json")}` or `@{http.OpenAPI}` |
 | `Swagger(path)` | Class | `@{http.Swagger("/swagger")}` or `@{http.Swagger}` |
 | `OAuth(options...)` | Class | `@{http.OAuth(http.OAuthProvider.Google)}` |

@@ -124,29 +124,30 @@ template PostPage(post Post) @{tpl.Path("/posts/{id}")} {
 }
 ```
 
-`ctx.Template(post)` automatically uses the current request path to find the
+`ctx.HTML(200, post)` automatically uses the current request path to find the
 matching `tpl.Path` annotation, supplies the matched path parameters, and
-writes the rendered template as an HTML response. The handler does not need to
-pass `ctx.Request.URL.Path` itself:
+writes the rendered template as an HTML response. If no template matches, it
+returns an error to the handler. The handler does not need to pass
+`ctx.Request.URL.Path` itself:
 
 ```go
 class App : http.Server {
 	func ShowPost(ctx *http.Context) error @{http.GET("/posts/{id}")} {
 		post := LoadPost(ctx.Param("id"))
-		return ctx.Template(post)
+		return ctx.HTML(200, post)
 	}
 }
 ```
 
 When the handler already knows which template it wants, pass its declared name
-as the first argument:
+as `key`:
 
 ```go
-return ctx.Template("PostPage", post)
+return ctx.HTML(200, post, "PostPage")
 ```
 
-The helper defaults to status 200; its status overload accepts the status
-first, as in `ctx.Template(404, "NotFound", data)`. The corresponding
+The helper defaults to status 200. Set `status` directly when needed, as in
+`ctx.HTML(404, data, "NotFound")`. The corresponding
 non-HTTP API is `tpl.Execute(writer, key, args...)`, where `key` can be a
 template name, a URL path matched by `tpl.Path`, or inline template source.
 Static calls such as `tpl.PostPage(writer, post)` remain available when the

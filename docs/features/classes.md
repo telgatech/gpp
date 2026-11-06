@@ -118,7 +118,7 @@ user := User(
 )
 ```
 
-## Constructor hook: `init()` (Planned)
+## Constructor hook: `init()`
 
 The constructor specification reserves an instance method named `init()` for
 setup after constructor fields are assigned. Use it to normalize values or
@@ -133,11 +133,12 @@ class Person {
     }
 }
 
-person := Person(" Ada ") // the planned constructor path runs init()
+person := Person(" Ada ") // init runs after Name has been assigned
 ```
 
-An `init()` method may return an `error` when the values are invalid. If the
-caller does not explicitly capture that error, Go++ propagates it automatically:
+An `init()` method may return an `error` when the values are invalid.
+Construction then returns `(*Person, error)`. If the caller omits the trailing
+error, Go++ promotes it to an exception:
 
 ```go
 class Person {
@@ -151,16 +152,19 @@ class Person {
     }
 }
 
-person := Person(inputName)
+person := Person(inputName) // a non-nil init error is promoted
 ```
 
 The hook applies to Go++ constructor-style calls such as `Person(...)`.
 Ordinary Go composite literals such as `Person{Name: inputName}` remain
-unchanged and bypass it.
+unchanged and bypass it. An initializer takes no parameters and returns either
+nothing or one error-compatible result. A class may declare only one `init()`.
 
-> **Status: Planned.** The [constructor specification](/reference/specifications/constructors)
-> describes `init()` as the class-construction hook, but the current compiler
-> does not yet invoke it.
+When classes inherit from other classes, initialization runs base-first and
+left-to-right through the parent declarations. Each initializer sees the fully
+allocated object with constructor fields populated. The first error stops the
+remaining initializers. See the [constructor specification](/reference/specifications/constructors)
+for the exact rules.
 
 ## When a builder pattern helps
 

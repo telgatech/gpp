@@ -2,10 +2,10 @@
 
 ## Status
 
-Partially implemented. Constructor-style class calls now lower to pointers and
-ordinary composite literals remain values. The `init()` hook, initializer
-validation, and initializer error behavior remain proposed work; this document
-records their intended semantics.
+Implemented. Constructor-style class calls lower to pointers and ordinary
+composite literals remain values. Constructor calls invoke validated `init()`
+hooks after fields have been assigned, including base-to-derived initialization
+and error propagation.
 
 ## Goals
 
@@ -150,22 +150,21 @@ p, err := Person("Bob", 42)
 The first result is always `*Person`. The second result is the initializer's
 error. A non-error initializer returns only `*Person`.
 
-This follows Go++'s ordinary trailing-error rules. Therefore, where exception
-promotion is enabled, omitting the trailing error promotes a non-nil error:
+This follows Go++'s ordinary trailing-error rules. Omitting the trailing error
+promotes a non-nil error to an exception:
 
 ```go
 p := Person("Bob", 42)
 ```
 
-is valid only when the surrounding context permits automatic error promotion;
-otherwise the compiler requires explicit capture:
+To handle the error as a value, capture it explicitly:
 
 ```go
 p, err := Person("Bob", 42)
 ```
 
 No initializer may return any result other than either no result or one
-trailing `error` result.
+trailing error-compatible result.
 
 ## Initializer restrictions
 
@@ -177,8 +176,8 @@ trailing `error` result.
 * a class may declare at most one `init`; and
 * `init` is not an overloadable method.
 
-The compiler should diagnose invalid declarations at the source location of
-`init`, for example:
+The compiler diagnoses invalid declarations at the source location of `init`,
+for example:
 
 ```text
 class Person initializer `init` cannot have parameters
@@ -196,7 +195,8 @@ For a derived class, constructor-style initialization proceeds from the
 base-most class to the most-derived class:
 
 1. allocate and populate the complete object;
-2. run each parent initializer once, in left-to-right parent declaration order;
+2. run each embedded parent's initializer once, in left-to-right parent
+   declaration order;
 3. run the derived class initializer; and
 4. return the initialized pointer, or the first error encountered.
 
@@ -263,7 +263,7 @@ if err != nil {
 }
 ```
 
-With automatic error promotion enabled, this may be shortened to:
+With the trailing error omitted, this may be shortened to:
 
 ```go
 person := Person(inputName, inputAge)
@@ -284,17 +284,7 @@ generated API should preserve these properties:
 * ordinary Go callers can still use the emitted struct and methods; and
 * ordinary composite literals remain available.
 
-The compiler should represent constructor calls and initializer sequencing as
-typed AST nodes. It must not implement this feature by rewriting generated
-source strings or by making `Person{...}` behave differently after emission.
-
-## Open implementation questions
-
-The following details are intentionally left for compiler implementation and
-tests to settle without changing the source-level contract:
-
-* the generated helper naming convention;
-* whether parent initializer helpers are emitted as private methods or package
-  functions;
-* how constructor overloads are represented in generated Go; and
-* the exact diagnostic wording for inaccessible or ambiguous inherited fields.
+The compiler represents constructor calls and initializer sequencing as typed
+AST nodes. It does not make `Person{...}` behave differently after emission.
+Generated initializer helpers are an implementation detail; `GppInitialize`
+is reserved for compiler-generated use.

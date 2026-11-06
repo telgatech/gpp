@@ -230,7 +230,7 @@ annotation (
 
     WebSocket(path string) on method
 
-    Files(path string, dir string) on class
+    Files(path string, dir string, DirListing bool = false) on class
 
     Auth on class, method
     NoAuth on method
@@ -246,6 +246,9 @@ HTTP behavior.
 Conceptual API:
 
 class Server {
+    PublicDir string
+    DirListing bool
+    PublicCacheControl string
     func Listen(port int) error
     func Serve(listener net.Listener) error
     func Mount(mountable any, addresses ...string) error
@@ -256,6 +259,25 @@ class Server {
 the operating system to choose an available port. The `IP` annotation can
 still select the local interface, while `Unix` selects a Unix-domain socket
 and requires `Listen(0)`.
+
+When `Server.PublicDir` is non-empty, matching files are served from that
+directory at `/` before `Handle` or route dispatch. `http.Files(path, dir)`
+annotations add prefix-based static mounts. All configured static mounts are
+checked before `Handle`, ordered by longest matching prefix first. Only GET
+and HEAD requests are served as files. If no file matches, normal handler and
+route dispatch continues. An empty `PublicDir` disables its root mount.
+Directory requests prefer `index.html`, then `index.htm`, at each directory
+level. Directory listings are disabled by default; when an index is absent,
+the request continues to `Handle` and route dispatch. Set `Server.DirListing`
+to enable listings for `PublicDir`, or pass `DirListing: true` to an
+`http.Files` annotation to enable them for that mount.
+
+Public files use `Cache-Control: public, max-age=300` when
+`PublicCacheControl` is empty. The standard file server's `Last-Modified`
+conditional requests remain enabled. Compressible responses use gzip when
+requested by the client; range responses and already encoded content are not
+compressed. `PublicCacheControl` overrides the default cache policy for both
+`PublicDir` and `http.Files` mounts.
 
 `Mount` accepts an instance of a Go++ class marked with the `Mountable`
 annotation and one or more mount addresses. Its methods use the same HTTP
@@ -307,13 +329,14 @@ unspecified address such as `[::]` or `0.0.0.0`.
 
 `Server.Listen(port)` must discover App routes/configuration.
 
-Every request passes through the server's `Handle(*Context) (bool, error)`
-method before route dispatch. The default implementation returns `(false, nil)`.
-An override that returns `true` marks the request handled; `false` continues to
-the annotated, mounted, or generated routes. A returned error is sent through
-the server error handler. The same Context is passed to the selected route, and
-`BeforeRequest` and `AfterRequest` run once around the request. Returning false
-after writing a response must stop route dispatch and log a warning.
+Every request passes through the server's `Handle(*Context) error` method before
+route dispatch. The default implementation returns `nil`. If `Handle` writes a
+response, route dispatch is skipped; otherwise the annotated, mounted, or
+generated routes are tried. This allows `Handle` to serve requests procedurally
+without declaring annotated routes, while also allowing routes to act as
+fallbacks. Returning an error stops dispatch and sends it through the server
+error handler. The same Context is passed to the selected route, and
+`BeforeRequest` and `AfterRequest` run once around the request.
 
 For ordinary HTTP route methods, the first parameter is `*http.Context`.
 Additional parameters must each have exactly one request-binding annotation:

@@ -1015,10 +1015,27 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 			}
 		}
 	case *SelectorExpr:
-		if receiver, ok := function.Receiver.(*NameExpr); ok && receiver.Name == "this" {
-			signatures = append(signatures, context.MethodSignatures[function.Name]...)
-			if len(signatures) == 0 {
-				signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][function.Name]...)
+		if receiver, ok := function.Receiver.(*NameExpr); ok {
+			if receiver.Name == "this" {
+				signatures = append(signatures, context.MethodSignatures[function.Name]...)
+				if len(signatures) == 0 {
+					signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][function.Name]...)
+				}
+			} else if _, isClass := context.Targets[receiver.Name]; isClass {
+				// Static Go++ methods are emitted as package functions. A class
+				// receiver must therefore be lowered to that function instead of
+				// being emitted as a Go method selector (Class.Method).
+				staticCall = true
+				signatures = append(signatures, context.StaticMethodSignatures[receiver.Name][function.Name]...)
+			} else {
+				// Instance methods on typed parameters and globals also have
+				// signatures available for named/default argument lowering.
+				typeName := context.CurrentParameterTypes[receiver.Name]
+				if typeName == "" {
+					typeName = context.GlobalValueTypes[receiver.Name]
+				}
+				className := strings.TrimPrefix(strings.TrimSpace(typeName), "*")
+				signatures = append(signatures, context.ClassMethodSignatures[className][function.Name]...)
 			}
 		} else {
 			// Imported static calls use a qualified receiver such as

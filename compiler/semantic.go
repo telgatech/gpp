@@ -728,6 +728,21 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	methods := map[string][]methodEntry{}
 	for index, method := range class.Methods {
+		if method.Name == "init" {
+			if method.IsStatic {
+				return fmt.Errorf("%s: class %s initializer `init` cannot be static", classLocation(class), class.Name)
+			}
+			if _, exists := methods["init"]; exists {
+				return fmt.Errorf("%s: class %s may declare only one initializer `init`", classLocation(class), class.Name)
+			}
+			if strings.TrimSpace(methodParametersSource(method)) != "" {
+				return fmt.Errorf("%s: class %s initializer `init` cannot have parameters", classLocation(class), class.Name)
+			}
+			result := strings.TrimSpace(methodResultSource(method))
+			if result != "" && !initializerErrorResult(result, pkg) {
+				return fmt.Errorf("%s: class %s initializer `init` must return no values or a trailing error", classLocation(class), class.Name)
+			}
+		}
 		if method.IsStatic && tokensContainIdentifier(methodBodyTokens(method), "this") {
 			return fmt.Errorf(
 				"%s: static method %s has no this",
@@ -735,9 +750,9 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 				method.Name,
 			)
 		}
-		if method.Name == "GppRuntimeClass" {
+		if method.Name == "GppRuntimeClass" || method.Name == "GppInitialize" || method.Name == "__gppInit" {
 			return fmt.Errorf(
-				"%s: class %s method %s is reserved for Go++ runtime metadata",
+				"%s: class %s method %s is reserved for Go++ generated methods",
 				classLocation(class),
 				class.Name,
 				method.Name,
@@ -840,6 +855,39 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 
 	return nil
+}
+
+func initializerErrorResult(result string, pkg *PackageSymbols) bool {
+	if result == "error" {
+		return true
+	}
+	name := strings.TrimPrefix(result, "*")
+	if class := pkg.Classes[name]; class != nil {
+		return semanticClassHasErrorMethod(class, pkg.Classes, map[*ClassDecl]bool{})
+	}
+	if class := pkg.ImportedClasses[name]; class != nil {
+		return semanticClassHasErrorMethod(class, pkg.ImportedClasses, map[*ClassDecl]bool{})
+	}
+	return false
+}
+
+func semanticClassHasErrorMethod(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) bool {
+	if class == nil || visiting[class] {
+		return false
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+	for _, method := range class.Methods {
+		if !method.IsStatic && method.Name == "Error" && methodParametersSource(method) == "" && strings.TrimSpace(methodResultSource(method)) == "string" {
+			return true
+		}
+	}
+	for _, parent := range classParentNames(class) {
+		if semanticClassHasErrorMethod(classes[parent], classes, visiting) {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceContainsIdentifier(source, wanted string) bool {

@@ -55,30 +55,28 @@ and [lifecycle guide](/reference/specifications/std.http.lifecycle).
 
 ## Handle requests before route dispatch
 
-`http.Server` provides a default `Handle(ctx)` method that returns
-`(false, nil)`, so existing annotated routes work unchanged. Override it when
-one entry point should inspect every request before the server tries annotated
-routes:
+`http.Server` provides a default `Handle(ctx)` method that returns `nil`, so
+existing annotated routes work unchanged. Override it for a procedural handler
+that can respond to requests directly; annotated routes remain available as
+fallbacks:
 
 ```go
 class App : http.Server {
-    func Handle(ctx *http.Context) (bool, error) {
+    func Handle(ctx *http.Context) error {
         if ctx.Request.URL.Path == "/healthz" {
-            return true, ctx.Text("ok")
+            return ctx.Text("ok")
         }
-        return false, nil
-    }
-
-    func Hello(ctx *http.Context) error @{http.GET("/hello")} {
-        return ctx.Text("hello")
+        return nil
     }
 }
 ```
 
-Return `true` when `Handle` has responded to the request. Return `false` to
-continue to annotated routes; do not write a response before continuing. An
-error goes through the server's normal error handler. The same context reaches
-the selected route, and request hooks run once around the whole request.
+`Handle` runs before annotated routes on every request. If it writes a response,
+route dispatch stops; if it returns without writing, the server tries the
+annotated routes. Return an error to use the server's normal error handler. This
+lets an application use `Handle` as its only handler or mix it with annotated
+routes as fallbacks. The same context reaches a selected route, and request
+hooks run once around the whole request.
 
 ## Bind into a typed value
 

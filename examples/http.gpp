@@ -100,7 +100,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         http.Description("Returns a small HTML page rendered from a Go++ template."),
         http.Tags("Templates")
     } {
-        return ctx.Template("Page", "Go++ HTTP")
+        return ctx.HTML(200, "Go++ HTTP", "Page")
     }
 
     func AfterRequest(ctx *http.Context) error {

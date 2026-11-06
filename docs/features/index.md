@@ -14,7 +14,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Program exit hook](./at-exit)
 - [Extension methods](./extensions)
 - [Serialization](./serialization)
-- [Constructor hook: class `init()` (Planned)](./classes#constructor-hook-init-planned)
+- [Constructor hook: class `init()`](./classes#constructor-hook-init)
 - [Static methods and factories](./static-methods)
 - [Named arguments and defaults](./named-arguments)
 - [Structural records](./records)

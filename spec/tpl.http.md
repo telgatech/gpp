@@ -8,7 +8,7 @@ This addendum defines:
 2. default server error-page handling;
 3. status-aware `Context.JSON`;
 4. status-aware `Context.Text`;
-5. `Context.Template`;
+5. `Context.HTML`;
 6. interaction with `gpp/tpl.Execute`.
 
 The responsibility boundary is:
@@ -153,10 +153,10 @@ The HTTP response status and template data are separate concepts.
 For example:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     404,
-    this.ErrorTemplate(),
     data,
+    this.ErrorTemplate(),
 )
 ```
 
@@ -193,10 +193,10 @@ data := record(
 and execute:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     code,
-    this.ErrorTemplate(),
     data,
+    this.ErrorTemplate(),
 )
 ```
 
@@ -371,10 +371,10 @@ if route == nil {
 The error handler constructs suitable data and executes:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     404,
-    this.ErrorTemplate(),
     data,
+    this.ErrorTemplate(),
 )
 ```
 
@@ -448,10 +448,10 @@ Error rendering must not recurse indefinitely.
 If:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     code,
-    this.ErrorTemplate(),
     data,
+    this.ErrorTemplate(),
 )
 ```
 
@@ -509,7 +509,7 @@ If execution fails, the server still has an opportunity to send the minimal fall
 ```gpp
 ctx.JSON(...)
 ctx.Text(...)
-ctx.Template(...)
+ctx.HTML(...)
 ```
 
 Each supports:
@@ -608,38 +608,38 @@ Content-Type:
 
 ---
 
-# 19. `Context.Template`
+# 19. `Context.HTML`
 
 For consistency, `http.Context` provides:
 
 ```gpp
-ctx.Template(...)
+ctx.HTML(...)
 ```
 
-Canonical overloads:
+The method has one signature with optional arguments:
 
 ```gpp
-func Template(
-    key string,
-    args ...any,
-) error
-
-func Template(
-    data any,
-) error
-
-func Template(
-    status int,
-    key string,
-    args ...any,
+func HTML(
+    status int = 200,
+    data any = nil,
+    key string = "",
 ) error
 ```
 
-Default status:
+If `key` is empty, the current request URL path is used. Otherwise `key` may
+name a registered template or contain inline template source. The argument
+order is always status, data, then key. A key beginning with `/` is treated as
+a URL path; if it has no matching `tpl.Path` template, the method returns an
+error instead of treating the path as inline source. Examples:
 
-```text
-200 OK
+```gpp
+ctx.HTML(201)
+ctx.HTML(200, post)
+ctx.HTML(404, errorData, "NotFound")
 ```
+
+`Context.Template` is a deprecated alias with the same signature and behavior.
+It is annotated with `std.Deprecated("Use HTML(status, data, key) instead")`.
 
 ---
 
@@ -648,39 +648,40 @@ Default status:
 Registered template:
 
 ```gpp
-ctx.Template(
-    "BlogPost",
+ctx.HTML(
+    200,
     post,
+    "BlogPost",
 )
 ```
 
 Explicit status:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     200,
-    "BlogPost",
     post,
+    "BlogPost",
 )
 ```
 
 Path-based execution:
 
 ```gpp
-ctx.Template(post)
+ctx.HTML(200, post)
 ```
 
-The data-only overload looks up a template using the current request URL path.
-The template must declare a matching `tpl.Path` annotation. Captured path
-parameters are made available through the template's `param` helper.
+With the key omitted, the method looks up a template using the current request
+URL path. The template must declare a matching `tpl.Path` annotation. Captured
+path parameters are made available through the template's `param` helper.
 
 Inline source:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     200,
-    `<h1>{{.Title}}</h1>`,
     post,
+    `<h1>{{.Title}}</h1>`,
 )
 ```
 
@@ -694,30 +695,16 @@ behavior.
 
 ---
 
-# 21. `Context.Template` Delegation
+# 21. `Context.HTML` Delegation
 
 Conceptually:
 
 ```gpp
-func Template(data any) error {
-    return this.renderTemplate(
-        200,
-        this.Request.URL.Path,
-        data,
-    )
-}
-
-func Template(
-    status int,
-    key string,
-    args ...any,
-) error {
-    ...
-    tpl.Execute(
-        writer,
-        key,
-        args...,
-    )
+func HTML(status int = 200, data any = nil, key string = "") error {
+    if key == "" {
+        key = this.Request.URL.Path
+    }
+    return this.renderTemplate(status, key, data)
 }
 ```
 
@@ -742,7 +729,7 @@ html/template execution
 
 # 22. Template Content Type
 
-`Context.Template` should default to:
+`Context.HTML` should default to:
 
 ```text
 text/html; charset=utf-8
@@ -758,7 +745,7 @@ It does not belong in template annotations.
 
 # 23. Template Buffering
 
-`Context.Template` should preferably execute into a temporary buffer before committing headers.
+`Context.HTML` should preferably execute into a temporary buffer before committing headers.
 
 Conceptually:
 
@@ -867,8 +854,7 @@ ctx.JSON(status, value)
 ctx.Text(value)
 ctx.Text(status, value)
 
-ctx.Template(key, args...)
-ctx.Template(status, key, args...)
+ctx.HTML(status, data, key)
 ```
 
 Examples:
@@ -880,17 +866,18 @@ ctx.JSON(201, user)
 ctx.Text("ok")
 ctx.Text(202, "accepted")
 
-ctx.Template("BlogPost", post)
-ctx.Template(404, "ErrorPage", data)
+ctx.HTML(200, post, "BlogPost")
+ctx.HTML(404, data, "ErrorPage")
 ```
 
-This is the canonical response-helper pattern.
+An omitted key uses the current request path. The parameter order is status,
+data, then key, so positional calls can use the same order.
 
 ---
 
 # 28. Default Status Rule
 
-When the explicit status overload is not used:
+When no status argument is supplied:
 
 ```text
 JSON      -> 200
@@ -913,7 +900,7 @@ All three response helpers return `error`:
 ```gpp
 ctx.JSON(...)
 ctx.Text(...)
-ctx.Template(...)
+ctx.HTML(...)
 ```
 
 Therefore normal Go++ automatic trailing-error promotion applies.
@@ -966,9 +953,10 @@ func ShowPost(
 ) {
     post := LoadPost(id)
 
-    ctx.Template(
-        "BlogPost",
+    ctx.HTML(
+        200,
         post,
+        "BlogPost",
     )
 }
 ```
@@ -990,10 +978,10 @@ data := record(
 and:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     404,
-    this.ErrorTemplate(),
     data,
+    this.ErrorTemplate(),
 )
 ```
 
@@ -1016,22 +1004,22 @@ Template:
 Applications may also keep it minimal:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     404,
-    this.ErrorTemplate(),
     record(
         Code: 404,
     ),
+    this.ErrorTemplate(),
 )
 ```
 
 or even:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
+    404,
     404,
     this.ErrorTemplate(),
-    404,
 )
 ```
 
@@ -1065,10 +1053,10 @@ func Error(
         Path:    ctx.Request.URL.Path,
     )
 
-    ctx.Template(
+    ctx.HTML(
         code,
-        this.ErrorTemplate(),
         data,
+        this.ErrorTemplate(),
     )
 }
 ```
@@ -1113,7 +1101,7 @@ construct template data
     ↓
 this.ErrorTemplate()
     ↓
-ctx.Template(code, keyOrSource, data)
+ctx.HTML(code, data, keyOrSource)
     ↓
 tpl.Execute(...)
     ↓
@@ -1226,14 +1214,14 @@ template ErrorPage(data record) {
 Example response:
 
 ```gpp
-ctx.Template(
+ctx.HTML(
     404,
-    this.ErrorTemplate(),
     record(
         Code:    404,
         Message: "Page not found",
         Path:    ctx.Request.URL.Path,
     ),
+    this.ErrorTemplate(),
 )
 ```
 

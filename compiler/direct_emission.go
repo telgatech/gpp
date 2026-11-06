@@ -275,7 +275,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 	// Normalize expression-level constructs before exception promotion. A
 	// selector such as Enum.From(...) can become a generated Go call during
 	// this pass; promotion must inspect that lowered call rather than the
-	// original Go++ selector and miss its multi-result error ABI.
+	// original Go++ selector and miss its multi-result error ABI. Keep class
+	// constructor calls intact until promotion has seen their initializer ABI.
+	bodyContext.DeferConstructorLowering = true
 	if err := lowerExceptionBlockNodes(bodyAST, bodyContext); err != nil {
 		if isSourceLineDiagnostic(err) {
 			return nil, true, err
@@ -288,6 +290,7 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		}
 		return nil, false, nil
 	}
+	bodyContext.DeferConstructorLowering = false
 	if err := lowerPolymorphismBlockNode(bodyAST, bodyContext); err != nil {
 		return nil, false, nil
 	}

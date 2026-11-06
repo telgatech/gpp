@@ -138,6 +138,7 @@ type constructorContext struct {
 	NativeMethods              map[string]map[string]bool
 	CurrentClass               string
 	CurrentMethod              string
+	DeferConstructorLowering   bool
 	CurrentResultAST           TypeNode
 	CurrentExtensionReceiver   string
 	CurrentParameterTypes      map[string]string
@@ -1637,6 +1638,9 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	if err != nil {
 		return err
 	}
+	if initializer := classInitializer(class); initializer != nil {
+		methods = append(methods, *initializer)
+	}
 
 	for _, method := range class.Methods {
 		if !method.IsStatic {
@@ -1649,6 +1653,12 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 
 	for methodIndex := range methods {
 		method := methods[methodIndex]
+		// Initializers are construction hooks, not inherited API methods. A
+		// class's own init method is emitted below as its source method; a
+		// parent's init is invoked through the parent's generated helper.
+		if method.Name == "init" && classInitializer(class) == nil {
+			continue
+		}
 		if method.Generated && isDefaultObjectMethod(method) {
 			if len(class.TypeParamsAST) != 0 {
 				continue
@@ -1795,6 +1805,16 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		out.WriteString("\n}\n\n")
 	}
 
+	if classInitializer(class) != nil {
+		fmt.Fprintf(out, "func (this *%s) GppInitialize() error {\n", class.Name+typeParameterNames(class.TypeParamsAST))
+		if strings.TrimSpace(methodResultSource(*classInitializer(class))) == "" {
+			out.WriteString("\tthis.__gppInit()\n\treturn nil\n")
+		} else {
+			out.WriteString("\treturn this.__gppInit()\n")
+		}
+		out.WriteString("}\n\n")
+	}
+
 	// Runtime class descriptors describe concrete field and method types. A
 	// generic declaration has no concrete Go type until instantiated.
 	if len(class.TypeParamsAST) != 0 {
@@ -1804,6 +1824,9 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
 	out.WriteString("\tGppRuntimeClass() *GppClass\n")
 	for _, method := range methods {
+		if method.Name == "init" {
+			continue
+		}
 		parameterSource := methodParametersSource(method)
 		resultSource := methodResultSource(method)
 		if parentName, imported := importedParentForMethod(class, method, classes); imported {
@@ -1846,6 +1869,18 @@ func methodReceiverType(class *ClassDecl, method Method) string {
 		return classType
 	}
 	return "*" + classType
+}
+
+func classInitializer(class *ClassDecl) *Method {
+	if class == nil {
+		return nil
+	}
+	for index := range class.Methods {
+		if class.Methods[index].Name == "init" && !class.Methods[index].IsStatic {
+			return &class.Methods[index]
+		}
+	}
+	return nil
 }
 
 func typeParameterNames(parameters []TypeParameterNode) string {
@@ -2127,7 +2162,7 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 	methods := []Method{}
 	seen := map[string]bool{}
 	for _, method := range class.Methods {
-		if method.IsStatic {
+		if method.IsStatic || method.Name == "init" {
 			continue
 		}
 		methods = append(methods, method)
@@ -2169,6 +2204,9 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 }
 
 func methodOutputName(method Method) string {
+	if method.Name == "init" {
+		return "__gppInit"
+	}
 	if method.GoName != "" {
 		return method.GoName
 	}

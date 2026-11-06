@@ -22,7 +22,7 @@ annotation (
 
 	WebSocket(path string) on method
 	SSE on method
-	Files(path string, dir string) on class
+	Files(path string, dir string, DirListing bool = false) on class
 	OpenAPI(path string = "/openapi.json") on class
 	Swagger(path string = "/swagger") on class
 	OAuth(options ...any) on class

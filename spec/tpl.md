@@ -45,7 +45,7 @@ each have a template for `/` without conflicting.
 Resolution must use the package scope of the Go++ call site. The compiler must
 preserve that scope for generated typed template calls and dynamic calls such
 as `tpl.Execute`. HTTP route dispatch must carry the scope of the package that
-declared the matched handler into `Context.Template` and other framework
+declared the matched handler into `Context.HTML` and other framework
 rendering helpers. A path lookup must never silently select a template from an
 unrelated package.
 

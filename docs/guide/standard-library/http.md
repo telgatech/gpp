@@ -85,6 +85,20 @@ return server.ListenAndServe()
 
 `Listen(port)` creates the listener and runs the server. Pass `0` to let the operating system choose an available port; the assigned port is available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the log uses `http://localhost:8080` instead of an unspecified wildcard address.
 
+Static files are checked before `Handle(ctx)` and route dispatch, regardless of whether they come from `PublicDir` or an `http.Files` annotation. A matching GET or HEAD file is served first; directory requests serve `index.html`, or `index.htm` when `index.html` is absent. Directory listings are disabled by default, so a directory without an index falls through to the handler and then registered routes. Set `DirListing: true` on the server or on an `http.Files` annotation to enable listings for that mount. Static responses use `Cache-Control: public, max-age=300` by default, retain `FileServer` conditional caching, and use gzip for compressible content when requested. Range responses are not compressed.
+
+Set the inherited `PublicDir` field to serve a directory from `/` without route annotations:
+
+```gpp
+AppServer(PublicDir: "./public").Listen(8080)
+```
+
+Use `AppServer(PublicDir: "./public", DirListing: true)` to enable directory listings for the root mount.
+
+Set `PublicCacheControl` to override the cache policy. For fingerprinted assets, for example, use a longer policy such as `public, max-age=31536000, immutable`.
+
+Use `http.Files(path, directory)` annotations when files should live under specific URL prefixes or when you need multiple static mounts. These mounts use the same precedence and cache/compression behavior as `PublicDir`; pass `DirListing: true` to enable listing for one mount.
+
 The annotations set the bind address, URL prefix, static-file mount, OpenAPI document, and Swagger UI. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` annotations attach routes to methods; the handler still receives a normal request context and can return ordinary Go errors.
 
 **The two API-documentation annotations do a lot of work.** `http.OpenAPI` generates an OpenAPI 3.0.3 document for routes with JSON request or response contracts at `/openapi.json`; `http.Swagger` serves the bundled Swagger UI at `/swagger` and connects it to that document. Open the UI, choose an operation, and use its **Try it out** control to send a request to the running API and inspect the response. You write no OpenAPI file, docs handler, Swagger page, JavaScript setup, or UI asset wiring. The same route annotations already used to run the service power this live API explorer; maintaining that infrastructure by hand can grow to hundreds or thousands of lines as an API expands.
@@ -109,7 +123,7 @@ These are the annotations declared by `gpp/http`. The first group is read by the
 | `http.Body` | Handler parameter | Binds a JSON or form request body into a typed parameter. | Avoids creating and populating a request object inside the handler. |
 | `http.WebSocket(path)` | Handler method | WebSocket endpoint that handles a GET upgrade | Sends each connection to the annotated handler method. |
 | `http.SSE` | Handler method | Optional Server-Sent Events marker | Documents that a GET handler writes an event stream through `ctx.SSE`; it has no routing effect. |
-| `http.Files(path, dir)` | Server class | Static-file mount | Replaces manual `FileServer` and `StripPrefix` registration. |
+| `http.Files(path, dir, DirListing = false)` | Server class | Static-file mount | Replaces manual `FileServer` and `StripPrefix` registration; listings are opt-in. |
 | `http.OpenAPI(path)` | Server class | Generated OpenAPI endpoint; defaults to `/openapi.json` | Avoids maintaining a separate API description and serving handler. |
 | `http.Swagger(path)` | Server class | Bundled Swagger UI; defaults to `/swagger` | Avoids adding Swagger assets, page setup, and spec-loading code. Requires `http.OpenAPI`. |
 | `http.OAuth(options...)` | Server class | OAuth/OIDC provider login and callback routes | Replaces hand-written protocol routes and state/token-exchange plumbing; the app still chooses its user and session behavior. |
@@ -267,7 +281,7 @@ class App : http.Server @{http.Prefix("/api")} {
 }
 ```
 
-The context provides `Text`, `JSON`, `Template`, and `Redirect` response helpers. It retains `Request` and `Response` for code that needs the full `net/http` API. `Files(path, directory)` mounts a static directory, while `Prefix(path)` applies a common path prefix to application routes.
+The context provides `Text`, `JSON`, `Template`, and `Redirect` response helpers. It retains `Request` and `Response` for code that needs the full `net/http` API. `PublicDir` serves matching files from `/`; `Files(path, directory)` mounts a directory under a specific URL prefix. Both are checked before app handlers, while `Prefix(path)` applies a common path prefix to application routes.
 
 ## Mount route modules
 
@@ -339,7 +353,7 @@ func SearchUsers(ctx *http.Context) error @{http.GET("/users")} {
 
 ## Shared request behavior and middleware
 
-For common app-wide work, the server calls `BeforeRequest(ctx)` before request handling and `AfterRequest(ctx)` after the request is handled. The inherited `Handle(ctx)` method runs between those hooks and route dispatch; it returns `false` by default so annotated routes work as before. Override it to handle a request centrally or return `false` to continue to annotated routes. These hooks are useful for request-scoped values, metrics, auditing, and application checks:
+For common app-wide work, the server calls `BeforeRequest(ctx)` before request handling and `AfterRequest(ctx)` after the request is handled. The inherited `Handle(ctx)` method runs before route dispatch and returns `nil` by default. Override it for a procedural handler: if it writes a response, annotated routes are skipped; if it returns without writing, routes are tried. Return an error to invoke the server's error handler. `Handle` can be the app's only handler or work with annotated routes as fallbacks. These hooks are useful for metrics, auditing, and application checks:
 
 ```go
 class App : http.Server {
@@ -441,12 +455,12 @@ template ProfilePage(user User) {
 class App : http.Server {
 	func Profile(ctx *http.Context) error @{http.GET("/profile/{id}")} {
 		user := loadUser(ctx.Param("id"))
-		return ctx.Template("ProfilePage", user)
+		return ctx.HTML(200, user, "ProfilePage")
 	}
 }
 ```
 
-`ctx.Template(data)` uses the current request path to find a template declared with a matching `tpl.Path` annotation, so the handler can render it without passing the URL again. For example, `return ctx.Template(user)` uses the current request path and supplies `user` as the template data. To select a template by name explicitly, use `ctx.Template("ProfilePage", user)`. The helper writes an HTML response with status 200 by default; its keyed form accepts an explicit status first, as in `ctx.Template(404, "NotFound", data)`. `ErrorTemplate()` selects the template used for server-generated error pages. For URL-bound templates and the generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
+`ctx.HTML` takes optional `status`, `data`, and `key` arguments in that order. Status defaults to 200, data defaults to `nil`, and an omitted key uses the current request path to find a matching `tpl.Path` template. For example, `ctx.HTML(200, user)` renders the URL-bound template, `ctx.HTML(404, data, "NotFound")` selects a named template and status, and `ctx.HTML(201)` sets a status without passing data. `ctx.Template` remains an obsolete alias for `ctx.HTML`. `ErrorTemplate()` selects the template used for server-generated error pages. For URL-bound templates and the generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
 
 ## HTTPS and deployment boundaries
 

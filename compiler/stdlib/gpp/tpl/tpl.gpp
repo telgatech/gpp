@@ -184,6 +184,10 @@ func ExecuteIn(scope string, writer io.Writer, key string, args ...any) error {
 			templateRegistry.RUnlock()
 			return registration.Render(writer, params, args...)
 		}
+		if strings.HasPrefix(key, "/") {
+			templateRegistry.RUnlock()
+			return err
+		}
 	}
 	if registration, exists := templateRegistry.byName[templateRegistryKey(scope, key)]; exists {
 		templateRegistry.RUnlock()

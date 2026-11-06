@@ -2001,6 +2001,15 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 		if err := validateCallArgumentStyle(callExpression); err != nil {
 			return nil, err
 		}
+		if context.DeferConstructorLowering {
+			if _, target, constructor := constructorTargetForCallee(callExpression.Callee, context); constructor {
+				for _, initializer := range constructorInitializers(target.Class, classesForClass(context, target.Class), nil, map[*ClassDecl]bool{}) {
+					if initializer.ReturnsErr {
+						return callExpression, nil
+					}
+				}
+			}
+		}
 		if lowered, handled, err := lowerRecordCallExprNode(callExpression, context); handled {
 			return lowered, err
 		}
@@ -3794,6 +3803,13 @@ func promotionASTInlineReplacementNode(call *CallExpr, resultTypes []string, dis
 func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes map[string]string) (promotedCall, bool) {
 	if call == nil {
 		return promotedCall{}, false
+	}
+	if name, target, ok := constructorTargetForCallee(call.Callee, context); ok {
+		for _, initializer := range constructorInitializers(target.Class, classesForClass(context, target.Class), nil, map[*ClassDecl]bool{}) {
+			if initializer.ReturnsErr {
+				return promotedCall{types: []string{"*" + name, "error"}, trailingError: true}, true
+			}
+		}
 	}
 	if result, ok := generatedStaticSelfResultType(call.Callee, context); ok {
 		resultTypes := resultTypesFromText(result)

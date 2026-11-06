@@ -1,9 +1,11 @@
 package gpp.http
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"log"
+	"mime"
 	"net"
 	"os"
 	"os/signal"
@@ -11,6 +13,7 @@ import (
 	gppwebsocket "golang.org/x/net/websocket"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,6 +45,121 @@ type gppHTTPRequestState struct {
 	AfterHandled bool
 }
 
+type gppHTTPStatusResponseWriter struct {
+	stdhttp.ResponseWriter
+	Status       int
+	Request      *stdhttp.Request
+	CacheControl string
+	gzipWriter   *gzip.Writer
+}
+
+func (writer *gppHTTPStatusResponseWriter) WriteHeader(status int) {
+	if writer.Status != 0 {
+		return
+	}
+	writer.Status = status
+	header := writer.ResponseWriter.Header()
+	if status == stdhttp.StatusOK || status == stdhttp.StatusPartialContent || status == stdhttp.StatusNotModified {
+		cacheControl := writer.CacheControl
+		if cacheControl == "" {
+			cacheControl = "public, max-age=300"
+		}
+		if header.Get("Cache-Control") == "" {
+			header.Set("Cache-Control", cacheControl)
+		}
+	}
+	if !gppHTTPCompressibleContentType(header.Get("Content-Type")) {
+		writer.ResponseWriter.WriteHeader(status)
+		return
+	}
+	gppHTTPAppendVary(header, "Accept-Encoding")
+	contentLength, lengthErr := strconv.ParseInt(header.Get("Content-Length"), 10, 64)
+	if status == stdhttp.StatusOK && (lengthErr != nil || contentLength >= 512) && writer.Request != nil && writer.Request.Header.Get("Range") == "" && header.Get("Content-Encoding") == "" && gppHTTPAcceptsGzip(writer.Request.Header.Get("Accept-Encoding")) {
+		header.Del("Content-Length")
+		header.Set("Content-Encoding", "gzip")
+		if writer.Request.Method != stdhttp.MethodHead {
+			writer.gzipWriter = gzip.NewWriter(writer.ResponseWriter)
+		}
+	}
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *gppHTTPStatusResponseWriter) Write(data []byte) (int, error) {
+	if writer.Status == 0 {
+		writer.WriteHeader(stdhttp.StatusOK)
+	}
+	if writer.gzipWriter != nil {
+		return writer.gzipWriter.Write(data)
+	}
+	return writer.ResponseWriter.Write(data)
+}
+
+func (writer *gppHTTPStatusResponseWriter) Unwrap() stdhttp.ResponseWriter {
+	return writer.ResponseWriter
+}
+
+func (writer *gppHTTPStatusResponseWriter) Close() error {
+	if writer.gzipWriter != nil {
+		return writer.gzipWriter.Close()
+	}
+	return nil
+}
+
+func gppHTTPCompressibleContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	mediaType = strings.ToLower(mediaType)
+	return strings.HasPrefix(mediaType, "text/") || mediaType == "application/json" || mediaType == "application/javascript" || mediaType == "application/xml" || mediaType == "application/xhtml+xml" || mediaType == "application/wasm" || mediaType == "image/svg+xml"
+}
+
+func gppHTTPAcceptsGzip(header string) bool {
+	gzipQuality := -1.0
+	wildcardQuality := -1.0
+	for _, item := range strings.Split(header, ",") {
+		parts := strings.Split(item, ";")
+		encoding := strings.ToLower(strings.TrimSpace(parts[0]))
+		if encoding == "" {
+			continue
+		}
+		quality := 1.0
+		for _, parameter := range parts[1:] {
+			name, value, found := strings.Cut(strings.TrimSpace(parameter), "=")
+			if !found || !strings.EqualFold(strings.TrimSpace(name), "q") {
+				continue
+			}
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil || parsed < 0 || parsed > 1 {
+				quality = 0
+			} else {
+				quality = parsed
+			}
+		}
+		switch encoding {
+		case "gzip":
+			gzipQuality = quality
+		case "*":
+			wildcardQuality = quality
+		}
+	}
+	if gzipQuality >= 0 {
+		return gzipQuality > 0
+	}
+	return wildcardQuality > 0
+}
+
+func gppHTTPAppendVary(header stdhttp.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, item := range strings.Split(existing, ",") {
+			if strings.TrimSpace(item) == "*" || strings.EqualFold(strings.TrimSpace(item), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
+}
+
 func gppHTTPRequestStateFor(request *stdhttp.Request) *gppHTTPRequestState {
 	if request == nil {
 		return nil
@@ -63,16 +181,18 @@ func gppContextForRequest(response stdhttp.ResponseWriter, request *stdhttp.Requ
 	return ctx, nil
 }
 
-func gppCallHandle(app any, ctx *Context) (bool, error) {
+func gppCallHandle(app any, ctx *Context) error {
 	handler := reflect.ValueOf(app).MethodByName("Handle")
-	if !handler.IsValid() || handler.Type().NumIn() != 1 || handler.Type().In(0) != reflect.TypeOf((*Context)(nil)) || handler.Type().NumOut() != 2 || handler.Type().Out(0).Kind() != reflect.Bool || handler.Type().Out(1) != reflect.TypeOf((*error)(nil)).Elem() {
-		return false, fmt.Errorf("http: Handle must have signature Handle(*http.Context) (bool, error)")
+	if !handler.IsValid() || handler.Type().NumIn() != 1 || handler.Type().In(0) != reflect.TypeOf((*Context)(nil)) || handler.Type().NumOut() != 1 || handler.Type().Out(0) != reflect.TypeOf((*error)(nil)).Elem() {
+		return fmt.Errorf("http: Handle must have signature Handle(*http.Context) error")
 	}
 	result := handler.Call([]reflect.Value{reflect.ValueOf(ctx)})
-	return result[0].Bool(), gppErrorResult(result[1:])
+	return gppErrorResult(result)
 }
 
 func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
+	staticMounts := gppHTTPStaticMounts(app)
+	staticCacheControl := gppHTTPStringField(app, "PublicCacheControl")
 	return stdhttp.HandlerFunc(func(response stdhttp.ResponseWriter, request *stdhttp.Request) {
 		ctx := gppNewContext(response, request)
 		ctx.TemplateScope = gppTemplateScope(app)
@@ -82,19 +202,19 @@ func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
 			return
 		}
 
-		handled, handleErr := gppCallHandle(app, ctx)
-		if handleErr != nil {
-			state.FailureCode = stdhttp.StatusInternalServerError
-			state.Failure = handleErr
-		} else if !handled && ctx.Written {
-			log.Printf("http: Handle returned false after writing a response; skipping route dispatch")
-		} else if !handled {
-			routedRequest := ctx.Request
-			if routedRequest == nil {
-				routedRequest = request
+		if !ctx.Written && !gppServeStaticFiles(staticMounts, staticCacheControl, ctx) {
+			handleErr := gppCallHandle(app, ctx)
+			if handleErr != nil {
+				state.FailureCode = stdhttp.StatusInternalServerError
+				state.Failure = handleErr
+			} else if !ctx.Written {
+				routedRequest := ctx.Request
+				if routedRequest == nil {
+					routedRequest = request
+				}
+				requestContext := context.WithValue(routedRequest.Context(), gppHTTPRequestContextKey{}, state)
+				routes.ServeHTTP(response, routedRequest.WithContext(requestContext))
 			}
-			requestContext := context.WithValue(routedRequest.Context(), gppHTTPRequestContextKey{}, state)
-			routes.ServeHTTP(response, routedRequest.WithContext(requestContext))
 		}
 
 		var afterErr error
@@ -121,6 +241,201 @@ func gppHTTPListenerAddress(address net.Addr) string {
 		host = "localhost"
 	}
 	return net.JoinHostPort(host, fmt.Sprint(tcpAddress.Port))
+}
+
+func gppHTTPPublicDir(app any) string {
+	return gppHTTPStringField(app, "PublicDir")
+}
+
+func gppHTTPStringField(app any, name string) string {
+	value := reflect.ValueOf(app)
+	if !value.IsValid() {
+		return ""
+	}
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return ""
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return ""
+	}
+	field := value.FieldByName(name)
+	if field.IsValid() && field.Kind() == reflect.String {
+		return field.String()
+	}
+	return ""
+}
+
+func gppHTTPBoolField(app any, name string) bool {
+	value := reflect.ValueOf(app)
+	if !value.IsValid() {
+		return false
+	}
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return false
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return false
+	}
+	field := value.FieldByName(name)
+	return field.IsValid() && field.Kind() == reflect.Bool && field.Bool()
+}
+
+type gppHTTPStaticMount struct {
+	Path      string
+	Directory string
+	DirListing bool
+}
+
+func gppHTTPStaticMounts(app any) []gppHTTPStaticMount {
+	mounts := []gppHTTPStaticMount{}
+	descriptor := gppRuntimeClass(app)
+	value := reflect.ValueOf(descriptor)
+	if value.IsValid() && value.Kind() == reflect.Pointer && !value.IsNil() {
+		value = value.Elem()
+	}
+	if value.IsValid() && value.Kind() == reflect.Struct {
+		annotations := value.FieldByName("Annotations")
+		if annotations.IsValid() && annotations.Kind() == reflect.Slice {
+			for index := 0; index < annotations.Len(); index++ {
+				annotation := gppReflectIndex(annotations, index)
+				name := fmt.Sprint(annotation.FieldByName("Name").Interface())
+				fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
+				if name != "Files" && fullName != "gpp.http.Files" {
+					continue
+				}
+				arguments := annotation.FieldByName("Args")
+				if !arguments.IsValid() || arguments.Kind() != reflect.Slice || arguments.Len() < 2 {
+					continue
+				}
+				listing := false
+				if arguments.Len() > 2 {
+					listingValue := gppReflectIndex(arguments, 2)
+					listing = listingValue.IsValid() && listingValue.Kind() == reflect.Bool && listingValue.Bool()
+				}
+				mounts = append(mounts, gppHTTPStaticMount{
+					Path:       fmt.Sprint(gppReflectIndex(arguments, 0).Interface()),
+					Directory:  fmt.Sprint(gppReflectIndex(arguments, 1).Interface()),
+					DirListing: listing,
+				})
+			}
+		}
+	}
+	if directory := gppHTTPPublicDir(app); directory != "" {
+		mounts = append(mounts, gppHTTPStaticMount{Path: "/", Directory: directory, DirListing: gppHTTPBoolField(app, "DirListing")})
+	}
+	sort.SliceStable(mounts, func(left int, right int) bool {
+		return len(mounts[left].Path) > len(mounts[right].Path)
+	})
+	return mounts
+}
+
+func gppServeStaticFiles(mounts []gppHTTPStaticMount, cacheControl string, ctx *Context) bool {
+	if ctx == nil || ctx.Request == nil || (ctx.Request.Method != stdhttp.MethodGet && ctx.Request.Method != stdhttp.MethodHead) {
+		return false
+	}
+	for _, mount := range mounts {
+		if gppServeStaticMount(mount, cacheControl, ctx) {
+			return true
+		}
+	}
+	return false
+}
+
+func gppServeStaticMount(mount gppHTTPStaticMount, cacheControl string, ctx *Context) bool {
+	if mount.Path == "" || mount.Directory == "" {
+		return false
+	}
+	requestPath := ctx.Request.URL.Path
+	filePath := requestPath
+	if mount.Path != "/" {
+		if strings.HasSuffix(mount.Path, "/") {
+			if requestPath == strings.TrimSuffix(mount.Path, "/") {
+				stdhttp.Redirect(ctx.Response, ctx.Request, mount.Path, stdhttp.StatusMovedPermanently)
+				ctx.Status = stdhttp.StatusMovedPermanently
+				ctx.Written = true
+				return true
+			}
+			if !strings.HasPrefix(requestPath, mount.Path) {
+				return false
+			}
+			filePath = strings.TrimPrefix(requestPath, mount.Path)
+		} else {
+			if requestPath != mount.Path {
+				return false
+			}
+			filePath = "/"
+		}
+	}
+	if filePath == "" {
+		filePath = "/"
+	}
+	root := stdhttp.Dir(mount.Directory)
+	file, err := root.Open(filePath)
+	if err != nil {
+		return false
+	}
+	fileInfo, err := file.Stat()
+	_ = file.Close()
+	if err != nil {
+		return false
+	}
+	serveRequest := ctx.Request
+	if fileInfo.IsDir() {
+		indexHTML := strings.TrimRight(filePath, "/") + "/index.html"
+		hasIndexHTML := gppHTTPStaticFileExists(root, indexHTML)
+		indexHTM := strings.TrimRight(filePath, "/") + "/index.htm"
+		hasIndexHTM := gppHTTPStaticFileExists(root, indexHTM)
+		if !hasIndexHTML && !hasIndexHTM && !mount.DirListing {
+			return false
+		}
+		useIndexHTM := strings.HasSuffix(requestPath, "/") || (mount.Path != "/" && !strings.HasSuffix(mount.Path, "/") && requestPath == mount.Path)
+		if !hasIndexHTML && hasIndexHTM && useIndexHTM {
+			clonedRequest := ctx.Request.Clone(ctx.Request.Context())
+			clonedURL := *ctx.Request.URL
+			if mount.Path == "/" {
+				clonedURL.Path = indexHTM
+			} else {
+				prefix := mount.Path
+				if !strings.HasSuffix(prefix, "/") {
+					prefix += "/"
+				}
+				clonedURL.Path = prefix + strings.TrimLeft(indexHTM, "/")
+			}
+			clonedURL.RawPath = ""
+			clonedRequest.URL = &clonedURL
+			serveRequest = clonedRequest
+		}
+	}
+	response := &gppHTTPStatusResponseWriter{
+		ResponseWriter: ctx.Response,
+		Request:        ctx.Request,
+		CacheControl:   cacheControl,
+	}
+	fileServer := stdhttp.Handler(stdhttp.FileServer(root))
+	if mount.Path != "/" {
+		fileServer = stdhttp.StripPrefix(mount.Path, fileServer)
+	}
+	fileServer.ServeHTTP(response, serveRequest)
+	_ = response.Close()
+	ctx.Status = response.Status
+	ctx.Written = response.Status != 0
+	return true
+}
+
+func gppHTTPStaticFileExists(root stdhttp.Dir, name string) bool {
+	file, err := root.Open(name)
+	if err != nil {
+		return false
+	}
+	info, err := file.Stat()
+	_ = file.Close()
+	return err == nil && !info.IsDir()
 }
 
 func gppErrorResult(result []reflect.Value) error {
@@ -765,6 +1080,9 @@ type gppHTTPErrorData struct {
 
 class Server {
 	HTTPServer *stdhttp.Server
+	PublicDir string
+	DirListing bool
+	PublicCacheControl string
 	mounts []gppHTTPMount
 	ShutdownSetup *sync.Once
 	ShutdownLifecycle *sync.Once
@@ -849,8 +1167,8 @@ class Server {
 		return nil
 	}
 
-	func Handle(ctx *Context) (bool, error) {
-		return false, nil
+	func Handle(ctx *Context) error {
+		return nil
 	}
 
 	func AfterRequest(ctx *Context) error {
@@ -921,17 +1239,6 @@ class Server {
 		prefix := ""
 		if args := gppAnnotationArgs(descriptor, "gpp.http.Prefix"); len(args) > 0 {
 			prefix = fmt.Sprint(args[0])
-		}
-		if args := gppAnnotationArgs(descriptor, "gpp.http.Files"); len(args) > 1 {
-			path := fmt.Sprint(args[0])
-			directory := fmt.Sprint(args[1])
-			fileServer := stdhttp.StripPrefix(path, stdhttp.FileServer(stdhttp.Dir(directory)))
-			if err := gppRegisterMuxHandler(mux, path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-				fileServer.ServeHTTP(w, r)
-			}); err != nil {
-				_ = listener.Close()
-				return err
-			}
 		}
 		oauthEngine, oauthErr := gppOAuthNewEngine(descriptor)
 		if oauthErr != nil {

@@ -786,7 +786,7 @@ http.ResponseBody(code, text, media, ex)  -> responses[code]
 
 `ResponseBody` may be applied more than once to document distinct status codes. Its `example` value supplies both the schema type and the OpenAPI media-type example; its value is documentation data and is not sent by the handler. Use a nil example and an empty media type for a response without a body, such as a 204 response. When any explicit response annotations are present, they define the operation's response map. If none are present, the generator keeps its generic 200 response and uses a non-error handler return type as an inferred JSON schema when possible.
 
-Annotations must match what the handler actually sends. OpenAPI metadata does not enforce status codes, content types, or schemas at runtime. Since handlers that write through `ctx.JSON`, `ctx.Text`, or `ctx.Template` expose those details only in their implementation, annotate them explicitly when Swagger callers need an accurate contract.
+Annotations must match what the handler actually sends. OpenAPI metadata does not enforce status codes, content types, or schemas at runtime. Since handlers that write through `ctx.JSON`, `ctx.Text`, or `ctx.HTML` expose those details only in their implementation, annotate them explicitly when Swagger callers need an accurate contract.
 
 ---
 
