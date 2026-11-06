@@ -84,7 +84,11 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	context.FunctionSignatures = functionSignatures
 	configureEnumSignatures(&context)
 
-	return emitFile(file, context)
+	code, err := emitFile(file, context)
+	if err != nil {
+		return nil, diagnosticAt(file.Name, Span{}, err)
+	}
+	return code, nil
 }
 
 type constructorTarget struct {
@@ -648,7 +652,11 @@ func templateBodyParseError(template *TemplateDecl, err error) error {
 	} else {
 		line = template.SourceLine
 	}
-	return sourceLineError(Span{Line: line}, fmt.Errorf("invalid template body: %s", message))
+	column := 1
+	if line == template.BodySpan.Line && template.BodySpan.Column > 0 {
+		column = template.BodySpan.Column
+	}
+	return sourceLineError(Span{Line: line, Column: column}, fmt.Errorf("invalid template body: %s", message))
 }
 
 func templateUsedAsLayout(name string, templates map[string]*TemplateDecl) bool {
@@ -1057,7 +1065,11 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 				out.WriteString(structured)
 				continue
 			}
-			return "", fmt.Errorf("%s:%d: declaration has no structured AST representation", d.SourceFile, d.SourceLine)
+			span := d.SourceSpan
+			if span.Line <= 0 || span.Column <= 0 {
+				span = Span{Line: d.SourceLine, Column: 1}
+			}
+			return "", diagnosticAt(d.SourceFile, span, fmt.Errorf("declaration has no structured AST representation"))
 
 		case *FunctionDecl:
 			code, err := transformTopLevelDeclSource(d, context, interpolationName)
@@ -1548,7 +1560,7 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	}
 	code, err = transformConstructors(code, context)
 	if err != nil {
-		return "", err
+		return "", rebaseDiagnosticToSource(err, function.SourceFile, function.SourceSpan)
 	}
 	code, err = transformRecords(code, context)
 	if err != nil {
@@ -1821,6 +1833,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		return nil
 	}
 
+	emitSourceDirective(out, sourcePath, class.SourceLine)
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
 	out.WriteString("\tGppRuntimeClass() *GppClass\n")
 	for _, method := range methods {
@@ -1833,6 +1846,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 			parameterSource = qualifyImportedTypeNames(parameterSource, parentName, classes, context.ImportedTypes)
 			resultSource = qualifyImportedTypeNames(resultSource, parentName, classes, context.ImportedTypes)
 		}
+		emitSourceDirective(out, sourcePath, methodSourceLine(method, class))
 		parameters, err := transformParameterList(parameterSource, context)
 		if err != nil {
 			return err

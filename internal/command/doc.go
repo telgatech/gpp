@@ -43,12 +43,10 @@ func runDoc(args []string) int {
 		if err == flag.ErrHelp {
 			return 0
 		}
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+		return reportErrorWithCode(err, 2)
 	}
 	if len(flags.Args()) > 1 {
-		fmt.Fprintln(os.Stderr, "gpp doc accepts at most one symbol or package query")
-		return 2
+		return reportErrorWithCode(fmt.Errorf("gpp doc accepts at most one symbol or package query"), 2)
 	}
 	query := ""
 	if len(flags.Args()) == 1 {
@@ -71,8 +69,7 @@ func runDoc(args []string) int {
 
 	files, normalizedQuery, packageName, err := documentationFiles(query)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return reportError(err)
 	}
 	index := compiler.BuildDocIndex(files)
 	if packageName != "" && normalizedQuery == packageName {
@@ -83,15 +80,15 @@ func runDoc(args []string) int {
 		if nativeDoc(normalizedQuery) {
 			return 0
 		}
-		fmt.Fprintf(os.Stderr, "symbol not found: %s\n", query)
-		return 1
+		return reportErrorWithCode(fmt.Errorf("symbol not found: %s", query), 1)
 	}
 	if len(results) > 1 && !options.json {
-		fmt.Fprintf(os.Stderr, "symbol %q is ambiguous\n\nCandidates:\n", query)
+		var output strings.Builder
+		fmt.Fprintf(&output, "symbol %q is ambiguous\n\nCandidates:\n", query)
 		for _, result := range results {
-			fmt.Printf("    %s\n", displayDocName(*result))
+			fmt.Fprintf(&output, "    %s\n", displayDocName(*result))
 		}
-		return 1
+		return reportErrorText(output.String(), 1)
 	}
 	if options.json {
 		return printDocJSON(results)
@@ -108,13 +105,11 @@ func runDoc(args []string) int {
 func renderCurrentPackageDoc(options docOptions) int {
 	sources, err := discoverSources([]string{"."})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return reportError(err)
 	}
 	files, err := parseDocumentationFiles(sources)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return reportError(err)
 	}
 	index := compiler.BuildDocIndex(files)
 	packageName := "main"
@@ -125,8 +120,7 @@ func renderCurrentPackageDoc(options docOptions) int {
 		}
 		sort.Strings(keys)
 		if len(keys) == 0 {
-			fmt.Fprintln(os.Stderr, "no Go++ package documentation found")
-			return 1
+			return reportErrorWithCode(fmt.Errorf("no Go++ package documentation found"), 1)
 		}
 		packageName = keys[0]
 	}
@@ -136,8 +130,7 @@ func renderCurrentPackageDoc(options docOptions) int {
 func printDocPackage(index *compiler.DocIndex, packageName string, options docOptions) int {
 	pkg := index.Packages[packageName]
 	if pkg == nil {
-		fmt.Fprintf(os.Stderr, "package not found: %s\n", packageName)
-		return 1
+		return reportErrorWithCode(fmt.Errorf("package not found: %s", packageName), 1)
 	}
 	if options.json {
 		copy := *pkg
@@ -156,13 +149,11 @@ func printDocPackage(index *compiler.DocIndex, packageName string, options docOp
 func renderDocSearch(term string, options docOptions) int {
 	sources, err := discoverSources([]string{"."})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return reportError(err)
 	}
 	files, err := parseDocumentationFiles(sources)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return reportError(err)
 	}
 	if prelude, preludeErr := compiler.LoadPrelude(); preludeErr == nil {
 		files = append(files, prelude)
@@ -215,7 +206,7 @@ func parseDocumentationFiles(sources []string) ([]*compiler.File, error) {
 		}
 		file, err := compiler.ParseFile(source, string(data))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", source, err)
+			return nil, err
 		}
 		file.SourcePath, err = filepath.Abs(source)
 		if err != nil {
@@ -237,8 +228,7 @@ func printDocJSON(values []*compiler.DocSymbol) int {
 func printJSON(output any) int {
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return reportError(err)
 	}
 	fmt.Println(string(data))
 	return 0

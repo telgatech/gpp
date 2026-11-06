@@ -82,10 +82,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			if annotation, ok := decl.(*AnnotationDecl); ok {
 				annotation.Package = file.Package
 				if previous, exists := pkg.Annotations[annotation.Name]; exists {
-					return nil, fmt.Errorf(
-						"%s: duplicate annotation %s in package %s; first declared in %s",
-						annotationLocation(annotation), annotation.Name, file.Package, annotationLocation(previous),
-					)
+					return nil, annotationDeclarationDiagnostic(annotation, fmt.Errorf("duplicate annotation %s in package %s; first declared in %s", annotation.Name, file.Package, annotationLocation(previous)))
 				}
 				pkg.Annotations[annotation.Name] = annotation
 				continue
@@ -135,10 +132,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			if embed, ok := decl.(*EmbedDecl); ok {
 				for _, entry := range embed.Entries {
 					if previous, exists := pkg.Embeds[entry.Name]; exists {
-						return nil, fmt.Errorf(
-							"%s: duplicate embed symbol %s in package %s; first declared in %s",
-							embedLocation(embed), entry.Name, file.Package, embedEntryLocation(previous),
-						)
+						return nil, embedEntryDiagnostic(entry, fmt.Errorf("duplicate embed symbol %s in package %s; first declared in %s", entry.Name, file.Package, embedEntryLocation(previous)))
 					}
 					pkg.Embeds[entry.Name] = entry
 				}
@@ -146,10 +140,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			}
 			if template, ok := decl.(*TemplateDecl); ok {
 				if previous, exists := pkg.Templates[template.Name]; exists {
-					return nil, fmt.Errorf(
-						"%s: duplicate template %s in package %s; first declared in %s:%d",
-						templateLocation(template), template.Name, file.Package, previous.SourceFile, previous.SourceLine,
-					)
+					return nil, templateDiagnosticf(template, "duplicate template %s in package %s; first declared in %s:%d", template.Name, file.Package, previous.SourceFile, previous.SourceLine)
 				}
 				if currentPath := templatePath(template); currentPath != "" {
 					for _, previous := range pkg.TemplateOrder {
@@ -157,13 +148,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 						if previousPath == "" || !sameTemplatePathPattern(currentPath, previousPath) {
 							continue
 						}
-						return nil, fmt.Errorf(
-							"%s: duplicate template path %q; conflicts with %s at %s",
-							templatePathLocation(template),
-							normalizeTemplatePathPattern(currentPath),
-							previous.Name,
-							templatePathLocation(previous),
-						)
+						return nil, templatePathDiagnostic(template, fmt.Errorf("duplicate template path %q; conflicts with %s at %s", normalizeTemplatePathPattern(currentPath), previous.Name, templatePathLocation(previous)))
 					}
 				}
 				pkg.Templates[template.Name] = template
@@ -176,12 +161,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			}
 			if enum, ok := decl.(*EnumDecl); ok {
 				if _, exists := pkg.Enums[enum.Name]; exists || pkg.Classes[enum.Name] != nil {
-					return nil, fmt.Errorf(
-						"%s: duplicate type %s in package %s",
-						classLocation(&ClassDecl{SourceFile: enum.SourceFile, SourceLine: enum.SourceLine}),
-						enum.Name,
-						file.Package,
-					)
+					return nil, diagnosticAt(enum.SourceFile, enum.Span(), fmt.Errorf("duplicate type %s in package %s", enum.Name, file.Package))
 				}
 				pkg.Enums[enum.Name] = enum
 				pkg.Types[enum.Name] = true
@@ -193,22 +173,11 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 			}
 
 			if _, exists := pkg.Enums[class.Name]; exists {
-				return nil, fmt.Errorf(
-					"%s: duplicate type %s in package %s",
-					classLocation(class),
-					class.Name,
-					file.Package,
-				)
+				return nil, classDiagnosticf(class, "duplicate type %s in package %s", class.Name, file.Package)
 			}
 
 			if previous, exists := pkg.Classes[class.Name]; exists {
-				return nil, fmt.Errorf(
-					"%s: duplicate class %s in package %s; first declared in %s",
-					classLocation(class),
-					class.Name,
-					file.Package,
-					classLocation(previous),
-				)
+				return nil, classDiagnosticf(class, "duplicate class %s in package %s; first declared in %s", class.Name, file.Package, classLocation(previous))
 			}
 
 			pkg.Classes[class.Name] = class
@@ -284,31 +253,31 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 		for name, template := range pkg.Templates {
 			_, embedExists := pkg.Embeds[name]
 			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] || embedExists {
-				return nil, fmt.Errorf("%s: duplicate template %s in package %s", templateLocation(template), name, pkg.Name)
+				return nil, templateDiagnosticf(template, "duplicate template %s in package %s", name, pkg.Name)
 			}
 			if _, imported := pkg.Imports[name]; imported {
-				return nil, fmt.Errorf("%s: template %s conflicts with import in package %s", templateLocation(template), name, pkg.Name)
+				return nil, templateDiagnosticf(template, "template %s conflicts with import in package %s", name, pkg.Name)
 			}
 			if template.Layout != "" {
 				layout, exists := pkg.Templates[template.Layout]
 				if !exists {
-					return nil, fmt.Errorf("%s: layout template %s does not exist in package %s", templateLocation(template), template.Layout, pkg.Name)
+					return nil, templateDiagnosticf(template, "layout template %s does not exist in package %s", template.Layout, pkg.Name)
 				}
 				if layout.Name == template.Name {
-					return nil, fmt.Errorf("%s: template cannot use itself as a layout", templateLocation(template))
+					return nil, templateDiagnosticf(template, "template cannot use itself as a layout")
 				}
 				if len(layout.ParameterAST) > 0 {
-					return nil, fmt.Errorf("%s: layout template %s must not declare parameters", templateLocation(template), template.Layout)
+					return nil, templateDiagnosticf(template, "layout template %s must not declare parameters", template.Layout)
 				}
 			}
 		}
 		for name, entry := range pkg.Embeds {
 			_, templateExists := pkg.Templates[name]
 			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] || templateExists {
-				return nil, fmt.Errorf("%s: duplicate embed symbol %s in package %s", embedEntryLocation(entry), name, pkg.Name)
+				return nil, embedEntryDiagnostic(entry, fmt.Errorf("duplicate embed symbol %s in package %s", name, pkg.Name))
 			}
 			if _, imported := pkg.Imports[name]; imported {
-				return nil, fmt.Errorf("%s: embed symbol %s conflicts with import in package %s", embedEntryLocation(entry), name, pkg.Name)
+				return nil, embedEntryDiagnostic(entry, fmt.Errorf("embed symbol %s conflicts with import in package %s", name, pkg.Name))
 			}
 		}
 		for _, class := range pkg.Classes {
@@ -380,6 +349,15 @@ func templatePathLocation(template *TemplateDecl) string {
 		}
 	}
 	return templateLocation(template)
+}
+
+func templatePathDiagnostic(template *TemplateDecl, err error) error {
+	for _, annotation := range template.Annotations {
+		if annotation.Name == "Path" || strings.HasSuffix(annotation.Name, ".Path") {
+			return annotationDiagnostic(annotation, err)
+		}
+	}
+	return templateDiagnostic(template, err)
 }
 
 func normalizeTemplatePathPattern(value string) string {
@@ -645,30 +623,30 @@ func validateExtensions(pkg *PackageSymbols) error {
 	for _, extension := range pkg.Extensions {
 		targetNames := extensionTargetNames(extension)
 		if len(targetNames) == 0 {
-			return fmt.Errorf("%s: extension target cannot be empty", extension.SourceFile)
+			return extensionDiagnosticf(extension, "extension target cannot be empty")
 		}
 		targets := map[string]bool{}
 		for _, rawTarget := range targetNames {
 			target := strings.TrimSpace(rawTarget)
 			if target == "" {
-				return fmt.Errorf("%s: extension target cannot be empty", extension.SourceFile)
+				return extensionDiagnosticf(extension, "extension target cannot be empty")
 			}
 			normalized := normalizeExtensionTarget(target)
 			if targets[normalized] {
-				return fmt.Errorf("%s: duplicate extension target %s", extension.SourceFile, target)
+				return extensionDiagnosticf(extension, "duplicate extension target %s", target)
 			}
 			targets[normalized] = true
 		}
 		for _, method := range extension.Methods {
 			parameters, err := parameterInfosForMethod(method)
 			if err != nil {
-				return fmt.Errorf("%s: extension %s.%s has invalid parameters: %w", extension.SourceFile, strings.Join(targetNames, ", "), method.Name, err)
+				return extensionDiagnosticf(extension, "extension %s.%s has invalid parameters: %w", strings.Join(targetNames, ", "), method.Name, err)
 			}
 			for _, rawTarget := range targetNames {
 				target := strings.TrimSpace(rawTarget)
 				key := normalizeExtensionTarget(target) + "/" + method.Name + "/" + parameterSignatureKey(parameters)
 				if seen[key] {
-					return fmt.Errorf("%s: extension method %s for %s is declared more than once with parameter types %s", extension.SourceFile, method.Name, target, parameterSignatureKey(parameters))
+					return extensionDiagnosticf(extension, "extension method %s for %s is declared more than once with parameter types %s", method.Name, target, parameterSignatureKey(parameters))
 				}
 				seen[key] = true
 			}
@@ -692,30 +670,16 @@ func normalizeExtensionTarget(target string) string {
 func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	for _, reserved := range []string{"GppClass", "GppField", "GppType"} {
 		if class.Name == reserved {
-			return fmt.Errorf(
-				"%s: class name %s is reserved for Go++ introspection metadata",
-				classLocation(class),
-				class.Name,
-			)
+			return classDiagnosticf(class, "class name %s is reserved for Go++ introspection metadata", class.Name)
 		}
 	}
 	fields := map[string]bool{}
 	for _, field := range class.Fields {
 		if field.Name == "GppDynamicClass" || field.Name == "GppDynamicObject" {
-			return fmt.Errorf(
-				"%s: class %s field %s is reserved for Go++ runtime metadata",
-				classLocation(class),
-				class.Name,
-				field.Name,
-			)
+			return fieldDiagnosticf(class, &field, "class %s field %s is reserved for Go++ runtime metadata", class.Name, field.Name)
 		}
 		if fields[field.Name] {
-			return fmt.Errorf(
-				"%s: class %s declares field %s more than once",
-				classLocation(class),
-				class.Name,
-				field.Name,
-			)
+			return fieldDiagnosticf(class, &field, "class %s declares field %s more than once", class.Name, field.Name)
 		}
 		fields[field.Name] = true
 	}
@@ -730,62 +694,36 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	for index, method := range class.Methods {
 		if method.Name == "init" {
 			if method.IsStatic {
-				return fmt.Errorf("%s: class %s initializer `init` cannot be static", classLocation(class), class.Name)
+				return methodDiagnosticf(class, &method, "class %s initializer `init` cannot be static", class.Name)
 			}
 			if _, exists := methods["init"]; exists {
-				return fmt.Errorf("%s: class %s may declare only one initializer `init`", classLocation(class), class.Name)
+				return methodDiagnosticf(class, &method, "class %s may declare only one initializer `init`", class.Name)
 			}
 			if strings.TrimSpace(methodParametersSource(method)) != "" {
-				return fmt.Errorf("%s: class %s initializer `init` cannot have parameters", classLocation(class), class.Name)
+				return methodDiagnosticf(class, &method, "class %s initializer `init` cannot have parameters", class.Name)
 			}
 			result := strings.TrimSpace(methodResultSource(method))
 			if result != "" && !initializerErrorResult(result, pkg) {
-				return fmt.Errorf("%s: class %s initializer `init` must return no values or a trailing error", classLocation(class), class.Name)
+				return methodDiagnosticf(class, &method, "class %s initializer `init` must return no values or a trailing error", class.Name)
 			}
 		}
 		if method.IsStatic && tokensContainIdentifier(methodBodyTokens(method), "this") {
-			return fmt.Errorf(
-				"%s: static method %s has no this",
-				classLocation(class),
-				method.Name,
-			)
+			return methodDiagnosticf(class, &method, "static method %s has no this", method.Name)
 		}
 		if method.Name == "GppRuntimeClass" || method.Name == "GppInitialize" || method.Name == "__gppInit" {
-			return fmt.Errorf(
-				"%s: class %s method %s is reserved for Go++ generated methods",
-				classLocation(class),
-				class.Name,
-				method.Name,
-			)
+			return methodDiagnosticf(class, &method, "class %s method %s is reserved for Go++ generated methods", class.Name, method.Name)
 		}
 		if fields[method.Name] {
-			return fmt.Errorf(
-				"%s: class %s declares field and method %s with the same name",
-				classLocation(class),
-				class.Name,
-				method.Name,
-			)
+			return methodDiagnosticf(class, &method, "class %s declares field and method %s with the same name", class.Name, method.Name)
 		}
 		arity, err := parameterCount(methodParametersSource(method))
 		if err != nil {
-			return fmt.Errorf(
-				"%s: class %s method %s has invalid parameters: %w",
-				classLocation(class),
-				class.Name,
-				method.Name,
-				err,
-			)
+			return methodDiagnosticf(class, &method, "class %s method %s has invalid parameters: %w", class.Name, method.Name, err)
 		}
 
 		parameters, err := parameterInfosForMethod(method)
 		if err != nil {
-			return fmt.Errorf(
-				"%s: class %s method %s has invalid parameters: %w",
-				classLocation(class),
-				class.Name,
-				method.Name,
-				err,
-			)
+			return methodDiagnosticf(class, &method, "class %s method %s has invalid parameters: %w", class.Name, method.Name, err)
 		}
 		typeKey := parameterSignatureKey(parameters)
 		methodKey := method.Name
@@ -794,13 +732,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 		}
 		for _, previous := range methods[methodKey] {
 			if previous.typeKey == typeKey {
-				return fmt.Errorf(
-					"%s: class %s declares method %s more than once with parameter types %s",
-					classLocation(class),
-					class.Name,
-					method.Name,
-					typeKey,
-				)
+				return methodDiagnosticf(class, &method, "class %s declares method %s more than once with parameter types %s", class.Name, method.Name, typeKey)
 			}
 		}
 		methods[methodKey] = append(methods[methodKey], methodEntry{
@@ -831,12 +763,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	parents := map[string]bool{}
 	for _, parentName := range classParentNames(class) {
 		if parents[parentName] {
-			return fmt.Errorf(
-				"%s: class %s lists parent %s more than once",
-				classLocation(class),
-				class.Name,
-				parentName,
-			)
+			return classDiagnosticf(class, "class %s lists parent %s more than once", class.Name, parentName)
 		}
 		parents[parentName] = true
 
@@ -844,13 +771,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			if _, imported := pkg.ImportedClasses[parentName]; imported {
 				continue
 			}
-			return fmt.Errorf(
-				"%s: class %s has unresolved parent %s in package %s",
-				classLocation(class),
-				class.Name,
-				parentName,
-				pkg.Name,
-			)
+			return classDiagnosticf(class, "class %s has unresolved parent %s in package %s", class.Name, parentName, pkg.Name)
 		}
 	}
 
@@ -966,12 +887,7 @@ func validateInheritanceCycles(pkg *PackageSymbols) error {
 			}
 
 			cycle := append(append([]string(nil), stack[start:]...), className)
-			return fmt.Errorf(
-				"%s: inheritance cycle in package %s: %s",
-				classLocation(pkg.Classes[className]),
-				pkg.Name,
-				joinNames(cycle),
-			)
+			return classDiagnosticf(pkg.Classes[className], "inheritance cycle in package %s: %s", pkg.Name, joinNames(cycle))
 		case 2:
 			return nil
 		}
@@ -1609,14 +1525,7 @@ func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error 
 			access = append(access, "this."+qualifier+"."+member)
 		}
 
-		return fmt.Errorf(
-			"%s: class %s method %s has ambiguous member %s; qualify access as %s",
-			classLocation(class),
-			class.Name,
-			method.Name,
-			member,
-			strings.Join(access, " or "),
-		)
+		return classDiagnosticf(class, "class %s method %s has ambiguous member %s; qualify access as %s", class.Name, method.Name, member, strings.Join(access, " or "))
 	}
 
 	return nil
@@ -1643,11 +1552,7 @@ func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]ma
 		return members, nil
 	}
 	if visiting[class] {
-		return nil, fmt.Errorf(
-			"%s: inheritance cycle involving class %s",
-			classLocation(class),
-			class.Name,
-		)
+		return nil, classDiagnosticf(class, "inheritance cycle involving class %s", class.Name)
 	}
 
 	visiting[class] = true

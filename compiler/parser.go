@@ -48,11 +48,7 @@ func ParseFile(name, src string) (*File, error) {
 		switch {
 		case keywordAt(src, pos, "package"):
 			if hasPackage {
-				return nil, fmt.Errorf(
-					"%s:%d: duplicate package declaration",
-					name,
-					sourceLine(src, declarationPos),
-				)
+				return nil, diagnosticAt(name, sourceSpan(src, declarationPos, declarationPos), fmt.Errorf("duplicate package declaration"))
 			}
 
 			end := lineEnd(src, pos)
@@ -64,11 +60,7 @@ func ParseFile(name, src string) (*File, error) {
 			}
 			packageName := packageText[:nameEnd]
 			if !isLogicalPackageName(packageName) {
-				return nil, fmt.Errorf(
-					"%s:%d: invalid package declaration",
-					name,
-					sourceLine(src, pos),
-				)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), fmt.Errorf("invalid package declaration"))
 			}
 
 			file.Package = packageName
@@ -81,9 +73,9 @@ func ParseFile(name, src string) (*File, error) {
 			if rest != "" {
 				uses, _, err := parseAnnotationUses(rest, 0)
 				if err != nil {
-					return nil, fmt.Errorf("%s:%d: invalid package annotations: %w", name, sourceLine(src, pos), err)
+					return nil, diagnosticAt(name, sourceSpan(src, pos, pos), fmt.Errorf("invalid package annotations: %w", err))
 				}
-				setAnnotationUseLocations(uses, name, sourceLine(src, pos))
+				setAnnotationUseLocations(uses, name, sourceSpan(src, pos, pos))
 				file.Annotations = append(file.Annotations, uses...)
 				packageDecl.Annotations = uses
 			}
@@ -92,16 +84,12 @@ func ParseFile(name, src string) (*File, error) {
 			pos = end
 
 		case legacyUseAt(src, pos):
-			return nil, fmt.Errorf(
-				"%s:%d: use declarations are no longer supported; use Go import syntax",
-				name,
-				sourceLine(src, pos),
-			)
+			return nil, diagnosticAt(name, sourceSpan(src, pos, pos), fmt.Errorf("use declarations are no longer supported; use Go import syntax"))
 
 		case keywordAt(src, pos, "class"):
 			class, end, err := parseClass(src, pos)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
 			}
 			class.SourceFile = name
 			class.Owner = file
@@ -118,7 +106,7 @@ func ParseFile(name, src string) (*File, error) {
 		case keywordAt(src, pos, "enum"):
 			enums, end, err := parseEnums(src, pos)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
 			}
 			for _, enum := range enums {
 				enum.SourceFile = name
@@ -134,7 +122,7 @@ func ParseFile(name, src string) (*File, error) {
 		case keywordAt(src, pos, "extend"):
 			extend, end, err := parseExtend(src, pos)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
 			}
 			extend.SourceFile = name
 			extend.SourceLine = sourceLine(src, declarationPos)
@@ -142,7 +130,7 @@ func ParseFile(name, src string) (*File, error) {
 			extend.Doc = doc
 			attachMethodOwners(file, extend.Methods)
 			for index := range extend.Methods {
-				setMethodAnnotationLocations(&extend.Methods[index], name, extend.SourceLine)
+				setMethodAnnotationLocations(&extend.Methods[index], name, extend.Methods[index].Span())
 			}
 			file.Decls = append(file.Decls, extend)
 			pos = end
@@ -150,7 +138,7 @@ func ParseFile(name, src string) (*File, error) {
 		case keywordAt(src, pos, "annotation"):
 			declarations, end, err := parseAnnotationDecls(src, pos)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
 			}
 			for _, declaration := range declarations {
 				declaration.SourceFile = name
@@ -165,7 +153,7 @@ func ParseFile(name, src string) (*File, error) {
 		case keywordAt(src, pos, "embed"):
 			embed, end, err := parseEmbed(src, pos)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
 			}
 			embed.SourceFile = name
 			embed.SourceLine = sourceLine(src, declarationPos)
@@ -173,6 +161,7 @@ func ParseFile(name, src string) (*File, error) {
 			for index := range embed.Entries {
 				embed.Entries[index].SourceFile = name
 				embed.Entries[index].SourceLine = sourceLine(src, declarationPos)
+				embed.Entries[index].SpanValue = embed.SpanValue
 			}
 			file.Decls = append(file.Decls, embed)
 			pos = end
@@ -180,13 +169,13 @@ func ParseFile(name, src string) (*File, error) {
 		case keywordAt(src, pos, "template"):
 			template, end, err := parseTemplate(src, pos)
 			if err != nil {
-				return nil, fmt.Errorf("%s:%d: %w", name, sourceLine(src, pos), err)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
 			}
 			template.SourceFile = name
 			template.SourceLine = sourceLine(src, declarationPos)
 			template.SpanValue = sourceSpan(src, declarationPos, end)
 			template.Doc = doc
-			setAnnotationUseLocations(template.Annotations, name, template.SourceLine)
+			setAnnotationUseLocations(template.Annotations, name, template.Span())
 			file.Decls = append(file.Decls, template)
 			pos = end
 
@@ -196,12 +185,7 @@ func ParseFile(name, src string) (*File, error) {
 			next := findNextExtension(src, pos)
 
 			if next == pos {
-				return nil, fmt.Errorf(
-					"%s:%d: parser stalled near %q",
-					name,
-					sourceLine(src, pos),
-					src[pos:min(pos+30, len(src))],
-				)
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), fmt.Errorf("parser stalled near %q", src[pos:min(pos+30, len(src))]))
 			}
 
 			if next < 0 {
@@ -213,19 +197,19 @@ func ParseFile(name, src string) (*File, error) {
 			if strings.TrimSpace(code) != "" {
 				placements, err := collectRawAnnotationPlacements(code, name)
 				if err != nil {
-					return nil, fmt.Errorf("%s:%d: invalid annotation use: %w", name, sourceLine(src, start), err)
+					return nil, diagnosticAt(name, sourceSpan(src, start, start), fmt.Errorf("invalid annotation use: %w", err))
 				}
 				localTokens, tokenErr := LexSource(name, code)
 				bodyTokens := rebaseTokens(localTokens, src, start)
 				imports, importErr := importNodesFromTokens(bodyTokens)
 				if importErr != nil {
-					return nil, fmt.Errorf("%s:%d: invalid import declaration: %w", name, sourceLine(src, start), importErr)
+					return nil, diagnosticAt(name, sourceSpan(src, start, start), fmt.Errorf("invalid import declaration: %w", importErr))
 				}
 				file.Imports = append(file.Imports, imports...)
 				goASTDecls, goASTFileSet := parseGoDeclarations(name, file.Package, code)
 				functions, functionErr := parseTopLevelFunctionsCheckedWithTokens(name, file.Package, code, start, src, doc, declarationPos, localTokens, tokenErr)
 				if functionErr != nil {
-					return nil, fmt.Errorf("%s:%d: invalid function body: %w", name, sourceLine(src, start), functionErr)
+					return nil, diagnosticAt(name, sourceSpan(src, start, start), fmt.Errorf("invalid function body: %w", functionErr))
 				}
 				for _, function := range functions {
 					attachFunctionOwner(file, function)
@@ -266,11 +250,7 @@ func ParseFile(name, src string) (*File, error) {
 					continue
 				}
 				if len(functions) == 0 && len(goASTDecls) == 0 {
-					return nil, fmt.Errorf(
-						"%s:%d: unsupported top-level syntax; no structured AST representation",
-						name,
-						sourceLine(src, start),
-					)
+					return nil, diagnosticAt(name, sourceSpan(src, start, start), fmt.Errorf("unsupported top-level syntax; no structured AST representation"))
 				}
 				if len(placements) == 0 && len(goASTDecls) > 0 && appendStructuredMixedParts(file, functions, goASTDecls, goASTFileSet, start, next) {
 					pos = next
@@ -1341,29 +1321,50 @@ func isExportedIdentifier(name string) bool {
 	return false
 }
 
-func setAnnotationUseLocations(uses []AnnotationUse, fileName string, line int) {
+func setAnnotationUseLocations(uses []AnnotationUse, fileName string, fallback Span) {
 	for index := range uses {
 		uses[index].SourceFile = fileName
+		if uses[index].SpanValue.Line == 0 || uses[index].SpanValue.Column == 0 {
+			uses[index].SpanValue = fallback
+		}
 		if uses[index].SourceLine == 0 {
-			uses[index].SourceLine = line
+			uses[index].SourceLine = uses[index].SpanValue.Line
 		}
 	}
 }
 
 func setClassAnnotationLocations(class *ClassDecl, fileName string) {
-	setAnnotationUseLocations(class.Annotations, fileName, class.SourceLine)
+	classSpan := class.Span()
+	if classSpan.Line == 0 || classSpan.Column == 0 {
+		classSpan = Span{Line: class.SourceLine, Column: 1}
+	}
+	setAnnotationUseLocations(class.Annotations, fileName, classSpan)
 	for index := range class.Fields {
-		setAnnotationUseLocations(class.Fields[index].Annotations, fileName, class.SourceLine)
+		span := class.Fields[index].Span()
+		if span.Line == 0 || span.Column == 0 {
+			span = classSpan
+		}
+		setAnnotationUseLocations(class.Fields[index].Annotations, fileName, span)
 	}
 	for index := range class.Methods {
-		setMethodAnnotationLocations(&class.Methods[index], fileName, class.SourceLine)
+		span := class.Methods[index].Span()
+		if span.Line == 0 || span.Column == 0 {
+			span = classSpan
+		}
+		setMethodAnnotationLocations(&class.Methods[index], fileName, span)
 	}
 }
 
-func setMethodAnnotationLocations(method *Method, fileName string, line int) {
-	setAnnotationUseLocations(method.Annotations, fileName, line)
+func setMethodAnnotationLocations(method *Method, fileName string, fallback Span) {
+	if method == nil {
+		return
+	}
+	if span := method.Span(); span.Line > 0 && span.Column > 0 {
+		fallback = span
+	}
+	setAnnotationUseLocations(method.Annotations, fileName, fallback)
 	for _, uses := range method.ParameterAnnotations {
-		setAnnotationUseLocations(uses, fileName, line)
+		setAnnotationUseLocations(uses, fileName, fallback)
 	}
 }
 

@@ -24,11 +24,11 @@ func validateAtExit(program *Program) (bool, error) {
 					continue
 				}
 				if found {
-					return false, fmt.Errorf("%s:%d: atExit may be declared only once in package main", value.SourceFile, value.SourceLine)
+					return false, diagnosticAt(value.SourceFile, value.SourceSpan, fmt.Errorf("atExit may be declared only once in package main"))
 				}
 				found = true
 				if len(value.Method.ParameterAST) != 0 || value.Method.ResultAST != nil || len(value.Method.ResultFieldsAST) != 0 {
-					return false, fmt.Errorf("%s:%d: atExit must have no parameters and no return values", value.SourceFile, value.SourceLine)
+					return false, diagnosticAt(value.SourceFile, value.SourceSpan, fmt.Errorf("atExit must have no parameters and no return values"))
 				}
 			case *GoDecl:
 				for _, goDeclaration := range value.Declarations {
@@ -37,11 +37,11 @@ func validateAtExit(program *Program) (bool, error) {
 						continue
 					}
 					if found {
-						return false, fmt.Errorf("%s:%d: atExit may be declared only once in package main", value.SourceFile, value.SourceLine)
+						return false, diagnosticAt(value.SourceFile, value.SourceSpan, fmt.Errorf("atExit may be declared only once in package main"))
 					}
 					found = true
 					if function.Type.Params.NumFields() != 0 || function.Type.Results != nil && function.Type.Results.NumFields() != 0 {
-						return false, fmt.Errorf("%s:%d: atExit must have no parameters and no return values", value.SourceFile, value.SourceLine)
+						return false, diagnosticAt(value.SourceFile, value.SourceSpan, fmt.Errorf("atExit must have no parameters and no return values"))
 					}
 				}
 			}

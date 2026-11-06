@@ -146,7 +146,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 	for _, file := range program.Files {
 		scope, err := annotationScopeForFile(file, model, options.ModulePath)
 		if err != nil {
-			return fmt.Errorf("%s: %w", file.Name, err)
+			return diagnosticAt(file.Name, Span{}, err)
 		}
 		if err := validateFileAnnotations(file, model.Packages[file.Package], scope, false); err != nil {
 			return err
@@ -213,7 +213,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		fileOutputPaths[file] = filepath.Join(dir, outputNames[file])
 		embeds, err := prepareEmbeds(file, dir, options.ProjectRoot)
 		if err != nil {
-			return fmt.Errorf("%s: %w", file.Name, err)
+			return diagnosticAt(file.Name, Span{}, err)
 		}
 		fileEmbeds[file] = embeds
 		for _, embed := range embeds {
@@ -437,7 +437,7 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 	for _, file := range files {
 		context, err := constructorContextForFile(file, model, options.ModulePath)
 		if err != nil {
-			return generatedPackageOutput{}, fmt.Errorf("%s: %w", file.Name, err)
+			return generatedPackageOutput{}, diagnosticAt(file.Name, Span{}, err)
 		}
 		context.Records = records
 		context.Introspection = introspection
@@ -467,7 +467,7 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 			context.PreludeExtensionsNeeded = preludeExtensions
 			preludeEmitted = true
 			if err := configurePrelude(&context, context.EmitPrelude); err != nil {
-				return generatedPackageOutput{}, fmt.Errorf("%s: %w", file.Name, err)
+				return generatedPackageOutput{}, diagnosticAt(file.Name, Span{}, err)
 			}
 		}
 		configureNativeExtensionMethods(&context, file)
@@ -482,10 +482,7 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 
 		code, err := emitFile(file, context)
 		if err != nil {
-			if isSourceLineDiagnostic(err) {
-				return generatedPackageOutput{}, fmt.Errorf("%s:%w", file.Name, err)
-			}
-			return generatedPackageOutput{}, fmt.Errorf("%s: %w", file.Name, err)
+			return generatedPackageOutput{}, diagnosticAt(file.Name, Span{}, err)
 		}
 
 		generatedPath := outputPaths[file]
@@ -516,7 +513,7 @@ func generatedPackageFingerprints(program *Program, model *SemanticModel, option
 	localFingerprints := make(map[string]string, len(filesByPackage))
 	for packageName, files := range filesByPackage {
 		h := sha256.New()
-		writePackageHashPart(h, "package-fingerprint-version=4")
+		writePackageHashPart(h, "package-fingerprint-version=5")
 		writePackageHashPart(h, "package="+packageName)
 		for _, file := range files {
 			writePackageHashPart(h, "source-path="+file.SourcePath)

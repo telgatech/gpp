@@ -188,8 +188,9 @@ func (*FunctionLiteralExpr) expr()                 {}
 func (expression *FunctionLiteralExpr) Span() Span { return expression.SpanValue }
 
 type CallArg struct {
-	Name  string
-	Value ExprNode
+	Name     string
+	NameSpan Span
+	Value    ExprNode
 }
 
 type CallExpr struct {
@@ -1139,8 +1140,10 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 		arguments := []CallArg{}
 		for parser.index < len(parser.tokens) && parser.tokens[parser.index].Text != ")" {
 			name := ""
-			if named, ok := parser.parseCallArgumentName(); ok {
+			nameSpan := Span{}
+			if named, span, ok := parser.parseCallArgumentName(); ok {
 				name = named
+				nameSpan = span
 			}
 			argument, err := parser.parseCallArgument()
 			if err != nil {
@@ -1151,7 +1154,7 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 				parser.index++
 				argument = &SpreadExpr{Expression: argument, SpanValue: Span{Start: argument.Span().Start, End: spreadToken.Span.End, Line: argument.Span().Line, Column: argument.Span().Column}}
 			}
-			arguments = append(arguments, CallArg{Name: name, Value: argument})
+			arguments = append(arguments, CallArg{Name: name, NameSpan: nameSpan, Value: argument})
 			if !parser.take(",") {
 				break
 			}
@@ -1168,10 +1171,10 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 // parseCallArgumentName accepts both ordinary named arguments (`name: value`)
 // and qualified constructor fields (`Parent.name: value`). The latter is
 // needed when multiple inherited classes expose the same field name.
-func (parser *expressionParser) parseCallArgumentName() (string, bool) {
+func (parser *expressionParser) parseCallArgumentName() (string, Span, bool) {
 	start := parser.index
 	if start >= len(parser.tokens) || (parser.tokens[start].Kind != TokenIdentifier && parser.tokens[start].Kind != TokenKeyword) {
-		return "", false
+		return "", Span{}, false
 	}
 	index := start + 1
 	for index+1 < len(parser.tokens) && parser.tokens[index].Text == "." &&
@@ -1179,14 +1182,14 @@ func (parser *expressionParser) parseCallArgumentName() (string, bool) {
 		index += 2
 	}
 	if index >= len(parser.tokens) || parser.tokens[index].Text != ":" {
-		return "", false
+		return "", Span{}, false
 	}
 	parts := make([]string, 0, (index-start+1)/2)
 	for part := start; part < index; part += 2 {
 		parts = append(parts, parser.tokens[part].Text)
 	}
 	parser.index = index + 1
-	return strings.Join(parts, "."), true
+	return strings.Join(parts, "."), tokenSpan(parser.tokens[start:index]), true
 }
 
 func (parser *expressionParser) parseCallArgument() (ExprNode, error) {

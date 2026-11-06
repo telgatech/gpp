@@ -10,17 +10,28 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/telgatech/gpp/compiler"
 )
 
 type unusedLocalWarning struct {
-	file string
-	line int
-	name string
+	file   string
+	line   int
+	column int
+	name   string
 }
 
 func (warning unusedLocalWarning) String() string {
-	diagnostic := fmt.Sprintf("%s:%d: warning: declared and not used: %s", warning.file, warning.line, warning.name)
-	return normalizeBackendLocation(diagnostic, "")
+	column := warning.column
+	if column <= 0 {
+		column = 1
+	}
+	diagnostic := compiler.NewDiagnosticError(
+		warning.file,
+		compiler.Span{Line: warning.line, Column: column},
+		fmt.Errorf("warning: declared and not used: %s", warning.name),
+	)
+	return normalizeBackendLocation(diagnostic.Error(), "")
 }
 
 // suppressUnusedLocalErrors marks source-level local variables as used in the
@@ -99,7 +110,7 @@ func suppressUnusedLocalsInFile(path string, rescanSuppressed bool) ([]unusedLoc
 		if position.Filename == "" || position.Line <= 0 {
 			continue
 		}
-		warnings = append(warnings, unusedLocalWarning{file: position.Filename, line: position.Line, name: ident.Name})
+		warnings = append(warnings, unusedLocalWarning{file: position.Filename, line: position.Line, column: position.Column, name: ident.Name})
 		offset, ok := unusedSuppressionOffset(object, parents, fset, len(analysisSource))
 		if !ok {
 			continue

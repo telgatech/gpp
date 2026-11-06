@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -96,10 +95,7 @@ func expandSerializableClass(class *ClassDecl, qualifier string) error {
 				if generated.static {
 					kind = "static method"
 				}
-				return fmt.Errorf(
-					"%s: encoding.Serializable requires %s.%s%s, but %s defines an incompatible %s",
-					classLocation(class), class.Name, generated.name, generatedSignature(generated.parameters, generated.result), class.Name, kind,
-				)
+				return classDiagnosticf(class, "encoding.Serializable requires %s.%s%s, but %s defines an incompatible %s", class.Name, generated.name, generatedSignature(generated.parameters, generated.result), class.Name, kind)
 			}
 			break
 		}

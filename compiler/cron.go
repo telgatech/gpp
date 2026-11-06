@@ -16,28 +16,28 @@ func cronFunctionRegistrationSource(function *FunctionDecl, context constructorC
 			continue
 		}
 		if len(function.Method.TypeParamsAST) != 0 || len(function.Method.ParameterAST) != 1 {
-			return "", fmt.Errorf("%s: cron function %s must accept context.Context and return error", annotationUseLocation(use), function.Name)
+			return "", annotationDiagnostic(use, fmt.Errorf("cron function %s must accept context.Context and return error", function.Name))
 		}
 		parameterType, err := typeNodeSource(function.Method.ParameterAST[0].Type)
 		if err != nil || strings.TrimSpace(parameterType) != "context.Context" || strings.TrimSpace(methodResultSource(function.Method)) != "error" {
-			return "", fmt.Errorf("%s: cron function %s must have signature func(context.Context) error", annotationUseLocation(use), function.Name)
+			return "", annotationDiagnostic(use, fmt.Errorf("cron function %s must have signature func(context.Context) error", function.Name))
 		}
 		arguments := use.ArgumentTexts()
 		if len(arguments) != 1 {
-			return "", fmt.Errorf("%s: %s requires one argument", annotationUseLocation(use), declaration.Name)
+			return "", annotationDiagnostic(use, fmt.Errorf("%s requires one argument", declaration.Name))
 		}
 		register := "Register"
 		schedule := strings.TrimSpace(arguments[0])
 		if declaration.Name == "Cron" {
 			if _, err := strconv.Unquote(schedule); err != nil {
-				return "", fmt.Errorf("%s: Cron expression must be a string literal", annotationUseLocation(use))
+				return "", annotationDiagnostic(use, fmt.Errorf("Cron expression must be a string literal"))
 			}
 		} else {
 			register = "RegisterEvery"
 		}
 		qualifier, err := cronAnnotationQualifier(use, context)
 		if err != nil {
-			return "", fmt.Errorf("%s: %w", annotationUseLocation(use), err)
+			return "", annotationDiagnostic(use, err)
 		}
 		if qualifier != "" {
 			register = qualifier + "." + register

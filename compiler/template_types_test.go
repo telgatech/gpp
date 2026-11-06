@@ -57,7 +57,7 @@ template Page(post Post) {
 }
 `
 	err := validateTemplateSourceForTest(t, source, "Page")
-	if err == nil || !strings.Contains(err.Error(), "has no field or method Missing") || !strings.HasPrefix(err.Error(), "4:") {
+	if err == nil || !strings.Contains(err.Error(), "has no field or method Missing") || !strings.HasPrefix(err.Error(), "typed-template.gpp:4:") {
 		t.Fatalf("expected a source-located missing-member diagnostic, got %v", err)
 	}
 }
@@ -78,7 +78,7 @@ func main() {}
 		t.Fatal(err)
 	}
 	err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated", NoStdlib: true})
-	want := `tpl.gpp:4: invalid template body: function "PostCards" not defined`
+	want := `tpl.gpp:4:1: invalid template body: function "PostCards" not defined`
 	if err == nil || err.Error() != want {
 		t.Fatalf("expected one precise template diagnostic %q, got %v", want, err)
 	}

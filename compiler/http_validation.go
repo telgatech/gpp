@@ -37,7 +37,7 @@ func validateHTTPDocumentation(program *Program, model *SemanticModel) error {
 			}
 			if len(oauthUses) > 0 {
 				if !httpServerClass(pkg, class, map[*ClassDecl]bool{}) {
-					return fmt.Errorf("%s: http.OAuth requires a class derived from http.Server", annotationUseLocation(*oauthUses[0]))
+					return annotationDiagnostic(*oauthUses[0], fmt.Errorf("http.OAuth requires a class derived from http.Server"))
 				}
 				if err := validateHTTPOAuthAnnotations(pkg, class, oauthUses, prefixForHTTPClass(pkg, class)); err != nil {
 					return err
@@ -50,27 +50,27 @@ func validateHTTPDocumentation(program *Program, model *SemanticModel) error {
 				continue
 			}
 			if openAPI == nil {
-				return fmt.Errorf("%s: http.Swagger requires http.OpenAPI on the same server", annotationUseLocation(*swagger))
+				return annotationDiagnostic(*swagger, fmt.Errorf("http.Swagger requires http.OpenAPI on the same server"))
 			}
 
 			prefix := httpClassAnnotationPath(pkg, class, "Prefix", "")
 			openAPIPath := joinHTTPPath(prefix, httpClassAnnotationPath(pkg, class, "OpenAPI", "/openapi.json"))
 			swaggerPath := normalizeHTTPMountPath(joinHTTPPath(prefix, httpClassAnnotationPath(pkg, class, "Swagger", "/swagger")))
 			if openAPIPath == swaggerPath || pathOwnedByHTTPMount(openAPIPath, swaggerPath) {
-				return fmt.Errorf("%s: http.OpenAPI route %s conflicts with http.Swagger mount %s", swagger.SourceFile, openAPIPath, swaggerPath)
+				return annotationDiagnostic(*openAPI, fmt.Errorf("http.OpenAPI route %s conflicts with http.Swagger mount %s", openAPIPath, swaggerPath))
 			}
 			if pathOwnedByHTTPMount(swaggerPath, openAPIPath) {
-				return fmt.Errorf("%s: http.Swagger route %s conflicts with http.OpenAPI", annotationUseLocation(*swagger), swaggerPath)
+				return annotationDiagnostic(*swagger, fmt.Errorf("http.Swagger route %s conflicts with http.OpenAPI", swaggerPath))
 			}
 			for _, route := range httpClassRoutes(pkg, class, prefix) {
 				if route.Path == openAPIPath && route.Method == "GET" {
-					return fmt.Errorf("%s: GET %s conflicts with http.OpenAPI", annotationUseLocation(*openAPI), openAPIPath)
+					return annotationDiagnostic(*openAPI, fmt.Errorf("GET %s conflicts with http.OpenAPI", openAPIPath))
 				}
 				if route.Path == swaggerPath && route.Method == "GET" {
-					return fmt.Errorf("%s: GET %s conflicts with http.Swagger", annotationUseLocation(*swagger), swaggerPath)
+					return annotationDiagnostic(*swagger, fmt.Errorf("GET %s conflicts with http.Swagger", swaggerPath))
 				}
 				if route.Path != swaggerPath && pathOwnedByHTTPMount(route.Path, swaggerPath) {
-					return fmt.Errorf("%s: %s %s conflicts with http.Swagger mount %s", annotationUseLocation(*swagger), route.Method, route.Path, swaggerPath)
+					return annotationDiagnostic(*swagger, fmt.Errorf("%s %s conflicts with http.Swagger mount %s", route.Method, route.Path, swaggerPath))
 				}
 			}
 		}
@@ -106,17 +106,17 @@ func validateHTTPOAuthAnnotations(pkg *PackageSymbols, class *ClassDecl, uses []
 	for _, use := range uses {
 		name, err := httpOAuthStaticName(*use)
 		if err != nil {
-			return fmt.Errorf("%s: %w", annotationUseLocation(*use), err)
+			return annotationDiagnostic(*use, err)
 		}
 		if seen[name] {
-			return fmt.Errorf("%s: duplicate OAuth provider %s", annotationUseLocation(*use), name)
+			return annotationDiagnostic(*use, fmt.Errorf("duplicate OAuth provider %s", name))
 		}
 		seen[name] = true
 		loginPath := joinHTTPPath(prefix, "/auth/"+name)
 		callbackPath := loginPath + "/callback"
 		for _, route := range routes {
 			if route.Method == "GET" && (route.Path == loginPath || route.Path == callbackPath) {
-				return fmt.Errorf("%s: GET %s conflicts with generated OAuth route", annotationUseLocation(*use), route.Path)
+				return annotationDiagnostic(*use, fmt.Errorf("GET %s conflicts with generated OAuth route", route.Path))
 			}
 		}
 	}
@@ -188,25 +188,25 @@ func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 		}
 		parameters, err := parameterInfosForMethod(method)
 		if err != nil {
-			return fmt.Errorf("%s: %s has invalid parameters: %w", classLocation(class), method.Name, err)
+			return methodDiagnosticf(class, &method, "%s has invalid parameters: %w", method.Name, err)
 		}
 		if methodResultSource(method) != "" && strings.TrimSpace(methodResultSource(method)) != "error" {
-			return fmt.Errorf("%s: %s may return only error", classLocation(class), method.Name)
+			return methodDiagnosticf(class, &method, "%s may return only error", method.Name)
 		}
 		if method.Name == "OAuthError" {
 			if len(parameters) != 3 || !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || normalizeHTTPHookType(parameters[1].typeText()) != "string" || normalizeHTTPHookType(parameters[2].typeText()) != "error" {
-				return fmt.Errorf("%s: OAuthError must have signature (ctx *http.Context, provider string, err error)", classLocation(class))
+				return methodDiagnosticf(class, &method, "OAuthError must have signature (ctx *http.Context, provider string, err error)")
 			}
 			continue
 		}
 		if len(parameters) != 2 && len(parameters) != 3 {
-			return fmt.Errorf("%s: OAuthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])", classLocation(class))
+			return methodDiagnosticf(class, &method, "OAuthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])")
 		}
 		if !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].typeText(), "OAuthIdentity", false, true) {
-			return fmt.Errorf("%s: OAuthLogin has invalid signature", classLocation(class))
+			return methodDiagnosticf(class, &method, "OAuthLogin has invalid signature")
 		}
 		if len(parameters) == 3 && !httpOAuthTypeMatches(pkg, parameters[2].typeText(), "OAuthToken", false, true) {
-			return fmt.Errorf("%s: OAuthLogin token parameter must be http.OAuthToken", classLocation(class))
+			return methodDiagnosticf(class, &method, "OAuthLogin token parameter must be http.OAuthToken")
 		}
 	}
 	return nil

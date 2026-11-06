@@ -143,7 +143,7 @@ func lowerLambdaExprNode(lambda *LambdaExpr, context constructorContext, expecte
 	if selected == nil {
 		if len(expected) > 0 {
 			span := lambda.Span()
-			return nil, fmt.Errorf("lambda does not match any expected function type at %d:%d", span.Line, span.Column)
+			return nil, sourceLineError(span, fmt.Errorf("lambda does not match any expected function type"))
 		}
 		for _, parameter := range parameters {
 			if parameter.Type == nil {
@@ -548,7 +548,7 @@ func lowerLambdaASTSpans(src string, spans []lambdaASTSpan, blocks []*BlockStmt,
 		lambda, err := lambdaSourceFromAST(span.Lambda)
 		if err != nil {
 			spanValue := span.Lambda.Span()
-			return "", fmt.Errorf("%w at %d:%d", err, spanValue.Line, spanValue.Column)
+			return "", sourceLineError(spanValue, err)
 		}
 		lambda.Placeholder = span.Name
 		lambda.Captured = lambdaCapturedTypes(span, spans, parameterTypesBySpan)
@@ -566,7 +566,7 @@ func lowerLambdaASTSpans(src string, spans []lambdaASTSpan, blocks []*BlockStmt,
 		}
 		if err != nil {
 			spanValue := span.Lambda.Span()
-			return "", fmt.Errorf("%w at %d:%d", err, spanValue.Line, spanValue.Column)
+			return "", sourceLineError(spanValue, err)
 		}
 		renderedBySpan[lambdaASTKey{Start: span.Start, End: span.End}] = rendered
 	}

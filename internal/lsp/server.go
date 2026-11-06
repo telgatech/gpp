@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -443,20 +442,16 @@ func isGoPlusFile(path string) bool {
 	return strings.HasSuffix(path, ".gpp") || strings.HasSuffix(path, ".gpp.tpl")
 }
 
-var locationPattern = regexp.MustCompile(`(^|:)([^:\n]+):(\d+)(?::(\d+))?:\s*(.*)$`)
-
 func diagnosticFromError(uri, source string, err error) Diagnostic {
 	message := err.Error()
 	line := 0
 	byteCharacter := 0
-	if match := locationPattern.FindStringSubmatch(message); match != nil {
-		line, _ = strconv.Atoi(match[3])
-		line--
-		if match[4] != "" {
-			byteCharacter, _ = strconv.Atoi(match[4])
-			byteCharacter--
+	if position, ok := compiler.PositionOfDiagnostic(err); ok {
+		line = position.Span.Line - 1
+		if position.Span.Column > 0 {
+			byteCharacter = position.Span.Column - 1
 		}
-		message = match[5]
+		message = position.Message
 	}
 	if line < 0 {
 		line = 0

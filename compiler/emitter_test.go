@@ -304,6 +304,15 @@ func TestEmitConstructorRejectsUnknownNamedField(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown field Height") {
 		t.Fatalf("expected unknown field error, got %v", err)
 	}
+	position, ok := PositionOfDiagnostic(err)
+	if !ok {
+		t.Fatalf("constructor error did not retain a structured source position: %v", err)
+	}
+	fieldOffset := strings.Index(file.Source, "Height")
+	wantLine, wantColumn := sourcePosition(file.Source, fieldOffset)
+	if position.File != file.Name || position.Span.Line != wantLine || position.Span.Column != wantColumn {
+		t.Fatalf("constructor error position = %s:%d:%d, want %s:%d:%d", position.File, position.Span.Line, position.Span.Column, file.Name, wantLine, wantColumn)
+	}
 }
 
 func TestEmitConstructorRejectsWrongArity(t *testing.T) {

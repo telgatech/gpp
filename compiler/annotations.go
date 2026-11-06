@@ -11,7 +11,7 @@ import (
 func validateAnnotationDeclarations(pkg *PackageSymbols) error {
 	for _, declaration := range pkg.Annotations {
 		if _, err := annotationParameterInfos(declaration); err != nil {
-			return fmt.Errorf("%s: annotation %s has invalid parameters: %w", annotationLocation(declaration), declaration.Name, err)
+			return annotationDeclarationDiagnostic(declaration, fmt.Errorf("annotation %s has invalid parameters: %w", declaration.Name, err))
 		}
 	}
 	return nil
@@ -98,22 +98,22 @@ func validateAnnotationUses(uses []AnnotationUse, target AnnotationTarget, pkg *
 				continue
 			}
 			if strings.Contains(use.Name, ".") {
-				return fmt.Errorf("%s: undefined annotation %s", annotationUseLocation(*use), use.Name)
+				return annotationDiagnostic(*use, fmt.Errorf("undefined annotation %s", use.Name))
 			}
 			if pkg.Functions[use.Name] {
-				return fmt.Errorf("%s: %s is a function, not an annotation", annotationUseLocation(*use), use.Name)
+				return annotationDiagnostic(*use, fmt.Errorf("%s is a function, not an annotation", use.Name))
 			}
-			return fmt.Errorf("%s: undefined annotation %s", annotationUseLocation(*use), use.Name)
+			return annotationDiagnostic(*use, fmt.Errorf("undefined annotation %s", use.Name))
 		}
 		use.Declaration = declaration
 		if len(declaration.Targets) > 0 && !containsAnnotationTarget(declaration.Targets, target) {
-			return fmt.Errorf(
-				"%s: annotation %s cannot be applied to %s; allowed targets: %s",
-				annotationUseLocation(*use), use.Name, target, strings.Join(annotationTargetNames(declaration.Targets), ", "),
-			)
+			return annotationDiagnostic(*use, fmt.Errorf(
+				"annotation %s cannot be applied to %s; allowed targets: %s",
+				use.Name, target, strings.Join(annotationTargetNames(declaration.Targets), ", "),
+			))
 		}
 		if err := validateAnnotationArguments(*use, declaration); err != nil {
-			return fmt.Errorf("%s: %w", annotationUseLocation(*use), err)
+			return annotationDiagnostic(*use, err)
 		}
 	}
 	return nil

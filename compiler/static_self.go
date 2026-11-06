@@ -1,9 +1,5 @@
 package compiler
 
-import (
-	"fmt"
-)
-
 // bindStaticSelfTypes makes self an implicit generic type parameter on static
 // methods that use it. Calls through a subclass bind that parameter to the
 // class used at the call site.
@@ -21,7 +17,7 @@ func bindStaticSelfTypes(program *Program) error {
 				}
 				usesSelf, err := methodSignatureUsesType(method, "self")
 				if err != nil {
-					return fmt.Errorf("%s: %w", classLocation(class), err)
+					return classDiagnostic(class, err)
 				}
 				if !usesSelf {
 					for _, token := range method.BodyTokens {

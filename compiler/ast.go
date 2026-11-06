@@ -177,6 +177,7 @@ type EmbedEntry struct {
 	Name       string
 	Path       string
 	Directory  bool
+	SpanValue  Span
 	SourceFile string
 	SourceLine int
 }
@@ -409,6 +410,7 @@ type AnnotationUse struct {
 	ArgumentTokens [][]Token
 	ArgumentsAST   []ExprNode
 	HasArguments   bool
+	SpanValue      Span
 	SourceFile     string
 	SourceLine     int
 	Declaration    *AnnotationDecl

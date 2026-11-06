@@ -23,7 +23,7 @@ func TestSuppressUnusedLocalErrors(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("got %d warnings, want 1: %#v", len(warnings), warnings)
 	}
-	if got := warnings[0].String(); !strings.HasSuffix(got, "classifieds.gpp:917: warning: declared and not used: x") {
+	if got := warnings[0].String(); !strings.HasSuffix(got, "classifieds.gpp:917:1: warning: declared and not used: x") {
 		t.Fatalf("warning = %q, want a classifieds.gpp:917 diagnostic", got)
 	}
 	updated, err := os.ReadFile(path)
@@ -68,7 +68,7 @@ func TestUnusedLocalWarningUsesBackendRelativePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	warning := unusedLocalWarning{file: filepath.Join(working, "classifieds.gpp"), line: 840, name: "err"}
-	if got, want := warning.String(), "classifieds.gpp:840: warning: declared and not used: err"; got != want {
+	if got, want := warning.String(), "classifieds.gpp:840:1: warning: declared and not used: err"; got != want {
 		t.Fatalf("warning = %q, want %q", got, want)
 	}
 }
@@ -103,7 +103,7 @@ func TestSuppressUnusedLocalErrorsMapsCopiedGoFilesBackToSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.ToSlash(relativeSource) + ":3: warning: declared and not used: x"
+	want := filepath.ToSlash(relativeSource) + ":3:1: warning: declared and not used: x"
 	if got := warnings[0].String(); got != want {
 		t.Fatalf("warning = %q, want %q", got, want)
 	}

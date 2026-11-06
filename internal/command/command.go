@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -277,7 +278,7 @@ func runCompile(args []string) int {
 	if code >= 0 {
 		if code != 0 {
 			for _, message := range parseErrors {
-				fmt.Fprintln(os.Stderr, message)
+				reportErrorText(message, code)
 			}
 		}
 		return code
@@ -307,7 +308,7 @@ func runBuild(args []string) int {
 	if code >= 0 {
 		if code != 0 {
 			for _, message := range parseErrors {
-				fmt.Fprintln(os.Stderr, message)
+				reportErrorText(message, code)
 			}
 		}
 		return code
@@ -381,7 +382,7 @@ func runRun(args []string) int {
 	if code >= 0 {
 		if code != 0 {
 			for _, message := range parseErrors {
-				fmt.Fprintln(os.Stderr, message)
+				reportErrorText(message, code)
 			}
 		}
 		return code
@@ -425,7 +426,7 @@ func runTest(args []string) int {
 	if code >= 0 {
 		if code != 0 {
 			for _, message := range parseErrors {
-				fmt.Fprintln(os.Stderr, message)
+				reportErrorText(message, code)
 			}
 		}
 		return code
@@ -571,7 +572,7 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	}
 	if options.warnings {
 		for _, warning := range state.Warn {
-			fmt.Fprintln(os.Stderr, warning)
+			reportWarningText(warning)
 		}
 	}
 	if includeTests {
@@ -1543,7 +1544,7 @@ func runGoCommand(directory string, args ...string) error {
 			_, _ = os.Stdout.Write(stdout.Bytes())
 		}
 		if output := cleanBackendOutput(stderr.String(), directory); output != "" {
-			return backendDiagnosticError{output: output}
+			return newBackendDiagnosticError(output)
 		}
 		return fmt.Errorf("Go backend failed: %w", err)
 	}
@@ -1586,7 +1587,7 @@ func runGoProgram(directory string, arguments []string) error {
 			_, _ = os.Stdout.Write(stdout.Bytes())
 		}
 		if output := cleanBackendOutput(stderr.String(), directory); output != "" {
-			return backendDiagnosticError{output: output}
+			return newBackendDiagnosticError(output)
 		}
 		return fmt.Errorf("Go backend failed: %w", err)
 	}
@@ -1606,11 +1607,90 @@ func runGoProgram(directory string, arguments []string) error {
 }
 
 type backendDiagnosticError struct {
-	output string
+	lines []backendOutputLine
+}
+
+type backendOutputLine struct {
+	text       string
+	diagnostic error
 }
 
 func (err backendDiagnosticError) Error() string {
-	return err.output
+	lines := make([]string, len(err.lines))
+	for index, line := range err.lines {
+		if line.diagnostic != nil {
+			lines[index] = compiler.FormatError(line.diagnostic)
+		} else {
+			lines[index] = line.text
+		}
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
+func (err backendDiagnosticError) Unwrap() []error {
+	diagnostics := make([]error, 0, len(err.lines))
+	for _, line := range err.lines {
+		if line.diagnostic != nil {
+			diagnostics = append(diagnostics, line.diagnostic)
+		}
+	}
+	return diagnostics
+}
+
+var backendPositionedDiagnostic = regexp.MustCompile(`^(.+):([0-9]+):([0-9]+): (.*)$`)
+var backendLineDiagnostic = regexp.MustCompile(`^(.+):([0-9]+): (.*)$`)
+
+func newBackendDiagnosticError(output string) backendDiagnosticError {
+	result := backendDiagnosticError{}
+	seenDiagnostics := map[struct {
+		file    string
+		line    int
+		column  int
+		message string
+	}]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		if match := backendPositionedDiagnostic.FindStringSubmatch(line); match != nil {
+			lineNumber, _ := strconv.Atoi(match[2])
+			column, _ := strconv.Atoi(match[3])
+			key := struct {
+				file    string
+				line    int
+				column  int
+				message string
+			}{match[1], lineNumber, column, match[4]}
+			if seenDiagnostics[key] {
+				continue
+			}
+			seenDiagnostics[key] = true
+			result.lines = append(result.lines, backendOutputLine{diagnostic: compiler.NewDiagnosticError(
+				match[1],
+				compiler.Span{Line: lineNumber, Column: column},
+				errors.New(match[4]),
+			)})
+			continue
+		}
+		if match := backendLineDiagnostic.FindStringSubmatch(line); match != nil {
+			lineNumber, _ := strconv.Atoi(match[2])
+			key := struct {
+				file    string
+				line    int
+				column  int
+				message string
+			}{match[1], lineNumber, 0, match[3]}
+			if seenDiagnostics[key] {
+				continue
+			}
+			seenDiagnostics[key] = true
+			result.lines = append(result.lines, backendOutputLine{diagnostic: compiler.DiagnosticError{
+				File:  match[1],
+				Span:  compiler.Span{Line: lineNumber},
+				Cause: errors.New(match[3]),
+			}})
+			continue
+		}
+		result.lines = append(result.lines, backendOutputLine{text: line})
+	}
+	return result
 }
 
 func cleanBackendOutput(output, directory string) string {
@@ -2104,16 +2184,16 @@ func runDoctor(args []string) int {
 	failed := false
 	goPath, err := findGo()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "✗ %s\n", err)
+		reportErrorText(fmt.Sprintf("✗ %s", err), 1)
 		return 1
 	}
 	fmt.Printf("✓ Go found: %s\n", goPath)
 	version, err := goVersion()
 	if err != nil || !supportedGo(version) {
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "✗ %s\n", err)
+			reportErrorText(fmt.Sprintf("✗ %s", err), 1)
 		} else {
-			fmt.Fprintf(os.Stderr, "✗ Go %s is unsupported; Go 1.%d or newer is required\n", version, minimumGoMinor)
+			reportErrorText(fmt.Sprintf("✗ Go %s is unsupported; Go 1.%d or newer is required", version, minimumGoMinor), 1)
 		}
 		failed = true
 	} else {
@@ -2121,34 +2201,34 @@ func runDoctor(args []string) int {
 	}
 	cache, err := gppCacheDirectory()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "✗ cache directory unavailable: %v\n", err)
+		reportErrorText(fmt.Sprintf("✗ cache directory unavailable: %v", err), 1)
 		failed = true
 	} else {
 		if err := os.MkdirAll(cache, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "✗ cache not writable: %v\n", err)
+			reportErrorText(fmt.Sprintf("✗ cache not writable: %v", err), 1)
 			failed = true
 		} else {
 			fmt.Printf("✓ cache writable: %s\n", cache)
 		}
 	}
 	if !compiler.EmbeddedStdlibAvailable() {
-		fmt.Fprintln(os.Stderr, "✗ embedded standard library unavailable")
+		reportErrorText("✗ embedded standard library unavailable", 1)
 		failed = true
 	} else {
 		fmt.Println("✓ embedded standard library available")
 	}
 	temporary, err := os.MkdirTemp("", "gpp-doctor-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "✗ temporary build directory unavailable: %v\n", err)
+		reportErrorText(fmt.Sprintf("✗ temporary build directory unavailable: %v", err), 1)
 		failed = true
 	} else {
 		defer os.RemoveAll(temporary)
 		source := filepath.Join(temporary, "main.gpp")
 		if err := os.WriteFile(source, []byte("func main() {}\n"), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "✗ test source could not be created: %v\n", err)
+			reportErrorText(fmt.Sprintf("✗ test source could not be created: %v", err), 1)
 			failed = true
 		} else if err := compiler.CompileFilesWithOptions([]string{source}, filepath.Join(temporary, ".gpp"), compiler.CompileOptions{ModulePath: "generated", NoStdlib: true, CleanOutput: true}); err != nil {
-			fmt.Fprintf(os.Stderr, "✗ test compilation failed: %v\n", err)
+			reportErrorText(fmt.Sprintf("✗ test compilation failed: %v", err), 1)
 			failed = true
 		} else {
 			fmt.Println("✓ test compilation succeeded")
@@ -2177,17 +2257,28 @@ func runVersion(args []string) int {
 }
 
 func reportError(err error) int {
-	var backend backendDiagnosticError
-	if errors.As(err, &backend) {
-		fmt.Fprintln(os.Stderr, backend.Error())
-		return 1
-	}
-	fmt.Fprintln(os.Stderr, err)
-	return 1
+	return reportErrorWithCode(err, 1)
+}
+
+func reportErrorWithCode(err error, exitCode int) int {
+	return reportErrorText(compiler.FormatError(err), exitCode)
+}
+
+func reportErrorText(message string, exitCode int) int {
+	reportOutputText(message)
+	return exitCode
+}
+
+func reportWarningText(message string) {
+	reportOutputText(message)
+}
+
+func reportOutputText(message string) {
+	fmt.Fprintln(os.Stderr, strings.TrimRight(message, "\n"))
 }
 
 func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	_ = reportErrorWithCode(fmt.Errorf(format, args...), 2)
 }
 
 func mustGetwd() string {

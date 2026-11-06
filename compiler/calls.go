@@ -49,6 +49,7 @@ type callableSignature struct {
 	StaticSelf bool
 	SourceFile string
 	SourceLine int
+	SourceSpan Span
 }
 
 func (signature callableSignature) resultText() string {
@@ -458,13 +459,16 @@ func functionDeclSignature(function *FunctionDecl) (callableSignature, error) {
 		ResultAST:  methodResultTypeNode(function.Method),
 		SourceFile: function.SourceFile,
 		SourceLine: function.SourceLine,
+		SourceSpan: function.SourceSpan,
 	}, nil
 }
 
 func goCallableSignature(function *ast.FuncDecl, fileSet *token.FileSet, filename string) callableSignature {
 	signature := callableSignature{Name: function.Name.Name, SourceFile: filename}
 	if fileSet != nil {
-		signature.SourceLine = fileSet.Position(function.Pos()).Line
+		position := fileSet.Position(function.Pos())
+		signature.SourceLine = position.Line
+		signature.SourceSpan = Span{Start: position.Offset, End: position.Offset, Line: position.Line, Column: position.Column}
 	}
 	if function.Type == nil || function.Type.Params == nil {
 		return signature
@@ -537,7 +541,7 @@ func functionSignaturesForProgram(program *Program) (map[string]map[string][]cal
 		}
 		signatures, err := functionSignaturesForFile(file)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", file.Name, err)
+			return nil, diagnosticAt(file.Name, Span{}, err)
 		}
 		for name, values := range signatures {
 			result[file.Package][name] = append(result[file.Package][name], values...)
@@ -563,7 +567,11 @@ func configureFunctionOverloads(overloads *overloadContext, signatures map[strin
 		for index := range candidates {
 			key := parameterSignatureKey(candidates[index].Parameters)
 			if previous, duplicate := seen[key]; duplicate {
-				return fmt.Errorf("%s: function %s redeclared in this block\n\t%s: other declaration of %s", callableSignatureLocation(candidates[index]), name, callableSignatureLocation(previous), name)
+				span := candidates[index].SourceSpan
+				if span.Line <= 0 || span.Column <= 0 {
+					span = Span{Line: candidates[index].SourceLine, Column: 1}
+				}
+				return diagnosticAt(candidates[index].SourceFile, span, fmt.Errorf("function %s redeclared in this block; other declaration at %s", name, callableSignatureLocation(previous)))
 			}
 			seen[key] = candidates[index]
 			arityCounts[len(candidates[index].Parameters)]++

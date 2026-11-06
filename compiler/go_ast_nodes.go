@@ -1048,14 +1048,18 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot mix named and positional arguments in call to %s", name))
 	}
 	if !named && len(call.Arguments) != len(fields) && len(call.Arguments) != 0 {
-		return nil, true, fmt.Errorf("%s constructor expects %d arguments, got %d", name, len(fields), len(call.Arguments))
+		return nil, true, sourceLineError(call.Span(), fmt.Errorf("%s constructor expects %d arguments, got %d", name, len(fields), len(call.Arguments)))
 	}
 	for index, argument := range call.Arguments {
 		field := constructorField{}
 		if named {
 			field, err = resolveConstructorField(fields, argument.Name)
 			if err != nil {
-				return nil, true, fmt.Errorf("%s constructor: %w", name, err)
+				span := argument.NameSpan
+				if span.Line == 0 {
+					span = call.Span()
+				}
+				return nil, true, sourceLineError(span, fmt.Errorf("%s constructor: %w", name, err))
 			}
 		} else {
 			field = fields[index]

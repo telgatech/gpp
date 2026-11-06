@@ -695,5 +695,9 @@ func (checker *templateTypeChecker) at(node templateparse.Node, err error) error
 	if line < 1 {
 		line = checker.template.SourceLine
 	}
-	return sourceLineError(Span{Line: line}, err)
+	_, column := sourcePosition(checker.template.Body, position)
+	if strings.Contains(checker.template.Body[:position], "\n") == false && checker.template.BodySpan.Column > 0 {
+		column += checker.template.BodySpan.Column - 1
+	}
+	return diagnosticAt(checker.template.SourceFile, Span{Line: line, Column: column}, err)
 }

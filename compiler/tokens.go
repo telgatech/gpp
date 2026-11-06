@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"go/format"
 	"go/token"
@@ -37,37 +36,6 @@ type Span struct {
 	End    int
 	Line   int
 	Column int
-}
-
-type sourceLineDiagnostic struct {
-	line   int
-	column int
-	err    error
-}
-
-func (diagnostic sourceLineDiagnostic) Error() string {
-	if diagnostic.column > 0 {
-		return fmt.Sprintf("%d:%d: %v", diagnostic.line, diagnostic.column, diagnostic.err)
-	}
-	return fmt.Sprintf("%d: %v", diagnostic.line, diagnostic.err)
-}
-
-func (diagnostic sourceLineDiagnostic) Unwrap() error { return diagnostic.err }
-
-func sourceLineError(span Span, err error) error {
-	if err == nil || span.Line <= 0 {
-		return err
-	}
-	var located sourceLineDiagnostic
-	if errors.As(err, &located) {
-		return err
-	}
-	return sourceLineDiagnostic{line: span.Line, column: span.Column, err: err}
-}
-
-func isSourceLineDiagnostic(err error) bool {
-	var located sourceLineDiagnostic
-	return errors.As(err, &located)
 }
 
 func sourceSpan(source string, start, end int) Span {
@@ -504,10 +472,7 @@ func sourcePosition(source string, offset int) (int, int) {
 }
 
 func tokenError(filename string, span Span, message string) error {
-	if filename == "" {
-		return fmt.Errorf("%d:%d: %s", span.Line, span.Column, message)
-	}
-	return fmt.Errorf("%s:%d:%d: %s", filename, span.Line, span.Column, message)
+	return diagnosticAt(filename, span, fmt.Errorf("%s", message))
 }
 
 func isTokenIdentStart(char byte) bool {
