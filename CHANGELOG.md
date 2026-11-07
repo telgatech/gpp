@@ -2,6 +2,8 @@
 
 ## 2026-11-07
 
+- `gpp build`, `gpp run`, and `gpp test` now use the current project's `go.mod` module path by default, improving resolution of local Go++ packages.
+- Fixed constructor lowering across package boundaries, including inherited fields and method calls with default arguments directly after construction.
 - Simplified ORM model declarations: fields map to snake_case columns and classes map to snake_case table names by default. Use `orm.Column` and `orm.Table` to override names, and `orm.Ignore` to omit non-database fields. Schema-qualified table names such as `sales.employees` are supported.
 - ORM models now infer the primary key from a persisted `Id` or `ID` field when no `orm.PK` is specified. Keep `orm.PK` for custom key names or to select among multiple candidates.
 - Updated the ORM and todo examples to demonstrate inferred mappings, with explicit annotations shown as comments in the todo model.
@@ -17,7 +19,7 @@
 - Added `http.Server.PublicDir` for root static files and made `http.Files` mounts run before procedural handlers and routes. Both prefer `index.html` then `index.htm`, disable directory listings by default, and use a five-minute cache policy with gzip for compressible responses.
 - Simplified `http.Context.Template` to one call with optional status, data, and key arguments; an omitted key uses the request path.
 - Split generic typed SQL queries into the new `gpp/sql` package; model mapping and model operations remain in `gpp/orm`.
-- `http.Server.Listen(port)` now takes the TCP port directly; pass `0` to let the OS choose an available port. This replaces the `http.Port` annotation.
+- `http.Server.Listen(port)` takes the TCP port directly; its default of `0` lets the OS choose an available port. This replaces the `http.Port` annotation.
 - Fixed automatic exception promotion for ignored errors returned by lowered calls, including extension calls with callback overloads; added runtime regression coverage.
 
 ## 2026-11-05

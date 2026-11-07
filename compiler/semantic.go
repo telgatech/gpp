@@ -1083,10 +1083,33 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		context.Extensions = append(context.Extensions, importedExtensions...)
 	}
 
-	for _, class := range localClasses {
-		if err := addClassParentTargets(&context, class, model, modulePath); err != nil {
-			return context, err
+	// Constructor calls may target a class imported from another package whose
+	// own parent classes are imported in that package's source file. Resolve
+	// those parent targets too, so lowering can include inherited fields when
+	// the caller constructs the qualified class directly.
+	for {
+		targetCount := len(context.Targets)
+		for _, target := range context.Targets {
+			if target.Class == nil {
+				continue
+			}
+			if err := addClassParentTargets(&context, target.Class, model, modulePath); err != nil {
+				return context, err
+			}
 		}
+		if len(context.Targets) == targetCount {
+			break
+		}
+	}
+	for key, target := range context.Targets {
+		if target.Class == nil || target.Qualifier == "" {
+			continue
+		}
+		context.ClassMethodSignatures[key] = methodSignaturesForClass(
+			target.Class,
+			classesForClass(context, target.Class),
+			map[*ClassDecl]bool{},
+		)
 	}
 
 	for name, class := range localClasses {

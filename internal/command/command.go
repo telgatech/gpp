@@ -235,6 +235,11 @@ func parseCompileFlags(name string, args []string, allowOutputBinary bool) (comp
 		}
 		return result, nil, []string{err.Error()}, 2
 	}
+	if result.module == "generated" && !hasModuleFlag(args) {
+		if projectModule := modulePathFromGoMod(); projectModule != "" {
+			result.module = projectModule
+		}
+	}
 	return result, flags.Args(), nil, -1
 }
 
@@ -1227,6 +1232,34 @@ func moduleRoot() string {
 		}
 		working = parent
 	}
+}
+
+func modulePathFromGoMod() string {
+	root := moduleRoot()
+	if root == "" {
+		return ""
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "module" {
+			continue
+		}
+		return strings.Trim(fields[1], "\"`")
+	}
+	return ""
+}
+
+func hasModuleFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "-module" || arg == "--module" || strings.HasPrefix(arg, "-module=") || strings.HasPrefix(arg, "--module=") {
+			return true
+		}
+	}
+	return false
 }
 
 func gppCacheDirectory() (string, error) {

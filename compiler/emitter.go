@@ -4008,6 +4008,11 @@ func transformConstructorsAST(src string, context constructorContext) (string, b
 		if formatErr != nil {
 			return "", true, formatErr
 		}
+		// Go requires parentheses around pointer composite literals used as a
+		// selector receiver, such as (&T{...}).Method().
+		if constructorCallHasSelectorSuffix(src, candidate.end) {
+			literalSource = "(" + literalSource + ")"
+		}
 		edits = append(edits, edit{start: candidate.start, end: candidate.end, text: literalSource})
 	}
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
@@ -4018,6 +4023,13 @@ func transformConstructorsAST(src string, context constructorContext) (string, b
 		src = src[:edit.start] + edit.text + src[edit.end:]
 	}
 	return src, true, nil
+}
+
+func constructorCallHasSelectorSuffix(src string, end int) bool {
+	if end < 0 || end > len(src) {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimLeft(src[end:], " \t\r\n"), ".")
 }
 
 func collectConstructorBodyExpressions(block *BlockStmt, visit func(ExprNode)) {

@@ -1202,7 +1202,7 @@ class Server {
 		return nil
 	}
 
-	func Listen(port int) error {
+	func Listen(port int = 0) error {
 		app := any(this)
 		if this.GppDynamicObject != nil {
 			app = this.GppDynamicObject

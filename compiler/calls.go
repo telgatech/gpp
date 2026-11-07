@@ -1045,6 +1045,13 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 				className := strings.TrimPrefix(strings.TrimSpace(typeName), "*")
 				signatures = append(signatures, context.ClassMethodSignatures[className][function.Name]...)
 			}
+		} else if constructor, ok := function.Receiver.(*CallExpr); ok {
+			// A method call chained directly from a class constructor has a
+			// statically known receiver type even though it is not a local or
+			// parameter name. Resolve its method defaults from that class too.
+			if className, _, isConstructor := constructorTargetForCallee(constructor.Callee, context); isConstructor {
+				signatures = append(signatures, context.ClassMethodSignatures[className][function.Name]...)
+			}
 		} else {
 			// Imported static calls use a qualified receiver such as
 			// `model.User`, which is represented by a SelectorExpr. Resolve

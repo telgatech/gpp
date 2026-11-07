@@ -669,6 +669,12 @@ func goExprNode(expression ExprNode) (ast.Expr, error) {
 		if value.Safe {
 			return nil, fmt.Errorf("safe selector %s is not lowered", value.Name)
 		}
+		// Go requires parentheses when selecting a method or field from a
+		// pointer to a composite literal (for example, (&T{...}).Method()).
+		// Constructor lowering produces precisely this shape for classes.
+		if _, pointer := receiver.(*ast.UnaryExpr); pointer {
+			receiver = &ast.ParenExpr{X: receiver}
+		}
 		return &ast.SelectorExpr{X: receiver, Sel: ast.NewIdent(value.Name)}, nil
 	case *IndexExpr:
 		receiver, err := goExprNode(value.Receiver)
@@ -1185,7 +1191,10 @@ func constructorASTLiteralExpr(name string, class *ClassDecl, literal *construct
 			continue
 		}
 		parent := classes[parentName]
-		parentNameText := qualifyTypeName(parentName, qualifier)
+		parentNameText := parentName
+		if !strings.Contains(parentName, ".") {
+			parentNameText = qualifyTypeName(parentName, qualifier)
+		}
 		value := constructorASTLiteralExpr(parentNameText, parent, child, classes, qualifier)
 		elements = append(elements, CompositeElement{Key: &NameExpr{Name: parentFieldName}, Value: value})
 	}
