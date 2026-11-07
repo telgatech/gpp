@@ -1491,6 +1491,114 @@ func main() {
 	}
 }
 
+func TestCompileFilesResolvesModulePackagesAcrossLayouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name: "packages in one directory",
+			files: map[string]string{
+				"context.gpp": `package api
+class Context {}
+`,
+				"server.gpp": `package api
+class Server {
+    func Handle(ctx *Context) error { return nil }
+}
+`,
+				"common.gpp": `package common
+import "fixture/api"
+class Server: api.Server {}
+`,
+				"app.gpp": `package app
+import "fixture/common"
+class App: common.Server {}
+`,
+			},
+		},
+		{
+			name: "packages in conventional directories",
+			files: map[string]string{
+				"api/context.gpp": `package api
+class Context {}
+`,
+				"api/server.gpp": `package api
+class Server {
+    func Handle(ctx *Context) error { return nil }
+}
+`,
+				"common/server.gpp": `package common
+import "fixture/api"
+class Server: api.Server {}
+`,
+				"app/app.gpp": `package app
+import "fixture/common"
+class App: common.Server {}
+`,
+			},
+		},
+		{
+			name: "nested dotted packages split across files",
+			files: map[string]string{
+				"internal/api/context.gpp": `package internal.api
+class Context {}
+`,
+				"internal/api/server.gpp": `package internal.api
+class Server {
+    func Handle(ctx *Context) error { return nil }
+}
+`,
+				"internal/common/server.gpp": `package internal.common
+import "fixture/internal/api"
+class Server: api.Server {}
+`,
+				"internal/common/extra.gpp": `package internal.common
+class Extra {}
+`,
+				"cmd/app/app.gpp": `package cmd.app
+import "fixture/internal/common"
+class App: common.Server {}
+`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inputDir := t.TempDir()
+			outputDir := t.TempDir()
+			paths := make([]string, 0, len(test.files))
+			for relative, source := range test.files {
+				path := filepath.Join(inputDir, relative)
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+					t.Fatal(err)
+				}
+				paths = append(paths, path)
+			}
+
+			if err := CompileFilesWithOptions(paths, outputDir, CompileOptions{
+				ModulePath: "fixture",
+				NoStdlib:   true,
+				NoPrelude:  true,
+			}); err != nil {
+				t.Fatalf("compiling module-local package references: %v", err)
+			}
+
+			command := exec.Command("go", "build", "./...")
+			command.Dir = outputDir
+			command.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "go-cache"), "GOPROXY=off")
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("generated Go did not build: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
 func TestCompileFilesSupportsExpressionCatch(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

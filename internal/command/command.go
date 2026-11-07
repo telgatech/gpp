@@ -1920,7 +1920,7 @@ func runInit(args []string) int {
 	if err := runGoCommand(absoluteTarget, "mod", "init", modulePath); err != nil {
 		return reportError(err)
 	}
-	const starter = "import \"fmt\"\n\nfunc main() {\n    fmt.Println(\"Hello from Go++\")\n}\n"
+	const starter = "import \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello from Go++\")\n}\n"
 	if err := os.WriteFile(mainPath, []byte(starter), 0644); err != nil {
 		return reportError(err)
 	}

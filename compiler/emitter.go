@@ -139,6 +139,8 @@ type constructorContext struct {
 	IntrospectionRuntimeImport string
 	Exceptions                 *exceptionContext
 	ImportedTypes              map[string]map[string]bool
+	ImportedPackageNames       map[string]string
+	ImportedPackageTypes       map[string]map[string]bool
 	NativeMethods              map[string]map[string]bool
 	CurrentClass               string
 	CurrentMethod              string
@@ -1843,8 +1845,8 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		parameterSource := methodParametersSource(method)
 		resultSource := methodResultSource(method)
 		if parentName, imported := importedParentForMethod(class, method, classes); imported {
-			parameterSource = qualifyImportedTypeNames(parameterSource, parentName, classes, context.ImportedTypes)
-			resultSource = qualifyImportedTypeNames(resultSource, parentName, classes, context.ImportedTypes)
+			parameterSource = qualifyInheritedMethodTypes(parameterSource, method, parentName, classes, context)
+			resultSource = qualifyInheritedMethodTypes(resultSource, method, parentName, classes, context)
 		}
 		emitSourceDirective(out, sourcePath, methodSourceLine(method, class))
 		parameters, err := transformParameterList(parameterSource, context)
@@ -1994,7 +1996,7 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 		if name == "" {
 			name = fmt.Sprintf("arg%d", index)
 		}
-		parameterType := qualifyImportedTypeNames(parameter.typeText(), parentName, classesForClass(context, class), context.ImportedTypes)
+		parameterType := qualifyInheritedMethodTypes(parameter.typeText(), method, parentName, classesForClass(context, class), context)
 		parameterParts = append(parameterParts, name+" "+transformPolymorphicType(parameterType, context))
 		argument := name
 		if strings.HasPrefix(parameter.typeText(), "...") {
@@ -2004,7 +2006,7 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 	}
 
 	methodName := methodOutputName(method)
-	resultType := qualifyImportedTypeNames(methodResultSource(method), parentName, classesForClass(context, class), context.ImportedTypes)
+	resultType := qualifyInheritedMethodTypes(methodResultSource(method), method, parentName, classesForClass(context, class), context)
 	result := transformPolymorphicResultType(strings.TrimSpace(resultType), context)
 	fieldName := classParentFieldName(parentName)
 	fmt.Fprintf(out, "func (this *%s%s) %s(%s)", class.Name, typeParameterNames(class.TypeParamsAST), methodName, strings.Join(parameterParts, ", "))
@@ -2021,6 +2023,26 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 	}
 	out.WriteString("}\n\n")
 	return nil
+}
+
+func qualifyInheritedMethodTypes(typeName string, method Method, parentName string, classes map[string]*ClassDecl, context constructorContext) string {
+	if method.Owner != nil {
+		qualifiers := []string{}
+		for qualifier, packageName := range context.ImportedPackageNames {
+			if qualifier != "" && qualifier != "_" && packageName == method.Owner.Package {
+				qualifiers = append(qualifiers, qualifier)
+			}
+		}
+		sort.Strings(qualifiers)
+		if len(qualifiers) > 0 {
+			qualifier := qualifiers[0]
+			for name := range context.ImportedPackageTypes[qualifier] {
+				typeName = qualifyImportedTypeIdentifier(typeName, name, qualifier+"."+name)
+			}
+			return typeName
+		}
+	}
+	return qualifyImportedTypeNames(typeName, parentName, classes, context.ImportedTypes)
 }
 
 func qualifyImportedTypeNames(typeName, parentName string, classes map[string]*ClassDecl, importedTypes map[string]map[string]bool) string {

@@ -52,6 +52,18 @@ func rawTypeNamesAST(declaration ast.Decl) map[string]bool {
 }
 
 func ResolveProgram(program *Program) (*SemanticModel, error) {
+	return ResolveProgramWithModulePath(program, "")
+}
+
+// ResolveProgramWithModulePath resolves Go++ package imports that point to
+// packages in the current module as well as bundled standard-library packages.
+func ResolveProgramWithModulePath(program *Program, modulePath string) (*SemanticModel, error) {
+	for _, file := range program.Files {
+		if err := validateImportNames(file); err != nil {
+			return nil, err
+		}
+	}
+
 	model := &SemanticModel{
 		Packages: map[string]*PackageSymbols{},
 	}
@@ -232,7 +244,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 	}
 	for _, pkg := range model.Packages {
 		for alias, importPath := range pkg.Imports {
-			logical, ok := officialLogicalPackage(importPath)
+			logical, ok := logicalPackageForImport(importPath, modulePath, model)
 			if !ok {
 				continue
 			}
@@ -291,7 +303,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 		}
 
 		for _, class := range pkg.Classes {
-			if err := validateAmbiguousMemberAccess(pkg, class); err != nil {
+			if err := validateAmbiguousMemberAccess(model, pkg, class); err != nil {
 				return nil, err
 			}
 		}
@@ -936,6 +948,8 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 	context.Annotations, _ = annotationScopeForFile(file, model, modulePath)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
 	context.ImportedTypes = map[string]map[string]bool{}
+	context.ImportedPackageNames = map[string]string{}
+	context.ImportedPackageTypes = map[string]map[string]bool{}
 
 	if modulePath == "" {
 		return context, nil
@@ -1123,6 +1137,28 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 			classesForClass(context, class),
 			map[*ClassDecl]bool{},
 		)
+	}
+	for alias, importPath := range availableImportsForFile(file, model, modulePath) {
+		if alias == "" || alias == "_" || alias == "." {
+			continue
+		}
+		logicalPackage, ok := logicalPackageForImport(importPath, modulePath, model)
+		if !ok {
+			continue
+		}
+		pkg := model.Packages[logicalPackage]
+		if pkg == nil {
+			continue
+		}
+		context.ImportedPackageNames[alias] = logicalPackage
+		types := map[string]bool{}
+		for name := range pkg.Types {
+			types[name] = true
+		}
+		for name := range pkg.Classes {
+			types[name] = true
+		}
+		context.ImportedPackageTypes[alias] = types
 	}
 
 	return context, nil
@@ -1360,7 +1396,6 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 		if tokens[index].Text != "import" {
 			continue
 		}
-		startToken := tokens[index]
 		index = nextSignificantToken(tokens, index+1)
 		if index >= len(tokens) {
 			return nil, fmt.Errorf("import declaration is missing a path")
@@ -1370,7 +1405,7 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 			if !ok {
 				return nil, fmt.Errorf("invalid import declaration")
 			}
-			declaration, err := tokenImportNode(name, importPath, logical, startToken, tokens[next-1])
+			declaration, err := tokenImportNode(name, importPath, logical, tokens[index], tokens[next-1])
 			if err != nil {
 				return nil, err
 			}
@@ -1392,7 +1427,7 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 			if !ok {
 				return nil, fmt.Errorf("invalid import declaration")
 			}
-			declaration, err := tokenImportNode(name, importPath, logical, startToken, tokens[next-1])
+			declaration, err := tokenImportNode(name, importPath, logical, tokens[index], tokens[next-1])
 			if err != nil {
 				return nil, err
 			}
@@ -1401,6 +1436,24 @@ func importNodesFromTokens(tokens []Token) ([]ImportDecl, error) {
 		}
 	}
 	return imports, nil
+}
+
+func validateImportNames(file *File) error {
+	seen := map[string]bool{}
+	for _, imported := range file.Imports {
+		name := imported.Alias
+		if name == "" {
+			name = path.Base(imported.Path)
+		}
+		if name == "_" || name == "." {
+			continue
+		}
+		if seen[name] {
+			return diagnosticAt(file.Name, imported.Span(), fmt.Errorf("%s redeclared in this block", name))
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 func tokenImportNode(name *ast.Ident, importPath string, logical bool, startToken, endToken Token) (ImportDecl, error) {
@@ -1520,8 +1573,8 @@ func officialLogicalPackage(importPath string) (string, bool) {
 	return "gpp." + strings.ReplaceAll(strings.TrimPrefix(importPath, "gpp/"), "/", "."), true
 }
 
-func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error {
-	ambiguous, err := ambiguousMembers(pkg, class, map[*ClassDecl]map[string][]string{}, map[*ClassDecl]bool{})
+func validateAmbiguousMemberAccess(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl) error {
+	ambiguous, err := ambiguousMembers(model, pkg, class, map[*ClassDecl]map[string][]string{}, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
 	}
@@ -1554,8 +1607,8 @@ func validateAmbiguousMemberAccess(pkg *PackageSymbols, class *ClassDecl) error 
 	return nil
 }
 
-func ambiguousMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
-	members, err := classMembers(pkg, class, cache, visiting)
+func ambiguousMembers(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
+	members, err := classMembers(model, pkg, class, cache, visiting)
 	if err != nil {
 		return nil, err
 	}
@@ -1570,7 +1623,7 @@ func ambiguousMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDec
 	return ambiguous, nil
 }
 
-func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
+func classMembers(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
 	if members, ok := cache[class]; ok {
 		return members, nil
 	}
@@ -1597,10 +1650,18 @@ func classMembers(pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]ma
 		if parent == nil {
 			parent = pkg.ImportedClasses[parentName]
 		}
+		if parent == nil && model != nil && class.Owner != nil {
+			if ownerPackage := model.Packages[class.Owner.Package]; ownerPackage != nil {
+				parent = ownerPackage.Classes[parentName]
+				if parent == nil {
+					parent = ownerPackage.ImportedClasses[parentName]
+				}
+			}
+		}
 		if parent == nil {
 			return nil, fmt.Errorf("class %s has unresolved parent %s", class.Name, parentName)
 		}
-		parentMembers, err := classMembers(pkg, parent, cache, visiting)
+		parentMembers, err := classMembers(model, pkg, parent, cache, visiting)
 		if err != nil {
 			return nil, err
 		}

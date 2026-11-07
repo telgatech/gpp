@@ -2,6 +2,9 @@
 
 ## 2026-11-07
 
+- Fixed resolution of module-local package references during inheritance analysis, including transitive parents and method types from their declaring packages. This works across same-directory packages, conventional directory layouts, and multi-file dotted packages.
+- `gpp fiximports` now checks current-module Go++ packages before bundled and standard packages, matches candidates by exported symbol, and adds imports to an existing grouped import block.
+- Go-compatible source formatting now follows Go tab indentation and trims blank lines at block edges; `gpp init` starters use the same formatting.
 - `gpp build`, `gpp run`, and `gpp test` now use the current project's `go.mod` module path by default, improving resolution of local Go++ packages.
 - Fixed constructor lowering across package boundaries, including inherited fields and method calls with default arguments directly after construction.
 - Simplified ORM model declarations: fields map to snake_case columns and classes map to snake_case table names by default. Use `orm.Column` and `orm.Table` to override names, and `orm.Ignore` to omit non-database fields. Schema-qualified table names such as `sales.employees` are supported.

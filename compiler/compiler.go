@@ -123,19 +123,19 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		return err
 	}
 
-	model, err := ResolveProgram(program)
+	model, err := ResolveProgramWithModulePath(program, options.ModulePath)
 	if err != nil {
 		return err
 	}
 	addDefaultObjectMethods(model)
-	model, err = ResolveProgram(program)
+	model, err = ResolveProgramWithModulePath(program, options.ModulePath)
 	if err != nil {
 		return err
 	}
 	if err := expandSerializableClasses(program, model, options.ModulePath); err != nil {
 		return err
 	}
-	model, err = ResolveProgram(program)
+	model, err = ResolveProgramWithModulePath(program, options.ModulePath)
 	if err != nil {
 		return err
 	}

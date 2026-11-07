@@ -22,13 +22,13 @@ func TestFormatSourcePreservesCommentsAndOpaqueLiterals(t *testing.T) {
 	formatted := FormatSource(source)
 	expected := "// don't \"fix\"   spacing in my prose\n" +
 		"func main() {\n" +
-		"    value := \"literal { not a block }\"\n" +
-		"    raw := `raw {\n" +
+		"\tvalue := \"literal { not a block }\"\n" +
+		"\traw := `raw {\n" +
 		"  intentionally indented }`\n" +
-		"    if true {\n" +
-		"        // Must remain inside the block.\n" +
-		"        return\n" +
-		"    }\n" +
+		"\tif true {\n" +
+		"\t\t// Must remain inside the block.\n" +
+		"\t\treturn\n" +
+		"\t}\n" +
 		"}\n"
 	if formatted != expected {
 		t.Fatalf("unexpected formatted source:\n%s", formatted)
@@ -51,7 +51,7 @@ func TestFormatSourceFileRejectsInvalidSource(t *testing.T) {
 
 func TestFormatSourceNormalizesLineEndings(t *testing.T) {
 	formatted := FormatSource("func main() {\r\n\treturn\r\n}\r\n\r\n")
-	if formatted != "func main() {\n    return\n}\n" {
+	if formatted != "func main() {\n\treturn\n}\n" {
 		t.Fatalf("unexpected normalized source: %q", formatted)
 	}
 }
@@ -138,18 +138,18 @@ wait()
 }
 `
 	want := `func main() {
-    result:=call(
-        first,
-        second(
-            third,
-        ),
-    )
-    use(result)
-    if ready {
-        run()
-    } else if waiting {
-        wait()
-    }
+	result := call(
+		first,
+		second(
+			third,
+		),
+	)
+	use(result)
+	if ready {
+		run()
+	} else if waiting {
+		wait()
+	}
 }
 `
 	got := FormatSource(source)
@@ -215,20 +215,20 @@ wait()
 }
 `
 	want := `func main() {
-    switch value {
-    case 1:
-        first()
-    case 2, 3:
-        second()
-    default:
-        fallback()
-    }
-    select {
-    case value := <-values:
-        receive(value)
-    default:
-        wait()
-    }
+	switch value {
+	case 1:
+		first()
+	case 2, 3:
+		second()
+	default:
+		fallback()
+	}
+	select {
+	case value := <-values:
+		receive(value)
+	default:
+		wait()
+	}
 }
 `
 	got := FormatSource(source)
@@ -246,10 +246,10 @@ Speak() string
 }
 `
 	want := `type Person struct {
-    Name string
+	Name string
 }
 type Speaker interface {
-    Speak() string
+	Speak() string
 }
 `
 	if got := FormatSource(source); got != want {
@@ -265,7 +265,7 @@ return             "{{this.Named.Name}} is a {{this.Role}}"
 }
 `
 	want := `func Summary() string {
-    return "{{this.Named.Name}} is a {{this.Role}}"
+	return "{{this.Named.Name}} is a {{this.Role}}"
 }
 `
 	if got := FormatSource(source); got != want {
