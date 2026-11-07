@@ -54,7 +54,7 @@ func TestRunFmtCheckStdoutAndAtomicRewrite(t *testing.T) {
 	if code := runFmt([]string{path}); code != 0 {
 		t.Fatalf("in-place formatting failed with code %d", code)
 	}
-	formatted := "func main() {\n    println()\n}\n"
+	formatted := "func main() {\n\tprintln()\n}\n"
 	contents, err = os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

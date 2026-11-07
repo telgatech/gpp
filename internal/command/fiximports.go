@@ -22,6 +22,7 @@ type importPackage struct {
 	ImportPath string
 	Name       string
 	Symbols    map[string]bool
+	Module     bool
 	GoPlus     bool
 	Standard   bool
 }
@@ -66,7 +67,7 @@ func runFixImports(args []string) int {
 	if stdout && len(sources) != 1 {
 		return reportError(fmt.Errorf("--stdout requires exactly one Go++ source file"))
 	}
-	packages, err := availableImportPackages()
+	packages, err := availableImportPackages(sources)
 	if err != nil {
 		return reportError(err)
 	}
@@ -105,14 +106,16 @@ func runFixImports(args []string) int {
 	return 0
 }
 
-func availableImportPackages() (map[string][]importPackage, error) {
+func availableImportPackages(sources []string) (map[string][]importPackage, error) {
 	goPath, err := findGo()
 	if err != nil {
 		return nil, err
 	}
+	moduleRoot := moduleDirectoryForGoList(sources)
+	modulePath := modulePathAt(moduleRoot)
 	cmd := exec.Command(goPath, "list", "-e", "-json", "std", "all")
-	if workingDir := moduleDirectoryForGoList(); workingDir != "" {
-		cmd.Dir = workingDir
+	if moduleRoot != "" {
+		cmd.Dir = moduleRoot
 	}
 	output, err := cmd.Output()
 	if err != nil {
@@ -131,7 +134,13 @@ func availableImportPackages() (map[string][]importPackage, error) {
 		if listed.Name == "" || listed.ImportPath == "" || listed.Dir == "" || strings.HasPrefix(listed.Name, "_") {
 			continue
 		}
-		packageInfo := importPackage{ImportPath: listed.ImportPath, Name: listed.Name, Symbols: map[string]bool{}, Standard: listed.Standard}
+		packageInfo := importPackage{
+			ImportPath: listed.ImportPath,
+			Name:       listed.Name,
+			Symbols:    map[string]bool{},
+			Module:     modulePath != "" && (listed.ImportPath == modulePath || strings.HasPrefix(listed.ImportPath, modulePath+"/")),
+			Standard:   listed.Standard,
+		}
 		for _, filename := range append(append([]string(nil), listed.GoFiles...), listed.CgoFiles...) {
 			if strings.HasSuffix(filename, "_test.go") {
 				continue
@@ -164,7 +173,7 @@ func availableImportPackages() (map[string][]importPackage, error) {
 				}
 			}
 		}
-		byName[listed.Name] = append(byName[listed.Name], packageInfo)
+		addImportPackage(byName, packageInfo)
 	}
 	for _, importPath := range compiler.OfficialStdlibPackages() {
 		files, err := compiler.LoadOfficialPackage(importPath)
@@ -200,9 +209,134 @@ func availableImportPackages() (map[string][]importPackage, error) {
 				}
 			}
 		}
-		byName[packageName] = append(byName[packageName], packageInfo)
+		addImportPackage(byName, packageInfo)
+	}
+	if moduleRoot != "" && modulePath != "" {
+		localPackages, err := moduleGoPlusImportPackages(moduleRoot, modulePath)
+		if err != nil {
+			return nil, err
+		}
+		for _, candidates := range localPackages {
+			for _, candidate := range candidates {
+				addImportPackage(byName, candidate)
+			}
+		}
 	}
 	return byName, nil
+}
+
+func moduleGoPlusImportPackages(root, modulePath string) (map[string][]importPackage, error) {
+	packages := map[string][]importPackage{}
+	sources, err := discoverSources([]string{root})
+	if err != nil {
+		if strings.Contains(err.Error(), "no .gpp or .gpp.tpl source files found") {
+			return packages, nil
+		}
+		return nil, err
+	}
+	for _, filename := range sources {
+		if strings.HasSuffix(filename, ".gpp.tpl") {
+			continue
+		}
+		if sourceRoot := moduleRootForDirectory(filepath.Dir(filename)); sourceRoot != "" && sourceRoot != root {
+			continue
+		}
+		source, err := os.ReadFile(filename)
+		if err != nil {
+			return nil, err
+		}
+		file, err := compiler.ParseFile(filename, string(source))
+		if err != nil {
+			continue
+		}
+		if file.Package == "main" {
+			continue
+		}
+		packagePath := modulePath
+		packagePath += "/" + strings.ReplaceAll(file.Package, ".", "/")
+		parts := strings.Split(file.Package, ".")
+		packageName := parts[len(parts)-1]
+		packageInfo := importPackage{
+			ImportPath: packagePath,
+			Name:       packageName,
+			Symbols:    map[string]bool{},
+			Module:     true,
+		}
+		addExportedGoPlusSymbols(packageInfo.Symbols, file)
+		addImportPackage(packages, packageInfo)
+	}
+	return packages, nil
+}
+
+func addExportedGoPlusSymbols(symbols map[string]bool, file *compiler.File) {
+	for _, declaration := range file.Decls {
+		switch declaration := declaration.(type) {
+		case *compiler.ClassDecl:
+			if ast.IsExported(declaration.Name) {
+				symbols[declaration.Name] = true
+			}
+		case *compiler.EnumDecl:
+			if ast.IsExported(declaration.Name) {
+				symbols[declaration.Name] = true
+			}
+		case *compiler.FunctionDecl:
+			if ast.IsExported(declaration.Name) {
+				symbols[declaration.Name] = true
+			}
+		case *compiler.ValueDecl:
+			for _, name := range declaration.Names {
+				if ast.IsExported(name.Text) {
+					symbols[name.Text] = true
+				}
+			}
+		case *compiler.GoDecl:
+			addExportedASTSymbols(symbols, declaration.Declarations)
+		case *compiler.MixedDecl:
+			addExportedASTSymbols(symbols, declaration.GoASTDecls)
+			for _, function := range declaration.Functions {
+				if ast.IsExported(function.Name) {
+					symbols[function.Name] = true
+				}
+			}
+		}
+	}
+}
+
+func addImportPackage(packages map[string][]importPackage, candidate importPackage) {
+	for index, existing := range packages[candidate.Name] {
+		if existing.ImportPath != candidate.ImportPath {
+			continue
+		}
+		if existing.Symbols == nil {
+			existing.Symbols = map[string]bool{}
+		}
+		for symbol := range candidate.Symbols {
+			existing.Symbols[symbol] = true
+		}
+		existing.Module = existing.Module || candidate.Module
+		existing.GoPlus = existing.GoPlus || candidate.GoPlus
+		existing.Standard = existing.Standard || candidate.Standard
+		packages[candidate.Name][index] = existing
+		return
+	}
+	packages[candidate.Name] = append(packages[candidate.Name], candidate)
+}
+
+func modulePathAt(root string) string {
+	if root == "" {
+		return ""
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return strings.Trim(fields[1], "\"`")
+		}
+	}
+	return ""
 }
 
 func addExportedASTSymbols(symbols map[string]bool, declarations []ast.Decl) {
@@ -373,20 +507,24 @@ func fixImports(filename string, source []byte, packages map[string][]importPack
 			paths = append(paths, importPath)
 		}
 		sort.Strings(paths)
-		var block strings.Builder
-		block.WriteString("import (\n")
-		for _, importPath := range paths {
-			block.WriteString("    ")
-			if missing[importPath] != importName(importPath, packages) {
-				block.WriteString(missing[importPath])
-				block.WriteByte(' ')
+		if edit, ok := groupedImportEdit(source, tokens, paths, missing, packages); ok {
+			edits = append(edits, edit)
+		} else {
+			var block strings.Builder
+			block.WriteString("import (\n")
+			for _, importPath := range paths {
+				block.WriteString("    ")
+				if missing[importPath] != importName(importPath, packages) {
+					block.WriteString(missing[importPath])
+					block.WriteByte(' ')
+				}
+				block.WriteString(strconv.Quote(importPath))
+				block.WriteByte('\n')
 			}
-			block.WriteString(strconv.Quote(importPath))
-			block.WriteByte('\n')
+			block.WriteString(")\n\n")
+			insertAt := importInsertionPoint(source, tokens, file)
+			edits = append(edits, sourceEdit{start: insertAt, end: insertAt, text: block.String()})
 		}
-		block.WriteString(")\n\n")
-		insertAt := importInsertionPoint(source, tokens, file)
-		edits = append(edits, sourceEdit{start: insertAt, end: insertAt, text: block.String()})
 	}
 	if len(edits) == 0 {
 		return source, false, nil
@@ -397,6 +535,82 @@ func fixImports(filename string, source []byte, packages map[string][]importPack
 		updated = append(updated[:edit.start], append([]byte(edit.text), updated[edit.end:]...)...)
 	}
 	return updated, true, nil
+}
+
+func groupedImportEdit(source []byte, tokens []compiler.Token, paths []string, aliases map[string]string, packages map[string][]importPackage) (sourceEdit, bool) {
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Text != "import" {
+			continue
+		}
+		open := nextNonTrivia(tokens, index+1)
+		if open >= len(tokens) || tokens[open].Text != "(" {
+			continue
+		}
+		depth := 1
+		close := -1
+		for cursor := open + 1; cursor < len(tokens); cursor++ {
+			switch tokens[cursor].Text {
+			case "(":
+				depth++
+			case ")":
+				depth--
+				if depth == 0 {
+					close = cursor
+					cursor = len(tokens)
+				}
+			}
+		}
+		if close < 0 {
+			return sourceEdit{}, false
+		}
+
+		indent := "    "
+		previous := close - 1
+		for previous >= open && (tokens[previous].Kind == compiler.TokenNewline || tokens[previous].Kind == compiler.TokenComment) {
+			previous--
+		}
+		if previous >= open {
+			lineStart := bytes.LastIndexByte(source[:tokens[previous].Span.Start], '\n') + 1
+			candidate := string(source[lineStart:tokens[previous].Span.Start])
+			if strings.Trim(candidate, " \t") == "" {
+				indent = candidate
+			}
+		}
+
+		closeStart := tokens[close].Span.Start
+		lineStart := bytes.LastIndexByte(source[:closeStart], '\n') + 1
+		insertAt, end := closeStart, closeStart
+		if strings.Trim(string(source[lineStart:closeStart]), " \t") == "" {
+			insertAt, end = lineStart, lineStart
+			for insertAt > 0 {
+				previousEnd := insertAt
+				if previousEnd > 0 && source[previousEnd-1] == '\n' {
+					previousEnd--
+				}
+				previousLineStart := bytes.LastIndexByte(source[:previousEnd], '\n') + 1
+				if strings.Trim(string(source[previousLineStart:previousEnd]), " \t\r") != "" {
+					break
+				}
+				insertAt = previousLineStart
+			}
+		}
+
+		var specs strings.Builder
+		if insertAt == closeStart && lineStart < closeStart {
+			specs.WriteByte('\n')
+		}
+		for _, importPath := range paths {
+			specs.WriteString(indent)
+			if aliases[importPath] != importName(importPath, packages) {
+				specs.WriteString(aliases[importPath])
+				specs.WriteByte(' ')
+			}
+			specs.WriteString(strconv.Quote(importPath))
+			specs.WriteByte('\n')
+		}
+		return sourceEdit{start: insertAt, end: end, text: specs.String()}, true
+	}
+	return sourceEdit{}, false
 }
 
 func chooseImportPackage(receiver, member string, packages map[string][]importPackage, imported map[string]*importPackage) (importPackage, bool) {
@@ -423,15 +637,18 @@ func chooseImportPackage(receiver, member string, packages map[string][]importPa
 		return importPackage{}, false
 	}
 	priority := func(candidate importPackage) int {
-		if candidate.GoPlus {
+		if candidate.Module {
 			return 0
 		}
-		if candidate.Standard {
+		if candidate.GoPlus {
 			return 1
 		}
-		return 2
+		if candidate.Standard {
+			return 2
+		}
+		return 3
 	}
-	bestPriority := 3
+	bestPriority := 4
 	for _, candidate := range matches {
 		if candidatePriority := priority(candidate); candidatePriority < bestPriority {
 			bestPriority = candidatePriority
@@ -706,19 +923,30 @@ func importName(importPath string, packages map[string][]importPackage) string {
 	return pathBase(importPath)
 }
 
-func moduleDirectoryForGoList() string {
+func moduleDirectoryForGoList(sources []string) string {
+	for _, source := range sources {
+		if root := moduleRootForDirectory(filepath.Dir(source)); root != "" {
+			return root
+		}
+	}
 	working, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
-	directory := working
+	if root := moduleRootForDirectory(working); root != "" {
+		return root
+	}
+	return working
+}
+
+func moduleRootForDirectory(directory string) string {
 	for {
 		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
 			return directory
 		}
 		parent := filepath.Dir(directory)
 		if parent == directory {
-			return working
+			return ""
 		}
 		directory = parent
 	}

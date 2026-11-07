@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	gofmt "go/format"
 	"strings"
 )
 
@@ -19,6 +20,9 @@ func FormatSource(source string) string {
 func formatSourceWithFile(file *File, source string) string {
 	source = strings.ReplaceAll(source, "\r\n", "\n")
 	source = strings.ReplaceAll(source, "\r", "\n")
+	if formatted, ok := formatGoCompatibleSource(source); ok {
+		return formatted
+	}
 	lines := strings.Split(source, "\n")
 	dropBlankLines := make([]bool, len(lines))
 	indent := 0
@@ -103,6 +107,72 @@ func formatSourceWithFile(file *File, source string) string {
 		}
 	}
 	return strings.TrimRight(strings.Join(formattedLines, "\n"), "\n") + "\n"
+}
+
+// formatGoCompatibleSource delegates ordinary Go files and snippets to
+// gofmt. Go++ constructs that Go cannot parse continue through the
+// source-preserving formatter below.
+func formatGoCompatibleSource(source string) (string, bool) {
+	prefix := ""
+	tokens, err := LexSource("format", source)
+	if err != nil {
+		return "", false
+	}
+	first := ""
+	for _, token := range tokens {
+		if token.Kind == TokenComment || token.Kind == TokenNewline || token.Kind == TokenEOF {
+			continue
+		}
+		first = token.Text
+		break
+	}
+	if first != "package" {
+		prefix = "package __gpp_format__\n\n"
+	}
+	formatted, err := gofmt.Source([]byte(prefix + source))
+	if err != nil {
+		return "", false
+	}
+	result := string(formatted)
+	if prefix != "" {
+		result = strings.TrimPrefix(result, prefix)
+	}
+	return trimGoBlockEdgeBlankLines(result), true
+}
+
+func trimGoBlockEdgeBlankLines(source string) string {
+	lines := strings.Split(source, "\n")
+	dropBlankLines := make([]bool, len(lines))
+	state := formatScanState{}
+	previousLineOpenedBlock := false
+	for index, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			if state.mode == '`' || state.mode == '/' {
+				formatBraceDelta(line, &state)
+				previousLineOpenedBlock = false
+				continue
+			}
+			if previousLineOpenedBlock || nextNonBlankStartsWithBlockClose(lines, index+1) {
+				dropBlankLines[index] = true
+				continue
+			}
+			previousLineOpenedBlock = false
+			continue
+		}
+		if state.mode == '`' || state.mode == '/' {
+			formatBraceDelta(line, &state)
+			previousLineOpenedBlock = false
+			continue
+		}
+		previousLineOpenedBlock = formatBraceDelta(line, &state) > 0
+	}
+	result := make([]string, 0, len(lines))
+	for index, line := range lines {
+		if !dropBlankLines[index] {
+			result = append(result, line)
+		}
+	}
+	return strings.Join(result, "\n")
 }
 
 func nextNonBlankStartsWithBlockClose(lines []string, index int) bool {
@@ -288,6 +358,13 @@ func templateBodySpan(source string, start int) (int, int, int, bool) {
 
 func canonicalizeFormatLine(line string) string {
 	line = collapseCodeWhitespace(line)
+	if formatted, ok := formatGoCompatibleStatement(line); ok {
+		line = formatted
+	} else if formatted, ok := formatGoCompatibleFunctionHeader(line); ok {
+		line = formatted
+	} else {
+		line = spaceDefineAssignment(line)
+	}
 	if strings.HasPrefix(line, "}") {
 		index := 0
 		for index < len(line) && line[index] == '}' {
@@ -339,6 +416,139 @@ func canonicalizeFormatLine(line string) string {
 		}
 	}
 	return line
+}
+
+func formatGoCompatibleFunctionHeader(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	static := strings.HasPrefix(line, "static func ")
+	if static {
+		line = strings.TrimPrefix(line, "static ")
+	}
+	if !strings.HasPrefix(line, "func ") || !strings.HasSuffix(line, "{") {
+		return "", false
+	}
+	source := "package __gpp_format__\n\n" + line + "}\n"
+	formatted, err := gofmt.Source([]byte(source))
+	if err != nil {
+		return "", false
+	}
+	text := string(formatted)
+	start := strings.Index(text, "func ")
+	if start < 0 {
+		return "", false
+	}
+	declaration := strings.TrimSpace(text[start:])
+	declaration = strings.TrimSuffix(declaration, "\n")
+	if !strings.HasSuffix(declaration, "}") {
+		return "", false
+	}
+	declaration = strings.TrimSuffix(declaration, "}")
+	declaration = strings.TrimRight(declaration, " \t")
+	if static {
+		declaration = "static " + declaration
+	}
+	return declaration, true
+}
+
+func formatGoCompatibleStatement(line string) (string, bool) {
+	if strings.TrimSpace(line) == "" {
+		return line, true
+	}
+	source := "package __gpp_format__\n\nfunc __gpp_format__() {\n" + line + "\n}\n"
+	formatted, err := gofmt.Source([]byte(source))
+	if err != nil {
+		return "", false
+	}
+	text := string(formatted)
+	start := strings.Index(text, "func __gpp_format__() {\n")
+	if start < 0 {
+		return "", false
+	}
+	start += len("func __gpp_format__() {\n")
+	end := strings.LastIndex(text, "\n}\n")
+	if end < start {
+		return "", false
+	}
+	body := text[start:end]
+	bodyLines := strings.Split(body, "\n")
+	if len(bodyLines) > 1 {
+		if !strings.HasSuffix(strings.TrimSpace(line), "{") {
+			return "", false
+		}
+		for _, trailing := range bodyLines[1:] {
+			if strings.TrimSpace(trailing) != "}" {
+				return "", false
+			}
+		}
+	}
+	return strings.TrimPrefix(bodyLines[0], "\t"), true
+}
+
+func spaceDefineAssignment(line string) string {
+	var output strings.Builder
+	output.Grow(len(line) + 4)
+	for index := 0; index < len(line); {
+		switch line[index] {
+		case '"', '\'', '`':
+			quote := line[index]
+			start := index
+			index++
+			for index < len(line) {
+				if line[index] == '\\' && quote != '`' {
+					index += 2
+					continue
+				}
+				if line[index] == quote {
+					index++
+					break
+				}
+				index++
+			}
+			output.WriteString(line[start:index])
+		case '/':
+			if index+1 < len(line) && line[index+1] == '/' {
+				output.WriteString(line[index:])
+				return output.String()
+			}
+			if index+1 < len(line) && line[index+1] == '*' {
+				end := strings.Index(line[index+2:], "*/")
+				if end < 0 {
+					output.WriteString(line[index:])
+					return output.String()
+				}
+				end += index + 4
+				output.WriteString(line[index:end])
+				index = end
+				continue
+			}
+			output.WriteByte(line[index])
+			index++
+		case ':':
+			if index+1 < len(line) && line[index+1] == '=' {
+				if output.Len() > 0 {
+					current := output.String()
+					if last := current[len(current)-1]; last != ' ' && last != '\t' {
+						output.WriteByte(' ')
+					}
+				}
+				output.WriteString(":=")
+				index += 2
+				for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+					index++
+				}
+				if index < len(line) && line[index] != ')' && line[index] != ']' && line[index] != '}' && line[index] != ',' && line[index] != ';' {
+					output.WriteByte(' ')
+				}
+				continue
+			}
+			output.WriteByte(line[index])
+			index++
+		default:
+			output.WriteByte(line[index])
+			index++
+		}
+	}
+	return output.String()
 }
 
 func collapseCodeWhitespace(line string) string {
