@@ -1979,7 +1979,7 @@ func Size(file *os.File) int64 {
 	}
 }
 
-func TestEmitRejectsImplicitErrorPromotionInGoroutine(t *testing.T) {
+func TestEmitPreservesDiscardedGoroutineResults(t *testing.T) {
 	file, err := ParseFile("goroutine-error.gpp", `
 import "os"
 
@@ -1990,8 +1990,12 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Emit(file); err == nil || !strings.Contains(err.Error(), "goroutine") {
-		t.Fatalf("expected goroutine error diagnostic, got %v", err)
+	output, err := Emit(file)
+	if err != nil {
+		t.Fatalf("go statement should preserve Go's discarded-result behavior: %v", err)
+	}
+	if !strings.Contains(string(output), `go os.ReadFile("config.json")`) {
+		t.Fatalf("goroutine call was unexpectedly rewritten:\n%s", output)
 	}
 }
 

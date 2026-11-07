@@ -1158,12 +1158,6 @@ func lowerExceptionPromotionStatement(statement Stmt, context constructorContext
 			}
 		}
 		return lowerExceptionPromotions(value.Finally, context)
-	case *GoStmt:
-		if call, ok := value.Expression.(*CallExpr); ok {
-			if result, found := promotedCallForExpr(call, context, context.CurrentParameterTypes); found && result.trailingError {
-				return fmt.Errorf("cannot implicitly propagate error from goroutine call")
-			}
-		}
 	case *ThrowStmt:
 		lowered, err := lowerNestedExceptionPromotionExpr(value.Value, context)
 		if err != nil {
@@ -3372,7 +3366,9 @@ func transformImplicitErrorPromotionAST(src string, context constructorContext) 
 				return
 			}
 			if _, isGoroutine := statement.(*GoStmt); isGoroutine && parent == nil {
-				promotionErr = fmt.Errorf("cannot implicitly propagate error from goroutine call; handle the error inside the goroutine")
+				// Go discards the result values of a go statement. Preserve that
+				// behavior rather than converting the goroutine's returned error
+				// into an exception in a different control-flow context.
 				return
 			}
 			resultCount := len(result.types)
