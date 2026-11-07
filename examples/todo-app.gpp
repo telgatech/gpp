@@ -26,22 +26,24 @@ import (
 var db *sql.DB
 
 
-class Todo : orm.Model @{orm.Table("todos")} {
-    Id int64 @{orm.Column("id"), orm.PK}
-    Title string @{orm.Column("title")}
-    Completed bool @{orm.Column("completed")}
-    CreatedAt int64 @{orm.Column("created_at")}
-    CompletedAt int64 @{orm.Column("completed_at")}
+// The ORM derives table "todo" and snake_case columns by default. The commented
+// annotations show how to override those defaults.
+class Todo : orm.Model /* @{orm.Table("todos")} */ {
+    Id int64 /* @{orm.Column("id"), orm.PK} */
+    Title string /* @{orm.Column("title")} */
+    Completed bool /* @{orm.Column("completed")} */
+    CreatedAt int64 /* @{orm.Column("created_at")} */
+    CompletedAt int64 /* @{orm.Column("completed_at")} */
 
     func Validate(exec orm.SQLExecutor) error {
-        if strings.TrimSpace(this.Title) == "" {
+        if this.Title.IsBlank() {
             return fmt.Errorf("todo title is required")
         }
         return nil
     }
 
     func BeforeCreate(exec orm.SQLExecutor) error {
-        this.Title = strings.TrimSpace(this.Title)
+        this.Title = this.Title.TrimSpace()
         return nil
     }
 
@@ -412,7 +414,7 @@ func main() {
         db.SetMaxOpenConns(1)
         db.SetMaxIdleConns(1)
         db.Exec(`
-			CREATE TABLE IF NOT EXISTS todos (
+			CREATE TABLE IF NOT EXISTS todo (
 				id INTEGER PRIMARY KEY,
 				title TEXT NOT NULL,
 				completed BOOLEAN NOT NULL DEFAULT FALSE,

@@ -13,10 +13,11 @@ The Go++ version declares the mapping once on a class and uses ORM methods for i
 ::: code-group
 
 ```gpp [Go++]
-class Employee : orm.Model @{orm.Table("employees")} {
-	ID int @{orm.Column("id"), orm.PK}
-	Name string @{orm.Column("name")}
-	Email string @{orm.Column("email")}
+class Employee : orm.Model {
+	ID int
+	Name string
+	Email string
+	DisplayLabel string @{orm.Ignore}
 }
 
 employee := Employee(ID: 42, Name: "Ada", Email: "ada@example.com")
@@ -26,23 +27,31 @@ employee = Employee.Find(db, employee.ID)
 
 ```go [Go]
 _, err := db.Exec(
-	"INSERT INTO employees (name, email) VALUES ($1, $2)",
+	"INSERT INTO employee (name, email) VALUES ($1, $2)",
 	employee.Name, employee.Email,
 )
 if err != nil { return err }
 
-row := db.QueryRow("SELECT id, name, email FROM employees WHERE id = $1", id)
+row := db.QueryRow("SELECT id, name, email FROM employee WHERE id = $1", id)
 err = row.Scan(&employee.ID, &employee.Name, &employee.Email)
 ```
 
 :::
 
-Only fields marked with `orm.Column` participate in persistence. The primary-key field also carries `orm.PK`, as shown above.
+Fields map to snake_case columns by default, and the class name supplies the
+snake_case table name (`Employee` becomes `employee`). Use
+`orm.Column("...")` or `orm.Table("...")` to override either name. Mark
+fields that are not database columns with `orm.Ignore`. A persisted field
+named `Id` or `ID` is the primary key by default. Use `orm.PK` for a differently
+named key; an explicit marker takes precedence over the name convention.
+
+Schema-qualified table names are supported in `orm.Table`, for example
+`@{orm.Table("sales.employees")}`. A derived table name has no schema prefix.
 
 For ORM model types, `Employee.Get` and `Employee.Select` generate the
 `SELECT` from the model mapping. Their first argument is a SQL condition
 fragment, such as `"id = $1"`, followed by its parameter values. `Find` looks
-up a model by its annotated primary key. `All`, `First`, and `Last` sort by the
+up a model by its inferred or explicitly marked primary key. `All`, `First`, and `Last` sort by the
 primary key by default; `All` and `First` use ascending order, while `Last` uses
 descending order. They accept an optional persisted field or column name to
 sort by. `Find` requires a primary key; a custom sort field lets the other

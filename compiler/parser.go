@@ -978,7 +978,7 @@ func isGoKeyword(name string) bool {
 
 func parseClass(src string, start int) (*ClassDecl, int, error) {
 	pos := start + len("class")
-	pos = skipSpace(src, pos)
+	pos = skipClassHeaderSpace(src, pos)
 
 	name, n := readIdent(src[pos:])
 	if n == 0 {
@@ -986,7 +986,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 	}
 
 	pos += n
-	pos = skipSpace(src, pos)
+	pos = skipClassHeaderSpace(src, pos)
 	typeParams := ""
 	if pos < len(src) && src[pos] == '[' {
 		end, err := findMatchingBracket(src, pos)
@@ -994,7 +994,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 			return nil, 0, fmt.Errorf("class %s type parameters: %w", name, err)
 		}
 		typeParams = src[pos : end+1]
-		pos = skipSpace(src, end+1)
+		pos = skipClassHeaderSpace(src, end+1)
 	}
 
 	class := &ClassDecl{
@@ -1009,7 +1009,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 		pos++
 
 		for {
-			pos = skipSpace(src, pos)
+			pos = skipClassHeaderSpace(src, pos)
 
 			parent, n := readQualifiedIdent(src[pos:])
 			if n == 0 {
@@ -1021,7 +1021,7 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 			class.ParentAST = append(class.ParentAST, parseTypeText(parent))
 
 			pos += n
-			pos = skipSpace(src, pos)
+			pos = skipClassHeaderSpace(src, pos)
 
 			if pos >= len(src) || src[pos] != ',' {
 				break
@@ -1031,14 +1031,14 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 		}
 	}
 
-	pos = skipSpace(src, pos)
+	pos = skipClassHeaderSpace(src, pos)
 	annotations, next, err := parseOptionalAnnotationUses(src, pos)
 	if err != nil {
 		return nil, 0, err
 	}
 	if next != pos {
 		class.Annotations = annotations
-		pos = skipSpace(src, next)
+		pos = skipClassHeaderSpace(src, next)
 	}
 
 	if pos >= len(src) || src[pos] != '{' {
@@ -1060,6 +1060,39 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 	}
 
 	return class, close + 1, nil
+}
+
+// skipClassHeaderSpace treats comments as trivia between class header tokens,
+// including after the parent list and before annotations or the class body.
+func skipClassHeaderSpace(src string, pos int) int {
+	for pos < len(src) {
+		switch src[pos] {
+		case ' ', '\t', '\r', '\n':
+			pos++
+		case '/':
+			if pos+1 >= len(src) {
+				return pos
+			}
+			switch src[pos+1] {
+			case '/':
+				pos += 2
+				for pos < len(src) && src[pos] != '\n' {
+					pos++
+				}
+			case '*':
+				end := strings.Index(src[pos+2:], "*/")
+				if end < 0 {
+					return pos
+				}
+				pos += end + 4
+			default:
+				return pos
+			}
+		default:
+			return pos
+		}
+	}
+	return pos
 }
 
 func readQualifiedIdent(src string) (string, int) {

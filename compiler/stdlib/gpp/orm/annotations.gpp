@@ -4,4 +4,5 @@ annotation (
 	Table(name string) on class
 	Column(name string) on field
 	PK on field
+	Ignore on field
 )

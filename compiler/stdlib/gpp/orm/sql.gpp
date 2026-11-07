@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
 )
 
 type gppORMColumn struct {
@@ -59,6 +60,22 @@ func gppORMModelScanTargets(target any, columnNames []string, columns []gppORMCo
 
 func gppORMNormalizeFieldName(value string) string {
 	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", ""))
+}
+
+func gppORMSnakeCase(value string) string {
+	runes := []rune(value)
+	var result strings.Builder
+	for index, current := range runes {
+		if index > 0 && unicode.IsUpper(current) {
+			previous := runes[index-1]
+			nextIsLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+			if unicode.IsLower(previous) || unicode.IsDigit(previous) || (unicode.IsUpper(previous) && nextIsLower) {
+				result.WriteByte('_')
+			}
+		}
+		result.WriteRune(unicode.ToLower(current))
+	}
+	return result.String()
 }
 
 func gppORMReflectIndex(value reflect.Value, index int) reflect.Value {
@@ -158,11 +175,17 @@ func gppORMColumns(descriptor any) ([]gppORMColumn, error) {
 	columns := []gppORMColumn{}
 	for index := 0; index < fields.Len(); index++ {
 		field := gppORMReflectIndex(fields, index)
-		args := gppORMAnnotationArgs(field.Interface(), "gpp.orm.Column")
-		if len(args) == 0 {
+		if gppORMHasAnnotation(gppORMFieldAnnotations(field.Interface()), "gpp.orm.Ignore") {
 			continue
 		}
-		columns = append(columns, gppORMColumn{Name: fmt.Sprint(args[0]), Field: field.Interface()})
+		args := gppORMAnnotationArgs(field.Interface(), "gpp.orm.Column")
+		name := ""
+		if len(args) > 0 {
+			name = fmt.Sprint(args[0])
+		} else {
+			name = gppORMSnakeCase(fmt.Sprint(field.FieldByName("Name").Interface()))
+		}
+		columns = append(columns, gppORMColumn{Name: name, Field: field.Interface()})
 	}
 	if len(columns) == 0 {
 		return nil, fmt.Errorf("orm: %s has no persisted columns", fmt.Sprint(value.FieldByName("Name").Interface()))
@@ -172,20 +195,20 @@ func gppORMColumns(descriptor any) ([]gppORMColumn, error) {
 
 func gppORMTable(descriptor any) (string, error) {
 	args := gppORMAnnotationArgs(descriptor, "gpp.orm.Table")
-	if len(args) == 0 {
-		name := "model"
-		if descriptor != nil {
-			value := reflect.ValueOf(descriptor)
-			if value.Kind() == reflect.Pointer {
-				value = value.Elem()
-			}
-			if value.IsValid() {
-				name = fmt.Sprint(value.FieldByName("Name").Interface())
-			}
-		}
-		return "", fmt.Errorf("orm: %s has no Table annotation", name)
+	if len(args) > 0 {
+		return fmt.Sprint(args[0]), nil
 	}
-	return fmt.Sprint(args[0]), nil
+	if descriptor == nil {
+		return "", fmt.Errorf("orm: target has no Go++ runtime class")
+	}
+	value := reflect.ValueOf(descriptor)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() || !value.FieldByName("Name").IsValid() {
+		return "", fmt.Errorf("orm: target has no Go++ runtime class name")
+	}
+	return gppORMSnakeCase(fmt.Sprint(value.FieldByName("Name").Interface())), nil
 }
 
 func gppORMFieldGet(field any, object any) any {
@@ -370,28 +393,57 @@ func gppORMSelectModel[T any](exec SQLExecutor, where string, args ...any) ([]*T
 }
 
 func gppORMPrimaryKey(descriptor any) (string, error) {
-	table, err := gppORMTable(descriptor)
+	column, err := gppORMPrimaryKeyColumn(descriptor)
 	if err != nil {
 		return "", err
+	}
+	return column.Name, nil
+}
+
+func gppORMPrimaryKeyColumn(descriptor any) (gppORMColumn, error) {
+	table, err := gppORMTable(descriptor)
+	if err != nil {
+		return gppORMColumn{}, err
 	}
 	columns, err := gppORMColumns(descriptor)
 	if err != nil {
-		return "", err
+		return gppORMColumn{}, err
 	}
-	primaryKey := ""
+	explicit := []gppORMColumn{}
 	for _, column := range columns {
-		if !gppORMHasPK(column.Field) {
-			continue
+		if gppORMHasPK(column.Field) {
+			explicit = append(explicit, column)
 		}
-		if primaryKey != "" {
-			return "", fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
+	}
+	if len(explicit) > 1 {
+		return gppORMColumn{}, fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
+	}
+	if len(explicit) == 1 {
+		return explicit[0], nil
+	}
+
+	conventional := []gppORMColumn{}
+	for _, column := range columns {
+		name := gppORMFieldName(column.Field)
+		if name == "Id" || name == "ID" {
+			conventional = append(conventional, column)
 		}
-		primaryKey = column.Name
 	}
-	if primaryKey == "" {
-		return "", fmt.Errorf("orm: %s has no primary key", table)
+	if len(conventional) > 1 {
+		return gppORMColumn{}, fmt.Errorf("orm: %s has both Id and ID fields; mark the primary key with orm.PK", table)
 	}
-	return primaryKey, nil
+	if len(conventional) == 1 {
+		return conventional[0], nil
+	}
+	return gppORMColumn{}, fmt.Errorf("orm: %s has no primary key", table)
+}
+
+func gppORMFieldName(field any) string {
+	value := reflect.ValueOf(field)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	return fmt.Sprint(value.FieldByName("Name").Interface())
 }
 
 func gppORMOrderColumn(descriptor any, sortBy string) (string, error) {
@@ -405,11 +457,7 @@ func gppORMOrderColumn(descriptor any, sortBy string) (string, error) {
 	wanted := gppORMNormalizeFieldName(strings.TrimSpace(sortBy))
 	matched := ""
 	for _, column := range columns {
-		field := reflect.ValueOf(column.Field)
-		if field.Kind() == reflect.Pointer {
-			field = field.Elem()
-		}
-		fieldName := fmt.Sprint(field.FieldByName("Name").Interface())
+		fieldName := gppORMFieldName(column.Field)
 		if wanted != gppORMNormalizeFieldName(column.Name) && wanted != gppORMNormalizeFieldName(fieldName) {
 			continue
 		}
@@ -557,31 +605,26 @@ func gppORMUpdate(exec SQLExecutor, entity any) error {
 	if err != nil {
 		return err
 	}
+	primaryColumn, err := gppORMPrimaryKeyColumn(descriptor)
+	if err != nil {
+		return err
+	}
+	primaryValue := gppORMFieldGet(primaryColumn.Field, entity)
 	columns, err := gppORMColumns(descriptor)
 	if err != nil {
 		return err
 	}
-	primaryKey := ""
-	var primaryValue any
 	assignments := []string{}
 	values := []any{}
 	for _, column := range columns {
-		if gppORMHasPK(column.Field) {
-			if primaryKey != "" {
-				return fmt.Errorf("orm: %s has multiple primary keys; composite keys are not supported", table)
-			}
-			primaryKey = column.Name
-			primaryValue = gppORMFieldGet(column.Field, entity)
+		if gppORMFieldName(column.Field) == gppORMFieldName(primaryColumn.Field) {
 			continue
 		}
 		assignments = append(assignments, column.Name+" = $"+fmt.Sprint(len(values)+1))
 		values = append(values, gppORMFieldGet(column.Field, entity))
 	}
-	if primaryKey == "" {
-		return fmt.Errorf("orm: %s has no primary key", table)
-	}
 	values = append(values, primaryValue)
-	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = $%d", table, strings.Join(assignments, ", "), primaryKey, len(values))
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = $%d", table, strings.Join(assignments, ", "), primaryColumn.Name, len(values))
 	if _, err := exec.Exec(query, values...); err != nil {
 		return err
 	}
@@ -598,22 +641,12 @@ func gppORMDelete(exec SQLExecutor, entity any) error {
 	if err != nil {
 		return err
 	}
-	columns, err := gppORMColumns(descriptor)
+	primaryColumn, err := gppORMPrimaryKeyColumn(descriptor)
 	if err != nil {
 		return err
 	}
-	primaryKey, err := gppORMPrimaryKey(descriptor)
-	if err != nil {
-		return err
-	}
-	var primaryValue any
-	for _, column := range columns {
-		if column.Name == primaryKey {
-			primaryValue = gppORMFieldGet(column.Field, entity)
-			break
-		}
-	}
-	query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", table, primaryKey)
+	primaryValue := gppORMFieldGet(primaryColumn.Field, entity)
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", table, primaryColumn.Name)
 	if _, err := exec.Exec(query, primaryValue); err != nil {
 		return err
 	}

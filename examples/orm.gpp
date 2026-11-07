@@ -8,15 +8,16 @@ import (
     gppsql "gpp/sql"
 )
 
-class Employee : orm.Model @{orm.Table("employees")} {
-    Id int64 @{orm.Column("id"), orm.PK}
-    Name string @{orm.Column("name")}
-    Email string @{orm.Column("email")}
+class Employee : orm.Model {
+    Id int64
+    Name string
+    Email string
+    DisplayLabel string @{orm.Ignore}
 }
 
 func ModelAPIExample(db *sql.DB) {
-    ada := Employee(1, "Ada Lovelace", "ada@example.com")
-    grace := Employee(2, "Grace Hopper", "grace@example.com")
+    ada := Employee(Id: 1, Name: "Ada Lovelace", Email: "ada@example.com", DisplayLabel: "Ada")
+    grace := Employee(Id: 2, Name: "Grace Hopper", Email: "grace@example.com", DisplayLabel: "Grace")
     ada.Insert(db)
     grace.Insert(db)
 
@@ -26,7 +27,9 @@ func ModelAPIExample(db *sql.DB) {
     // Model queries use conditions while SQL is built from model metadata.
     employees := Employee.Select(db, "name LIKE $1", "A%")
     target := Employee.Get(db, "id = $1", ada.Id)
+    found := Employee.Find(db, ada.Id)
     fmt.Println("model queries:", len(employees), "selected, get:", target.Name)
+    fmt.Println("inferred primary key:", found.Name)
 
     first := Employee.First(db)
     last := Employee.Last(db)
@@ -45,7 +48,7 @@ func GenericDBExample(db *sql.DB) {
     // Use Exec for raw SQL writes, and generic queries when you want typed results.
     db.Exec("INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)", int64(2), "selected")
 
-    employeeCount := db.Get[int64]("SELECT COUNT(*) FROM employees")
+    employeeCount := db.Get[int64]("SELECT COUNT(*) FROM employee")
     event := db.Get[record(employee_id: int64, event: string)](
         "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
         int64(2),
@@ -57,10 +60,10 @@ func GenericDBExample(db *sql.DB) {
     eventPointers := db.Select[*record(employee_id: int64, event: string)](
         "SELECT employee_id, event FROM employee_events ORDER BY employee_id",
     )
-    employee := db.Get[Employee]("SELECT id, name, email FROM employees WHERE id = $1", int64(2))
-    employees := db.Select[Employee]("SELECT id, name, email FROM employees ORDER BY id")
-    employeePointer := db.Get[*Employee]("SELECT id, name, email FROM employees WHERE id = $1", int64(2))
-    employeePointers := db.Select[*Employee]("SELECT id, name, email FROM employees ORDER BY id")
+    employee := db.Get[Employee]("SELECT id, name, email FROM employee WHERE id = $1", int64(2))
+    employees := db.Select[Employee]("SELECT id, name, email FROM employee ORDER BY id")
+    employeePointer := db.Get[*Employee]("SELECT id, name, email FROM employee WHERE id = $1", int64(2))
+    employeePointers := db.Select[*Employee]("SELECT id, name, email FROM employee ORDER BY id")
     fmt.Println("scalar query:", employeeCount)
     fmt.Println("record query:", event.employee_id, event.event)
     fmt.Println("pointer record query:", eventPointer.employee_id, eventPointer.event)
@@ -73,7 +76,7 @@ func main() {
     try {
         db := sql.Open("sqlite", ":memory:")
         defer db.Close()
-        db.Exec(`CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)`)
+        db.Exec(`CREATE TABLE employee (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)`)
         db.Exec(`CREATE TABLE employee_events (employee_id INTEGER NOT NULL, event TEXT NOT NULL)`)
 
         ModelAPIExample(db)

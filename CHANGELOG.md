@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-07
+
+- Simplified ORM model declarations: fields map to snake_case columns and classes map to snake_case table names by default. Use `orm.Column` and `orm.Table` to override names, and `orm.Ignore` to omit non-database fields. Schema-qualified table names such as `sales.employees` are supported.
+- ORM models now infer the primary key from a persisted `Id` or `ID` field when no `orm.PK` is specified. Keep `orm.PK` for custom key names or to select among multiple candidates.
+- Updated the ORM and todo examples to demonstrate inferred mappings, with explicit annotations shown as comments in the todo model.
+- Added support for block comments between class header tokens, including between a parent class and the opening brace; compiler and LSP diagnostics now accept this syntax.
+- Updated todo validation and normalization to use the Go++ string methods `IsBlank()` and `TrimSpace()`.
+
 ## 2026-11-06
 
 - Added `ctx.HTML` for HTML responses from named, path-matched, or inline templates; `ctx.Template` remains as an obsolete alias.

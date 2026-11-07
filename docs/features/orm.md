@@ -28,9 +28,10 @@ for routine operations:
 
 ::: code-group
 ```gpp [Go++]
-class Employee : orm.Model @{orm.Table("employees")} {
-    ID int @{orm.Column("id"), orm.PK}
-    Name string @{orm.Column("name")}
+class Employee : orm.Model {
+    ID int
+    Name string
+    DisplayLabel string @{orm.Ignore}
 }
 
 employee := Employee.Find(db, employeeID)
@@ -43,12 +44,21 @@ type Employee struct {
 }
 
 var employee Employee
-row := db.QueryRow("SELECT id, name FROM employees WHERE id = $1", employeeID)
+row := db.QueryRow("SELECT id, name FROM employee WHERE id = $1", employeeID)
 if err := row.Scan(&employee.ID, &employee.Name); err != nil {
     return err
 }
 ```
 :::
+
+Fields map to snake_case columns by default (`DisplayName` becomes
+`display_name`), and the class name supplies the default table name
+(`Employee` becomes `employee`). Use `orm.Column("...")` or
+`orm.Table("...")` to override a name. Mark fields that are not database
+columns with `orm.Ignore`. A persisted field named `Id` or `ID` is inferred as
+the primary key; use `orm.PK` for a differently named key, or to choose between
+multiple candidates. Schema-qualified names such as
+`orm.Table("sales.employees")` are supported.
 
 ## Query into ORM models
 
@@ -70,7 +80,7 @@ The model methods take a SQL condition fragment. The `gpp/sql` package's
 ## Common model operations
 
 The base `orm.Model` also provides helpers that use the model's table and
-primary-key annotations:
+primary-key mapping:
 
 ```gpp
 employee := Employee.Find(db, employeeID)
@@ -87,7 +97,7 @@ employee.Destroy(db)
 Employee.Truncate(db)
 ```
 
-`Find` loads by primary key and requires one declared primary key. `All` sorts
+`Find` loads by primary key and requires one explicit or inferred primary key. `All` sorts
 by the primary key ascending by default. `First` and `Last` use that default
 order, ascending and descending, respectively. These three helpers accept an
 optional `sortBy` field or annotated column name, for example

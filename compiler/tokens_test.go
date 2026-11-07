@@ -79,6 +79,34 @@ func main() {
 	}
 }
 
+func TestParseClassAllowsCommentsBetweenHeaderTokens(t *testing.T) {
+	source := `package main
+
+class Todo : orm.Model /* @{orm.Table("todos")} */ {
+    Id int64 /* @{orm.Column("id"), orm.PK} */
+    Title string
+}
+`
+	file, err := ParseFile("todo.gpp", source)
+	if err != nil {
+		t.Fatalf("class header comments should be accepted: %v", err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one class declaration, got %d", len(file.Decls))
+	}
+	class, ok := file.Decls[0].(*ClassDecl)
+	if !ok || class.Name != "Todo" || len(class.ParentAST) != 1 {
+		t.Fatalf("class header was not parsed correctly: %#v", file.Decls[0])
+	}
+	parent, ok := class.ParentAST[0].(*NamedType)
+	if !ok || strings.Join(parent.Parts, ".") != "orm.Model" {
+		t.Fatalf("class parent was not parsed correctly: %#v", class.ParentAST)
+	}
+	if len(class.Annotations) != 0 {
+		t.Fatalf("commented annotation was parsed as active: %#v", class.Annotations)
+	}
+}
+
 func TestParseFileTracksMultipleTopLevelFunctionASTs(t *testing.T) {
 	file, err := ParseFile("functions.gpp", `
 func first(value string) string {

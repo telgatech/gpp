@@ -10,6 +10,26 @@ import (
 	"github.com/telgatech/gpp/compiler"
 )
 
+func TestLSPAcceptsBlockCommentInClassHeader(t *testing.T) {
+	source := `package main
+
+class Base {}
+class Todo : Base /* @{orm.Table("todos")} */ {
+    Id int64 /* @{orm.Column("id"), orm.PK} */
+}
+`
+	path := "/todo.gpp"
+	uri := uriForPath(path)
+	workspace := &workspaceState{
+		files:       map[string]*fileState{path: {Path: path, URI: uri, Source: source, Open: true}},
+		diagnostics: map[string][]Diagnostic{},
+	}
+	workspace.analyze()
+	if diagnostics := workspace.diagnostics[uri]; len(diagnostics) != 0 {
+		t.Fatalf("LSP reported diagnostics for a valid commented class header: %#v", diagnostics)
+	}
+}
+
 func TestSemanticTokensCoverGoPlusSyntaxWithStableRanges(t *testing.T) {
 	source := `package main
 annotation Route(path string) on method
