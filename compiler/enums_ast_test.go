@@ -25,6 +25,30 @@ func TestTransformEnumsUsesBodyAST(t *testing.T) {
 	}
 }
 
+func TestEnumMemberRetainsExactSourceNameSpan(t *testing.T) {
+	source := "package main\nenum Status string {\n    Ready = \"ready\"\n    Other = \"other\"\n}\n"
+	file, err := ParseFile("enum.gpp", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status *EnumDecl
+	for _, declaration := range file.Decls {
+		if enum, ok := declaration.(*EnumDecl); ok && enum.Name == "Status" {
+			status = enum
+			break
+		}
+	}
+	if status == nil || len(status.Members) != 2 {
+		t.Fatalf("expected parsed Status members, got %#v", status)
+	}
+	for index, name := range []string{"Ready", "Other"} {
+		member := status.Members[index]
+		if member.NameSpan.End <= member.NameSpan.Start || source[member.NameSpan.Start:member.NameSpan.End] != name {
+			t.Errorf("enum member %s source span = %#v (%q)", name, member.NameSpan, source[member.NameSpan.Start:member.NameSpan.End])
+		}
+	}
+}
+
 func TestTransformEnumsUsesASTTypesForRangeValues(t *testing.T) {
 	context := constructorContext{Enums: map[string]*EnumDecl{
 		"Status": {Name: "Status", Members: []EnumMember{{Name: "Active"}}},

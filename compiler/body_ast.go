@@ -406,6 +406,14 @@ func walkBlockExpressions(block *BlockStmt, visit func(ExprNode)) {
 	}
 }
 
+// WalkBlockExpressions visits the expressions contained in a parsed block,
+// including expressions in nested statements. It does not recursively visit
+// child expressions; visitors that need a complete expression tree should
+// recurse through each expression node themselves.
+func WalkBlockExpressions(block *BlockStmt, visit func(ExprNode)) {
+	walkBlockExpressions(block, visit)
+}
+
 func ParseBodyAST(tokens []Token) (*BlockStmt, error) {
 	parser := bodyParser{tokens: tokens}
 	block, err := parser.parseBlock(false)

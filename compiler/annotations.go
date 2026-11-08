@@ -9,87 +9,106 @@ import (
 )
 
 func validateAnnotationDeclarations(pkg *PackageSymbols) error {
-	for _, declaration := range pkg.Annotations {
+	names := make([]string, 0, len(pkg.Annotations))
+	for name := range pkg.Annotations {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var diagnostics []error
+	for _, name := range names {
+		declaration := pkg.Annotations[name]
 		if _, err := annotationParameterInfos(declaration); err != nil {
-			return annotationDeclarationDiagnostic(declaration, fmt.Errorf("annotation %s has invalid parameters: %w", declaration.Name, err))
+			diagnostics = append(diagnostics, annotationDeclarationDiagnostic(declaration, fmt.Errorf("annotation %s has invalid parameters: %w", declaration.Name, err)))
 		}
 	}
-	return nil
+	return NewDiagnosticErrors(diagnostics)
 }
 
 func validateFileAnnotations(file *File, pkg *PackageSymbols, scope map[string]*AnnotationDecl, allowUnresolvedQualified bool) error {
+	var diagnostics []error
+	add := func(err error) {
+		diagnostics = append(diagnostics, DiagnosticsOf(err)...)
+	}
 	validate := func(uses []AnnotationUse, target AnnotationTarget) error {
 		return validateAnnotationUses(uses, target, pkg, scope, allowUnresolvedQualified)
 	}
 	if err := validate(file.Annotations, AnnotationTargetPackage); err != nil {
-		return err
+		add(err)
 	}
 	for _, declaration := range file.Decls {
 		switch value := declaration.(type) {
 		case *ClassDecl:
 			if err := validate(value.Annotations, AnnotationTargetClass); err != nil {
-				return err
+				add(err)
 			}
 			for _, field := range value.Fields {
 				if err := validate(field.Annotations, AnnotationTargetField); err != nil {
-					return err
+					add(err)
 				}
 			}
 			for _, method := range value.Methods {
 				if err := validate(method.Annotations, AnnotationTargetMethod); err != nil {
-					return err
+					add(err)
 				}
 				if err := validateParameterAnnotations(method.ParameterAnnotations, pkg, scope, allowUnresolvedQualified); err != nil {
-					return err
+					add(err)
 				}
 			}
 		case *ExtendDecl:
 			for _, method := range value.Methods {
 				if err := validate(method.Annotations, AnnotationTargetMethod); err != nil {
-					return err
+					add(err)
 				}
 				if err := validateParameterAnnotations(method.ParameterAnnotations, pkg, scope, allowUnresolvedQualified); err != nil {
-					return err
+					add(err)
 				}
 			}
 		case *TemplateDecl:
 			if err := validate(value.Annotations, AnnotationTargetTemplate); err != nil {
-				return err
+				add(err)
 			}
 		case *FunctionDecl:
 			if err := validate(value.Annotations, AnnotationTargetFunction); err != nil {
-				return err
+				add(err)
 			}
 			if err := validateParameterAnnotations(value.Method.ParameterAnnotations, pkg, scope, allowUnresolvedQualified); err != nil {
-				return err
+				add(err)
 			}
 		case *GoDecl:
 			for _, placement := range value.AnnotationPlacements {
 				if err := validate([]AnnotationUse{placement.Use}, placement.Target); err != nil {
-					return err
+					add(err)
 				}
 			}
 		case *MixedDecl:
 			for _, placement := range value.AnnotationPlacements {
 				if err := validate([]AnnotationUse{placement.Use}, placement.Target); err != nil {
-					return err
+					add(err)
 				}
 			}
 		}
 	}
-	return nil
+	return NewDiagnosticErrors(diagnostics)
 }
 
 func validateParameterAnnotations(annotations map[string][]AnnotationUse, pkg *PackageSymbols, scope map[string]*AnnotationDecl, allowUnresolvedQualified bool) error {
-	for _, uses := range annotations {
+	parameterNames := make([]string, 0, len(annotations))
+	for name := range annotations {
+		parameterNames = append(parameterNames, name)
+	}
+	sort.Strings(parameterNames)
+	var diagnostics []error
+	for _, name := range parameterNames {
+		uses := annotations[name]
 		if err := validateAnnotationUses(uses, AnnotationTargetParameter, pkg, scope, allowUnresolvedQualified); err != nil {
-			return err
+			diagnostics = append(diagnostics, DiagnosticsOf(err)...)
 		}
 	}
-	return nil
+	return NewDiagnosticErrors(diagnostics)
 }
 
 func validateAnnotationUses(uses []AnnotationUse, target AnnotationTarget, pkg *PackageSymbols, scope map[string]*AnnotationDecl, allowUnresolvedQualified bool) error {
+	var diagnostics []error
 	for index := range uses {
 		use := &uses[index]
 		declaration := scope[use.Name]
@@ -98,25 +117,29 @@ func validateAnnotationUses(uses []AnnotationUse, target AnnotationTarget, pkg *
 				continue
 			}
 			if strings.Contains(use.Name, ".") {
-				return annotationDiagnostic(*use, fmt.Errorf("undefined annotation %s", use.Name))
+				diagnostics = append(diagnostics, annotationDiagnostic(*use, fmt.Errorf("undefined annotation %s", use.Name)))
+				continue
 			}
 			if pkg.Functions[use.Name] {
-				return annotationDiagnostic(*use, fmt.Errorf("%s is a function, not an annotation", use.Name))
+				diagnostics = append(diagnostics, annotationDiagnostic(*use, fmt.Errorf("%s is a function, not an annotation", use.Name)))
+				continue
 			}
-			return annotationDiagnostic(*use, fmt.Errorf("undefined annotation %s", use.Name))
+			diagnostics = append(diagnostics, annotationDiagnostic(*use, fmt.Errorf("undefined annotation %s", use.Name)))
+			continue
 		}
 		use.Declaration = declaration
 		if len(declaration.Targets) > 0 && !containsAnnotationTarget(declaration.Targets, target) {
-			return annotationDiagnostic(*use, fmt.Errorf(
+			diagnostics = append(diagnostics, annotationDiagnostic(*use, fmt.Errorf(
 				"annotation %s cannot be applied to %s; allowed targets: %s",
 				use.Name, target, strings.Join(annotationTargetNames(declaration.Targets), ", "),
-			))
+			)))
+			continue
 		}
 		if err := validateAnnotationArguments(*use, declaration); err != nil {
-			return annotationDiagnostic(*use, err)
+			diagnostics = append(diagnostics, annotationDiagnostic(*use, err))
 		}
 	}
-	return nil
+	return NewDiagnosticErrors(diagnostics)
 }
 
 func containsAnnotationTarget(targets []AnnotationTarget, target AnnotationTarget) bool {

@@ -571,7 +571,9 @@ func configureFunctionOverloads(overloads *overloadContext, signatures map[strin
 				if span.Line <= 0 || span.Column <= 0 {
 					span = Span{Line: candidates[index].SourceLine, Column: 1}
 				}
-				return diagnosticAt(candidates[index].SourceFile, span, fmt.Errorf("function %s redeclared in this block; other declaration at %s", name, callableSignatureLocation(previous)))
+				return NewDiagnosticErrorWithRelated(candidates[index].SourceFile, span,
+					fmt.Errorf("function %s redeclared in this block; other declaration at %s", name, callableSignatureLocation(previous)),
+					[]RelatedDiagnostic{{File: previous.SourceFile, Span: previous.SourceSpan, Message: "other declaration is here"}})
 			}
 			seen[key] = candidates[index]
 			arityCounts[len(candidates[index].Parameters)]++

@@ -72,22 +72,35 @@ func parseEnumDeclaration(src string, start int) (*EnumDecl, int, error) {
 		return nil, 0, err
 	}
 	enum := &EnumDecl{Name: name, BackingTypeAST: parseTypeText(backingType)}
-	if err := parseEnumMembers(enum, src[pos+1:close]); err != nil {
+	if err := parseEnumMembers(enum, src[pos+1:close], src, pos+1); err != nil {
 		return nil, 0, err
 	}
 	return enum, close + 1, nil
 }
 
-func parseEnumMembers(enum *EnumDecl, body string) error {
+func parseEnumMembers(enum *EnumDecl, body, source string, sourceOffset int) error {
 	backingType := enumBackingType(enum)
 	seenNames := map[string]bool{}
 	seenValues := map[string]string{}
 	integerNext := int64(0)
 	unsignedNext := uint64(0)
+	var pendingDoc []string
 	for pos := 0; pos < len(body); {
+		lineStart := pos
 		end := lineEnd(body, pos)
-		line := strings.TrimSpace(enumLineWithoutComment(body[pos:end]))
+		rawLine := body[lineStart:end]
+		trimmed := strings.TrimSpace(rawLine)
 		pos = end
+		if trimmed == "" {
+			pendingDoc = nil
+			continue
+		}
+		if strings.HasPrefix(trimmed, "//") {
+			comment := strings.TrimSpace(strings.TrimPrefix(trimmed, "//"))
+			pendingDoc = append(pendingDoc, comment)
+			continue
+		}
+		line := strings.TrimSpace(enumLineWithoutComment(rawLine))
 		if line == "" {
 			continue
 		}
@@ -147,7 +160,13 @@ func parseEnumMembers(enum *EnumDecl, body string) error {
 			}
 			return fmt.Errorf("enum member %s: %w", name, parseErr)
 		}
-		enum.Members = append(enum.Members, EnumMember{Name: name, ValueAST: valueAST, ValueTokens: valueTokens})
+		nameStart := strings.Index(rawLine, name)
+		nameSpan := Span{}
+		if nameStart >= 0 {
+			nameSpan = sourceSpan(source, sourceOffset+lineStart+nameStart, sourceOffset+lineStart+nameStart+len(name))
+		}
+		enum.Members = append(enum.Members, EnumMember{Name: name, NameSpan: nameSpan, ValueAST: valueAST, ValueTokens: valueTokens, Doc: strings.Join(pendingDoc, "\n")})
+		pendingDoc = nil
 	}
 	if len(enum.Members) == 0 {
 		return fmt.Errorf("enum %s cannot be empty", enum.Name)

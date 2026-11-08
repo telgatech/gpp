@@ -62,6 +62,11 @@ var goPlusKeywords = map[string]bool{
 	"this": true, "true": true, "false": true, "nil": true,
 }
 
+// IsKeyword reports whether word is reserved by Go++ and cannot be used as an
+// identifier in source code. Tooling uses this to validate rename targets with
+// the same keyword set as the lexer.
+func IsKeyword(word string) bool { return goPlusKeywords[word] }
+
 var goPlusOperators = []string{
 	"<<=", ">>=", "&^=", "...", "||=", "??=", "===", "!==",
 	":=", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.",

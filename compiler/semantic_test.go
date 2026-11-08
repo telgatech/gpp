@@ -49,6 +49,30 @@ func TestResolveProgramRejectsDuplicateClasses(t *testing.T) {
 	}
 }
 
+func TestResolveProgramCollectsDuplicateClassDeclarations(t *testing.T) {
+	program := parseProgram(t,
+		"class First {}\nclass Second {}\n",
+		"class First {}\nclass Second {}\n",
+	)
+	_, err := ResolveProgram(program)
+	if err == nil {
+		t.Fatal("expected duplicate class diagnostics")
+	}
+	diagnostics := DiagnosticsOf(err)
+	if len(diagnostics) != 2 {
+		t.Fatalf("expected duplicate diagnostics for both classes, got %#v", diagnostics)
+	}
+	for index, want := range []string{"First", "Second"} {
+		position, ok := PositionOfDiagnostic(diagnostics[index])
+		if !ok || !strings.Contains(position.Message, "duplicate class "+want) {
+			t.Errorf("diagnostic %d = %#v, want duplicate class %s", index, diagnostics[index], want)
+		}
+		if related := RelatedPositionsOfDiagnostic(diagnostics[index]); len(related) != 1 || related[0].Message != "first declaration is here" {
+			t.Errorf("duplicate class %s should retain its related first declaration: %#v", want, related)
+		}
+	}
+}
+
 func TestResolveProgramRejectsEnumClassNameCollision(t *testing.T) {
 	program := parseProgram(t, "enum Person int { Human }\n", "class Person {}\n")
 
@@ -64,6 +88,50 @@ func TestResolveProgramRejectsInvalidInheritance(t *testing.T) {
 	_, err := ResolveProgram(program)
 	if err == nil || !strings.Contains(err.Error(), "unresolved parent Missing") {
 		t.Fatalf("expected unresolved parent error, got %v", err)
+	}
+}
+
+func TestResolveProgramCollectsIndependentClassDiagnostics(t *testing.T) {
+	program := parseProgram(t, "class GppClass {}\nclass GppField {}\n")
+	_, err := ResolveProgram(program)
+	if err == nil {
+		t.Fatal("expected reserved class-name diagnostics")
+	}
+	diagnostics := DiagnosticsOf(err)
+	if len(diagnostics) != 2 {
+		t.Fatalf("expected both independent class diagnostics, got %#v", diagnostics)
+	}
+	for index, want := range []string{"GppClass", "GppField"} {
+		position, ok := PositionOfDiagnostic(diagnostics[index])
+		if !ok || !strings.Contains(position.Message, want) {
+			t.Fatalf("diagnostic %d = %#v, want source-located error for %s", index, diagnostics[index], want)
+		}
+	}
+	if !strings.Contains(err.Error(), "GppClass") {
+		t.Fatalf("ordinary error formatting should preserve the first diagnostic: %v", err)
+	}
+}
+
+func TestResolveProgramCollectsIndependentExtensionDiagnostics(t *testing.T) {
+	program := parseProgram(t, `
+extend string { func First() {} }
+extend string { func First() {} }
+extend int { func Second() {} }
+extend int { func Second() {} }
+`)
+	_, err := ResolveProgram(program)
+	if err == nil {
+		t.Fatal("expected duplicate extension diagnostics")
+	}
+	diagnostics := DiagnosticsOf(err)
+	if len(diagnostics) != 2 {
+		t.Fatalf("expected both duplicate extension diagnostics, got %#v", diagnostics)
+	}
+	for _, diagnostic := range diagnostics {
+		position, ok := PositionOfDiagnostic(diagnostic)
+		if !ok || !strings.Contains(position.Message, "declared more than once") {
+			t.Errorf("expected source-located duplicate extension diagnostic, got %#v", diagnostic)
+		}
 	}
 }
 
@@ -161,5 +229,28 @@ class Employee {
 	_, err := ResolveProgram(program)
 	if err == nil || !strings.Contains(err.Error(), "undefined annotation Required") {
 		t.Fatalf("expected unknown annotation error, got %v", err)
+	}
+}
+
+func TestResolveProgramCollectsUnknownAnnotationUses(t *testing.T) {
+	program := parseProgram(t, `
+class Employee {
+    Name string @{Required}
+    Age int @{Positive}
+}
+`)
+	_, err := ResolveProgram(program)
+	if err == nil {
+		t.Fatal("expected unknown annotation diagnostics")
+	}
+	diagnostics := DiagnosticsOf(err)
+	if len(diagnostics) != 2 {
+		t.Fatalf("expected both unknown annotation uses, got %#v", diagnostics)
+	}
+	for index, want := range []string{"Required", "Positive"} {
+		position, ok := PositionOfDiagnostic(diagnostics[index])
+		if !ok || !strings.Contains(position.Message, want) {
+			t.Errorf("diagnostic %d = %#v, want source-located undefined annotation %s", index, diagnostics[index], want)
+		}
 	}
 }

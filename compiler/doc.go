@@ -21,6 +21,7 @@ const (
 	DocPackage    DocKind = "package"
 	DocClass      DocKind = "class"
 	DocEnum       DocKind = "enum"
+	DocType       DocKind = "type"
 	DocFunction   DocKind = "function"
 	DocMethod     DocKind = "method"
 	DocField      DocKind = "field"
@@ -268,7 +269,21 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 			SourceLine: value.SourceLine, Exported: exportedDocName(value.Name), Annotations: formatAnnotationUses(value.Annotations),
 		}}
 	case *MixedDecl:
-		return documentationMixedFunctions(packageName, value)
+		result := documentationMixedFunctions(packageName, value)
+		return append(result, documentationGoDeclarations(packageName, value.GoASTDecls, value.GoASTFileSet, value.SourceFile, value.SourceLine, value.Doc, false)...)
+	case *GoDecl:
+		return documentationGoDeclarations(packageName, value.Declarations, value.FileSet, value.SourceFile, value.SourceLine, value.Doc, true)
+	case *ValueDecl:
+		var result []DocSymbol
+		for _, name := range value.Names {
+			signature := valueDeclDocumentationSignature(value, name)
+			result = append(result, DocSymbol{
+				Kind: DocValue, Name: name.Text, FullName: qualified(name.Text), Package: packageName,
+				Doc: value.Doc, Signature: signature, Source: signature, SourceFile: value.SourceFile,
+				SourceLine: value.SourceLine, Exported: exportedDocName(name.Text),
+			})
+		}
+		return result
 	case *FunctionDecl:
 		return []DocSymbol{{
 			Kind: DocFunction, Name: value.Name, FullName: packageName + "." + value.Name,
@@ -280,6 +295,293 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 	default:
 		return nil
 	}
+}
+
+func valueDeclDocumentationSignature(declaration *ValueDecl, name Token) string {
+	if declaration == nil {
+		return "value " + name.Text
+	}
+	if declaration.Owner == nil || declaration.Owner.Source == "" {
+		return declaration.Keyword + " " + name.Text
+	}
+	start := -1
+	for _, token := range declaration.Tokens {
+		if token.Text == declaration.Keyword {
+			start = token.Span.Start
+			break
+		}
+	}
+	if start < 0 {
+		start = declaration.SourceSpan.Start
+	}
+	end := name.Span.End
+	if declaration.Type != nil && declaration.Type.Span().End > end {
+		end = declaration.Type.Span().End
+	}
+	for _, value := range declaration.Values {
+		if value != nil && value.Span().End > end {
+			end = value.Span().End
+		}
+	}
+	if start < 0 || end < start || end > len(declaration.Owner.Source) {
+		return declaration.Keyword + " " + name.Text
+	}
+	return strings.TrimSpace(declaration.Owner.Source[start:end])
+}
+
+func documentationGoDeclarations(packageName string, declarations []ast.Decl, fileSet *gotoken.FileSet, sourceFile string, sourceLine int, leadingDoc string, includeFunctions bool) []DocSymbol {
+	var result []DocSymbol
+	for declarationIndex, declaration := range declarations {
+		if function, ok := declaration.(*ast.FuncDecl); ok {
+			if function.Recv != nil {
+				parent := goReceiverTypeName(function.Recv)
+				if parent == "" {
+					continue
+				}
+				doc := ""
+				if function.Doc != nil {
+					doc = strings.TrimSpace(function.Doc.Text())
+				} else if declarationIndex == 0 {
+					doc = leadingDoc
+				}
+				line := sourceLine
+				if fileSet != nil {
+					if position := fileSet.Position(function.Pos()); position.IsValid() {
+						line += position.Line - 2
+					}
+				}
+				signature := goMethodSignature(function, fileSet)
+				result = append(result, DocSymbol{
+					Kind: DocMethod, Name: function.Name.Name, FullName: packageName + "." + parent + "." + function.Name.Name,
+					Package: packageName, Parent: parent, Doc: doc, Signature: signature, Source: signature,
+					SourceFile: sourceFile, SourceLine: line, Exported: exportedDocName(function.Name.Name),
+				})
+				continue
+			}
+			if !includeFunctions {
+				continue
+			}
+			doc := leadingDoc
+			if function.Doc != nil {
+				doc = strings.TrimSpace(function.Doc.Text())
+			}
+			line := sourceLine
+			if fileSet != nil {
+				if position := fileSet.Position(function.Pos()); position.IsValid() {
+					line += position.Line - 2
+				}
+			}
+			signature := goFunctionSignature(function)
+			result = append(result, DocSymbol{
+				Kind: DocFunction, Name: function.Name.Name, FullName: packageName + "." + function.Name.Name,
+				Package: packageName, Doc: doc, Signature: signature, Source: signature,
+				SourceFile: sourceFile, SourceLine: line, Exported: exportedDocName(function.Name.Name),
+			})
+			continue
+		}
+		group, ok := declaration.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		groupDoc := ""
+		if group.Doc != nil {
+			groupDoc = strings.TrimSpace(group.Doc.Text())
+		} else if declarationIndex == 0 {
+			groupDoc = leadingDoc
+		}
+		for _, specification := range group.Specs {
+			specDoc := groupDoc
+			if comments := specComments(specification); comments != "" {
+				specDoc = comments
+			}
+			line := sourceLine
+			if fileSet != nil {
+				if position := fileSet.Position(specification.Pos()); position.IsValid() {
+					line += position.Line - 2
+				}
+			}
+			switch value := specification.(type) {
+			case *ast.TypeSpec:
+				signature := "type " + formatGoDocNode(fileSet, value)
+				typeSymbol := DocSymbol{
+					Kind: DocType, Name: value.Name.Name, FullName: packageName + "." + value.Name.Name,
+					Package: packageName, Doc: specDoc, Signature: signature, Source: signature,
+					SourceFile: sourceFile, SourceLine: line, Exported: exportedDocName(value.Name.Name),
+				}
+				if structure, ok := value.Type.(*ast.StructType); ok {
+					for _, field := range structure.Fields.List {
+						fieldDoc := ""
+						if field.Doc != nil {
+							fieldDoc = strings.TrimSpace(field.Doc.Text())
+						} else if field.Comment != nil {
+							fieldDoc = strings.TrimSpace(field.Comment.Text())
+						}
+						for _, fieldName := range goStructFieldNames(field) {
+							typeSymbol.Fields = append(typeSymbol.Fields, DocFieldInfo{
+								Name: fieldName, Type: formatGoDocNode(fileSet, field.Type), Doc: fieldDoc,
+							})
+						}
+					}
+				}
+				result = append(result, typeSymbol)
+				if interfaceType, ok := value.Type.(*ast.InterfaceType); ok {
+					for _, method := range interfaceType.Methods.List {
+						functionType, isMethod := method.Type.(*ast.FuncType)
+						if !isMethod || len(method.Names) == 0 {
+							continue
+						}
+						methodDoc := ""
+						if method.Doc != nil {
+							methodDoc = strings.TrimSpace(method.Doc.Text())
+						} else if method.Comment != nil {
+							methodDoc = strings.TrimSpace(method.Comment.Text())
+						}
+						methodLine := line
+						if fileSet != nil {
+							if position := fileSet.Position(method.Pos()); position.IsValid() {
+								methodLine = sourceLine + position.Line - 2
+							}
+						}
+						for _, methodName := range method.Names {
+							methodSignature := goInterfaceMethodSignature(methodName.Name, functionType, fileSet)
+							result = append(result, DocSymbol{
+								Kind: DocMethod, Name: methodName.Name, FullName: packageName + "." + value.Name.Name + "." + methodName.Name,
+								Package: packageName, Parent: value.Name.Name, Doc: methodDoc, Signature: methodSignature, Source: methodSignature,
+								SourceFile: sourceFile, SourceLine: methodLine, Exported: exportedDocName(methodName.Name),
+							})
+						}
+					}
+				}
+			case *ast.ValueSpec:
+				prefix := "var "
+				if group.Tok == gotoken.CONST {
+					prefix = "const "
+				}
+				signature := prefix + formatGoDocNode(fileSet, value)
+				for _, name := range value.Names {
+					result = append(result, DocSymbol{
+						Kind: DocValue, Name: name.Name, FullName: packageName + "." + name.Name,
+						Package: packageName, Doc: specDoc, Signature: signature, Source: signature,
+						SourceFile: sourceFile, SourceLine: line, Exported: exportedDocName(name.Name),
+					})
+				}
+			}
+		}
+	}
+	return result
+}
+
+func goStructFieldNames(field *ast.Field) []string {
+	if field == nil {
+		return nil
+	}
+	if len(field.Names) > 0 {
+		result := make([]string, 0, len(field.Names))
+		for _, name := range field.Names {
+			result = append(result, name.Name)
+		}
+		return result
+	}
+	var embeddedName func(ast.Expr) string
+	embeddedName = func(expression ast.Expr) string {
+		switch value := expression.(type) {
+		case *ast.Ident:
+			return value.Name
+		case *ast.SelectorExpr:
+			return value.Sel.Name
+		case *ast.StarExpr:
+			return embeddedName(value.X)
+		case *ast.IndexExpr:
+			return embeddedName(value.X)
+		case *ast.IndexListExpr:
+			return embeddedName(value.X)
+		case *ast.ParenExpr:
+			return embeddedName(value.X)
+		default:
+			return ""
+		}
+	}
+	if name := embeddedName(field.Type); name != "" {
+		return []string{name}
+	}
+	return nil
+}
+
+func goReceiverTypeName(receiver *ast.FieldList) string {
+	if receiver == nil || len(receiver.List) == 0 || receiver.List[0] == nil {
+		return ""
+	}
+	var typeName func(ast.Expr) string
+	typeName = func(expression ast.Expr) string {
+		switch value := expression.(type) {
+		case *ast.Ident:
+			return value.Name
+		case *ast.StarExpr:
+			return typeName(value.X)
+		case *ast.IndexExpr:
+			return typeName(value.X)
+		case *ast.IndexListExpr:
+			return typeName(value.X)
+		case *ast.SelectorExpr:
+			return value.Sel.Name
+		case *ast.ParenExpr:
+			return typeName(value.X)
+		default:
+			return ""
+		}
+	}
+	return typeName(receiver.List[0].Type)
+}
+
+func goMethodSignature(function *ast.FuncDecl, fileSet *gotoken.FileSet) string {
+	if function == nil {
+		return ""
+	}
+	if function.Recv == nil || len(function.Recv.List) == 0 {
+		return goFunctionSignature(function)
+	}
+	receiverType := formatGoDocNode(fileSet, function.Recv.List[0].Type)
+	if receiverType == "" {
+		receiverType = goReceiverTypeName(function.Recv)
+		if _, pointer := function.Recv.List[0].Type.(*ast.StarExpr); pointer {
+			receiverType = "*" + receiverType
+		}
+	}
+	functionSignature := strings.TrimPrefix(goFunctionSignature(function), "func "+function.Name.Name)
+	return "func (" + receiverType + ") " + function.Name.Name + functionSignature
+}
+
+func goInterfaceMethodSignature(name string, function *ast.FuncType, fileSet *gotoken.FileSet) string {
+	if function == nil {
+		return "func " + name
+	}
+	formatted := formatGoDocNode(fileSet, function)
+	if !strings.HasPrefix(formatted, "func") {
+		return "func " + name
+	}
+	return "func " + name + strings.TrimPrefix(formatted, "func")
+}
+
+func specComments(specification ast.Spec) string {
+	var comments *ast.CommentGroup
+	switch value := specification.(type) {
+	case *ast.TypeSpec:
+		comments = value.Doc
+	case *ast.ValueSpec:
+		comments = value.Doc
+	}
+	if comments == nil {
+		return ""
+	}
+	return strings.TrimSpace(comments.Text())
+}
+
+func formatGoDocNode(fileSet *gotoken.FileSet, node ast.Node) string {
+	var buffer bytes.Buffer
+	if err := gofmt.Node(&buffer, fileSet, node); err != nil {
+		return ""
+	}
+	return buffer.String()
 }
 
 func functionDeclDocumentationSignature(function *FunctionDecl) string {

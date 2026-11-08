@@ -225,6 +225,7 @@ func ParseFile(name, src string) (*File, error) {
 				if structuredFunctionAnnotations(placements) && len(functions) == 0 {
 					if value := parseTopLevelValueDecl(bodyTokens); value != nil {
 						line, column := sourcePosition(src, start)
+						value.Doc = doc
 						value.Owner = file
 						value.SourceSpan = Span{Start: start, End: next, Line: line, Column: column}
 						value.SourceFile = name
@@ -239,6 +240,7 @@ func ParseFile(name, src string) (*File, error) {
 					file.Decls = append(file.Decls, &GoDecl{
 						Declarations:         goASTDecls,
 						FileSet:              goASTFileSet,
+						Doc:                  doc,
 						Tokens:               bodyTokens,
 						AnnotationPlacements: placements,
 						Owner:                file,
@@ -260,6 +262,7 @@ func ParseFile(name, src string) (*File, error) {
 				file.Decls = append(file.Decls, &MixedDecl{
 					GoASTDecls:           goASTDecls,
 					GoASTFileSet:         goASTFileSet,
+					Doc:                  doc,
 					Functions:            functions,
 					Tokens:               bodyTokens,
 					AnnotationPlacements: placements,
@@ -2037,7 +2040,10 @@ func findNextExtension(src string, start int) int {
 			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || keywordAt(src, p, "extend") ||
 				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "template") || keywordAt(src, p, "package") ||
 				(p > start && topLevelDeclarationBoundary(src, start, p)) {
-				return leadingCommentStart(src, start, p)
+				boundary := leadingCommentStart(src, start, p)
+				if boundary > start {
+					return boundary
+				}
 			}
 		}
 
@@ -2242,7 +2248,7 @@ func leadingDocComments(src string, pos int) (string, int) {
 }
 
 func documentationTargetAt(src string, pos int) bool {
-	for _, keyword := range []string{"package", "import", "func", "class", "enum", "extend", "annotation", "embed", "template"} {
+	for _, keyword := range []string{"package", "import", "func", "const", "var", "let", "type", "class", "enum", "extend", "annotation", "embed", "template"} {
 		if keywordAt(src, pos, keyword) {
 			return true
 		}
