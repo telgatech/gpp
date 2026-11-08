@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -65,7 +66,15 @@ type semanticTokensParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
 }
 
+type semanticTokenSnapshot struct {
+	resultID string
+	data     []uint32
+}
+
 func (s *server) semanticTokens(uri string) map[string]any {
+	if s.cancelled() {
+		return map[string]any{"data": []uint32{}}
+	}
 	state := s.workspace.files[pathFromURI(uri)]
 	if state == nil {
 		return map[string]any{"data": []uint32{}}
@@ -73,8 +82,12 @@ func (s *server) semanticTokens(uri string) map[string]any {
 	classified := map[int]semanticToken{}
 	if state.File != nil {
 		classifyGoPlusTokens(state.File, classified)
+		s.classifyLocalBindings(state, classified)
 	}
 	for _, token := range state.FileTokens() {
+		if s.cancelled() {
+			return map[string]any{"data": []uint32{}}
+		}
 		if token.Kind == compiler.TokenEOF || token.Kind == compiler.TokenNewline || token.Kind == compiler.TokenPunctuation {
 			continue
 		}
@@ -154,6 +167,128 @@ func (s *server) semanticTokens(uri string) map[string]any {
 	return map[string]any{"data": data}
 }
 
+func (s *server) semanticTokensForRange(uri string, requested Range) map[string]any {
+	full, _ := s.semanticTokens(uri)["data"].([]uint32)
+	filtered := make([]uint32, 0, len(full))
+	line, character := 0, 0
+	lastLine, lastCharacter := 0, 0
+	for index := 0; index+4 < len(full); index += 5 {
+		deltaLine, deltaCharacter := int(full[index]), int(full[index+1])
+		line += deltaLine
+		if deltaLine == 0 {
+			character += deltaCharacter
+		} else {
+			character = deltaCharacter
+		}
+		length := int(full[index+2])
+		start := Position{Line: line, Character: character}
+		end := Position{Line: line, Character: character + length}
+		if compareLSPPosition(start, requested.Start) < 0 || compareLSPPosition(end, requested.End) > 0 {
+			continue
+		}
+		deltaLine = start.Line - lastLine
+		deltaCharacter = start.Character
+		if deltaLine == 0 {
+			deltaCharacter -= lastCharacter
+		}
+		filtered = append(filtered, uint32(deltaLine), uint32(deltaCharacter), full[index+2], full[index+3], full[index+4])
+		lastLine, lastCharacter = start.Line, start.Character
+	}
+	return map[string]any{"data": filtered}
+}
+
+func (s *server) semanticTokensDelta(uri, previousResultID string) map[string]any {
+	full, _ := s.semanticTokens(uri)["data"].([]uint32)
+	path := pathFromURI(uri)
+	s.semanticTokensMu.Lock()
+	defer s.semanticTokensMu.Unlock()
+	if s.semanticTokensByURI == nil {
+		s.semanticTokensByURI = make(map[string]semanticTokenSnapshot)
+	}
+	s.semanticTokensSequence++
+	resultID := fmt.Sprintf("%d", s.semanticTokensSequence)
+	previous, hasPrevious := s.semanticTokensByURI[path]
+	s.semanticTokensByURI[path] = semanticTokenSnapshot{resultID: resultID, data: append([]uint32(nil), full...)}
+	if !hasPrevious || previous.resultID != previousResultID {
+		return map[string]any{"resultId": resultID, "data": full}
+	}
+	prefix := 0
+	for prefix+5 <= len(previous.data) && prefix+5 <= len(full) && equalSemanticToken(previous.data[prefix:prefix+5], full[prefix:prefix+5]) {
+		prefix += 5
+	}
+	suffix := 0
+	for suffix+5 <= len(previous.data)-prefix && suffix+5 <= len(full)-prefix && equalSemanticToken(previous.data[len(previous.data)-suffix-5:len(previous.data)-suffix], full[len(full)-suffix-5:len(full)-suffix]) {
+		suffix += 5
+	}
+	edit := map[string]any{
+		"start":       prefix,
+		"deleteCount": len(previous.data) - prefix - suffix,
+		"data":        append([]uint32(nil), full[prefix:len(full)-suffix]...),
+	}
+	return map[string]any{"resultId": resultID, "edits": []any{edit}}
+}
+
+func equalSemanticToken(left, right []uint32) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func compareLSPPosition(left, right Position) int {
+	if left.Line < right.Line {
+		return -1
+	}
+	if left.Line > right.Line {
+		return 1
+	}
+	if left.Character < right.Character {
+		return -1
+	}
+	if left.Character > right.Character {
+		return 1
+	}
+	return 0
+}
+
+func (s *server) classifyLocalBindings(state *fileState, classified map[int]semanticToken) {
+	if state == nil || state.File == nil {
+		return
+	}
+	for _, token := range state.File.Tokens {
+		if s.cancelled() {
+			return
+		}
+		if token.Kind != compiler.TokenIdentifier {
+			continue
+		}
+		binding, ok := s.localBindingAt(state, token.Span.Start, token.Text)
+		if !ok {
+			continue
+		}
+		if binding.Kind == "parameter" && binding.Method != nil && token.Span.Start < binding.Method.BodySpan.Start && token.Span.Start != binding.Declaration.Start {
+			continue
+		}
+		tokenType := semanticVariable
+		if binding.Kind == "parameter" {
+			tokenType = semanticParameter
+		}
+		modifiers := 0
+		if token.Span.Start == binding.Declaration.Start {
+			modifiers |= modifierDeclaration
+		}
+		if binding.Kind == "constant" {
+			modifiers |= modifierReadonly
+		}
+		classified[token.Span.Start] = semanticToken{tokenType: tokenType, modifiers: modifiers, start: token.Span.Start, end: token.Span.End}
+	}
+}
+
 func (state *fileState) FileTokens() []compiler.Token {
 	if state == nil || state.File == nil {
 		return nil
@@ -196,6 +331,8 @@ func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
 		case *compiler.ClassDecl:
 			classNames[value.Name] = true
 			markNameAfter(value.SpanValue, "class", semanticClass, modifierDeclaration)
+			classTypeParams := markDeclaredTypeParameters(file.Tokens, value.Name, value.SpanValue, value.TypeParamsAST, mark)
+			markTypeParameterUses(file.Tokens, classTypeParams, value.SpanValue, mark)
 			for _, field := range value.Fields {
 				fieldNames[field.Name] = true
 				mark(firstIdentifierInSpan(file.Tokens, field.SpanValue), semanticProperty, modifierDeclaration)
@@ -207,7 +344,9 @@ func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
 					modifiers |= modifierStatic
 				}
 				mark(method.NameSpan, semanticMethod, modifiers)
-				markParameters(method.ParameterAST, mark)
+				methodTypeParams := markDeclaredTypeParameters(file.Tokens, method.Name, method.SpanValue, method.TypeParamsAST, mark)
+				markTypeParameterUses(file.Tokens, methodTypeParams, method.SpanValue, mark)
+				markParameters(file.Tokens, method.ParameterAST, method.ParametersSpan, mark)
 			}
 		case *compiler.EnumDecl:
 			enumNames[value.Name] = true
@@ -239,18 +378,32 @@ func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
 			}
 		case *compiler.AnnotationDecl:
 			markNameAfter(value.SpanValue, "annotation", semanticDecorator, modifierDeclaration)
-			markParameters(value.ParameterAST, mark)
+			markParameters(file.Tokens, value.ParameterAST, parameterListSpan(file.Tokens, value.SpanValue, "annotation"), mark)
 		case *compiler.TemplateDecl:
 			markNameAfter(value.SpanValue, "template", semanticFunction, modifierDeclaration)
-			markParameters(value.ParameterAST, mark)
+			markParameters(file.Tokens, value.ParameterAST, parameterListSpan(file.Tokens, value.SpanValue, "template"), mark)
 		case *compiler.FunctionDecl:
 			markNameAfter(value.SourceSpan, "func", semanticFunction, modifierDeclaration)
-			markParameters(value.Method.ParameterAST, mark)
+			functionTypeParams := markDeclaredTypeParameters(file.Tokens, value.Name, value.SourceSpan, value.Method.TypeParamsAST, mark)
+			markTypeParameterUses(file.Tokens, functionTypeParams, value.SourceSpan, mark)
+			markParameters(file.Tokens, value.Method.ParameterAST, value.Method.ParametersSpan, mark)
+		case *compiler.MixedDecl:
+			for _, function := range value.Functions {
+				if function == nil {
+					continue
+				}
+				mark(function.Method.NameSpan, semanticFunction, modifierDeclaration)
+				functionTypeParams := markDeclaredTypeParameters(file.Tokens, function.Name, function.SourceSpan, function.Method.TypeParamsAST, mark)
+				markTypeParameterUses(file.Tokens, functionTypeParams, function.SourceSpan, mark)
+				markParameters(file.Tokens, function.Method.ParameterAST, function.Method.ParametersSpan, mark)
+			}
 		case *compiler.ExtendDecl:
 			for _, method := range value.Methods {
 				methodNames[method.Name] = true
 				mark(method.NameSpan, semanticMethod, modifierDeclaration)
-				markParameters(method.ParameterAST, mark)
+				methodTypeParams := markDeclaredTypeParameters(file.Tokens, method.Name, method.SpanValue, method.TypeParamsAST, mark)
+				markTypeParameterUses(file.Tokens, methodTypeParams, method.SpanValue, mark)
+				markParameters(file.Tokens, method.ParameterAST, method.ParametersSpan, mark)
 			}
 		}
 	}
@@ -352,13 +505,153 @@ func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
 	}
 }
 
-func markParameters(parameters []compiler.ParameterNode, mark func(compiler.Span, int, int)) {
+func markDeclaredTypeParameters(tokens []compiler.Token, declarationName string, bounds compiler.Span, parameters []compiler.TypeParameterNode, mark func(compiler.Span, int, int)) map[string]compiler.Span {
+	if len(parameters) == 0 || declarationName == "" {
+		return nil
+	}
+	names := make(map[string]bool, len(parameters))
+	for _, parameter := range parameters {
+		if parameter.Name != "" {
+			names[parameter.Name] = true
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+
+	// Go++ places generic parameters directly after the class or function name.
+	// Find that bracket list in source tokens rather than using TypeParameterNode
+	// spans, which are relative to the parsed type-parameter fragment.
+	nameIndex := -1
+	for index, token := range tokens {
+		if token.Span.Start >= bounds.Start && token.Span.Start < bounds.End && token.Kind == compiler.TokenIdentifier && token.Text == declarationName {
+			nameIndex = index
+			break
+		}
+	}
+	if nameIndex < 0 {
+		return nil
+	}
+	open := nameIndex + 1
+	for open < len(tokens) && tokens[open].Span.Start < bounds.End && tokens[open].Text != "[" && tokens[open].Text != "(" && tokens[open].Text != "{" {
+		open++
+	}
+	if open >= len(tokens) || tokens[open].Span.Start >= bounds.End || tokens[open].Text != "[" {
+		return nil
+	}
+	depth := 0
+	close := -1
+	for index := open; index < len(tokens) && tokens[index].Span.Start < bounds.End; index++ {
+		switch tokens[index].Text {
+		case "[":
+			depth++
+		case "]":
+			depth--
+			if depth == 0 {
+				close = index
+				index = len(tokens)
+			}
+		}
+	}
+	if close < 0 {
+		return nil
+	}
+
+	found := map[string]compiler.Span{}
+	segmentStart := open + 1
+	depth = 0
+	markSegment := func(end int) {
+		for index := segmentStart; index < end; index++ {
+			if tokens[index].Kind != compiler.TokenIdentifier {
+				continue
+			}
+			if names[tokens[index].Text] {
+				found[tokens[index].Text] = tokens[index].Span
+				mark(tokens[index].Span, semanticTypeParameter, modifierDeclaration)
+			}
+			break
+		}
+	}
+	for index := open + 1; index <= close; index++ {
+		if index == close {
+			markSegment(index)
+			break
+		}
+		switch tokens[index].Text {
+		case "[", "(", "{":
+			depth++
+		case "]", ")", "}":
+			if depth > 0 {
+				depth--
+			}
+		case ",":
+			if depth == 0 {
+				markSegment(index)
+				segmentStart = index + 1
+			}
+		}
+	}
+	return found
+}
+
+func markTypeParameterUses(tokens []compiler.Token, declarations map[string]compiler.Span, bounds compiler.Span, mark func(compiler.Span, int, int)) {
+	if len(declarations) == 0 {
+		return
+	}
+	for _, token := range tokens {
+		declaration, ok := declarations[token.Text]
+		if token.Span.Start < bounds.Start || token.Span.End > bounds.End || token.Kind != compiler.TokenIdentifier || !ok || token.Span.Start == declaration.Start {
+			continue
+		}
+		mark(token.Span, semanticTypeParameter, 0)
+	}
+}
+
+func markParameters(tokens []compiler.Token, parameters []compiler.ParameterNode, bounds compiler.Span, mark func(compiler.Span, int, int)) {
+	searchFrom := bounds.Start
 	for _, parameter := range parameters {
 		if parameter.Name == "" {
 			continue
 		}
-		mark(parameter.SpanValue, semanticParameter, modifierDeclaration)
+		for _, token := range tokens {
+			if token.Span.Start < searchFrom || token.Span.Start < bounds.Start || token.Span.End > bounds.End {
+				continue
+			}
+			if token.Kind != compiler.TokenIdentifier || token.Text != parameter.Name {
+				continue
+			}
+			mark(token.Span, semanticParameter, modifierDeclaration)
+			searchFrom = token.Span.End
+			break
+		}
 	}
+}
+
+func parameterListSpan(tokens []compiler.Token, bounds compiler.Span, declarationKeyword string) compiler.Span {
+	for index, token := range tokens {
+		if token.Span.Start < bounds.Start || token.Span.Start >= bounds.End || token.Text != declarationKeyword {
+			continue
+		}
+		for open := index + 1; open < len(tokens) && tokens[open].Span.Start < bounds.End; open++ {
+			if tokens[open].Text != "(" {
+				continue
+			}
+			depth := 1
+			for close := open + 1; close < len(tokens) && tokens[close].Span.Start < bounds.End; close++ {
+				switch tokens[close].Text {
+				case "(":
+					depth++
+				case ")":
+					depth--
+					if depth == 0 {
+						return compiler.Span{Start: tokens[open].Span.End, End: tokens[close].Span.Start}
+					}
+				}
+			}
+			return compiler.Span{}
+		}
+	}
+	return compiler.Span{}
 }
 
 func firstIdentifierInSpan(tokens []compiler.Token, span compiler.Span) compiler.Span {

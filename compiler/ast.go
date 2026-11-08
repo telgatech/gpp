@@ -67,6 +67,7 @@ type Decl interface {
 type MixedDecl struct {
 	GoASTDecls   []ast.Decl
 	GoASTFileSet *token.FileSet
+	Doc          string
 	// Functions are structured metadata for top-level Go++ functions contained
 	// by this source declaration. MixedDecl remains the compatibility container
 	// while transformations still need to see adjacent top-level declarations
@@ -97,6 +98,7 @@ func (declaration *MixedDecl) Span() Span {
 type GoDecl struct {
 	Declarations         []ast.Decl
 	FileSet              *token.FileSet
+	Doc                  string
 	Tokens               []Token
 	AnnotationPlacements []AnnotationPlacement
 	Owner                *File
@@ -120,6 +122,7 @@ func (declaration *GoDecl) Span() Span {
 // only for exact source spans and comments.
 type ValueDecl struct {
 	Keyword    string
+	Doc        string
 	Names      []Token
 	Type       TypeNode
 	Values     []ExprNode
@@ -267,6 +270,7 @@ func (declaration *EnumDecl) Span() Span {
 
 type EnumMember struct {
 	Name        string
+	NameSpan    Span
 	ValueAST    ExprNode
 	ValueTokens []Token
 	Doc         string

@@ -8,9 +8,67 @@ import (
 // DiagnosticError carries a source location separately from the diagnostic
 // message so each compiler frontend and output surface can share one format.
 type DiagnosticError struct {
-	File  string
-	Span  Span
-	Cause error
+	File    string
+	Span    Span
+	Cause   error
+	Related []RelatedDiagnostic
+}
+
+// RelatedDiagnostic carries a secondary source position associated with a
+// primary diagnostic, such as the first declaration in a duplicate-name error.
+type RelatedDiagnostic struct {
+	File    string
+	Span    Span
+	Message string
+}
+
+// DiagnosticErrors groups independent source diagnostics while preserving the
+// first diagnostic as the ordinary error string used by command-line builds.
+type DiagnosticErrors struct {
+	Errors []error
+}
+
+func (diagnostics DiagnosticErrors) Error() string {
+	if len(diagnostics.Errors) == 0 {
+		return ""
+	}
+	return diagnostics.Errors[0].Error()
+}
+
+func (diagnostics DiagnosticErrors) Unwrap() []error {
+	return append([]error(nil), diagnostics.Errors...)
+}
+
+// NewDiagnosticErrors keeps the compiler's single-error behavior when there is
+// only one diagnostic and groups multiple independent diagnostics otherwise.
+func NewDiagnosticErrors(diagnostics []error) error {
+	filtered := make([]error, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic != nil {
+			filtered = append(filtered, diagnostic)
+		}
+	}
+	switch len(filtered) {
+	case 0:
+		return nil
+	case 1:
+		return filtered[0]
+	default:
+		return DiagnosticErrors{Errors: filtered}
+	}
+}
+
+// DiagnosticsOf returns independent diagnostics carried by an error, or the
+// original error as a single diagnostic when it is not a diagnostic group.
+func DiagnosticsOf(err error) []error {
+	if err == nil {
+		return nil
+	}
+	var diagnostics DiagnosticErrors
+	if errors.As(err, &diagnostics) {
+		return append([]error(nil), diagnostics.Errors...)
+	}
+	return []error{err}
 }
 
 func (diagnostic DiagnosticError) Error() string {
@@ -51,6 +109,16 @@ func PositionOfDiagnostic(err error) (DiagnosticPosition, bool) {
 		return DiagnosticPosition{}, false
 	}
 	return DiagnosticPosition{File: diagnostic.File, Span: diagnostic.Span, Message: errorMessage(diagnostic.Cause)}, true
+}
+
+// RelatedPositionsOfDiagnostic returns structured secondary positions without
+// parsing the user-facing error message.
+func RelatedPositionsOfDiagnostic(err error) []RelatedDiagnostic {
+	var diagnostic DiagnosticError
+	if !errors.As(err, &diagnostic) {
+		return nil
+	}
+	return append([]RelatedDiagnostic(nil), diagnostic.Related...)
 }
 
 // FileError adds file context to errors that do not describe a source location,
@@ -129,6 +197,18 @@ func diagnosticAt(file string, span Span, err error) error {
 // diagnostics that need to share the compiler's source-location formatter.
 func NewDiagnosticError(file string, span Span, cause error) error {
 	return diagnosticAt(file, span, cause)
+}
+
+// NewDiagnosticErrorWithRelated creates a source diagnostic with secondary
+// source locations that editor clients can present as related information.
+func NewDiagnosticErrorWithRelated(file string, span Span, cause error, related []RelatedDiagnostic) error {
+	err := diagnosticAt(file, span, cause)
+	var diagnostic DiagnosticError
+	if errors.As(err, &diagnostic) {
+		diagnostic.Related = append([]RelatedDiagnostic(nil), related...)
+		return diagnostic
+	}
+	return err
 }
 
 func rebaseDiagnosticToSource(err error, file string, base Span) error {

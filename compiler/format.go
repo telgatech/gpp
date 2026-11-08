@@ -358,6 +358,7 @@ func templateBodySpan(source string, start int) (int, int, int, bool) {
 
 func canonicalizeFormatLine(line string) string {
 	line = collapseCodeWhitespace(line)
+	line = canonicalizeClassHeaderSpacing(line)
 	if formatted, ok := formatGoCompatibleStatement(line); ok {
 		line = formatted
 	} else if formatted, ok := formatGoCompatibleFunctionHeader(line); ok {
@@ -416,6 +417,32 @@ func canonicalizeFormatLine(line string) string {
 		}
 	}
 	return line
+}
+
+func canonicalizeClassHeaderSpacing(line string) string {
+	if !strings.HasPrefix(line, "class ") {
+		return line
+	}
+
+	nameStart := len("class ")
+	_, nameLength := readIdent(line[nameStart:])
+	if nameLength == 0 {
+		return line
+	}
+	nameEnd := nameStart + nameLength
+	colon := nameEnd
+	for colon < len(line) && (line[colon] == ' ' || line[colon] == '\t') {
+		colon++
+	}
+	if colon >= len(line) || line[colon] != ':' {
+		return line
+	}
+
+	parent := colon + 1
+	for parent < len(line) && (line[parent] == ' ' || line[parent] == '\t') {
+		parent++
+	}
+	return line[:nameEnd] + " : " + line[parent:]
 }
 
 func formatGoCompatibleFunctionHeader(line string) (string, bool) {

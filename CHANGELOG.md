@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-08
+
+- Expanded LSP editor support with semantic token range and delta updates, inlay hints, selection ranges, code lenses, signature help, inline completions, and range/on-type formatting.
+- Added workspace-aware Go++ and native Go hover, completion, navigation, references, rename, type/call hierarchy, and implementation support across files and packages.
+- Improved LSP code actions and diagnostics, including generated-Go type errors, pull diagnostics, watched-file and workspace-folder updates, and request cancellation.
+- Fixed formatter spacing around inheritance colons in class declarations.
+
 ## 2026-11-07
 
 - Fixed resolution of module-local package references during inheritance analysis, including transitive parents and method types from their declaring packages. This works across same-directory packages, conventional directory layouts, and multi-file dotted packages.

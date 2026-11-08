@@ -62,6 +62,38 @@ func Load(id int) (User, error) { return User(), nil }
 	}
 }
 
+func TestBuildDocIndexIncludesGoTypesAndValues(t *testing.T) {
+	file, err := ParseFile("native_symbols.gpp", `package docs
+
+// MaxItems is the default number of items to return.
+const MaxItems = 64
+
+// MaxBatch is the maximum batch size.
+const (
+	MaxBatch = 16
+)
+
+// UserID is the stable identifier used by the Go API.
+type UserID int64
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := BuildDocIndex([]*File{file})
+	constant := index.Find("MaxItems", true)
+	if len(constant) != 1 || constant[0].Kind != DocValue || constant[0].Signature != "const MaxItems = 64" || !strings.Contains(constant[0].Doc, "default number") {
+		t.Fatalf("Go constant should be indexed with signature and docs: %#v", constant)
+	}
+	groupedConstant := index.Find("MaxBatch", true)
+	if len(groupedConstant) != 1 || groupedConstant[0].Kind != DocValue || !strings.Contains(groupedConstant[0].Signature, "MaxBatch = 16") || !strings.Contains(groupedConstant[0].Doc, "maximum batch") {
+		t.Fatalf("grouped Go constant should be indexed with signature and docs: %#v", groupedConstant)
+	}
+	typeSymbol := index.Find("UserID", true)
+	if len(typeSymbol) != 1 || typeSymbol[0].Kind != DocType || typeSymbol[0].Signature != "type UserID int64" || !strings.Contains(typeSymbol[0].Doc, "stable identifier") {
+		t.Fatalf("Go type should be indexed with signature and docs: %#v", typeSymbol)
+	}
+}
+
 func TestCompileFilesSupportsTemplateReload(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3465,6 +3497,50 @@ func main() {
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("static Self output did not compile and run: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesInheritedStaticSelfFactoryReturnsCallingClassPointer(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+class EntityFactory {
+    static func New() *self {
+        return new(self)
+    }
+}
+
+class User : EntityFactory {
+    Name string
+}
+
+func main() {
+    user := User.New()
+    user.Name = "Ada"
+    if user.Name != "Ada" {
+        panic("factory did not return a *User")
+    }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("documented inherited static self factory should compile: %v", err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "GppStatic_EntityFactory_New[User]") {
+		t.Fatalf("factory call should specialize self to User:\n%s", generated)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("documented inherited static self factory did not run: %v\n%s", err, output)
 	}
 }
 

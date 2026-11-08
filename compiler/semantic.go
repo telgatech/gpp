@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -58,16 +59,21 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 // ResolveProgramWithModulePath resolves Go++ package imports that point to
 // packages in the current module as well as bundled standard-library packages.
 func ResolveProgramWithModulePath(program *Program, modulePath string) (*SemanticModel, error) {
+	var importDiagnostics []error
 	for _, file := range program.Files {
 		if err := validateImportNames(file); err != nil {
-			return nil, err
+			importDiagnostics = append(importDiagnostics, err)
 		}
+	}
+	if err := NewDiagnosticErrors(importDiagnostics); err != nil {
+		return nil, err
 	}
 
 	model := &SemanticModel{
 		Packages: map[string]*PackageSymbols{},
 	}
 
+	var declarationDiagnostics []error
 	for _, file := range program.Files {
 		pkg, ok := model.Packages[file.Package]
 		if !ok {
@@ -94,7 +100,8 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			if annotation, ok := decl.(*AnnotationDecl); ok {
 				annotation.Package = file.Package
 				if previous, exists := pkg.Annotations[annotation.Name]; exists {
-					return nil, annotationDeclarationDiagnostic(annotation, fmt.Errorf("duplicate annotation %s in package %s; first declared in %s", annotation.Name, file.Package, annotationLocation(previous)))
+					declarationDiagnostics = append(declarationDiagnostics, annotationDeclarationDiagnostic(annotation, fmt.Errorf("duplicate annotation %s in package %s; first declared in %s", annotation.Name, file.Package, annotationLocation(previous))))
+					continue
 				}
 				pkg.Annotations[annotation.Name] = annotation
 				continue
@@ -144,7 +151,8 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			if embed, ok := decl.(*EmbedDecl); ok {
 				for _, entry := range embed.Entries {
 					if previous, exists := pkg.Embeds[entry.Name]; exists {
-						return nil, embedEntryDiagnostic(entry, fmt.Errorf("duplicate embed symbol %s in package %s; first declared in %s", entry.Name, file.Package, embedEntryLocation(previous)))
+						declarationDiagnostics = append(declarationDiagnostics, embedEntryDiagnostic(entry, fmt.Errorf("duplicate embed symbol %s in package %s; first declared in %s", entry.Name, file.Package, embedEntryLocation(previous))))
+						continue
 					}
 					pkg.Embeds[entry.Name] = entry
 				}
@@ -152,16 +160,23 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			}
 			if template, ok := decl.(*TemplateDecl); ok {
 				if previous, exists := pkg.Templates[template.Name]; exists {
-					return nil, templateDiagnosticf(template, "duplicate template %s in package %s; first declared in %s:%d", template.Name, file.Package, previous.SourceFile, previous.SourceLine)
+					declarationDiagnostics = append(declarationDiagnostics, templateDiagnosticf(template, "duplicate template %s in package %s; first declared in %s:%d", template.Name, file.Package, previous.SourceFile, previous.SourceLine))
+					continue
 				}
+				pathConflict := false
 				if currentPath := templatePath(template); currentPath != "" {
 					for _, previous := range pkg.TemplateOrder {
 						previousPath := templatePath(previous)
 						if previousPath == "" || !sameTemplatePathPattern(currentPath, previousPath) {
 							continue
 						}
-						return nil, templatePathDiagnostic(template, fmt.Errorf("duplicate template path %q; conflicts with %s at %s", normalizeTemplatePathPattern(currentPath), previous.Name, templatePathLocation(previous)))
+						declarationDiagnostics = append(declarationDiagnostics, templatePathDiagnostic(template, fmt.Errorf("duplicate template path %q; conflicts with %s at %s", normalizeTemplatePathPattern(currentPath), previous.Name, templatePathLocation(previous))))
+						pathConflict = true
+						break
 					}
+				}
+				if pathConflict {
+					continue
 				}
 				pkg.Templates[template.Name] = template
 				pkg.TemplateOrder = append(pkg.TemplateOrder, template)
@@ -173,7 +188,8 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			}
 			if enum, ok := decl.(*EnumDecl); ok {
 				if _, exists := pkg.Enums[enum.Name]; exists || pkg.Classes[enum.Name] != nil {
-					return nil, diagnosticAt(enum.SourceFile, enum.Span(), fmt.Errorf("duplicate type %s in package %s", enum.Name, file.Package))
+					declarationDiagnostics = append(declarationDiagnostics, diagnosticAt(enum.SourceFile, enum.Span(), fmt.Errorf("duplicate type %s in package %s", enum.Name, file.Package)))
+					continue
 				}
 				pkg.Enums[enum.Name] = enum
 				pkg.Types[enum.Name] = true
@@ -185,11 +201,18 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			}
 
 			if _, exists := pkg.Enums[class.Name]; exists {
-				return nil, classDiagnosticf(class, "duplicate type %s in package %s", class.Name, file.Package)
+				declarationDiagnostics = append(declarationDiagnostics, classDiagnosticf(class, "duplicate type %s in package %s", class.Name, file.Package))
+				continue
 			}
 
 			if previous, exists := pkg.Classes[class.Name]; exists {
-				return nil, classDiagnosticf(class, "duplicate class %s in package %s; first declared in %s", class.Name, file.Package, classLocation(previous))
+				relatedFile := previous.SourceFile
+				if previous.Owner != nil && previous.Owner.SourcePath != "" {
+					relatedFile = previous.Owner.SourcePath
+				}
+				cause := fmt.Errorf("duplicate class %s in package %s; first declared in %s", class.Name, file.Package, classLocation(previous))
+				declarationDiagnostics = append(declarationDiagnostics, NewDiagnosticErrorWithRelated(class.SourceFile, completeSpan(class.Span(), class.SourceLine), cause, []RelatedDiagnostic{{File: relatedFile, Span: completeSpan(previous.Span(), previous.SourceLine), Message: "first declaration is here"}}))
+				continue
 			}
 
 			pkg.Classes[class.Name] = class
@@ -242,6 +265,9 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			}
 		}
 	}
+	if err := NewDiagnosticErrors(declarationDiagnostics); err != nil {
+		return nil, err
+	}
 	for _, pkg := range model.Packages {
 		for alias, importPath := range pkg.Imports {
 			logical, ok := logicalPackageForImport(importPath, modulePath, model)
@@ -261,69 +287,100 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 		}
 	}
 
-	for _, pkg := range model.Packages {
-		for name, template := range pkg.Templates {
+	var diagnostics []error
+	packageNames := make([]string, 0, len(model.Packages))
+	for name := range model.Packages {
+		packageNames = append(packageNames, name)
+	}
+	sort.Strings(packageNames)
+	for _, packageName := range packageNames {
+		pkg := model.Packages[packageName]
+		templateNames := make([]string, 0, len(pkg.Templates))
+		for name := range pkg.Templates {
+			templateNames = append(templateNames, name)
+		}
+		sort.Strings(templateNames)
+		for _, name := range templateNames {
+			template := pkg.Templates[name]
 			_, embedExists := pkg.Embeds[name]
 			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] || embedExists {
-				return nil, templateDiagnosticf(template, "duplicate template %s in package %s", name, pkg.Name)
+				diagnostics = append(diagnostics, templateDiagnosticf(template, "duplicate template %s in package %s", name, pkg.Name))
 			}
 			if _, imported := pkg.Imports[name]; imported {
-				return nil, templateDiagnosticf(template, "template %s conflicts with import in package %s", name, pkg.Name)
+				diagnostics = append(diagnostics, templateDiagnosticf(template, "template %s conflicts with import in package %s", name, pkg.Name))
 			}
 			if template.Layout != "" {
 				layout, exists := pkg.Templates[template.Layout]
 				if !exists {
-					return nil, templateDiagnosticf(template, "layout template %s does not exist in package %s", template.Layout, pkg.Name)
-				}
-				if layout.Name == template.Name {
-					return nil, templateDiagnosticf(template, "template cannot use itself as a layout")
-				}
-				if len(layout.ParameterAST) > 0 {
-					return nil, templateDiagnosticf(template, "layout template %s must not declare parameters", template.Layout)
+					diagnostics = append(diagnostics, templateDiagnosticf(template, "layout template %s does not exist in package %s", template.Layout, pkg.Name))
+				} else {
+					if layout.Name == template.Name {
+						diagnostics = append(diagnostics, templateDiagnosticf(template, "template cannot use itself as a layout"))
+					}
+					if len(layout.ParameterAST) > 0 {
+						diagnostics = append(diagnostics, templateDiagnosticf(template, "layout template %s must not declare parameters", template.Layout))
+					}
 				}
 			}
 		}
-		for name, entry := range pkg.Embeds {
+		embedNames := make([]string, 0, len(pkg.Embeds))
+		for name := range pkg.Embeds {
+			embedNames = append(embedNames, name)
+		}
+		sort.Strings(embedNames)
+		for _, name := range embedNames {
+			entry := pkg.Embeds[name]
 			_, templateExists := pkg.Templates[name]
 			if pkg.Classes[name] != nil || pkg.Enums[name] != nil || pkg.Types[name] || pkg.Values[name] || templateExists {
-				return nil, embedEntryDiagnostic(entry, fmt.Errorf("duplicate embed symbol %s in package %s", name, pkg.Name))
+				diagnostics = append(diagnostics, embedEntryDiagnostic(entry, fmt.Errorf("duplicate embed symbol %s in package %s", name, pkg.Name)))
 			}
 			if _, imported := pkg.Imports[name]; imported {
-				return nil, embedEntryDiagnostic(entry, fmt.Errorf("embed symbol %s conflicts with import in package %s", name, pkg.Name))
+				diagnostics = append(diagnostics, embedEntryDiagnostic(entry, fmt.Errorf("embed symbol %s conflicts with import in package %s", name, pkg.Name)))
 			}
 		}
-		for _, class := range pkg.Classes {
-			if err := validateClass(pkg, class); err != nil {
-				return nil, err
+		classNames := make([]string, 0, len(pkg.Classes))
+		for name := range pkg.Classes {
+			classNames = append(classNames, name)
+		}
+		sort.Strings(classNames)
+		var classDiagnostics []error
+		for _, name := range classNames {
+			if err := validateClass(pkg, pkg.Classes[name]); err != nil {
+				classDiagnostics = append(classDiagnostics, err)
 			}
 		}
-
-		if err := validateInheritanceCycles(pkg); err != nil {
-			return nil, err
-		}
-
-		for _, class := range pkg.Classes {
-			if err := validateAmbiguousMemberAccess(model, pkg, class); err != nil {
-				return nil, err
+		diagnostics = append(diagnostics, classDiagnostics...)
+		if len(classDiagnostics) == 0 {
+			if err := validateInheritanceCycles(pkg); err != nil {
+				diagnostics = append(diagnostics, err)
+			} else {
+				for _, name := range classNames {
+					if err := validateAmbiguousMemberAccess(model, pkg, pkg.Classes[name]); err != nil {
+						diagnostics = append(diagnostics, err)
+					}
+				}
 			}
 		}
 
 		if err := validateExtensions(pkg); err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, DiagnosticsOf(err)...)
 		}
 		if err := validateAnnotationDeclarations(pkg); err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, err)
 		}
 		for _, file := range program.Files {
 			if file.Package != pkg.Name {
 				continue
 			}
 			if err := validateFileAnnotations(file, pkg, pkg.Annotations, true); err != nil {
-				return nil, err
+				diagnostics = append(diagnostics, err)
 			}
 		}
 	}
 	if err := validateHTTPDocumentation(program, model); err != nil {
+		diagnostics = append(diagnostics, err)
+	}
+	if err := NewDiagnosticErrors(diagnostics); err != nil {
 		return nil, err
 	}
 
@@ -632,39 +689,46 @@ func skipSemanticBalanced(tokens []Token, open int, opening, closing string) int
 
 func validateExtensions(pkg *PackageSymbols) error {
 	seen := map[string]bool{}
+	var diagnostics []error
 	for _, extension := range pkg.Extensions {
 		targetNames := extensionTargetNames(extension)
 		if len(targetNames) == 0 {
-			return extensionDiagnosticf(extension, "extension target cannot be empty")
+			diagnostics = append(diagnostics, extensionDiagnosticf(extension, "extension target cannot be empty"))
+			continue
 		}
 		targets := map[string]bool{}
+		uniqueTargets := make([]string, 0, len(targetNames))
 		for _, rawTarget := range targetNames {
 			target := strings.TrimSpace(rawTarget)
 			if target == "" {
-				return extensionDiagnosticf(extension, "extension target cannot be empty")
+				diagnostics = append(diagnostics, extensionDiagnosticf(extension, "extension target cannot be empty"))
+				continue
 			}
 			normalized := normalizeExtensionTarget(target)
 			if targets[normalized] {
-				return extensionDiagnosticf(extension, "duplicate extension target %s", target)
+				diagnostics = append(diagnostics, extensionDiagnosticf(extension, "duplicate extension target %s", target))
+				continue
 			}
 			targets[normalized] = true
+			uniqueTargets = append(uniqueTargets, target)
 		}
 		for _, method := range extension.Methods {
 			parameters, err := parameterInfosForMethod(method)
 			if err != nil {
-				return extensionDiagnosticf(extension, "extension %s.%s has invalid parameters: %w", strings.Join(targetNames, ", "), method.Name, err)
+				diagnostics = append(diagnostics, extensionDiagnosticf(extension, "extension %s.%s has invalid parameters: %w", strings.Join(targetNames, ", "), method.Name, err))
+				continue
 			}
-			for _, rawTarget := range targetNames {
-				target := strings.TrimSpace(rawTarget)
+			for _, target := range uniqueTargets {
 				key := normalizeExtensionTarget(target) + "/" + method.Name + "/" + parameterSignatureKey(parameters)
 				if seen[key] {
-					return extensionDiagnosticf(extension, "extension method %s for %s is declared more than once with parameter types %s", method.Name, target, parameterSignatureKey(parameters))
+					diagnostics = append(diagnostics, extensionDiagnosticf(extension, "extension method %s for %s is declared more than once with parameter types %s", method.Name, target, parameterSignatureKey(parameters)))
+					continue
 				}
 				seen[key] = true
 			}
 		}
 	}
-	return nil
+	return NewDiagnosticErrors(diagnostics)
 }
 
 func normalizeExtensionTarget(target string) string {

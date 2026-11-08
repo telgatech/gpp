@@ -71,6 +71,34 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 			return err
 		}
 	}
+	program := &Program{}
+	parseCacheDir := ""
+	if options.IncrementalOutput {
+		parseCacheDir = outputDir
+	}
+	parsedFiles, err := parseInputFiles(files, parseCacheDir)
+	if err != nil {
+		return err
+	}
+	program.Files = parsedFiles
+	options.CleanOutput = false
+	return CompileProgramWithOptions(program, outputDir, options)
+}
+
+// CompileProgramWithOptions emits an already parsed program. The program must
+// contain only the Go++ source files supplied by the caller; compiler-owned
+// standard library sources are added here just as they are for CompileFiles.
+// This entry point lets editor integrations compile unsaved buffers without
+// writing those buffers over the user's files.
+func CompileProgramWithOptions(program *Program, outputDir string, options CompileOptions) error {
+	if program == nil {
+		return fmt.Errorf("cannot compile a nil program")
+	}
+	if options.CleanOutput {
+		if err := cleanGeneratedOutput(outputDir); err != nil {
+			return err
+		}
+	}
 	previousGeneratedFiles := map[string]bool{}
 	previousPackages := map[string]generatedPackageOutput{}
 	if options.IncrementalOutput && !options.CleanOutput {
@@ -104,16 +132,6 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 		return nil
 	}
 
-	program := &Program{}
-	parseCacheDir := ""
-	if options.IncrementalOutput {
-		parseCacheDir = outputDir
-	}
-	parsedFiles, err := parseInputFiles(files, parseCacheDir)
-	if err != nil {
-		return err
-	}
-	program.Files = parsedFiles
 	if !options.NoStdlib {
 		if err := appendOfficialStdlib(program); err != nil {
 			return err

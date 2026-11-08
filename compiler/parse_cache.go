@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 )
 
-const parsedFileCacheVersion = 3
+const parsedFileCacheVersion = 4
 
 type parsedFileCacheEntry struct {
 	Version  int
@@ -35,6 +35,7 @@ type gobGoDecl struct {
 	Declarations         []ast.Decl
 	Tokens               []Token
 	AnnotationPlacements []AnnotationPlacement
+	Doc                  string
 	SourceSpan           Span
 	SourceFile           string
 	SourceLine           int
@@ -45,6 +46,7 @@ type gobMixedDecl struct {
 	Functions            []*FunctionDecl
 	Tokens               []Token
 	AnnotationPlacements []AnnotationPlacement
+	Doc                  string
 	SourceSpan           Span
 	SourceFile           string
 	SourceLine           int
@@ -67,6 +69,7 @@ func (declaration *GoDecl) GobEncode() ([]byte, error) {
 		Declarations:         declaration.Declarations,
 		Tokens:               declaration.Tokens,
 		AnnotationPlacements: declaration.AnnotationPlacements,
+		Doc:                  declaration.Doc,
 		SourceSpan:           declaration.SourceSpan,
 		SourceFile:           declaration.SourceFile,
 		SourceLine:           declaration.SourceLine,
@@ -82,6 +85,7 @@ func (declaration *GoDecl) GobDecode(data []byte) error {
 	declaration.Declarations = decoded.Declarations
 	declaration.Tokens = decoded.Tokens
 	declaration.AnnotationPlacements = decoded.AnnotationPlacements
+	declaration.Doc = decoded.Doc
 	declaration.SourceSpan = decoded.SourceSpan
 	declaration.SourceFile = decoded.SourceFile
 	declaration.SourceLine = decoded.SourceLine
@@ -95,6 +99,7 @@ func (declaration *MixedDecl) GobEncode() ([]byte, error) {
 		Functions:            declaration.Functions,
 		Tokens:               declaration.Tokens,
 		AnnotationPlacements: declaration.AnnotationPlacements,
+		Doc:                  declaration.Doc,
 		SourceSpan:           declaration.SourceSpan,
 		SourceFile:           declaration.SourceFile,
 		SourceLine:           declaration.SourceLine,
@@ -111,6 +116,7 @@ func (declaration *MixedDecl) GobDecode(data []byte) error {
 	declaration.Functions = decoded.Functions
 	declaration.Tokens = decoded.Tokens
 	declaration.AnnotationPlacements = decoded.AnnotationPlacements
+	declaration.Doc = decoded.Doc
 	declaration.SourceSpan = decoded.SourceSpan
 	declaration.SourceFile = decoded.SourceFile
 	declaration.SourceLine = decoded.SourceLine
