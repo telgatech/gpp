@@ -841,7 +841,7 @@ Canonical inline usage:
 tpl.Execute(w, source, data)
 ```
 
-where `data` is a struct, class, record, map, or other suitable aggregate.
+where `data` is a struct, class, struct, map, or other suitable aggregate.
 
 The variadic signature remains necessary for registered typed templates.
 

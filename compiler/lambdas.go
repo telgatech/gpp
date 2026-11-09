@@ -1182,7 +1182,7 @@ func specializeExtensionLambdaParameterForCall(extension extensionMethod, parame
 	expected := substituteLambdaType(parameters[parameterIndex].typeText(), targetBindings)
 	expected = substituteLambdaType(expected, bindings)
 	lambda, ok := call.Arguments[parameterIndex].Value.(*LambdaExpr)
-	if !ok || lambda.BlockBody != nil || len(genericNames) == 0 {
+	if !ok || len(genericNames) == 0 {
 		return expected
 	}
 	function, err := parseLambdaFunctionType(expected)
@@ -1201,7 +1201,7 @@ func specializeExtensionLambdaParameterForCall(extension extensionMethod, parame
 			parameterTypes[lambdaParameter.Name] = function.Parameters[index]
 		}
 	}
-	actualResult := lambdaExpressionTypeAST(lambda.Body, parameterTypes, context)
+	actualResult := lambdaResultTypeNodeAST(lambda, parameterTypes, context)
 	if actualResult == nil {
 		return expected
 	}

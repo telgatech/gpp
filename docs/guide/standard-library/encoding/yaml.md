@@ -59,7 +59,7 @@ if config.Port == 0 { config.Port = 8080 }
 You can also emit a small diagnostic document without defining a class:
 
 ```go
-data := encoding.ToYAML(record(service: "catalog", ready: true))
+data := encoding.ToYAML(struct(service: "catalog", ready: true))
 fmt.Print(string(data))
 ```
 

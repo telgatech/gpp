@@ -3,7 +3,7 @@ layout: home
 
 hero:
   text: Go++
-  tagline: "Extends Go with classes, inheritance, generics, function overloading, named arguments, exceptions, extension methods, annotations, records, enums and more!"
+  tagline: "Extends Go with classes, inheritance, generics, function overloading, named arguments, exceptions, extension methods, annotations, anonymous structs, enums and more!"
   image:
     src: /go-gopher-superman.webp
     alt: Go's blue gopher mascot flying upward with a red cape
@@ -24,7 +24,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 <div class="catalog-footer-copy">
 <p class="catalog-footer-eyebrow"><span class="latest-change-ribbon">What's new</span> 2026-11-05</p>
 <h2>Typed database queries</h2>
-<p>Use <code>gpp/sql</code> with <code>db.Get[T]</code> and <code>db.Select[T]</code> for models, scalars, or inline record shapes.</p>
+<p>Use <code>gpp/sql</code> for typed scalar and struct queries; use <code>gpp/orm</code> for model-mapped queries and persistence.</p>
 </div>
 <div class="latest-change-actions">
 <a href="/features/sql">Explore typed queries <span aria-hidden="true">→</span></a>

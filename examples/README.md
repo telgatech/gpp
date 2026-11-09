@@ -37,8 +37,8 @@ The examples cover:
 - `polymorphism.gpp` — derived instances flowing through base-typed variables,
   parameters, results, and fields; virtual dispatch and shared mutation.
 - `safe_access.gpp` — explicit `?.` safe access for nullable class values.
-- `records.gpp` — anonymous structural records, nested records, inferred
-  return types, `let` bindings, and capitalization-based field visibility.
+- `structs.gpp` — named and anonymous structs flowing through function
+  parameters and return values.
 - `introspection.gpp` — runtime class names, parent classes, inherited field
   ownership and access, method and parameter metadata, and annotation lookup.
 - `extension_methods.gpp` — extensions on strings and Go++ classes.
@@ -51,11 +51,12 @@ The examples cover:
 - `annotation_inheritance.gpp` — direct class annotations, inherited field and
   method metadata, original owners, parameter annotations, and unannotated
   overrides.
-- `orm.gpp` — a mini in-memory SQLite app using `gpp/sql` typed queries and
-  `gpp/orm` model helpers,
+- `orm.gpp` — a mini in-memory SQLite app using `gpp/sql` typed scalar/struct
+  queries and `gpp/orm` model helpers,
   annotated models, runtime metadata inspection, model validation, lifecycle
-  hooks, and ordinary `database/sql`, including `Get` for one model and
-  `Select` for model slices on both `*sql.DB` and `*sql.Tx`.
+  hooks, and ordinary `database/sql`, including condition-based model queries
+  and `orm.GetSQL`/`orm.SelectSQL` for full-SQL model queries on both `*sql.DB`
+  and `*sql.Tx`.
   It uses the pure-Go `modernc.org/sqlite` driver; `gpp build` and `gpp run`
   resolve it through `go mod tidy`.
   Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and

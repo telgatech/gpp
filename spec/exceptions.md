@@ -316,7 +316,7 @@ variable and writing a separate `errors.Is` check:
 try {
     user := LoadUser(id)
 } catch sql.ErrNoRows {
-    return ctx.JSON(404, record(Error: "user not found"))
+    return ctx.JSON(404, struct(Error: "user not found"))
 }
 ```
 

@@ -2181,7 +2181,7 @@ func lowerGenericRecordTypeArguments(callee ExprNode, context constructorContext
 			return original, false, nil
 		}
 		recordCall := call
-		if name, ok := call.Callee.(*NameExpr); !ok || name.Name != "record" {
+		if name, ok := call.Callee.(*NameExpr); !ok || !isAnonymousStructCall(name.Name) {
 			typeExpression, ok := call.Callee.(*TypeExpr)
 			if !ok {
 				return original, false, nil
@@ -2191,19 +2191,19 @@ func lowerGenericRecordTypeArguments(callee ExprNode, context constructorContext
 				return original, false, nil
 			}
 			namedType, ok := pointerType.Element.(*NamedType)
-			if !ok || len(namedType.Parts) != 1 || namedType.Parts[0] != "record" {
+			if !ok || !isAnonymousStructMarker(namedType.Parts) {
 				return original, false, nil
 			}
 			pointer = true
 			recordCall = &CallExpr{
-				Callee:    &NameExpr{Name: "record", SpanValue: call.Span()},
+				Callee:    &NameExpr{Name: "struct", SpanValue: call.Span()},
 				Arguments: call.Arguments,
 				SpanValue: call.Span(),
 			}
 		}
 		recordType := extensionASTTypeArgument(recordCall, context)
 		if recordType == nil {
-			return nil, false, fmt.Errorf("record type arguments require named fields with valid types")
+			return nil, false, fmt.Errorf("anonymous struct type arguments require named fields with valid types")
 		}
 		if pointer {
 			recordType = &PointerType{Element: recordType, SpanValue: original.Span()}
@@ -2287,7 +2287,7 @@ func lowerRecordCollectionTypeNode(literal *CompositeLiteralExpr, context constr
 		return nil
 	}
 	named, ok := (*element).(*NamedType)
-	if !ok || len(named.Parts) != 1 || named.Parts[0] != "record" {
+	if !ok || !isAnonymousStructMarker(named.Parts) {
 		return nil
 	}
 	for _, item := range literal.Elements {
@@ -2313,7 +2313,7 @@ func lowerRecordCallExprNode(call *CallExpr, context constructorContext) (ExprNo
 		return nil, false, nil
 	}
 	name, ok := call.Callee.(*NameExpr)
-	if !ok || name.Name != "record" {
+	if !ok || !isAnonymousStructCall(name.Name) {
 		return nil, false, nil
 	}
 	valueTypes := context.RecordValueTypes
@@ -2515,11 +2515,14 @@ func lowerExtensionArgumentNodes(call *CallExpr, parameters []parameterInfo, con
 	}
 
 	result := make([]CallArg, 0, len(args)+len(parameters))
-	lowerValue := func(expression ExprNode) (ExprNode, error) {
+	lowerValue := func(expression ExprNode, parameterIndex int) (ExprNode, error) {
+		if lambda, ok := expression.(*LambdaExpr); ok {
+			return lowerLambdaExprNode(lambda, context, lambdaFunctionTypesForCall(call, parameterIndex, context))
+		}
 		return lowerExceptionExprNode(expression, context)
 	}
 	for index := 0; index < fixedCount; index++ {
-		lowered, err := lowerValue(values[index])
+		lowered, err := lowerValue(values[index], index)
 		if err != nil {
 			return nil, true, err
 		}
@@ -2531,15 +2534,15 @@ func lowerExtensionArgumentNodes(call *CallExpr, parameters []parameterInfo, con
 			// A named variadic parameter is one slice argument, not a list of
 			// individual values. It is valid only when supplied explicitly.
 			if provided[fixedCount] {
-				lowered, err := lowerValue(values[fixedCount])
+				lowered, err := lowerValue(values[fixedCount], fixedCount)
 				if err != nil {
 					return nil, true, err
 				}
 				result = append(result, CallArg{Value: lowered})
 			}
 		} else {
-			for _, argument := range args[start:] {
-				lowered, err := lowerValue(argument.Value)
+			for argumentIndex, argument := range args[start:] {
+				lowered, err := lowerValue(argument.Value, start+argumentIndex)
 				if err != nil {
 					return nil, true, err
 				}
@@ -2552,7 +2555,7 @@ func lowerExtensionArgumentNodes(call *CallExpr, parameters []parameterInfo, con
 		if !provided[index] {
 			continue
 		}
-		lowered, err := lowerValue(values[index])
+		lowered, err := lowerValue(values[index], index)
 		if err != nil {
 			return nil, true, err
 		}

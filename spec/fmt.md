@@ -420,7 +420,7 @@ try {
 } catch e {
 }
 
-record(name: "Bob")
+struct(name: "Bob")
 
 template Page() {
 }
@@ -501,7 +501,7 @@ init
 annotations
 annotation declarations
 extend
-records
+anonymous structs
 enums
 templates
 try/catch/finally
@@ -536,7 +536,7 @@ Lowering loses source-level distinctions and cannot reliably reconstruct:
 ```text
 classes
 annotations
-records
+anonymous structs
 extension methods
 Go++ error syntax
 comments
@@ -827,18 +827,18 @@ extend *sql.DB, *sql.Tx {
 
 ---
 
-# 37. Records
+# 37. Anonymous structs
 
 Short:
 
 ```gpp
-result := record(name: "Bob", age: 42)
+result := struct(name: "Bob", age: 42)
 ```
 
 Long:
 
 ```gpp
-result := record(
+result := struct(
     Name: user.Name,
     Email: user.Email,
     CreatedAt: user.CreatedAt,
@@ -1272,7 +1272,7 @@ Go formatting infrastructure has no grammar or AST representation for:
 class
 annotation blocks
 extend
-record
+struct
 enum
 try/catch
 template

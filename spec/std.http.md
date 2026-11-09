@@ -24,7 +24,7 @@ Provides only language/runtime primitives such as:
 - inheritance
 - polymorphism
 - extension methods
-- records
+- structs
 - annotations
 - introspection
 - lambdas
@@ -614,7 +614,7 @@ Official libraries must operate through normal Go++ capabilities:
 - annotations
 - introspection
 - extension methods
-- records
+- structs
 - generics
 - Go interop
 
@@ -766,7 +766,7 @@ class App : http.Server @{
     func Health(ctx *http.Context) error @{
         http.GET("/health")
     } {
-        return ctx.JSON(record(
+        return ctx.JSON(struct(
             OK: true,
         ))
     }

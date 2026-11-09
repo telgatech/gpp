@@ -42,6 +42,7 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	}
 
 	context := localConstructorContext(model.Packages[file.Package].Classes)
+	context.StructConstructors = namedStructConstructors([]*File{file})
 	context.Enums = model.Packages[file.Package].Enums
 	context.Annotations = model.Packages[file.Package].Annotations
 	context.Package = file.Package
@@ -112,6 +113,7 @@ type overloadContext struct {
 
 type constructorContext struct {
 	Targets                    map[string]constructorTarget
+	StructConstructors         map[string][]constructorField
 	Enums                      map[string]*EnumDecl
 	Overloads                  overloadContext
 	FunctionSignatures         map[string][]callableSignature
@@ -286,7 +288,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		return nil, err
 	}
 	context.InterpolationName = interpolationName
-	if tokenSequence(file.Tokens, "record") || tokenSequence(file.Tokens, "let") {
+	if tokenSequence(file.Tokens, "record") || tokenSequence(file.Tokens, "struct", "(") || tokenSequence(file.Tokens, "let") {
 		if err := prepareRecordContextAST(file, context); err != nil {
 			return nil, err
 		}
@@ -1074,6 +1076,9 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			return "", diagnosticAt(d.SourceFile, span, fmt.Errorf("declaration has no structured AST representation"))
 
 		case *FunctionDecl:
+			if err := validateHookCallsFromFunction(d, context); err != nil {
+				return "", err
+			}
 			code, err := transformTopLevelDeclSource(d, context, interpolationName)
 			if err != nil {
 				return "", err
@@ -1237,6 +1242,9 @@ func goDeclNeedsLowering(declaration *GoDecl, node ast.Decl, context constructor
 			case "record", "let", "try", "throw", "??", "?.", "=>":
 				return true
 			}
+		}
+		if tokenSequence(declaration.Tokens, "struct", "(") {
+			return true
 		}
 		if tokensNeedInterpolationLowering(declaration.Tokens) {
 			return true
@@ -1613,6 +1621,13 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 }
 
 func emitClass(out *strings.Builder, file *File, class *ClassDecl, context constructorContext, interpolationName string) error {
+	classes := classesForClass(context, class)
+	for index := range class.Methods {
+		method := &class.Methods[index]
+		if err := validateHookCallsFromMethod(class, method, classes); err != nil {
+			return err
+		}
+	}
 	sourcePath := sourceDirectivePath(file)
 	emitSourceDirective(out, sourcePath, class.SourceLine)
 	classTypeParams, err := goTypeParameterNodesSource(class.TypeParamsAST)
@@ -1630,7 +1645,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		fmt.Fprintf(
 			out,
 			"\t%s %s%s\n",
-			field.Name,
+			generatedMemberName(field.Name),
 			fieldType,
 			serializationFieldTag(field.Annotations),
 		)
@@ -1647,7 +1662,6 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		}
 	}
 
-	classes := classesForClass(context, class)
 	methods, err := interfaceMethods(class, classes, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
@@ -1813,6 +1827,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		}
 		body, _ = wrapExceptionBoundaryBody(body, methodResult, methodContext)
 		body = qualifyImplicitClassFields(body, class, classesForClass(context, class), method)
+		body = rewriteProtectedMemberSource(body, class, classesForClass(context, class), method)
 
 		out.WriteString(body)
 
@@ -2224,6 +2239,13 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 			return nil, err
 		}
 		for _, method := range parentMethods {
+			// Lowercase methods are private to their declaring class. Keep them
+			// in that class's own method set, but do not promote them into a
+			// derived class where imported parents would require an inaccessible
+			// Go method call.
+			if !memberVisibleToSubclass(method.Name) {
+				continue
+			}
 			arity, err := parameterCount(methodParametersSource(method))
 			if err != nil {
 				return nil, err
@@ -2243,15 +2265,19 @@ func methodOutputName(method Method) string {
 	if method.Name == "init" {
 		return "__gppInit"
 	}
+	name := method.Name
 	if method.GoName != "" {
-		return method.GoName
+		name = method.GoName
 	}
-	return method.Name
+	if memberVisibility(method.Name) == memberProtected {
+		return generatedMemberName(name)
+	}
+	return name
 }
 
 func staticMethodGoName(class *ClassDecl, method Method) string {
 	prefix := "__gpp_static_"
-	if isExportedGoPlusName(method.Name) {
+	if memberVisibility(method.Name) != memberPrivate {
 		prefix = "GppStatic_"
 	}
 	return prefix + class.Name + "_" + methodOutputName(method)
@@ -2387,6 +2413,7 @@ func emitStaticMethod(out *strings.Builder, sourcePath string, class *ClassDecl,
 		return err
 	}
 	body, _ = wrapExceptionBoundaryBody(body, methodResult, methodContext)
+	body = rewriteProtectedMemberSource(body, class, classesForClass(context, class), method)
 	out.WriteString(body)
 	out.WriteString("\n}\n\n")
 	return nil
@@ -2448,7 +2475,7 @@ func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 		if overloads[method.Name] == nil {
 			overloads[method.Name] = map[int]string{}
 		}
-		overloads[method.Name][arity] = method.GoName
+		overloads[method.Name][arity] = methodOutputName(method)
 	}
 
 	for _, parentName := range classParentNames(class) {
@@ -2457,6 +2484,9 @@ func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 			continue
 		}
 		for name, methods := range methodOverloadsForClass(parent, classes, visiting) {
+			if !classMemberVisibleToSubclass(parent, name) {
+				continue
+			}
 			if overloads[name] == nil {
 				overloads[name] = map[int]string{}
 			}
@@ -2490,7 +2520,7 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 		if overloads[method.Name] == nil {
 			overloads[method.Name] = map[string]string{}
 		}
-		overloads[method.Name][parameterSignatureKey(parameters)] = method.GoName
+		overloads[method.Name][parameterSignatureKey(parameters)] = methodOutputName(method)
 	}
 	for _, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
@@ -2498,6 +2528,9 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 			continue
 		}
 		for name, methods := range methodOverloadTypesForClass(parent, classes, visiting) {
+			if !classMemberVisibleToSubclass(parent, name) {
+				continue
+			}
 			if overloads[name] == nil {
 				overloads[name] = map[string]string{}
 			}
@@ -2522,6 +2555,9 @@ func classFieldTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 	for _, parentName := range classParentNames(class) {
 		if parent, ok := classes[parentName]; ok {
 			for name, typeName := range classFieldTypesForClass(parent, classes, visiting) {
+				if !classMemberVisibleToSubclass(parent, name) {
+					continue
+				}
 				fields[name] = typeName
 			}
 		}
@@ -4094,6 +4130,9 @@ func collectConstructorCalls(expression ExprNode, context constructorContext, re
 		if name, target, ok := constructorTargetForCallee(value.Callee, context); ok {
 			span := value.Span()
 			*result = append(*result, constructorCallNode{call: value, name: name, target: target, start: span.Start, end: span.End})
+		} else if name, _, ok := namedStructConstructorForCallee(value.Callee, context); ok {
+			span := value.Span()
+			*result = append(*result, constructorCallNode{call: value, name: name, start: span.Start, end: span.End})
 		}
 		collectConstructorCalls(value.Callee, context, result)
 		for _, argument := range value.Arguments {
@@ -4251,6 +4290,16 @@ func constructorTargetForCallee(callee ExprNode, context constructorContext) (st
 	return name, target, ok
 }
 
+func namedStructConstructorForCallee(callee ExprNode, context constructorContext) (string, []constructorField, bool) {
+	name, ok := directSelectorPath(callee)
+	if !ok {
+		return "", nil, false
+	}
+	name = strings.TrimSpace(name)
+	fields, ok := context.StructConstructors[name]
+	return name, fields, ok
+}
+
 func genericTypeArgumentSource(expression ExprNode) (string, bool) {
 	switch value := expression.(type) {
 	case *TypeExpr:
@@ -4319,6 +4368,32 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 	}
 
 	return fields, nil
+}
+
+func constructorFieldsVisibleToClass(class *ClassDecl, classes map[string]*ClassDecl) ([]constructorField, error) {
+	fields, err := constructorFields(class, classes, nil, map[*ClassDecl]bool{})
+	if err != nil {
+		return nil, err
+	}
+	visible := fields[:0]
+	for _, field := range fields {
+		if len(field.Path) > 0 && !memberVisibleToSubclass(field.Name) {
+			continue
+		}
+		visible = append(visible, field)
+	}
+	return visible, nil
+}
+
+func constructorFieldsVisibleToCaller(fields []constructorField, callerClass string) []constructorField {
+	visible := fields[:0]
+	for _, field := range fields {
+		if memberVisibility(field.Name) == memberPrivate && field.Owner != callerClass {
+			continue
+		}
+		visible = append(visible, field)
+	}
+	return visible
 }
 
 func classParentFieldName(parentName string) string {

@@ -64,7 +64,7 @@ type checker
 overload resolver
 inheritance resolver
 template validator
-record validator
+anonymous struct validator
 annotation validator
 ```
 
@@ -259,7 +259,7 @@ class declaration
 method declaration
 extension declaration
 template declaration
-record-returning function
+anonymous-struct-returning function
 ```
 
 rather than an arbitrary generated line.
@@ -277,7 +277,7 @@ runtime support
 compiler-generated helper functions
 vtable plumbing
 temporary wrappers
-internal record helpers
+internal anonymous-struct helpers
 ```
 
 Such nodes should be marked as compiler-generated.
@@ -651,7 +651,7 @@ Examples:
 ```text
 untyped int
 generated helper identifiers
-internal record names
+internal anonymous-struct names
 lowered class implementation names
 ```
 
@@ -679,7 +679,7 @@ This is a presentation improvement, not a semantic change.
 
 ---
 
-# 28. Generated Record Names
+# 28. Generated Anonymous Struct Names
 
 Backend diagnostics may mention names such as:
 
@@ -700,14 +700,14 @@ may become:
 ```text
 cannot use:
 
-    record{Name string, Age int}
+    struct{Name string, Age int}
 
 as:
 
-    record{Name string, Age string}
+    struct{Name string, Age string}
 ```
 
-The compiler already has structural record metadata and can use it for presentation.
+The compiler already has anonymous struct metadata and can use it for presentation.
 
 ---
 
@@ -829,21 +829,21 @@ Backend generated Go used to support template wrappers should not leak into ordi
 
 ---
 
-# 34. Record Diagnostics
+# 34. Anonymous Struct Diagnostics
 
-Record lowering should preserve source mapping for:
+Anonymous struct lowering should preserve source mapping for:
 
 ```text
-record literals
-record field expressions
-record assignments
-record return expressions
+anonymous struct literals
+anonymous struct field expressions
+anonymous struct assignments
+anonymous struct return expressions
 ```
 
 Example:
 
 ```gpp
-record(
+struct(
     Name: value,
     Age: "42",
 )
@@ -1198,7 +1198,7 @@ returns
 type expressions
 method declarations
 template calls
-record literals
+anonymous struct literals
 extension calls
 ```
 
@@ -1425,17 +1425,17 @@ cannot use int as string
 
 ---
 
-# 62. Example: Record Error
+# 62. Example: Anonymous Struct Error
 
 Source:
 
 ```gpp
-a := record(
+a := struct(
     Name: "Bob",
     Age: 42,
 )
 
-b := record(
+b := struct(
     Name: "Alice",
     Age: "42",
 )
@@ -1447,13 +1447,13 @@ Desired diagnostic:
 
 ```text
 example.gpp:11:5:
-incompatible record types
+incompatible anonymous struct types
 
 expected:
-    record{Name string, Age int}
+    struct{Name string, Age int}
 
 got:
-    record{Name string, Age string}
+    struct{Name string, Age string}
 
     a = b
         ^

@@ -230,9 +230,9 @@ class Queue[T] {
 
 // listNode is an internal typed node stored by List.
 class listNode[T] {
-	value T
-	previous int
-	next int
+	Value T
+	Previous int
+	Next int
 }
 
 // List is a doubly linked list with typed nodes. Its zero value is ready to use.
@@ -245,13 +245,13 @@ class List[T] {
 
 	func allocate(value T, previous int, next int) int {
 		var node listNode[T]
-		node.value = value
-		node.previous = previous
-		node.next = next
+		node.Value = value
+		node.Previous = previous
+		node.Next = next
 
 		if this.freeHead != 0 {
 			index := this.freeHead
-			this.freeHead = this.nodes[index].next
+			this.freeHead = this.nodes[index].Next
 			this.nodes[index] = node
 			return index
 		}
@@ -265,11 +265,11 @@ class List[T] {
 	}
 
 	func release(index int) T {
-		value := this.nodes[index].value
+		value := this.nodes[index].Value
 		var zero T
-		this.nodes[index].value = zero
-		this.nodes[index].previous = 0
-		this.nodes[index].next = this.freeHead
+		this.nodes[index].Value = zero
+		this.nodes[index].Previous = 0
+		this.nodes[index].Next = this.freeHead
 		this.freeHead = index
 		this.size--
 		return value
@@ -280,7 +280,7 @@ class List[T] {
 		if this.head == 0 {
 			this.tail = index
 		} else {
-			this.nodes[this.head].previous = index
+			this.nodes[this.head].Previous = index
 		}
 		this.head = index
 		this.size++
@@ -291,7 +291,7 @@ class List[T] {
 		if this.tail == 0 {
 			this.head = index
 		} else {
-			this.nodes[this.tail].next = index
+			this.nodes[this.tail].Next = index
 		}
 		this.tail = index
 		this.size++
@@ -303,12 +303,12 @@ class List[T] {
 			return zero, false
 		}
 		index := this.head
-		next := this.nodes[index].next
+		next := this.nodes[index].Next
 		this.head = next
 		if next == 0 {
 			this.tail = 0
 		} else {
-			this.nodes[next].previous = 0
+			this.nodes[next].Previous = 0
 		}
 		return this.release(index), true
 	}
@@ -319,12 +319,12 @@ class List[T] {
 			return zero, false
 		}
 		index := this.tail
-		previous := this.nodes[index].previous
+		previous := this.nodes[index].Previous
 		this.tail = previous
 		if previous == 0 {
 			this.head = 0
 		} else {
-			this.nodes[previous].next = 0
+			this.nodes[previous].Next = 0
 		}
 		return this.release(index), true
 	}
@@ -334,7 +334,7 @@ class List[T] {
 			var zero T
 			return zero, false
 		}
-		return this.nodes[this.head].value, true
+		return this.nodes[this.head].Value, true
 	}
 
 	func Back() (T, bool) {
@@ -342,7 +342,7 @@ class List[T] {
 			var zero T
 			return zero, false
 		}
-		return this.nodes[this.tail].value, true
+		return this.nodes[this.tail].Value, true
 	}
 
 	func Len() int {
@@ -363,8 +363,8 @@ class List[T] {
 
 	func Values() []T {
 		values := make([]T, 0, this.size)
-		for index := this.head; index != 0; index = this.nodes[index].next {
-			values = append(values, this.nodes[index].value)
+		for index := this.head; index != 0; index = this.nodes[index].Next {
+			values = append(values, this.nodes[index].Value)
 		}
 		return values
 	}
@@ -375,6 +375,16 @@ class List[T] {
 class PriorityQueue[T] {
 	items []T
 	less func(T, T) bool
+
+	static func New[U any](less func(U, U) bool) *PriorityQueue[U] {
+		if less == nil {
+			panic("gpp/container: priority queue comparator is nil")
+		}
+		var queue PriorityQueue[U]
+		queue.items = []U{}
+		queue.less = less
+		return &queue
+	}
 
 	func Push(value T) {
 		this.items = append(this.items, value)
@@ -452,11 +462,5 @@ class PriorityQueue[T] {
 }
 
 func NewPriorityQueue[T](less func(T, T) bool) *PriorityQueue[T] {
-	if less == nil {
-		panic("gpp/container: priority queue comparator is nil")
-	}
-	var queue PriorityQueue[T]
-	queue.items = []T{}
-	queue.less = less
-	return &queue
+	return PriorityQueue.New[T](less)
 }

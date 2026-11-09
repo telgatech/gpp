@@ -1,6 +1,7 @@
 package gpp.orm
 
 import (
+	"database/sql"
 	"fmt"
 	"reflect"
 	"strings"
@@ -251,18 +252,6 @@ func gppORMHasAnnotation(owner any, name string) bool {
 	return false
 }
 
-func gppORMCallHook(entity any, name string, exec SQLExecutor) error {
-	handler := reflect.ValueOf(entity).MethodByName(name)
-	if !handler.IsValid() {
-		return nil
-	}
-	result := handler.Call([]reflect.Value{reflect.ValueOf(exec)})
-	if len(result) == 0 || result[0].IsNil() {
-		return nil
-	}
-	return result[0].Interface().(error)
-}
-
 func gppORMQuery(descriptor any, where string, limit string) (string, []gppORMColumn, error) {
 	table, err := gppORMTable(descriptor)
 	if err != nil {
@@ -288,12 +277,6 @@ func gppORMQuery(descriptor any, where string, limit string) (string, []gppORMCo
 
 func gppORMInsert(exec SQLExecutor, entity any) error {
 	entity = gppORMDynamicObject(entity)
-	if err := gppORMCallHook(entity, "Validate", exec); err != nil {
-		return err
-	}
-	if err := gppORMCallHook(entity, "BeforeCreate", exec); err != nil {
-		return err
-	}
 	descriptor := gppORMRuntimeClass(entity)
 	query, columns, err := gppORMQuery(descriptor, "", "")
 	if err != nil {
@@ -314,7 +297,7 @@ func gppORMInsert(exec SQLExecutor, entity any) error {
 	if _, err := exec.Exec(query, values...); err != nil {
 		return err
 	}
-	return gppORMCallHook(entity, "AfterCreate", exec)
+	return nil
 }
 
 func gppORMGetWhere(exec SQLExecutor, target any, where string, args ...any) error {
@@ -390,6 +373,122 @@ func gppORMSelectModel[T any](exec SQLExecutor, where string, args ...any) ([]*T
 		return target, err
 	}
 	return target, nil
+}
+
+func gppORMIsSelectQuery(query string) bool {
+	query = strings.ToUpper(strings.TrimSpace(query))
+	for _, keyword := range []string{"SELECT", "WITH"} {
+		if query == keyword || strings.HasPrefix(query, keyword+" ") || strings.HasPrefix(query, keyword+"\n") || strings.HasPrefix(query, keyword+"\t") {
+			return true
+		}
+	}
+	return false
+}
+
+func GetSQL[T any](exec SQLExecutor, query string, args ...any) (*T, error) {
+	target := new(T)
+	if err := gppORMGetSQL(exec, target, query, args...); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+func SelectSQL[T any](exec SQLExecutor, query string, args ...any) ([]*T, error) {
+	var targets []*T
+	if err := gppORMSelectSQL(exec, &targets, query, args...); err != nil {
+		return targets, err
+	}
+	return targets, nil
+}
+
+func gppORMGetSQL(exec SQLExecutor, target any, query string, args ...any) error {
+	if !gppORMIsSelectQuery(query) {
+		return fmt.Errorf("orm: GetSQL requires a full SELECT query")
+	}
+	value := reflect.ValueOf(target)
+	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() || value.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("orm: GetSQL target must be a non-nil pointer to a model")
+	}
+	descriptor := gppORMRuntimeClass(target)
+	if descriptor == nil {
+		return fmt.Errorf("orm: GetSQL target must be an ORM model")
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return err
+	}
+	rows, err := exec.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
+	scanTargets, err := gppORMModelScanTargets(target, columnNames, columns)
+	if err != nil {
+		return err
+	}
+	if err := rows.Scan(scanTargets...); err != nil {
+		return err
+	}
+	return rows.Err()
+}
+
+func gppORMSelectSQL(exec SQLExecutor, target any, query string, args ...any) error {
+	if !gppORMIsSelectQuery(query) {
+		return fmt.Errorf("orm: SelectSQL requires a full SELECT query")
+	}
+	targetValue := reflect.ValueOf(target)
+	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() || targetValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("orm: SelectSQL target must be a non-nil pointer to a model slice")
+	}
+	elementType := targetValue.Elem().Type().Elem()
+	if elementType.Kind() == reflect.Ptr {
+		elementType = elementType.Elem()
+	}
+	prototype := reflect.New(elementType).Interface()
+	descriptor := gppORMRuntimeClass(prototype)
+	if descriptor == nil {
+		return fmt.Errorf("orm: SelectSQL target slice must contain ORM models")
+	}
+	columns, err := gppORMColumns(descriptor)
+	if err != nil {
+		return err
+	}
+	rows, err := exec.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		itemValue := reflect.New(elementType)
+		item := itemValue.Interface()
+		scanTargets, err := gppORMModelScanTargets(item, columnNames, columns)
+		if err != nil {
+			return err
+		}
+		if err := rows.Scan(scanTargets...); err != nil {
+			return err
+		}
+		if targetValue.Elem().Type().Elem().Kind() == reflect.Ptr {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue))
+		} else {
+			targetValue.Elem().Set(reflect.Append(targetValue.Elem(), itemValue.Elem()))
+		}
+	}
+	return rows.Err()
 }
 
 func gppORMPrimaryKey(descriptor any) (string, error) {
@@ -594,12 +693,6 @@ func TruncateModel[T any](exec SQLExecutor) error {
 
 func gppORMUpdate(exec SQLExecutor, entity any) error {
 	entity = gppORMDynamicObject(entity)
-	if err := gppORMCallHook(entity, "Validate", exec); err != nil {
-		return err
-	}
-	if err := gppORMCallHook(entity, "BeforeUpdate", exec); err != nil {
-		return err
-	}
 	descriptor := gppORMRuntimeClass(entity)
 	table, err := gppORMTable(descriptor)
 	if err != nil {
@@ -628,14 +721,11 @@ func gppORMUpdate(exec SQLExecutor, entity any) error {
 	if _, err := exec.Exec(query, values...); err != nil {
 		return err
 	}
-	return gppORMCallHook(entity, "AfterUpdate", exec)
+	return nil
 }
 
 func gppORMDelete(exec SQLExecutor, entity any) error {
 	entity = gppORMDynamicObject(entity)
-	if err := gppORMCallHook(entity, "BeforeDelete", exec); err != nil {
-		return err
-	}
 	descriptor := gppORMRuntimeClass(entity)
 	table, err := gppORMTable(descriptor)
 	if err != nil {
@@ -650,5 +740,5 @@ func gppORMDelete(exec SQLExecutor, entity any) error {
 	if _, err := exec.Exec(query, primaryValue); err != nil {
 		return err
 	}
-	return gppORMCallHook(entity, "AfterDelete", exec)
+	return nil
 }

@@ -73,6 +73,22 @@ p := &Person{Name: "Bob", Age: 42}
 The exact generated helper names and dispatch machinery are implementation
 details.
 
+## Named struct construction
+
+Class constructor-style calls return pointers. Named struct constructor-style
+calls return struct values:
+
+```go
+struct User {
+    Name string
+}
+
+user := User(Name: "Ada") // type: User, not *User
+```
+
+This struct form lowers to an ordinary Go keyed composite literal. It does not
+run a class `init` hook.
+
 ## Field ordering and arguments
 
 Positional arguments map to fields in declaration order. In an inherited class,

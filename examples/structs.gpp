@@ -1,0 +1,32 @@
+import "fmt"
+
+struct User {
+    Name string
+    Age int
+}
+
+func makeUser() User {
+    return User(Name: "Ada", Age: 36)
+}
+
+func printUser(user User) {
+    fmt.Println("named:", user.Name, user.Age)
+}
+
+func makeSummary(user User) struct {
+    return struct(
+        Name: user.Name,
+        Age: user.Age,
+        Greeting: "Hello, " + user.Name,
+    )
+}
+
+func printSummary(summary struct) {
+    fmt.Println("anonymous:", summary.Name, summary.Age, summary.Greeting)
+}
+
+func main() {
+    user := makeUser()
+    printUser(user)
+    printSummary(makeSummary(user))
+}

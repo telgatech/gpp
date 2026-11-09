@@ -62,7 +62,7 @@ rules](/reference/specifications/static-methods).
 
 ## Use `self` for the calling class's type
 
-A base class can use lowercase `self` when a static method should create or
+A base class can use `self` when a static method should create or
 return the class used at the call site:
 
 ```go

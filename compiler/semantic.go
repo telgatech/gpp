@@ -16,6 +16,7 @@ type SemanticModel struct {
 
 type PackageSymbols struct {
 	Name            string
+	Files           []*File
 	Classes         map[string]*ClassDecl
 	Enums           map[string]*EnumDecl
 	Embeds          map[string]EmbedEntry
@@ -25,6 +26,7 @@ type PackageSymbols struct {
 	ImportedClasses map[string]*ClassDecl
 	ImportedEnums   map[string]*EnumDecl
 	Types           map[string]bool
+	TypeAliases     map[string]string
 	Values          map[string]bool
 	Extensions      []*ExtendDecl
 	Annotations     map[string]*AnnotationDecl
@@ -50,6 +52,27 @@ func rawTypeNamesAST(declaration ast.Decl) map[string]bool {
 		}
 	}
 	return result
+}
+
+func collectPackageTypeAliases(pkg *PackageSymbols, declarations []ast.Decl) {
+	if pkg == nil || len(declarations) == 0 {
+		return
+	}
+	for _, declaration := range declarations {
+		group, ok := declaration.(*ast.GenDecl)
+		if !ok || group.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range group.Specs {
+			typeSpec, ok := specification.(*ast.TypeSpec)
+			if !ok || !typeSpec.Assign.IsValid() {
+				continue
+			}
+			if target := goTypeExpressionName(typeSpec.Type); target != "" {
+				pkg.TypeAliases[typeSpec.Name.Name] = target
+			}
+		}
+	}
 }
 
 func ResolveProgram(program *Program) (*SemanticModel, error) {
@@ -88,6 +111,7 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 				ImportedClasses: map[string]*ClassDecl{},
 				ImportedEnums:   map[string]*EnumDecl{},
 				Types:           map[string]bool{},
+				TypeAliases:     map[string]string{},
 				Values:          map[string]bool{},
 				Extensions:      []*ExtendDecl{},
 				Annotations:     map[string]*AnnotationDecl{},
@@ -95,6 +119,7 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			}
 			model.Packages[file.Package] = pkg
 		}
+		pkg.Files = append(pkg.Files, file)
 
 		for _, decl := range file.Decls {
 			if annotation, ok := decl.(*AnnotationDecl); ok {
@@ -132,8 +157,10 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 				for name := range values {
 					pkg.Values[name] = true
 				}
+				collectPackageTypeAliases(pkg, raw.GoASTDecls)
 			}
 			if goDecl, ok := decl.(*GoDecl); ok {
+				collectPackageTypeAliases(pkg, goDecl.Declarations)
 				for _, declaration := range goDecl.Declarations {
 					for name := range rawTypeNamesAST(declaration) {
 						pkg.Types[name] = true
@@ -357,6 +384,10 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 				for _, name := range classNames {
 					if err := validateAmbiguousMemberAccess(model, pkg, pkg.Classes[name]); err != nil {
 						diagnostics = append(diagnostics, err)
+						continue
+					}
+					if err := validatePrivateInheritedMemberAccess(model, pkg, pkg.Classes[name]); err != nil {
+						diagnostics = append(diagnostics, err)
 					}
 				}
 			}
@@ -371,6 +402,9 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 		for _, file := range program.Files {
 			if file.Package != pkg.Name {
 				continue
+			}
+			if err := validateFileMemberVisibility(model, pkg, file); err != nil {
+				diagnostics = append(diagnostics, err)
 			}
 			if err := validateFileAnnotations(file, pkg, pkg.Annotations, true); err != nil {
 				diagnostics = append(diagnostics, err)
@@ -1007,6 +1041,7 @@ func joinNames(names []string) string {
 func constructorContextForFile(file *File, model *SemanticModel, modulePath string) (constructorContext, error) {
 	localClasses := model.Packages[file.Package].Classes
 	context := localConstructorContext(localClasses)
+	context.StructConstructors = namedStructConstructors(model.Packages[file.Package].Files)
 	context.GlobalValueTypes = globalValueTypesForFile(file)
 	context.Package = file.Package
 	context.Annotations, _ = annotationScopeForFile(file, model, modulePath)
@@ -1226,6 +1261,54 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 	}
 
 	return context, nil
+}
+
+func namedStructConstructors(files []*File) map[string][]constructorField {
+	result := map[string][]constructorField{}
+	var addDeclarations func([]ast.Decl, *token.FileSet)
+	addDeclarations = func(declarations []ast.Decl, fileSet *token.FileSet) {
+		for _, declaration := range declarations {
+			group, ok := declaration.(*ast.GenDecl)
+			if !ok || group.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range group.Specs {
+				typeSpec, ok := specification.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				structure, ok := typeSpec.Type.(*ast.StructType)
+				if !ok || structure.Fields == nil {
+					continue
+				}
+				fields := []constructorField{}
+				for _, field := range structure.Fields.List {
+					fieldType := formatGoDocNode(fileSet, field.Type)
+					if fieldType == "" {
+						continue
+					}
+					for _, name := range field.Names {
+						fields = append(fields, constructorField{Name: name.Name, Type: fieldType})
+					}
+				}
+				result[typeSpec.Name.Name] = fields
+			}
+		}
+	}
+	for _, file := range files {
+		if file == nil {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			switch value := declaration.(type) {
+			case *GoDecl:
+				addDeclarations(value.Declarations, value.FileSet)
+			case *MixedDecl:
+				addDeclarations(value.GoASTDecls, value.GoASTFileSet)
+			}
+		}
+	}
+	return result
 }
 
 func addClassParentTargets(context *constructorContext, class *ClassDecl, model *SemanticModel, modulePath string) error {
@@ -1671,6 +1754,182 @@ func validateAmbiguousMemberAccess(model *SemanticModel, pkg *PackageSymbols, cl
 	return nil
 }
 
+func validatePrivateInheritedMemberAccess(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl) error {
+	privateMembers := map[string]bool{}
+	visiting := map[*ClassDecl]bool{}
+	var collect func(*ClassDecl) error
+	collect = func(current *ClassDecl) error {
+		if current == nil || visiting[current] {
+			return nil
+		}
+		visiting[current] = true
+		defer delete(visiting, current)
+		for _, parentName := range classParentNames(current) {
+			parent := pkg.Classes[parentName]
+			if parent == nil {
+				parent = pkg.ImportedClasses[parentName]
+			}
+			if parent == nil && model != nil && current.Owner != nil {
+				if ownerPackage := model.Packages[current.Owner.Package]; ownerPackage != nil {
+					parent = ownerPackage.Classes[parentName]
+					if parent == nil {
+						parent = ownerPackage.ImportedClasses[parentName]
+					}
+				}
+			}
+			if parent == nil {
+				continue
+			}
+			for _, field := range parent.Fields {
+				if !memberVisibleToSubclass(field.Name) {
+					privateMembers[field.Name] = true
+				}
+			}
+			for _, method := range parent.Methods {
+				if !memberVisibleToSubclass(method.Name) {
+					privateMembers[method.Name] = true
+				}
+			}
+			if err := collect(parent); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := collect(class); err != nil {
+		return err
+	}
+	for _, field := range class.Fields {
+		delete(privateMembers, field.Name)
+	}
+	for _, method := range class.Methods {
+		delete(privateMembers, method.Name)
+	}
+	if len(privateMembers) == 0 {
+		return nil
+	}
+	classTypes := semanticClassLineage(model, pkg, class, map[*ClassDecl]bool{})
+	for _, method := range class.Methods {
+		typedReceivers := map[string]bool{"this": true}
+		for classType := range classTypes {
+			typedReceivers[classType] = true
+		}
+		for _, parameter := range method.ParameterAST {
+			if parameter.Name == "" {
+				continue
+			}
+			typeName, err := typeNodeSource(parameter.Type)
+			if err == nil && semanticTypeInClassLineage(typeName, classTypes) {
+				typedReceivers[parameter.Name] = true
+			}
+		}
+		if member := findPrivateMemberSelectorTokens(methodBodyTokens(method), privateMembers, typedReceivers, classTypes); member != "" {
+			return methodDiagnosticf(class, &method, "class %s method %s cannot access private inherited member %s", class.Name, method.Name, member)
+		}
+	}
+	return nil
+}
+
+func semanticClassLineage(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl, visiting map[*ClassDecl]bool) map[string]bool {
+	result := map[string]bool{}
+	var collect func(*ClassDecl)
+	collect = func(current *ClassDecl) {
+		if current == nil || visiting[current] {
+			return
+		}
+		visiting[current] = true
+		defer delete(visiting, current)
+		result[current.Name] = true
+		for _, parentName := range classParentNames(current) {
+			result[parentName] = true
+			parent := pkg.Classes[parentName]
+			if parent == nil {
+				parent = pkg.ImportedClasses[parentName]
+			}
+			if parent == nil && model != nil && current.Owner != nil {
+				if ownerPackage := model.Packages[current.Owner.Package]; ownerPackage != nil {
+					parent = ownerPackage.Classes[parentName]
+					if parent == nil {
+						parent = ownerPackage.ImportedClasses[parentName]
+					}
+				}
+			}
+			collect(parent)
+		}
+	}
+	collect(class)
+	return result
+}
+
+func semanticTypeInClassLineage(typeName string, classTypes map[string]bool) bool {
+	typeName = strings.TrimSpace(typeName)
+	for strings.HasPrefix(typeName, "*") {
+		typeName = strings.TrimSpace(strings.TrimPrefix(typeName, "*"))
+	}
+	if bracket := strings.IndexByte(typeName, '['); bracket >= 0 {
+		typeName = strings.TrimSpace(typeName[:bracket])
+	}
+	return classTypes[typeName]
+}
+
+func findPrivateMemberSelectorTokens(tokens []Token, privateMembers, typedReceivers, classTypes map[string]bool) string {
+	for index, token := range tokens {
+		if !typedReceivers[token.Text] || token.Kind != TokenIdentifier && token.Kind != TokenKeyword {
+			continue
+		}
+		cursor := index + 1
+		for cursor < len(tokens) && (tokens[cursor].Kind == TokenComment || tokens[cursor].Kind == TokenNewline) {
+			cursor++
+		}
+		if cursor >= len(tokens) || tokens[cursor].Text != "." {
+			continue
+		}
+		cursor++
+		qualifier := ""
+		for cursor < len(tokens) {
+			for cursor < len(tokens) && (tokens[cursor].Kind == TokenComment || tokens[cursor].Kind == TokenNewline) {
+				cursor++
+			}
+			if cursor >= len(tokens) || tokens[cursor].Kind != TokenIdentifier {
+				break
+			}
+			member := tokens[cursor].Text
+			if privateMembers[member] {
+				return member
+			}
+			if qualifier == "" {
+				qualifier = member
+			} else {
+				qualifier += "." + member
+			}
+			if !semanticClassTypePrefix(qualifier, classTypes) {
+				break
+			}
+			cursor++
+			for cursor < len(tokens) && (tokens[cursor].Kind == TokenComment || tokens[cursor].Kind == TokenNewline) {
+				cursor++
+			}
+			if cursor >= len(tokens) || tokens[cursor].Text != "." {
+				break
+			}
+			cursor++
+		}
+	}
+	return ""
+}
+
+func semanticClassTypePrefix(prefix string, classTypes map[string]bool) bool {
+	if classTypes[prefix] {
+		return true
+	}
+	for classType := range classTypes {
+		if strings.HasPrefix(classType, prefix+".") {
+			return true
+		}
+	}
+	return false
+}
+
 func ambiguousMembers(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl, cache map[*ClassDecl]map[string][]string, visiting map[*ClassDecl]bool) (map[string][]string, error) {
 	members, err := classMembers(model, pkg, class, cache, visiting)
 	if err != nil {
@@ -1731,6 +1990,9 @@ func classMembers(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl, c
 		}
 
 		for name, paths := range parentMembers {
+			if !classMemberVisibleToSubclass(parent, name) {
+				continue
+			}
 			if direct[name] {
 				continue
 			}
@@ -1746,6 +2008,26 @@ func classMembers(model *SemanticModel, pkg *PackageSymbols, class *ClassDecl, c
 
 	cache[class] = members
 	return members, nil
+}
+
+// classMemberVisibleToSubclass applies visibility to a directly declared
+// member. If the member is inherited, classMembers has already removed
+// private declarations from the inherited set.
+func classMemberVisibleToSubclass(class *ClassDecl, name string) bool {
+	if class == nil {
+		return false
+	}
+	for _, field := range class.Fields {
+		if field.Name == name {
+			return memberVisibleToSubclass(field.Name)
+		}
+	}
+	for _, method := range class.Methods {
+		if method.Name == name {
+			return memberVisibleToSubclass(method.Name)
+		}
+	}
+	return true
 }
 
 func findAmbiguousThisMember(src string, ambiguous map[string][]string) string {

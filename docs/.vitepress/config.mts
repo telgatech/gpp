@@ -50,7 +50,7 @@ export default defineConfig({
             { text: 'Serialization', link: '/features/serialization' },
             { text: 'Static methods', link: '/features/static-methods' },
             { text: 'Named arguments and defaults', link: '/features/named-arguments' },
-            { text: 'Structural records', link: '/features/records' },
+            { text: 'Anonymous structs', link: '/features/structs' },
             { text: 'Enums', link: '/features/enums' },
             { text: 'String interpolation', link: '/features/interpolation' },
             { text: 'Lambdas', link: '/features/lambdas' },
@@ -146,7 +146,7 @@ export default defineConfig({
     },
     footer: {
       message: 'Built with <a href="https://vitepress.dev/">VitePress</a>',
-      copyright: 'Copyright © 2026 <a href="https://telga.in">Telga Technologies</a>'
+      copyright: 'Copyright © 2026 <a href="https://telga.in">Telga Technologies Pvt Ltd</a>'
     }
   }
 })

@@ -376,6 +376,9 @@ func walkStmtExpressions(statement Stmt, visit func(ExprNode)) {
 		visit(value.Init)
 		visit(value.Condition)
 		visit(value.Post)
+		for _, expression := range value.RangeKey {
+			visit(expression)
+		}
 		visit(value.RangeExpr)
 		walkBlockExpressions(value.Body, visit)
 	case *SwitchStmt:

@@ -49,27 +49,26 @@ func GenericDBExample(db *sql.DB) {
     db.Exec("INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)", int64(2), "selected")
 
     employeeCount := db.Get[int64]("SELECT COUNT(*) FROM employee")
-    event := db.Get[record(employee_id: int64, event: string)](
+    event := db.Get[struct(employee_id: int64, event: string)](
         "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
         int64(2),
     )
-    eventPointer := db.Get[*record(employee_id: int64, event: string)](
+    eventPointer := db.Get[*struct(employee_id: int64, event: string)](
         "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
         int64(2),
     )
-    eventPointers := db.Select[*record(employee_id: int64, event: string)](
+    eventPointers := db.Select[*struct(employee_id: int64, event: string)](
         "SELECT employee_id, event FROM employee_events ORDER BY employee_id",
     )
-    employee := db.Get[Employee]("SELECT id, name, email FROM employee WHERE id = $1", int64(2))
-    employees := db.Select[Employee]("SELECT id, name, email FROM employee ORDER BY id")
-    employeePointer := db.Get[*Employee]("SELECT id, name, email FROM employee WHERE id = $1", int64(2))
-    employeePointers := db.Select[*Employee]("SELECT id, name, email FROM employee ORDER BY id")
+    employee, employeeErr := orm.GetSQL[Employee](db, "SELECT id, name, email FROM employee WHERE id = $1", int64(2))
+    if employeeErr != nil { panic(employeeErr) }
+    employees, employeesErr := orm.SelectSQL[Employee](db, "SELECT id, name, email FROM employee ORDER BY id")
+    if employeesErr != nil { panic(employeesErr) }
     fmt.Println("scalar query:", employeeCount)
-    fmt.Println("record query:", event.employee_id, event.event)
-    fmt.Println("pointer record query:", eventPointer.employee_id, eventPointer.event)
-    fmt.Println("pointer record select:", eventPointers[0].employee_id, eventPointers[0].event)
+    fmt.Println("struct query:", event.employee_id, event.event)
+    fmt.Println("pointer struct query:", eventPointer.employee_id, eventPointer.event)
+    fmt.Println("pointer struct select:", eventPointers[0].employee_id, eventPointers[0].event)
     fmt.Println("full SQL model queries:", employee.Name, len(employees))
-    fmt.Println("pointer model queries:", employeePointer.Name, employeePointers[0].Name)
 }
 
 func main() {

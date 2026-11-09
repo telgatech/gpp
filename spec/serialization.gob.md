@@ -394,12 +394,12 @@ FromGOB
 
 with static/instance metadata preserved.
 
-## Records
+## Anonymous Structs
 
-Records may support GOB through the package-level API:
+Anonymous structs may support GOB through the package-level API:
 
 ```go
-value := record(
+value := struct(
     id: 1,
     name: "Ada",
 )
@@ -407,9 +407,9 @@ value := record(
 data, err := encoding.ToGOB(value)
 ```
 
-Do not require instance methods on anonymous records in v1.
+Do not require instance methods on anonymous structs in v1.
 
-Package-level decoding of an anonymous record shape may be supported only where the target shape is statically known.
+Package-level decoding of an anonymous struct shape may be supported only where the target shape is statically known.
 
 ## HTTP
 

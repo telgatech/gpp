@@ -573,7 +573,7 @@ func extensionASTTypeArgument(expression ExprNode, context constructorContext) T
 		return typeExpr.Type
 	}
 	if call, ok := expression.(*CallExpr); ok {
-		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "record" {
+		if name, ok := call.Callee.(*NameExpr); ok && isAnonymousStructCall(name.Name) {
 			if context.Records == nil {
 				return nil
 			}
@@ -644,7 +644,17 @@ func renderExtensionASTCall(call *CallExpr, context constructorContext, valueTyp
 				receiverText = "&" + receiverText
 			}
 			arguments := []string{receiverText}
-			arguments = append(arguments, candidate.Arguments...)
+			for index, argumentText := range candidate.Arguments {
+				if index < len(call.Arguments) {
+					if lambdaTypes := extensionLambdaParameterTypes(candidate.Method, actualType, index, call.Arguments[index].Value, valueTypes); len(lambdaTypes) > 0 {
+						argumentText, err = transformExtensionsWithTypes(argumentText, context, lambdaTypes)
+						if err != nil {
+							return "", true, err
+						}
+					}
+				}
+				arguments = append(arguments, argumentText)
+			}
 			functionName := candidate.Method.GoName
 			if candidate.Method.Qualifier != "" {
 				functionName = candidate.Method.Qualifier + "." + functionName
@@ -664,6 +674,47 @@ func renderExtensionASTCall(call *CallExpr, context constructorContext, valueTyp
 		}
 	}
 	return "", false, nil
+}
+
+func extensionLambdaParameterTypes(extension extensionMethod, actualType string, argumentIndex int, argument ExprNode, inherited map[string]string) map[string]string {
+	parameters, err := parameterInfosForMethod(extension.Method)
+	if err != nil || argumentIndex >= len(parameters) {
+		return nil
+	}
+	expected := parseTypeText(substituteLambdaType(parameters[argumentIndex].typeText(), extensionTargetBindings(extension.Target, actualType)))
+	expectedFunction, ok := expected.(*FunctionType)
+	if !ok {
+		return nil
+	}
+	var lambdaParameters []ParameterNode
+	switch value := argument.(type) {
+	case *LambdaExpr:
+		lambdaParameters, err = lambdaParametersFromTokens(value.Parameters)
+	case *FunctionLiteralExpr:
+		if value.Type != nil {
+			lambdaParameters = value.Type.Parameters
+		}
+	}
+	if err != nil || len(lambdaParameters) != len(expectedFunction.Parameters) {
+		return nil
+	}
+	result := cloneStringMap(inherited)
+	if result == nil {
+		result = map[string]string{}
+	}
+	for index, parameter := range lambdaParameters {
+		if parameter.Name == "" {
+			continue
+		}
+		typeNode := parameter.Type
+		if typeNode == nil {
+			typeNode = expectedFunction.Parameters[index].Type
+		}
+		if typeName, typeErr := typeNodeSource(typeNode); typeErr == nil {
+			result[parameter.Name] = strings.TrimSpace(typeName)
+		}
+	}
+	return result
 }
 
 func renderExtensionASTExpression(expression ExprNode, context constructorContext, valueTypes map[string]string) (string, error) {
@@ -760,7 +811,9 @@ func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, 
 		if !extensionFunctionArgumentMatches(argument.Value, parameters[parameterIndex].TypeAST, context, generic) {
 			return nil, false
 		}
-		if actual != "" && !generic[expected] && !extensionArgumentMatches(actual, expected, text, context) && !genericExtensionArgumentMatches(actual, expected, generic) {
+		_, expectedFunction := parameters[parameterIndex].TypeAST.(*FunctionType)
+		_, namedFunction := argument.Value.(*NameExpr)
+		if actual != "" && !(expectedFunction && namedFunction) && !generic[expected] && !extensionArgumentMatches(actual, expected, text, context) && !genericExtensionArgumentMatches(actual, expected, generic) {
 			return nil, false
 		}
 	}
@@ -855,6 +908,15 @@ func containsGenericTypeParameter(typeName string, generic map[string]bool) bool
 }
 
 func extensionASTStaticType(expression ExprNode, context constructorContext, valueTypes map[string]string) string {
+	if _, selector := expression.(*SelectorExpr); selector {
+		if inferred := inferRecordExprType(expression, valueTypes, context); inferred != "" {
+			return inferred
+		}
+	}
+	staticType := staticExpressionTypeNode(expression, context, valueTypes)
+	if staticType != "" {
+		return staticType
+	}
 	call, ok := expression.(*CallExpr)
 	if !ok {
 		return staticExpressionTypeNode(expression, context, valueTypes)
@@ -1429,6 +1491,9 @@ func emitExtension(out *strings.Builder, file *File, declaration *ExtendDecl, co
 	for _, target := range extensionTargetNames(declaration) {
 		target = normalizeExtensionTarget(target)
 		for _, method := range declaration.Methods {
+			if err := validateHookCallsFromExtension(&method, target, declaration.SourceFile, declaration.SourceLine, context); err != nil {
+				return err
+			}
 			extension := extensionMethod{
 				Target:            target,
 				TargetConstraints: cloneTypeNodeMap(declaration.TargetConstraints),

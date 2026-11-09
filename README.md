@@ -35,7 +35,7 @@ feature with comparisons and examples.
   name for different arities and statically distinguishable argument types.
 - **[Named arguments and defaults](docs/features/named-arguments.md)** — Make
   call sites clearer and omit arguments that have a declared default.
-- **[Structural records](docs/features/records.md)** — Pass composite values
+- **[Anonymous structs](docs/features/structs.md)** — Pass composite values
   without declaring one-off structs for every function boundary.
 - **[Enums](docs/features/enums.md)** — Define closed, named value sets with
   grouped declarations, validation, ordered values, and member metadata.
@@ -69,8 +69,8 @@ feature with comparisons and examples.
   annotated routing, request binding, middleware, and lifecycle hooks.
 - **[OpenAPI, Swagger, and OAuth](docs/features/api-documentation.md)** —
   Generate API documentation and interactive Swagger UI, with OAuth/OIDC support.
-- **[Typed SQL queries](docs/features/sql.md)** — Return scalars, inline records,
-  structs, or models from full SQL statements.
+- **[Typed SQL queries](docs/features/sql.md)** — Return scalars, anonymous or
+  named structs, or models from full SQL statements.
 - **[ORM models](docs/features/orm.md)** — Map annotated models to tables and
   use model-oriented queries and persistence hooks.
 - **[Typed templates](docs/features/templates.md)** — Define HTML/XML templates
@@ -345,3 +345,16 @@ gpp run examples/expr_catch.gpp
 Class introspection exposes generated `name`, `fields`, `methods`,
 `annotations`, `owner`, `type`, `get`, `set`, and `addr` metadata while
 preserving ordinary Go structs and stdlib interoperability.
+
+## License
+
+Go++ is released under the BSD 3-Clause License.
+
+Copyright (c) 2026 Telga Technologies Pvt Ltd
+and Go++ contributors.
+
+See [LICENSE](LICENSE) for details.
+
+When redistributing source code from this Go++ compiler project, retain the
+copyright notice, all three license conditions, and the warranty disclaimer
+from [LICENSE](LICENSE).

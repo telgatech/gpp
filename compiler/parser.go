@@ -86,6 +86,34 @@ func ParseFile(name, src string) (*File, error) {
 		case legacyUseAt(src, pos):
 			return nil, diagnosticAt(name, sourceSpan(src, pos, pos), fmt.Errorf("use declarations are no longer supported; use Go import syntax"))
 
+		case isStructShorthandStart(src, pos):
+			rewritten, end, err := rewriteStructDeclarationShorthand(src, pos)
+			if err != nil {
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
+			}
+			declarations, fileSet := parseGoDeclarations(name, file.Package, rewritten)
+			if len(declarations) == 0 {
+				return nil, diagnosticAt(name, sourceSpan(src, pos, end), fmt.Errorf("invalid struct declaration"))
+			}
+			line, column := sourcePosition(src, declarationPos)
+			var declarationTokens []Token
+			for _, token := range file.Tokens {
+				if token.Span.Start >= pos && token.Span.End <= end {
+					declarationTokens = append(declarationTokens, token)
+				}
+			}
+			file.Decls = append(file.Decls, &GoDecl{
+				Declarations: declarations,
+				FileSet:      fileSet,
+				Doc:          doc,
+				Tokens:       declarationTokens,
+				Owner:        file,
+				SourceSpan:   Span{Start: declarationPos, End: end, Line: line, Column: column},
+				SourceFile:   name,
+				SourceLine:   line,
+			})
+			pos = end
+
 		case keywordAt(src, pos, "class"):
 			class, end, err := parseClass(src, pos)
 			if err != nil {
@@ -500,7 +528,7 @@ func topLevelDeclarationBoundary(source string, start, position int) bool {
 	if keywordAt(source, position, "func") && leadingAnnotationsOnly(source[start:position]) {
 		return false
 	}
-	for _, keyword := range []string{"func", "var", "const", "let", "type", "import"} {
+	for _, keyword := range []string{"func", "var", "const", "let", "type", "struct", "import"} {
 		if keywordAt(source, position, keyword) {
 			return true
 		}
@@ -697,6 +725,60 @@ func parseGoDeclarations(filename, packageName, source string) ([]ast.Decl, *tok
 		return nil, nil
 	}
 	return parsed.Decls, fileSet
+}
+
+func isStructShorthandStart(source string, start int) bool {
+	if !keywordAt(source, start, "struct") {
+		return false
+	}
+	position := skipSpace(source, start+len("struct"))
+	if position < len(source) && source[position] == '(' {
+		return false
+	}
+	_, size := readIdent(source[position:])
+	if size == 0 {
+		return false
+	}
+	position = skipSpace(source, position+size)
+	if position < len(source) && source[position] == '[' {
+		end, err := findMatchingBracket(source, position)
+		if err != nil {
+			return false
+		}
+		position = skipSpace(source, end+1)
+	}
+	return position < len(source) && source[position] == '{'
+}
+
+// rewriteStructDeclarationShorthand parses `struct Foo { ... }` and presents
+// an equivalent Go type declaration to the existing Go AST pipeline.
+func rewriteStructDeclarationShorthand(source string, start int) (string, int, error) {
+	position := skipSpace(source, start+len("struct"))
+	if position >= len(source) {
+		return "", start, fmt.Errorf("struct declaration requires a name")
+	}
+	name, size := readIdent(source[position:])
+	if size == 0 {
+		return "", start, fmt.Errorf("struct declaration requires a name")
+	}
+	position = skipSpace(source, position+size)
+	typeParameters := ""
+	if position < len(source) && source[position] == '[' {
+		end, err := findMatchingBracket(source, position)
+		if err != nil {
+			return "", start, fmt.Errorf("struct %s type parameters: %w", name, err)
+		}
+		typeParameters = source[position : end+1]
+		position = skipSpace(source, end+1)
+	}
+	if position >= len(source) || source[position] != '{' {
+		return "", start, fmt.Errorf("struct %s requires a field body", name)
+	}
+	end, err := findMatchingBrace(source, position)
+	if err != nil {
+		return "", start, err
+	}
+	return "type " + name + typeParameters + " struct " + source[position:end+1], end + 1, nil
 }
 
 func rewriteLogicalImportsForGoParser(source string) string {
@@ -1172,7 +1254,6 @@ func parseClassBody(class *ClassDecl, body string, sourceBase int, fullSource st
 		if err != nil {
 			return err
 		}
-
 		if line != "" {
 			if field.Name == "" {
 				return fmt.Errorf(
@@ -2248,7 +2329,7 @@ func leadingDocComments(src string, pos int) (string, int) {
 }
 
 func documentationTargetAt(src string, pos int) bool {
-	for _, keyword := range []string{"package", "import", "func", "const", "var", "let", "type", "class", "enum", "extend", "annotation", "embed", "template"} {
+	for _, keyword := range []string{"package", "import", "func", "const", "var", "let", "type", "struct", "class", "enum", "extend", "annotation", "embed", "template"} {
 		if keywordAt(src, pos, keyword) {
 			return true
 		}

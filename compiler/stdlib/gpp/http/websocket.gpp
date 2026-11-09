@@ -3,10 +3,12 @@ package gpp.http
 import "golang.org/x/net/websocket"
 
 extend *websocket.Conn {
+	// Read receives a text message from the WebSocket connection.
 	func Read(message *string) error {
 		return websocket.Message.Receive(this, message)
 	}
 
+	// Write sends a text message to the WebSocket connection.
 	func Write(message string) error {
 		return websocket.Message.Send(this, message)
 	}

@@ -43,6 +43,19 @@ func TestFormatSourcePreservesCommentsAndOpaqueLiterals(t *testing.T) {
 	}
 }
 
+func TestFormatSourcePreservesUnderscoreVisibilityNames(t *testing.T) {
+	source := "class Base {\n_state string\nfunc _reset(){ this._state = \"\" }\n}\nclass Child : Base {}\n"
+	formatted := FormatSource(source)
+	for _, member := range []string{"_state string", "func _reset()", "this._state"} {
+		if !strings.Contains(formatted, member) {
+			t.Errorf("formatter changed underscore-prefixed member %q:\n%s", member, formatted)
+		}
+	}
+	if again := FormatSource(formatted); again != formatted {
+		t.Fatalf("formatter is not idempotent for underscore-prefixed members:\nfirst:\n%s\nsecond:\n%s", formatted, again)
+	}
+}
+
 func TestFormatSourceFileRejectsInvalidSource(t *testing.T) {
 	if _, err := FormatSourceFile("broken.gpp", []byte("class {\n")); err == nil {
 		t.Fatal("expected invalid Go++ source to be rejected")
@@ -257,6 +270,18 @@ type Speaker interface {
 	}
 }
 
+func TestFormatSourceSpacesCommasAndInlineFunctionBlocks(t *testing.T) {
+	source := `func some() (int,int,int) {return 0,0,0}
+func quux() struct {return struct(works: true, a:1, b:2)}
+`
+	want := `func some() (int, int, int) { return 0, 0, 0 }
+func quux() struct { return struct(works: true, a: 1, b: 2) }
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("comma and inline block spacing was not normalized:\n%s", got)
+	}
+}
+
 func TestFormatSourceCollapsesExcessSpacingAroundExpressions(t *testing.T) {
 	source := `func Summary() string {
 
@@ -274,11 +299,19 @@ return             "{{this.Named.Name}} is a {{this.Role}}"
 }
 
 func TestFormatSourceTrimsBlockEdgeBlankLinesAndPreservesOpaqueWhitespace(t *testing.T) {
-	source := "func main(){\n\nraw := `first\n  \nlast`\ncall()\n\n}\n" +
-		"template Page() {\n<div>\n  \n</div>\n}\n"
-	want := "func main() {\n    raw := `first\n  \nlast`\n    call()\n}\n" +
-		"template Page() {\n<div>\n  \n</div>\n}\n"
+	source := "func main(){\n\nraw := `first\n  \n  \nlast`\ncall()\n\n}\n" +
+		"template Page() {\n<div>\n  \n\n\n</div>\n}\n"
+	want := "func main() {\n    raw := `first\n  \n  \nlast`\n    call()\n}\n" +
+		"template Page() {\n<div>\n  \n\n\n</div>\n}\n"
 	if got := FormatSource(source); got != want {
 		t.Fatalf("block edge blank lines or opaque whitespace were mishandled:\n%s", got)
+	}
+}
+
+func TestFormatSourceCollapsesRepeatedBlankLinesLikeGoFmt(t *testing.T) {
+	source := "func main() {\n\tfirst()\n\n\n\n\tsecond()\n\n}\n\n\nfunc next() {}\n"
+	want := "func main() {\n\tfirst()\n\n\tsecond()\n}\n\nfunc next() {}\n"
+	if got := FormatSource(source); got != want {
+		t.Fatalf("repeated blank lines were not collapsed:\n%s", got)
 	}
 }

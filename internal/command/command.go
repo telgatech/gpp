@@ -1672,6 +1672,21 @@ func (err backendDiagnosticError) Unwrap() []error {
 
 var backendPositionedDiagnostic = regexp.MustCompile(`^(.+):([0-9]+):([0-9]+): (.*)$`)
 var backendLineDiagnostic = regexp.MustCompile(`^(.+):([0-9]+): (.*)$`)
+var backendGeneratedExtensionName = regexp.MustCompile(`\bGpp(?:Prelude)?Ext_[A-Za-z0-9_]+_[0-9a-f]{8}\b`)
+
+func sourceFacingBackendMessage(message string) string {
+	return backendGeneratedExtensionName.ReplaceAllStringFunc(message, func(generated string) string {
+		name := strings.TrimPrefix(generated, "GppPreludeExt_")
+		name = strings.TrimPrefix(name, "GppExt_")
+		if hashSeparator := strings.LastIndexByte(name, '_'); hashSeparator >= 0 {
+			name = name[:hashSeparator]
+		}
+		if methodSeparator := strings.LastIndexByte(name, '_'); methodSeparator >= 0 {
+			name = name[methodSeparator+1:]
+		}
+		return name
+	})
+}
 
 func newBackendDiagnosticError(output string) backendDiagnosticError {
 	result := backendDiagnosticError{}
@@ -1685,12 +1700,13 @@ func newBackendDiagnosticError(output string) backendDiagnosticError {
 		if match := backendPositionedDiagnostic.FindStringSubmatch(line); match != nil {
 			lineNumber, _ := strconv.Atoi(match[2])
 			column, _ := strconv.Atoi(match[3])
+			message := sourceFacingBackendMessage(match[4])
 			key := struct {
 				file    string
 				line    int
 				column  int
 				message string
-			}{match[1], lineNumber, column, match[4]}
+			}{match[1], lineNumber, column, message}
 			if seenDiagnostics[key] {
 				continue
 			}
@@ -1698,18 +1714,19 @@ func newBackendDiagnosticError(output string) backendDiagnosticError {
 			result.lines = append(result.lines, backendOutputLine{diagnostic: compiler.NewDiagnosticError(
 				match[1],
 				compiler.Span{Line: lineNumber, Column: column},
-				errors.New(match[4]),
+				errors.New(message),
 			)})
 			continue
 		}
 		if match := backendLineDiagnostic.FindStringSubmatch(line); match != nil {
 			lineNumber, _ := strconv.Atoi(match[2])
+			message := sourceFacingBackendMessage(match[3])
 			key := struct {
 				file    string
 				line    int
 				column  int
 				message string
-			}{match[1], lineNumber, 0, match[3]}
+			}{match[1], lineNumber, 0, message}
 			if seenDiagnostics[key] {
 				continue
 			}
@@ -1717,11 +1734,11 @@ func newBackendDiagnosticError(output string) backendDiagnosticError {
 			result.lines = append(result.lines, backendOutputLine{diagnostic: compiler.DiagnosticError{
 				File:  match[1],
 				Span:  compiler.Span{Line: lineNumber},
-				Cause: errors.New(match[3]),
+				Cause: errors.New(message),
 			}})
 			continue
 		}
-		result.lines = append(result.lines, backendOutputLine{text: line})
+		result.lines = append(result.lines, backendOutputLine{text: sourceFacingBackendMessage(line)})
 	}
 	return result
 }

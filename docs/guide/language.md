@@ -112,12 +112,12 @@ and `&^=`. They follow Go's operand and type rules; bitwise and shift forms
 apply to integer values. `++` and `--` are standalone statements, as they are
 in Go.
 
-## Records and enums
+## Anonymous structs and enums
 
-Records are concise anonymous data values:
+Anonymous structs are concise anonymous data values:
 
 ```go
-health := record(ok: true, service: "catalog")
+health := struct(ok: true, service: "catalog")
 ```
 
 Enums provide named scalar values with conversion and metadata:

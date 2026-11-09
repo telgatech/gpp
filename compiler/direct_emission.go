@@ -87,6 +87,7 @@ func directStaticMethodSource(class *ClassDecl, method Method, context construct
 	if err != nil {
 		return "", true, err
 	}
+	rewriteProtectedMemberSelectors(body, class, classesForClass(context, class), method)
 	return formatDirectFunctionDecl(staticMethodGoName(class, method), nil, method.TypeParamsAST, method.ParameterAST, method.ResultAST, method.ResultFieldsAST, methodContext, !method.Generated, body)
 }
 
@@ -338,6 +339,7 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 			if err != nil {
 				return nil, true, err
 			}
+			rewriteProtectedMemberSelectors(body, target.Class, target.Classes, method)
 		}
 	}
 	return body, true, nil
@@ -795,7 +797,7 @@ func typeNodeHasRecord(typeNode TypeNode) bool {
 	}
 	switch value := typeNode.(type) {
 	case *NamedType:
-		if len(value.Parts) == 1 && value.Parts[0] == "record" {
+		if isAnonymousStructMarker(value.Parts) {
 			return true
 		}
 		for _, argument := range value.Arguments {
@@ -859,7 +861,7 @@ func typeNodeHasRecord(typeNode TypeNode) bool {
 		}
 	case *TokenType:
 		for _, token := range value.Tokens {
-			if token.Text == "record" {
+			if isAnonymousStructCall(token.Text) {
 				return true
 			}
 		}
@@ -1268,7 +1270,7 @@ func directExpressionSafe(expression ExprNode, context constructorContext) bool 
 				return false
 			}
 		}
-		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "record" {
+		if name, ok := value.Callee.(*NameExpr); ok && isAnonymousStructCall(name.Name) {
 			// Record calls are Go++ syntax and must be lowered to a generated
 			// structural type before direct Go AST emission.
 			return false
@@ -1288,6 +1290,9 @@ func directExpressionSafe(expression ExprNode, context constructorContext) bool 
 			return ok && directCallShapeSafe(inner, context)
 		}
 		if _, _, isConstructor := constructorTargetForCallee(value.Callee, context); isConstructor {
+			return false
+		}
+		if _, _, isStructConstructor := namedStructConstructorForCallee(value.Callee, context); isStructConstructor {
 			return false
 		}
 		if _, found, err := overloadCallName(value, context.CurrentParameterTypes, context.Overloads); err != nil || found {

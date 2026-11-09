@@ -91,6 +91,335 @@ func TestResolveProgramRejectsInvalidInheritance(t *testing.T) {
 	}
 }
 
+func TestResolveProgramRejectsChildAccessToPrivateInheritedFieldsAndMethods(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		member string
+	}{
+		{
+			name: "field",
+			source: `class Parent {
+    state string
+}
+class Child : Parent {
+    func Read() string { return this.state }
+}`,
+			member: "state",
+		},
+		{
+			name: "method",
+			source: `class Parent {
+    func helper() {}
+}
+class Child : Parent {
+    func Read() { this.helper() }
+}`,
+			member: "helper",
+		},
+		{
+			name: "parent-typed-parameter",
+			source: `class Parent {
+    state string
+}
+class Child : Parent {
+    func Read(other Parent) string { return other.state }
+}`,
+			member: "state",
+		},
+		{
+			name: "static-method",
+			source: `class Parent {
+    static func helper() {}
+}
+class Child : Parent {
+    static func Read() { Parent.helper() }
+}`,
+			member: "helper",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ResolveProgram(parseProgram(t, test.source))
+			if err == nil || !strings.Contains(err.Error(), "private inherited member "+test.member) {
+				t.Fatalf("expected child access to private member %q to be rejected, got %v", test.member, err)
+			}
+		})
+	}
+}
+
+func TestResolveProgramAllowsProtectedInheritedFieldsAndMethods(t *testing.T) {
+	program := parseProgram(t, `class Parent {
+    _state string
+    func _reset() { this._state = "" }
+    static func _factory() Parent { return Parent{} }
+}
+class Child : Parent {
+    func Reset() { this._reset(); this._state = "ready" }
+    static func New() Parent { return Parent._factory() }
+}`)
+	if _, err := ResolveProgram(program); err != nil {
+		t.Fatalf("protected inherited members should be accessible to the child: %v", err)
+	}
+}
+
+func TestResolveProgramRejectsOrdinaryAccessToPrivateAndProtectedMembers(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		member string
+		level  string
+	}{
+		{
+			name: "private-field",
+			source: `class Account { pin string }
+func show(account Account) string { return account.pin }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-method",
+			source: `class Account { func reset() {} }
+func reset(account Account) { account.reset() }`,
+			member: "reset",
+			level:  "private",
+		},
+		{
+			name: "private-field-on-inferred-local",
+			source: `class Account { pin string }
+func show() string { account := Account{}; return account.pin }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-in-composite-literal",
+			source: `class Account { pin string }
+func show() Account { return Account{pin: "hidden"} }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-on-computed-function-result",
+			source: `class Account { pin string }
+func GetAccount() Account { return Account{} }
+func show() string { return GetAccount().pin }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-through-type-alias",
+			source: `class Account { pin string }
+type AccountAlias = Account
+func show(account AccountAlias) string { return account.pin }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-after-type-switch",
+			source: `class Account { pin string }
+func show(value any) string {
+    switch account := value.(type) {
+    case Account:
+        return account.pin
+    default:
+        return ""
+    }
+}`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-inside-function-literal",
+			source: `class Account { pin string }
+func show() {
+	func() {
+		account := Account{}
+		_ = account.pin
+	}()
+}`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-inside-contextual-lambda",
+			source: `class Account { pin string }
+func Visit(callback func(Account)) {}
+func show() { Visit(account => println(account.pin)) }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-inside-contextual-lambda-through-function-value",
+			source: `class Account { pin string }
+func show(visit func(func(Account))) { visit(account => println(account.pin)) }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-on-computed-method-result",
+			source: `class Account { pin string }
+class Store { func Get() Account { return Account{} } }
+func show(store Store) string { return store.Get().pin }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "private-field-on-indexed-value",
+			source: `class Account { pin string }
+func show(accounts []Account) string { return accounts[0].pin }`,
+			member: "pin",
+			level:  "private",
+		},
+		{
+			name: "protected-field",
+			source: `class Account { _balance int }
+func show(account Account) int { return account._balance }`,
+			member: "_balance",
+			level:  "protected",
+		},
+		{
+			name: "protected-field-in-composite-literal",
+			source: `class Account { _balance int }
+func show() Account { return Account{_balance: 100} }`,
+			member: "_balance",
+			level:  "protected",
+		},
+		{
+			name: "protected-static-method",
+			source: `class Account { static func _reset() {} }
+func show() { Account._reset() }`,
+			member: "_reset",
+			level:  "protected",
+		},
+		{
+			name: "protected-method-on-base-and-child-values",
+			source: `class Account { func _reset() {} }
+class SavingsAccount : Account {}
+func reset(account Account, savings SavingsAccount) { account._reset(); savings._reset() }`,
+			member: "_reset",
+			level:  "protected",
+		},
+		{
+			name: "protected-member-in-extension",
+			source: `class Account { _balance int }
+extend Account { func Leak() int { return this._balance } }`,
+			member: "_balance",
+			level:  "protected",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ResolveProgram(parseProgram(t, test.source))
+			want := "cannot access " + test.level + " member " + test.member
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected %q access to be rejected, got %v", want, err)
+			}
+		})
+	}
+}
+
+func TestResolveProgramAllowsProtectedAccessFromChildToLocalBaseValue(t *testing.T) {
+	program := parseProgram(t, `class Parent { _state string }
+class Child : Parent {
+    func Read() string {
+        parent := Parent{}
+        return parent._state
+    }
+}`)
+	if _, err := ResolveProgram(program); err != nil {
+		t.Fatalf("a child should be able to access protected members through a local base value: %v", err)
+	}
+}
+
+func TestResolveProgramAllowsDeclaringClassAndChildCompositeInitialization(t *testing.T) {
+	program := parseProgram(t, `class Parent {
+    pin string
+    _state string
+    func Initialize() Parent { return Parent{pin: "own", _state: "ready"} }
+}
+class Child : Parent {
+    func InitializeChild() Child { return Child{_state: "ready"} }
+}`)
+	if _, err := ResolveProgram(program); err != nil {
+		t.Fatalf("classes should be able to initialize their private fields and children their protected fields: %v", err)
+	}
+}
+
+func TestResolveProgramRejectsProtectedAccessThroughParentQualifiedReceiver(t *testing.T) {
+	program := parseProgram(t, `class Parent { _state string }
+class Child : Parent {}
+func show(child Child) string { return child.Parent._state }`)
+	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access protected member _state") {
+		t.Fatalf("a parent qualifier must not expose protected state to ordinary callers, got %v", err)
+	}
+}
+
+func TestResolveProgramChecksComputedMemberReceiversAcrossFiles(t *testing.T) {
+	program := parseProgram(t,
+		"package example\nclass Account { pin string }\nfunc GetAccount() Account { return Account{} }\n",
+		"package example\nfunc show() string { return GetAccount().pin }\n",
+	)
+	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
+		t.Fatalf("private access through a cross-file function result should be rejected, got %v", err)
+	}
+}
+
+func TestResolveProgramAllowsPublicExtensionAccess(t *testing.T) {
+	program := parseProgram(t, `class Account { Name string }
+extend Account { func ReadName() string { return this.Name } }`)
+	if _, err := ResolveProgram(program); err != nil {
+		t.Fatalf("extensions should be able to access public target members: %v", err)
+	}
+}
+
+func TestResolveProgramRejectsPrivateAccessFromNativeGoMethod(t *testing.T) {
+	program := parseProgram(t, `class Account { pin string }
+func (account Account) Leak() string { return account.pin }`)
+	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
+		t.Fatalf("a native Go method must not bypass Go++ class privacy, got %v", err)
+	}
+}
+
+func TestResolveProgramRejectsPrivateAccessFromNativeGoTypeSwitch(t *testing.T) {
+	program := parseProgram(t, `class Account { pin string }
+func reveal(value any) string {
+	switch account := value.(type) {
+	case Account:
+		return account.pin
+	default:
+		return ""
+	}
+}`)
+	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
+		t.Fatalf("a native Go type switch must not bypass Go++ class privacy, got %v", err)
+	}
+}
+
+func TestResolveProgramRejectsPrivateAccessFromNativeGoPackageValue(t *testing.T) {
+	program := parseProgram(t, `class Account { pin string }
+var leaked = Account{pin: "hidden"}`)
+	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
+		t.Fatalf("a native Go package value must not bypass Go++ class privacy, got %v", err)
+	}
+}
+
+func TestResolveProgramAllowsPublicAccessAndDeclaringClassPrivateAccess(t *testing.T) {
+	program := parseProgram(t, `class Account {
+    Name string
+    pin string
+    func ownPin() string { return this.pin }
+    func Reset() { this.reset() }
+    func reset() {}
+}
+class SavingsAccount : Account {
+    func ReadName(account Account) string { return account.Name }
+}
+func show(account Account) string { return account.Name }`)
+	if _, err := ResolveProgram(program); err != nil {
+		t.Fatalf("public or declaring-class private access should be allowed: %v", err)
+	}
+}
+
 func TestResolveProgramCollectsIndependentClassDiagnostics(t *testing.T) {
 	program := parseProgram(t, "class GppClass {}\nclass GppField {}\n")
 	_, err := ResolveProgram(program)

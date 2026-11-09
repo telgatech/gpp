@@ -668,16 +668,16 @@ gpp doc User.Find
 
 ---
 
-# 25. Records
+# 25. Anonymous Structs
 
-Anonymous records do not normally have standalone declaration names.
+Anonymous structs do not normally have standalone declaration names.
 
-However, signatures containing records should display their source-level shape.
+However, signatures containing anonymous structs should display their source-level shape.
 
 Example:
 
 ```text
-func Stats() record{
+func Stats() struct{
     Users int
     Orders int
 }
@@ -693,13 +693,13 @@ must never appear in normal documentation.
 
 ---
 
-# 26. Named Context Around Records
+# 26. Named Context Around Anonymous Structs
 
-If a function returns an inferred anonymous record:
+If a function returns an inferred anonymous struct:
 
 ```gpp
-func Stats() record {
-    return record(
+func Stats() struct {
+    return struct(
         Users: users,
         Orders: orders,
     )
@@ -711,7 +711,7 @@ func Stats() record {
 Example:
 
 ```text
-func Stats() record{
+func Stats() struct{
     Users int
     Orders int
 }
@@ -1539,7 +1539,7 @@ __gpp_root
 __gpp_vtable
 __gpp_identity
 compiler temporary fields
-generated record hash names
+generated anonymous struct hash names
 bridge functions
 ```
 
@@ -1619,7 +1619,7 @@ Examples:
 ```bash
 gpp doc any
 gpp doc Object
-gpp doc record
+gpp doc struct
 ```
 
 The output should explain their Go++ semantics concisely.
@@ -1635,7 +1635,7 @@ Examples:
 ```bash
 gpp doc class
 gpp doc extend
-gpp doc record
+gpp doc struct
 gpp doc try
 gpp doc throw
 gpp doc template
@@ -1711,7 +1711,7 @@ unless an explicit topic mode is used.
 Possible explicit mode:
 
 ```bash
-gpp doc --lang record
+gpp doc --lang struct
 ```
 
 ---

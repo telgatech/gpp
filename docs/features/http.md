@@ -14,7 +14,7 @@ route with an annotation:
 class App : http.Server {
     func Health(ctx *http.Context) error
         @{http.GET("/health")} {
-        return ctx.JSON(record(ok: true))
+        return ctx.JSON(struct(ok: true))
     }
 }
 
@@ -81,7 +81,7 @@ hooks run once around the whole request.
 ## Bind into a typed value
 
 `ctx.Bind[T]()` returns the request data as the type you ask for. `T` can be a
-Go++ class, a Go struct, or a structural record. The request method and content
+Go++ class, a Go struct, or an anonymous struct. The request method and content
 type select query, JSON, or form binding:
 
 ::: info
@@ -91,8 +91,8 @@ Use a pointer type argument when you want a pointer result:
 
 ```go
 func Create(ctx *http.Context) error @{http.POST("/users")} {
-    input := ctx.Bind[record(name: string, age: int)]()
-    return ctx.JSON(201, record(Name: input.name, Age: input.age))
+    input := ctx.Bind[struct(name: string, age: int)]()
+    return ctx.JSON(201, struct(Name: input.name, Age: input.age))
 }
 
 func Update(ctx *http.Context) error @{http.PUT("/users/{id}")} {
@@ -102,7 +102,7 @@ func Update(ctx *http.Context) error @{http.PUT("/users/{id}")} {
 ```
 
 Go structs and classes use their exported fields and `form`/`json` tags.
-Records bind through their generated field accessors, including lowercase
+Anonymous structs bind through their generated field accessors, including lowercase
 field names. Missing fields keep their zero or initial values; unknown input
 fields are ignored. The existing destination-based forms remain available
 when a value must be initialized before binding:
@@ -190,7 +190,7 @@ marked with `http.Mountable` and mount it at one or more paths or hostnames:
 ```go
 class BillingRoutes @{http.Mountable} {
     func Status(ctx *http.Context) error @{http.GET("/status")} {
-        return ctx.JSON(record(Area: "billing"))
+        return ctx.JSON(struct(Area: "billing"))
     }
 }
 

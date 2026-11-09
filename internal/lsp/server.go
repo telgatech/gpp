@@ -2476,7 +2476,11 @@ func (s *server) resolveSymbolsAt(uri string, position Position, name string) []
 					return classMembers
 				}
 			}
-			if receiverType := s.receiverType(state, receiver, offset); receiverType != "" {
+			receiverType := s.receiverTypeForExpression(state, receiver, state.File.Tokens[index-1].Span.Start, offset)
+			if receiverType == "" {
+				receiverType = s.receiverType(state, receiver, offset)
+			}
+			if receiverType != "" {
 				baseType := strings.TrimSpace(receiverType)
 				for strings.HasPrefix(baseType, "*") {
 					baseType = strings.TrimSpace(strings.TrimPrefix(baseType, "*"))
@@ -2652,17 +2656,51 @@ func (s *server) extensionMembersForType(state *fileState, receiverType, memberN
 		}
 		extensionFile := s.fileForSymbolPath(info.Path)
 		if extensionFile == nil {
-			if s.canonicalTypeIdentity(state, info.Symbol.Target) == receiverIdentity {
+			target := s.canonicalTypeIdentity(state, info.Symbol.Target)
+			if target == receiverIdentity || genericExtensionTargetMatches(target, receiverIdentity) {
 				result = append(result, info)
 			}
 			continue
 		}
 		extensionState := &fileState{Path: info.Path, File: extensionFile}
-		if s.canonicalTypeIdentity(extensionState, info.Symbol.Target) == receiverIdentity {
+		target := s.canonicalTypeIdentity(extensionState, info.Symbol.Target)
+		if target == receiverIdentity || genericExtensionTargetMatches(target, receiverIdentity) {
 			result = append(result, info)
 		}
 	}
 	return result
+}
+
+func genericExtensionTargetMatches(target, actual string) bool {
+	target = strings.TrimSpace(target)
+	actual = strings.TrimSpace(actual)
+	if strings.HasPrefix(target, "[]") && strings.HasPrefix(actual, "[]") {
+		parameter := strings.TrimSpace(strings.TrimPrefix(target, "[]"))
+		return extensionTypeParameterName(parameter) && strings.TrimSpace(strings.TrimPrefix(actual, "[]")) != ""
+	}
+	if !strings.HasPrefix(target, "map[") || !strings.HasPrefix(actual, "map[") {
+		return false
+	}
+	targetClose := strings.IndexByte(target, ']')
+	actualClose := strings.IndexByte(actual, ']')
+	if targetClose < 0 || actualClose < 0 || targetClose == len(target)-1 || actualClose == len(actual)-1 {
+		return false
+	}
+	targetKey := strings.TrimSpace(target[len("map["):targetClose])
+	targetValue := strings.TrimSpace(target[targetClose+1:])
+	actualKey := strings.TrimSpace(actual[len("map["):actualClose])
+	actualValue := strings.TrimSpace(actual[actualClose+1:])
+	return (extensionTypeParameterName(targetKey) || targetKey == actualKey) &&
+		(extensionTypeParameterName(targetValue) || targetValue == actualValue)
+}
+
+func extensionTypeParameterName(name string) bool {
+	switch name {
+	case "T", "K", "V", "E":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *server) extensionPackageVisible(state *fileState, extension symbolInfo) bool {
@@ -2816,7 +2854,7 @@ func (s *server) symbolsMatching(uri, name string, accept func(compiler.DocSymbo
 	var result []symbolInfo
 	state := s.workspace.files[pathFromURI(uri)]
 	scope := ""
-	if state != nil {
+	if state != nil && state.File != nil {
 		scope = workspaceScopePath(state.Path)
 	}
 	for _, info := range s.workspace.symbols {
@@ -2904,6 +2942,11 @@ func (s *server) hover(params textDocumentPositionParams) *hover {
 			return nil
 		}
 	}
+	if stateAtPosition != nil {
+		if value := s.nativeGoExternalHover(stateAtPosition, name, offsetAt(stateAtPosition.Source, params.Position), selection); value != nil {
+			return value
+		}
+	}
 	if local := s.localHover(params.TextDocument.URI, name, params.Position); local != nil {
 		local.Range = &selection
 		return local
@@ -2912,10 +2955,16 @@ func (s *server) hover(params textDocumentPositionParams) *hover {
 		parameter.Range = &selection
 		return parameter
 	}
-	if stateAtPosition != nil {
-		if value := s.nativeGoExternalHover(stateAtPosition, name, offsetAt(stateAtPosition.Source, params.Position), selection); value != nil {
-			return value
-		}
+	offset := offsetAt(stateAtPosition.Source, params.Position)
+	if field, ok := s.anonymousStructFieldDeclarationAt(stateAtPosition, name, offset); ok {
+		value := localHoverValue("field", name, field.Type, "")
+		value.Range = &selection
+		return value
+	}
+	if field, ok := s.returnedStructFieldAt(stateAtPosition, name, offset); ok {
+		value := localHoverValue("field", name, field.Type, "")
+		value.Range = &selection
+		return value
 	}
 	choices := s.resolveSymbolsAt(params.TextDocument.URI, params.Position, name)
 	if len(choices) == 0 {
@@ -2926,10 +2975,6 @@ func (s *server) hover(params textDocumentPositionParams) *hover {
 		return nil
 	}
 	info := choices[0]
-	offset := 0
-	if stateAtPosition != nil {
-		offset = offsetAt(stateAtPosition.Source, params.Position)
-	}
 	symbol := s.contextualMethodSymbol(stateAtPosition, offset, info.Symbol)
 	signature := symbol.Signature
 	if signature == "" {
@@ -2939,13 +2984,42 @@ func (s *server) hover(params textDocumentPositionParams) *hover {
 		signature = info.Symbol.FullName
 	}
 	value := "**" + hoverSymbolKind(info.Symbol) + "**\n\n```gpp\n" + signature + "\n```"
-	if symbol.Doc != "" {
-		value += "\n\n" + symbol.Doc
+	documentation := symbol.Doc
+	if documentation == "" && symbol.Kind == compiler.DocClass {
+		if inherited, parent := s.inheritedClassDocumentation(info); inherited != "" {
+			documentation = "**Inherited from `" + parent + "`.**\n\n" + inherited
+		}
+	}
+	if documentation != "" {
+		value += "\n\n" + documentation
 	}
 	if deprecated(symbol) {
 		value += "\n\n**Deprecated.**"
 	}
 	return &hover{Contents: markupContent{Kind: "markdown", Value: value}, Range: &selection}
+}
+
+func (s *server) inheritedClassDocumentation(info symbolInfo) (string, string) {
+	queue := s.parentClasses(info)
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		key := semanticSymbolKey(parent)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if documentation := strings.TrimSpace(parent.Symbol.Doc); documentation != "" {
+			name := parent.Symbol.FullName
+			if name == "" {
+				name = parent.Symbol.Name
+			}
+			return documentation, name
+		}
+		queue = append(queue, s.parentClasses(parent)...)
+	}
+	return "", ""
 }
 
 func (s *server) contextualMethodSymbol(state *fileState, offset int, symbol compiler.DocSymbol) compiler.DocSymbol {
@@ -3750,7 +3824,7 @@ func bindingInitializer(root *compiler.BlockStmt, declaration compiler.Span) (co
 }
 
 func (s *server) expressionType(state *fileState, method *compiler.Method, expression compiler.ExprNode, depth int) string {
-	if state == nil || expression == nil || depth > 8 {
+	if state == nil || expression == nil || depth > 64 {
 		return ""
 	}
 	switch value := expression.(type) {
@@ -3789,13 +3863,13 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 		return s.expressionType(state, method, value.Left, depth+1)
 	case *compiler.NameExpr:
 		if method != nil {
+			if binding, found := s.localBindingAt(state, value.SpanValue.Start, value.Name); found && binding.Type != "" && binding.Type != "inferred" {
+				return binding.Type
+			}
 			for _, parameter := range method.ParameterAST {
 				if parameter.Name == value.Name && parameter.Type != nil {
 					return sourceType(state.Source, parameter.Type.Span())
 				}
-			}
-			if binding, found := s.localBindingAt(state, value.SpanValue.Start, value.Name); found && binding.Type != "" && binding.Type != "inferred" {
-				return binding.Type
 			}
 		}
 		if info := s.symbolAtName(state, value.Name, value.SpanValue.Start); info != nil {
@@ -3818,6 +3892,9 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 			if info.Symbol.Kind == compiler.DocMethod {
 				return callableResultTypeFor(info, s.classTypeForReceiver(state, sourceExpression(state.Source, value.Receiver), value.SpanValue.Start), nil)
 			}
+		}
+		if field, found := s.returnedStructFieldAt(state, value.Name, value.SpanValue.End-len(value.Name)); found {
+			return field.Type
 		}
 	case *compiler.CallExpr:
 		return s.callExpressionType(state, method, value, depth+1)
@@ -3868,6 +3945,21 @@ func (s *server) callExpressionType(state *fileState, method *compiler.Method, c
 	if call == nil {
 		return ""
 	}
+	if selector, ok := call.Callee.(*compiler.SelectorExpr); ok {
+		memberOffset := selector.SpanValue.End - len(selector.Name)
+		if object := s.nativeGoImportedObjectAt(state, selector.Name, memberOffset); object != nil {
+			if function, ok := object.(*types.Func); ok {
+				if signature, ok := function.Type().(*types.Signature); ok && signature.Results() != nil && signature.Results().Len() > 0 {
+					return types.TypeString(signature.Results().At(0).Type(), func(pkg *types.Package) string {
+						if pkg == nil {
+							return ""
+						}
+						return pkg.Name()
+					})
+				}
+			}
+		}
+	}
 	if name, ok := call.Callee.(*compiler.NameExpr); ok {
 		switch name.Name {
 		case "len", "cap", "copy":
@@ -3893,7 +3985,13 @@ func (s *server) callExpressionType(state *fileState, method *compiler.Method, c
 		if memberOffset >= 0 && memberOffset <= len(state.Source) {
 			position := positionAtOffset(state.Source, memberOffset)
 			receiverText := sourceExpression(state.Source, selector.Receiver)
-			dynamicType := s.classTypeForReceiver(state, receiverText, memberOffset)
+			dynamicType := s.expressionType(state, method, selector.Receiver, depth+1)
+			if dynamicType == "" {
+				dynamicType = s.receiverType(state, receiverText, memberOffset)
+			}
+			if dynamicType == "" {
+				dynamicType = s.classTypeForReceiver(state, receiverText, memberOffset)
+			}
 			for _, info := range s.resolveSymbolsAt(state.URI, position, selector.Name) {
 				if info.Symbol.Kind != compiler.DocMethod && info.Symbol.Kind != compiler.DocExtension && info.Symbol.Kind != compiler.DocFunction {
 					continue
@@ -3941,6 +4039,9 @@ func callableResultTypeFor(info symbolInfo, receiverType string, typeArguments [
 	if result == "" {
 		return ""
 	}
+	if info.Symbol.Kind == compiler.DocExtension && receiverType != "" {
+		result = specializeExtensionResultType(info.Symbol.Target, receiverType, result)
+	}
 	for index, parameter := range genericTypeParameterNames(info.Symbol.Signature, info.Symbol.Name) {
 		if index < len(typeArguments) {
 			result = replaceTypeIdentifier(result, parameter, typeArguments[index])
@@ -3948,6 +4049,33 @@ func callableResultTypeFor(info symbolInfo, receiverType string, typeArguments [
 	}
 	if receiverType != "" {
 		result = replaceTypeIdentifier(result, "self", receiverType)
+	}
+	return result
+}
+
+func specializeExtensionResultType(target, actual, result string) string {
+	target = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(target), "*"))
+	actual = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(actual), "*"))
+	if strings.HasPrefix(target, "[]") && strings.HasPrefix(actual, "[]") {
+		parameter := strings.TrimSpace(strings.TrimPrefix(target, "[]"))
+		if extensionTypeParameterName(parameter) {
+			return replaceTypeIdentifier(result, parameter, strings.TrimSpace(strings.TrimPrefix(actual, "[]")))
+		}
+	}
+	if strings.HasPrefix(target, "map[") && strings.HasPrefix(actual, "map[") {
+		targetClose := strings.IndexByte(target, ']')
+		actualClose := strings.IndexByte(actual, ']')
+		if targetClose > 0 && actualClose > 0 {
+			bindings := map[string]string{
+				strings.TrimSpace(target[len("map["):targetClose]): strings.TrimSpace(actual[len("map["):actualClose]),
+				strings.TrimSpace(target[targetClose+1:]):          strings.TrimSpace(actual[actualClose+1:]),
+			}
+			for parameter, value := range bindings {
+				if extensionTypeParameterName(parameter) {
+					result = replaceTypeIdentifier(result, parameter, value)
+				}
+			}
+		}
 	}
 	return result
 }
@@ -4664,6 +4792,9 @@ func (s *server) definitions(params textDocumentPositionParams) []Location {
 	state := s.workspace.files[pathFromURI(params.TextDocument.URI)]
 	if state != nil && state.File != nil {
 		offset := offsetAt(state.Source, params.Position)
+		if location := s.nativeGoImportedDefinition(state, name, offset); location != nil {
+			return []Location{*location}
+		}
 		if binding, ok := s.localBindingAt(state, offset, name); ok {
 			return []Location{{URI: state.URI, Range: rangeForOffsets(state.Source, binding.Declaration.Start, binding.Declaration.End)}}
 		}
@@ -4672,9 +4803,6 @@ func (s *server) definitions(params textDocumentPositionParams) []Location {
 		}
 		if location, ok := s.importAliasDefinition(state, name, offset); ok {
 			return []Location{location}
-		}
-		if location := s.nativeGoImportedDefinition(state, name, offset); location != nil {
-			return []Location{*location}
 		}
 	}
 	result := []Location{}
@@ -4722,10 +4850,32 @@ func (s *server) typeDefinitions(params textDocumentPositionParams) []Location {
 	}
 	state := s.workspace.files[pathFromURI(params.TextDocument.URI)]
 	typeName := name
-	if state != nil {
-		if binding, ok := s.localBindingAt(state, offsetAt(state.Source, params.Position), name); ok {
+	if state != nil && state.File != nil {
+		offset := offsetAt(state.Source, params.Position)
+		if token, ok := identifierTokenAt(state.File.Tokens, offset); ok {
+			index := tokenIndexAt(state.File.Tokens, token.Span.Start)
+			if index > 0 && state.File.Tokens[index-1].Text == "." {
+				qualifier := strings.TrimSpace(selectorReceiverBefore(state, state.File.Tokens[index-1].Span.Start))
+				qualifier = strings.TrimLeft(qualifier, "&*")
+				qualifier = strings.TrimSpace(qualifier)
+				if packageName, packageDir, found := s.importedPackageForQualifier(state, qualifier); found {
+					var importedTypes []Location
+					for _, symbol := range s.packageSymbols(packageName, packageDir) {
+						if symbol.Symbol.Name == name && (symbol.Symbol.Kind == compiler.DocClass || symbol.Symbol.Kind == compiler.DocEnum || symbol.Symbol.Kind == compiler.DocType) {
+							if location, ok := s.symbolLocation(symbol); ok {
+								importedTypes = append(importedTypes, location)
+							}
+						}
+					}
+					if len(importedTypes) > 0 {
+						return uniqueLocations(importedTypes)
+					}
+				}
+			}
+		}
+		if binding, ok := s.localBindingAt(state, offset, name); ok {
 			typeName = binding.Type
-		} else if parameter := s.typeParameterAt(state, name, offsetAt(state.Source, params.Position)); parameter != nil {
+		} else if parameter := s.typeParameterAt(state, name, offset); parameter != nil {
 			return []Location{{URI: state.URI, Range: rangeForOffsets(state.Source, parameter.Declaration.Start, parameter.Declaration.End)}}
 		} else if local := s.localHover(params.TextDocument.URI, name, params.Position); local != nil {
 			parts := strings.Split(local.Contents.Value, "`")
@@ -5947,7 +6097,7 @@ func (s *server) completions(params textDocumentPositionParams) []CompletionItem
 		return []CompletionItem{}
 	}
 	offset := offsetAt(state.Source, params.Position)
-	items := s.contextualCompletions(state, offset)
+	items := s.contextualCompletions(completionState(state, offset), offset)
 	start, end := completionReplacementOffsets(state, offset)
 	editRange := rangeForOffsets(state.Source, start, end)
 	for index := range items {
@@ -5962,6 +6112,31 @@ func (s *server) completions(params textDocumentPositionParams) []CompletionItem
 		items[index].Data = completionResolveData{URI: params.TextDocument.URI, Position: params.Position, Label: items[index].Label}
 	}
 	return items
+}
+
+func completionState(state *fileState, offset int) *fileState {
+	if state == nil || state.File != nil || offset < 0 || offset > len(state.Source) {
+		return state
+	}
+	start := offset
+	for start > 0 && isIdentifierByte(state.Source[start-1]) {
+		start--
+	}
+	selectorPrefix := strings.TrimRight(state.Source[:start], " \t\r\n")
+	if !strings.HasSuffix(selectorPrefix, ".") {
+		return state
+	}
+	const placeholder = "__gpp_completion_cursor()"
+	source := state.Source[:start] + placeholder + state.Source[offset:]
+	file, err := compiler.ParseFile(state.Path, source)
+	if err != nil {
+		return state
+	}
+	file.SourcePath = state.Path
+	recovered := *state
+	recovered.Source = source
+	recovered.File = file
+	return &recovered
 }
 
 func (s *server) resolveCompletionItem(item CompletionItem) CompletionItem {

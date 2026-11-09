@@ -185,7 +185,7 @@ try {
     todo := Todo.Find(id)
     return ctx.JSON(todo)
 } catch sql.ErrNoRows {
-    return ctx.JSON(404, record(Error: "todo not found"))
+    return ctx.JSON(404, struct(Error: "todo not found"))
 }
 ```
 

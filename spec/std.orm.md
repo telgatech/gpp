@@ -55,7 +55,8 @@ The package may use:
 
 ```go
 import (
-    "database/sql"
+	"database/sql"
+	gppsql "gpp/sql"
     "fmt"
     "reflect"
     "strings"
@@ -154,9 +155,7 @@ Expose:
 
 ```go
 type SQLExecutor interface {
-    Exec(query string, args ...any) (sql.Result, error)
-    Query(query string, args ...any) (*sql.Rows, error)
-    QueryRow(query string, args ...any) *sql.Row
+    gppsql.Executor
 }
 ```
 
@@ -177,10 +176,6 @@ Provide:
 
 ```go
 class Model {
-    func GppSQLGetQuery(where string) (string, error)
-    func GppSQLSelectQuery(where string) (string, error)
-    func GppSQLScanTargets(columnNames []string) ([]any, error)
-
     static func Get(exec SQLExecutor, where string, args ...any) (*self, error)
     static func Select(exec SQLExecutor, where string, args ...any) ([]*self, error)
     static func All(exec SQLExecutor, sortBy string = "") ([]*self, error)
@@ -222,6 +217,9 @@ class Model {
         return nil
     }
 }
+
+func GetSQL[T any](exec SQLExecutor, query string, args ...any) (*T, error)
+func SelectSQL[T any](exec SQLExecutor, query string, args ...any) ([]*T, error)
 ```
 
 All hooks are optional.
@@ -325,9 +323,9 @@ employees, err := Employee.Select(db, "active = $1", true)
 ```
 
 These methods work with `*sql.DB` and `*sql.Tx`. `Get` returns one model and
-`Select` returns a slice of model pointers. They are distinct from the generic
-full-SQL query methods provided by `gpp/sql`; see
-[the SQL package specification](./std.sql.md).
+`Select` returns a slice of model pointers. For full-SQL queries into model
+types, use `orm.GetSQL` and `orm.SelectSQL`. The generic `gpp/sql` package
+handles scalar, anonymous struct, and named struct result shapes.
 
 # Insert
 
@@ -819,8 +817,9 @@ if err := loaded.Destroy(db); err != nil {
 
 `gpp/orm` supplies model-oriented helpers and persistence behavior; it is not a
 query-language abstraction. Model helpers accept ordinary SQL condition
-fragments. Full SQL queries with typed scalar, record, struct, or model results
-belong to `gpp/sql`; see [the SQL package specification](./std.sql.md).
+fragments. ORM model metadata and full-SQL model scanning belong to `gpp/orm`.
+Typed scalar and struct queries belong to `gpp/sql`; see [the SQL
+package specification](./std.sql.md).
 
 # Database Compatibility
 
@@ -890,8 +889,9 @@ Add these validations without changing normal successful behavior.
 # Reflection
 
 ORM model operations use reflection to inspect class fields and annotations and
-to dispatch lifecycle hooks. Full-SQL result scanning is implemented by
-`gpp/sql` and documented in [its package specification](./std.sql.md).
+to dispatch lifecycle hooks. Full-SQL model result scanning remains inside
+`gpp/orm`; generic SQL result scanning is documented in
+[the SQL package specification](./std.sql.md).
 
 If Go++ later supports sufficient static class introspection, a future
 implementation may remove some reflection from both packages. This is a later

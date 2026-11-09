@@ -18,8 +18,9 @@ employee.Update(db)
 
 Model-class queries such as `Employee.Get(db, "id = $1", employeeID)` use a
 condition fragment, with SQL built from the model mapping. For full SQL queries
-that return scalars, inline records, structs, or models, use the separate
-[`gpp/sql` package](/guide/standard-library/sql).
+that return scalars, inline structs, or structs, use the separate
+[`gpp/sql` package](/guide/standard-library/sql). To scan full SQL results into
+ORM models, use `orm.GetSQL[T]` or `orm.SelectSQL[T]`.
 
 ## Compare handwritten queries with a model
 
@@ -74,8 +75,10 @@ employees := Employee.Select(db, "name LIKE $1 ORDER BY name", "A%")
 `[]*Employee`. Both accept parameterized conditions and work with `*sql.DB`
 and `*sql.Tx`.
 
-The model methods take a SQL condition fragment. The `gpp/sql` package's
-`db.Get[T]` and `db.Select[T]` methods take a complete `SELECT` statement.
+The model methods take a SQL condition fragment. For complete `SELECT`
+statements, use `orm.GetSQL[T]` and `orm.SelectSQL[T]` for models, or
+`gpp/sql`'s `db.Get[T]` and `db.Select[T]` for scalar, struct, and struct
+results.
 
 ## Common model operations
 
@@ -138,5 +141,5 @@ performance-sensitive queries. See the [ORM specification](/reference/specificat
 
 ## Full SQL queries
 
-Use [`gpp/sql`](/features/sql) for typed full-SQL queries. This keeps ad hoc
-query result types and model-mapping operations in separate packages.
+Use [`gpp/sql`](/features/sql) for typed full-SQL queries into scalars and structs,
+and structs. ORM model scanning and mapping stay in `gpp/orm`.

@@ -18,6 +18,17 @@ import (
 Importing `gpp/sql` enables the extension methods on both database handles and
 transactions.
 
+`gpp/sql.Executor` is the shared execution contract used by higher-level
+packages such as `gpp/orm`:
+
+```go
+type Executor interface {
+    Exec(query string, args ...any) (sql.Result, error)
+    Query(query string, args ...any) (*sql.Rows, error)
+    QueryRow(query string, args ...any) *sql.Row
+}
+```
+
 ## API
 
 ```go
@@ -41,40 +52,37 @@ model's static `Get` or `Select` method.
 `Select[T]` returns every row. Scalar result types require one result column.
 All methods pass `args` to `database/sql` without interpolation.
 
-Result types may be scalars, structs, Go++ records, or ORM model classes. Use
+Result types may be scalars, Go structs, or Go++ anonymous structs. Use
 pointer type arguments for pointer-shaped results:
 
 ```go
 count := db.Get[int64]("SELECT COUNT(*) FROM users")
-users := db.Select[record(ID: int64, Name: string)](
+users := db.Select[struct(ID: int64, Name: string)](
     "SELECT id, name FROM users WHERE active = $1", true,
 )
-user := db.Get[*Employee]("SELECT id, name FROM employees WHERE id = $1", id)
+user := db.Get[*User]("SELECT id, name FROM users WHERE id = $1", id)
 ```
 
 At most one pointer level is supported in a result type. A pointer `Get[T]`
 allocates the value only after a row is found.
 
-## Struct and record mapping
+## Struct mapping
 
 Column labels match exported result fields case-insensitively, ignoring
-underscores and hyphens. Go++ records may provide their generated field
+underscores and hyphens. Go++ anonymous structs may provide their generated field
 accessors. Unmatched result columns are scanned into discard destinations, and
 unmatched fields retain their zero values. If multiple fields normalize to the
 same name, the query must use an explicit alias to disambiguate them. Duplicate
 columns mapping to one field are an error.
 
-ORM models can participate by implementing the structural method
-`GppSQLScanTargets(columnNames []string) ([]any, error)`. `gpp/orm` implements
-this method using `orm.Column` annotations. `gpp/sql` must not import `gpp/orm`;
-the structural interface keeps the dependency direction one-way.
+ORM model metadata is not handled by this package. Use `orm.GetSQL[T]` and
+`orm.SelectSQL[T]` for full-SQL model queries; those functions live in
+`gpp/orm` and use the executor contract declared here.
 
 ## Destination overloads
 
 The deprecated overloads retain pointer-based destination scanning for callers
-migrating older code. For records and scalars they take a complete SQL query;
-for ORM model targets they also accept the older SQL condition fragment and
-build the query from the model mapping:
+migrating older code. They take a complete SQL query:
 
 ```go
 var count int64

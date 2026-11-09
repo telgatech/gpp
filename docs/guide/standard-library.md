@@ -11,7 +11,7 @@ Each entry now has its own guide with an introduction, the problem it addresses,
 | [Prelude](/guide/standard-library/prelude) | Everyday operations available without an import |
 | [Containers](/guide/standard-library/containers) | Typed sets, stacks, queues, deques, lists, and priority queues |
 | [Cron](/guide/standard-library/cron) | Schedule annotated functions with explicit startup and shutdown |
-| [SQL](/guide/standard-library/sql) | Query `database/sql` into typed values, records, and models |
+| [SQL](/guide/standard-library/sql) | Query `database/sql` into typed values, structs, and models |
 | [ORM](/guide/standard-library/orm) | Map annotated Go++ models onto `database/sql` |
 | [Standard annotations](/guide/standard-library/std) | Share common annotations such as `Deprecated` across packages |
 | [HTTP](/guide/standard-library/http) | Build servers, routes, and WebSocket handlers from classes and annotations |

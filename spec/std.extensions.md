@@ -171,35 +171,67 @@ Recommended v1 set:
 
 ```gpp
 extend string {
+    func Reverse() string
     func Trim(cutset string) string
     func TrimLeft(cutset string) string
     func TrimRight(cutset string) string
+    func TrimPrefix(prefix string) string
+    func TrimSuffix(suffix string) string
     func TrimSpace() string
+    func TrimFunc(predicate func(rune) bool) string
+    func TrimLeftFunc(predicate func(rune) bool) string
+    func TrimRightFunc(predicate func(rune) bool) string
 
     func ToLower() string
     func ToUpper() string
+    func ToTitle() string
+    func ToValidUTF8(replacement string) string
 
     func Contains(substr string) bool
+    func ContainsAny(characters string) bool
+    func ContainsRune(character rune) bool
+    func ContainsFunc(predicate func(rune) bool) bool
     func HasPrefix(prefix string) bool
     func HasSuffix(suffix string) bool
 
     func Replace(old string, new string, n int) string
     func ReplaceAll(old string, new string) string
+    func Cut(separator string) (string, string, bool)
+    func CutLast(separator string) (string, string, bool)
+    func CutPrefix(prefix string) (string, bool)
+    func CutSuffix(suffix string) (string, bool)
 
     func Split(sep string) []string
+    func SplitN(separator string, count int) []string
+    func SplitAfter(separator string) []string
+    func SplitAfterN(separator string, count int) []string
     func Fields() []string
 
     func Index(substr string) int
     func LastIndex(substr string) int
+    func IndexAny(characters string) int
+    func LastIndexAny(characters string) int
+    func IndexByte(character byte) int
+    func LastIndexByte(character byte) int
+    func IndexRune(character rune) int
+    func IndexFunc(predicate func(rune) bool) int
+    func LastIndexFunc(predicate func(rune) bool) int
 
     func Count(substr string) int
     func Repeat(count int) string
+    func Map(mapping func(rune) rune) string
 
     func EqualFold(other string) bool
+}
+
+extend []string {
+    func Join(separator string) string
 }
 ```
 
 These should preserve the semantics of their corresponding functions in Go's `strings` package.
+`Reverse()` is an addition beyond `strings`; it reverses Unicode code points,
+not user-perceived grapheme clusters.
 
 ---
 
@@ -243,6 +275,28 @@ Blank
 `Words()` may be equivalent to `strings.Fields`.
 
 `Lines()` should split text into logical lines using a documented newline policy.
+
+String parsing and scalar formatting are also available through the prelude:
+
+```gpp
+extend string {
+    func ToInt(fallback int = 0) int
+    func ToInt64(fallback int64 = 0) int64
+    func ToUint64(fallback uint64 = 0) uint64
+    func ToFloat32(fallback float32 = 0) float32
+    func ToFloat64(fallback float64 = 0) float64
+    func ToBool(fallback bool = false) bool
+}
+
+extend int { func String() string }
+extend float64 { func String() string }
+extend bool { func String() string }
+```
+
+The parsing methods return the fallback on invalid input; omitted fallbacks use
+the destination type's zero value. Integer parsing uses base 10. `String()` on
+integer and unsigned integer values uses base 10, while floating-point values
+use Go's shortest round-trippable representation.
 
 ---
 

@@ -28,6 +28,7 @@ func formatSourceWithFile(file *File, source string) string {
 	indent := 0
 	state := formatScanState{}
 	previousLineOpenedBlock := false
+	previousCodeLineBlank := false
 	templateLines, templateEnds := templateBodyLinesForFile(file, source, lines)
 
 	for index, line := range lines {
@@ -37,14 +38,18 @@ func formatSourceWithFile(file *File, source string) string {
 				lines[index] = line
 				formatBraceDelta(line, &state)
 				previousLineOpenedBlock = false
+				previousCodeLineBlank = false
 				continue
 			}
-			if previousLineOpenedBlock || nextNonBlankStartsWithBlockClose(lines, index+1) {
+			if previousCodeLineBlank || previousLineOpenedBlock || nextNonBlankStartsWithBlockClose(lines, index+1) {
 				dropBlankLines[index] = true
+				previousCodeLineBlank = true
 				continue
 			}
+			previousCodeLineBlank = true
 			continue
 		}
+		previousCodeLineBlank = false
 		if templateLines[index] {
 			// Template bodies are opaque HTML/template source. Preserve their
 			// whitespace and only close the surrounding declaration after its
@@ -145,20 +150,25 @@ func trimGoBlockEdgeBlankLines(source string) string {
 	dropBlankLines := make([]bool, len(lines))
 	state := formatScanState{}
 	previousLineOpenedBlock := false
+	previousCodeLineBlank := false
 	for index, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			if state.mode == '`' || state.mode == '/' {
 				formatBraceDelta(line, &state)
 				previousLineOpenedBlock = false
+				previousCodeLineBlank = false
 				continue
 			}
-			if previousLineOpenedBlock || nextNonBlankStartsWithBlockClose(lines, index+1) {
+			if previousCodeLineBlank || previousLineOpenedBlock || nextNonBlankStartsWithBlockClose(lines, index+1) {
 				dropBlankLines[index] = true
+				previousCodeLineBlank = true
 				continue
 			}
+			previousCodeLineBlank = true
 			previousLineOpenedBlock = false
 			continue
 		}
+		previousCodeLineBlank = false
 		if state.mode == '`' || state.mode == '/' {
 			formatBraceDelta(line, &state)
 			previousLineOpenedBlock = false
@@ -366,6 +376,7 @@ func canonicalizeFormatLine(line string) string {
 	} else {
 		line = spaceDefineAssignment(line)
 	}
+	line = canonicalizeLambdaArrowSpacing(line)
 	if strings.HasPrefix(line, "}") {
 		index := 0
 		for index < len(line) && line[index] == '}' {
@@ -379,44 +390,213 @@ func canonicalizeFormatLine(line string) string {
 	if isCatchHeader(line) && strings.Contains(line, ",") {
 		line = canonicalizeCatchSpacing(line)
 	}
+	line = canonicalizeInlineBlockSpacing(line)
+	line = canonicalizeCommaSpacing(line)
+	return canonicalizeColonSpacing(line)
+}
+
+func canonicalizeInlineBlockSpacing(line string) string {
+	var output strings.Builder
+	output.Grow(len(line) + 8)
+	var blockStack []bool
 	for index := 0; index < len(line); {
-		switch line[index] {
-		case '"', '\'', '`':
-			end := index + 1
-			for end < len(line) {
-				if line[end] == '\\' && line[index] != '`' {
-					end += 2
+		character := line[index]
+		if character == '"' || character == '\'' || character == '`' {
+			quote := character
+			start := index
+			index++
+			for index < len(line) {
+				if line[index] == '\\' && quote != '`' {
+					index += 2
 					continue
 				}
-				if line[end] == line[index] {
-					end++
+				if line[index] == quote {
+					index++
 					break
 				}
-				end++
+				index++
 			}
-			index = end
-		case '/':
-			if index+1 < len(line) && line[index+1] == '/' {
-				return line
+			output.WriteString(line[start:index])
+			continue
+		}
+		if character == '/' && index+1 < len(line) && (line[index+1] == '/' || line[index+1] == '*') {
+			output.WriteString(line[index:])
+			break
+		}
+		if character == '{' {
+			isBlock := isBlockBracePrefix(line[:index])
+			if isBlock && output.Len() > 0 {
+				current := output.String()
+				last := current[len(current)-1]
+				if last != ' ' && last != '\t' {
+					output.WriteByte(' ')
+				}
 			}
-			if index+1 < len(line) && line[index+1] == '*' {
-				return line
-			}
+			output.WriteByte(character)
+			blockStack = append(blockStack, isBlock)
 			index++
-		case '{':
-			if index+1 < len(line) && line[index+1] == '{' {
-				index += 2
-				continue
+			if isBlock {
+				for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+					index++
+				}
+				if index < len(line) && line[index] != '}' {
+					output.WriteByte(' ')
+				}
 			}
-			if index > 0 && line[index-1] != ' ' && line[index-1] != '\t' && line[index-1] != '@' && isBlockBracePrefix(line[:index]) {
-				return line[:index] + " " + line[index:]
+			continue
+		}
+		if character == '}' {
+			isBlock := false
+			if len(blockStack) > 0 {
+				isBlock = blockStack[len(blockStack)-1]
+				blockStack = blockStack[:len(blockStack)-1]
 			}
-			return line
-		default:
+			if isBlock {
+				current := output.String()
+				if len(current) > 0 && current[len(current)-1] != ' ' && current[len(current)-1] != '\t' && current[len(current)-1] != '{' {
+					output.WriteByte(' ')
+				}
+			}
+			output.WriteByte(character)
+			index++
+			continue
+		}
+		output.WriteByte(character)
+		index++
+	}
+	return output.String()
+}
+
+func canonicalizeCommaSpacing(line string) string {
+	var output strings.Builder
+	output.Grow(len(line) + 8)
+	for index := 0; index < len(line); {
+		character := line[index]
+		if character == '"' || character == '\'' || character == '`' {
+			quote := character
+			start := index
+			index++
+			for index < len(line) {
+				if line[index] == '\\' && quote != '`' {
+					index += 2
+					continue
+				}
+				if line[index] == quote {
+					index++
+					break
+				}
+				index++
+			}
+			output.WriteString(line[start:index])
+			continue
+		}
+		if character == '/' && index+1 < len(line) && (line[index+1] == '/' || line[index+1] == '*') {
+			output.WriteString(line[index:])
+			break
+		}
+		output.WriteByte(character)
+		index++
+		if character != ',' {
+			continue
+		}
+		for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
 			index++
 		}
+		if index < len(line) && line[index] != ')' && line[index] != ']' && line[index] != '}' && line[index] != ';' {
+			output.WriteByte(' ')
+		}
 	}
-	return line
+	return output.String()
+}
+
+func canonicalizeColonSpacing(line string) string {
+	var output strings.Builder
+	output.Grow(len(line) + 8)
+	for index := 0; index < len(line); {
+		character := line[index]
+		if character == '"' || character == '\'' || character == '`' {
+			quote := character
+			start := index
+			index++
+			for index < len(line) {
+				if line[index] == '\\' && quote != '`' {
+					index += 2
+					continue
+				}
+				if line[index] == quote {
+					index++
+					break
+				}
+				index++
+			}
+			output.WriteString(line[start:index])
+			continue
+		}
+		if character == '/' && index+1 < len(line) && (line[index+1] == '/' || line[index+1] == '*') {
+			output.WriteString(line[index:])
+			break
+		}
+		output.WriteByte(character)
+		index++
+		if character != ':' || index < len(line) && line[index] == '=' {
+			continue
+		}
+		for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+			index++
+		}
+		if index < len(line) && line[index] != '}' && line[index] != ')' && line[index] != ']' && line[index] != ',' && line[index] != ';' {
+			output.WriteByte(' ')
+		}
+	}
+	return output.String()
+}
+
+func canonicalizeLambdaArrowSpacing(line string) string {
+	var output strings.Builder
+	for index := 0; index < len(line); {
+		character := line[index]
+		if character == '"' || character == '\'' || character == '`' {
+			quote := character
+			output.WriteByte(character)
+			index++
+			for index < len(line) {
+				output.WriteByte(line[index])
+				if line[index] == '\\' && quote != '`' && index+1 < len(line) {
+					index++
+					output.WriteByte(line[index])
+				} else if line[index] == quote {
+					index++
+					break
+				}
+				index++
+			}
+			continue
+		}
+		if character == '/' && index+1 < len(line) && (line[index+1] == '/' || line[index+1] == '*') {
+			output.WriteString(line[index:])
+			break
+		}
+		if character == '=' && index+1 < len(line) && line[index+1] == '>' {
+			for output.Len() > 0 {
+				current := output.String()
+				last := current[len(current)-1]
+				if last != ' ' && last != '\t' {
+					break
+				}
+				output.Reset()
+				output.WriteString(current[:len(current)-1])
+			}
+			output.WriteString(" => ")
+			index += 2
+			for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+				index++
+			}
+			continue
+		}
+		output.WriteByte(character)
+		index++
+	}
+	return output.String()
 }
 
 func canonicalizeClassHeaderSpacing(line string) string {

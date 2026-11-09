@@ -117,9 +117,9 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
         }
     }
 
-    // Records are anonymous, statically checked data shapes, not maps.
-    func LoadUser() record {
-        return record(Name: "Ada", Age: 37)
+    // Anonymous structs are statically checked data shapes, not maps.
+    func LoadUser() struct {
+        return struct(Name: "Ada", Age: 37)
     }
 
     // Enums define named values with a specific underlying Go type.
@@ -284,7 +284,7 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
     //
     // class App : http.Server @{http.OpenAPI, http.Swagger} {
     //     func Hello(ctx *http.Context) error @{http.GET("/hello")} {
-    //         return ctx.JSON(record(Greeting: "Hello"))
+    //         return ctx.JSON(struct(Greeting: "Hello"))
     //     }
     // }
     //
@@ -297,7 +297,7 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
     //
     // Generic SQL queries return scalars, records, models, or slices:
     // count := db.Get[int64]("SELECT COUNT(*) FROM employees")
-    // events := db.Select[record(ID: int64, Name: string)](
+    // events := db.Select[struct(ID: int64, Name: string)](
     //     "SELECT id, name FROM events",
     // )
     //

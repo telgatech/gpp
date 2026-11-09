@@ -303,6 +303,25 @@ func Make() any {
 	}
 }
 
+func TestDirectFunctionEmissionLowersAnonymousStructCalls(t *testing.T) {
+	file, err := ParseFile("direct-struct.gpp", `
+func Make() any {
+	return struct(name: "Bob", age: 42)
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := file.Decls[0].(*FunctionDecl)
+	output, handled, err := directFunctionSource(function, constructorContext{Records: newRecordContext()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || strings.Contains(output, "struct(") || !strings.Contains(output, "__gpp_record_") {
+		t.Fatalf("anonymous struct call was not lowered through shape metadata: handled=%v output=%s", handled, output)
+	}
+}
+
 func TestDirectFunctionEmissionLowersAnonymousStructCollections(t *testing.T) {
 	file, err := ParseFile("direct-anonymous-struct.gpp", `
 func Configs() any {

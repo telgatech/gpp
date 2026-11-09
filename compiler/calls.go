@@ -318,6 +318,9 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 			continue
 		}
 		for name, signatures := range methodSignaturesForClass(parent, classes, visiting) {
+			if !classMemberVisibleToSubclass(parent, name) {
+				continue
+			}
 			result[name] = append(result[name], signatures...)
 		}
 	}
@@ -360,6 +363,9 @@ func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassD
 			qualifier = parentName[:dot]
 		}
 		for name, signatures := range staticMethodSignaturesForClass(parent, classes, visiting) {
+			if !classMemberVisibleToSubclass(parent, name) {
+				continue
+			}
 			if localNames[name] {
 				continue
 			}
@@ -400,7 +406,7 @@ func staticMethodsForClass(class *ClassDecl, classes map[string]*ClassDecl, visi
 			return nil, err
 		}
 		for _, method := range inherited {
-			if !localNames[method.Name] {
+			if memberVisibleToSubclass(method.Name) && !localNames[method.Name] {
 				methods = append(methods, method)
 			}
 		}
@@ -1784,6 +1790,26 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 				replacement = functionName + "(" + strings.Join(resolved, ", ") + ")"
 				changed = true
 			}
+		} else {
+			// Calls on constructed values and other chained expressions can have
+			// Go++ class methods too. Resolve their static receiver type so method
+			// defaults are applied just as they are for named variables.
+			receiverType := strings.TrimPrefix(strings.TrimSpace(staticExpressionTypeNode(function.Receiver, context, context.CurrentParameterTypes)), "*")
+			signatures := context.ClassMethodSignatures[receiverType][function.Name]
+			if len(signatures) > 0 {
+				resolved, resolvedChanged, resolveErr := resolveCallableCall(function.Name, args, signatures)
+				if resolveErr != nil {
+					return callableCallRewrite{}, false, sourceLineError(call.Span(), resolveErr)
+				}
+				if resolvedChanged {
+					resolved, resolveErr = transformCallableArgumentSources(resolved, context)
+					if resolveErr != nil {
+						return callableCallRewrite{}, false, resolveErr
+					}
+					replacement = receiver + "." + function.Name + "(" + strings.Join(resolved, ", ") + ")"
+					changed = true
+				}
+			}
 		}
 	}
 	if !changed {
@@ -1989,6 +2015,9 @@ func staticExpressionTypeNode(expression ExprNode, context constructorContext, v
 		}
 		baseType := strings.TrimPrefix(strings.TrimSpace(staticExpressionTypeNode(value.Receiver, context, valueTypes)), "*")
 		if target, ok := context.Targets[baseType]; ok {
+			if fieldType := classFieldTypesForClass(target.Class, classesForClass(context, target.Class), map[*ClassDecl]bool{})[value.Name]; fieldType != "" {
+				return fieldType
+			}
 			for _, field := range target.Class.Fields {
 				if field.Name == value.Name {
 					return fieldTypeSource(field)

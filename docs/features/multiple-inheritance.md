@@ -130,6 +130,75 @@ capabilities stay with the parents, so another class can reuse `Identified`
 and `AuditTrail` without copying their methods. Inheritance also gives each
 capability one implementation to fix when its behavior changes.
 
+## Override inherited methods
+
+A child inherits its parents' instance methods. Declare a method with the
+same name and parameter signature in the child to override the inherited
+implementation. Calls through a parent-typed value still dispatch to the
+child's override; parent-qualified calls select the parent implementation.
+Go++ has no separate `override` keyword.
+
+Lowercase fields and methods are private to the class that declares them.
+Children do not inherit them, and the compiler rejects direct access from a
+derived class. Uppercase fields and methods are public, inherited, and can be
+used or overridden by children. Prefix a field name or method name with `_` to
+make it available to the declaring class and its descendants without exposing
+it to ordinary callers:
+
+```go
+class Base {
+    _state string
+    func _reset() { this._state = "" }
+}
+
+class Child : Base {
+    func Clear() { this._reset() }
+}
+```
+
+Protected state remains stored in the parent object. Use a public accessor when
+ordinary callers need the capability; use private members for implementation
+details that subclasses should not depend on. See the [class visibility spec](../../spec/class-visibility.md)
+for the complete rules.
+
+Protected is strictly for class code. A function or other caller outside the
+class hierarchy cannot call `_reset` or access `_state`, even if it receives a
+`Base` or `Child` value. Such callers must use a public method such as an
+accessor instead:
+
+```go
+func ordinaryCaller(base Base, child Child) {
+    _ = base.Count() // valid
+    base._reset()    // invalid: protected
+    child._reset()   // invalid: still protected on Child
+}
+```
+
+If a method is a callback that a framework invokes by convention, mark it
+with `std.Hook`. The annotation keeps the method available to the framework
+and to overrides while removing it from editor completion suggestions,
+including suggestions on child instances:
+
+```go
+import std "gpp/std"
+
+class Model {
+    func BeforeSave() error @{std.Hook} {
+        return nil
+    }
+}
+
+class User : Model {}
+```
+
+Annotations belong to declarations. If a child overrides a hook and the
+override should also stay out of completions, annotate that child method too.
+An override does not let the child call an inherited hook directly: only the
+class that first declares a hook may call it from ordinary Go++ code. Framework
+dispatch remains allowed, and normal method dispatch still selects a child's
+override.
+See the [`gpp/std` guide](/guide/standard-library/std#hook) for details.
+
 ## Resolve overlapping parent members
 
 Independent capabilities can use the same field name for different values.

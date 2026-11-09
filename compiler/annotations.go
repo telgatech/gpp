@@ -425,7 +425,7 @@ func annotationUsesLiteral(uses []AnnotationUse, context constructorContext) str
 			args = resolved
 		}
 		for index := range args {
-			if strings.Contains(args[index], "record(") {
+			if strings.Contains(args[index], "record(") || strings.Contains(args[index], "struct(") {
 				if transformed, err := transformConstructors(args[index], context); err == nil {
 					args[index] = transformed
 				}

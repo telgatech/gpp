@@ -71,6 +71,67 @@ class User {
 }
 ```
 
+## Access: public, private, and protected
+
+Go++ uses member names to express access; these are conventions enforced by
+the compiler, not declaration keywords. It follows Go's familiar
+capitalization convention: names beginning with an uppercase letter are
+exported, while lowercase names are unexported. Go++ makes lowercase class
+members private to their declaring class, and uses `_` as an additional
+marker for subclass-only protected members.
+
+- Names beginning with an uppercase letter are **public**. Callers and child
+  classes can use them.
+- Names beginning with a lowercase letter are **private**. Only the class that
+  declares them can use them; child classes do not inherit them.
+- Names beginning with `_` are **protected**. The declaring class and its
+  descendants can use them, but ordinary callers cannot.
+
+```go
+class Account {
+    Name string
+    pin string
+    _balance int
+
+    func Deposit(amount int) { this._balance += amount }
+    func _reset() { this._balance = 0 }
+    func validPin() bool { return this.pin != "" }
+}
+
+class SavingsAccount : Account {
+    func AddBonus(amount int) {
+        this._balance += amount // valid: protected field
+        this._reset()           // valid: protected method
+        // this.pin = "1234"    // invalid: private to Account
+    }
+}
+
+func show(account Account, savings SavingsAccount) {
+    _ = account.Name       // valid: public
+    _ = account._balance   // invalid: protected
+    savings._reset()       // invalid: protected, even on a child value
+    _ = account.pin        // invalid: private
+}
+```
+
+The declaring class can use its own private and protected members. A child can
+use public and protected inherited members, but cannot use private members.
+Code outside the class hierarchy can use only public members. The compiler
+also filters private and protected members from ordinary caller completions,
+while showing protected members inside descendant classes. Constructor
+argument completions follow the constructor rules below and include inherited
+protected fields accepted by the child constructor.
+
+Visibility controls member access and inheritance. Constructor arguments are a
+separate access path: callers can pass public and protected fields accepted by
+the constructor; private fields can be passed only from a method of the class
+that declares them. A child constructor cannot accept a parent's private
+fields. This does not make those fields readable or writable through the
+resulting value. Class composite literal field keys follow ordinary access
+rules.
+See the [class visibility spec](../../spec/class-visibility.md)
+for the complete rules.
+
 ## Construct values
 
 Go++ offers positional and named class construction. These constructor calls
@@ -86,6 +147,9 @@ fmt.Println(first.Greeting())
 fmt.Println(second.Greeting())
 ```
 
+This pointer result is specific to classes. Constructor-style calls for named
+structs return struct values; see [named struct construction](./structs#declare-and-construct-named-structs).
+
 Go++ checks the class fields and constructor argument count while compiling.
 Named fields can appear in any order; positional construction follows field
 order. A call cannot mix positional and named arguments. Ordinary Go composite
@@ -100,8 +164,15 @@ user := User{
 }
 ```
 
-Named construction can set inherited fields too. If multiple parents expose a
-field with the same name, qualify it with the parent name:
+Named construction can set inherited public and protected fields too. Private
+fields stay with their declaring class and are not constructor arguments on
+child classes. A leading underscore marks a protected member: descendants can
+use it, while ordinary callers cannot. For example, `this._reset()` inside a
+derived class is valid; `server._reset()` in an ordinary function is not,
+even when `server` has the derived type. See [Access: public, private, and
+protected](#access-public-private-and-protected) for examples.
+If multiple parents expose a field with the same name, qualify it with the
+parent name:
 
 ```go
 class Named { Name string }
@@ -120,9 +191,9 @@ user := User(
 
 ## Constructor hook: `init()`
 
-The constructor specification reserves an instance method named `init()` for
-setup after constructor fields are assigned. Use it to normalize values or
-check invariants:
+Classes may declare an instance method named `init()` for setup after
+constructor fields are assigned. Use it to normalize values or check
+invariants:
 
 ```go
 class Person {
@@ -209,7 +280,7 @@ guest := User.Guest()
 
 Use a class when behavior and state form one concept or when you want to extend
 that concept through inheritance and polymorphism. For simple data transfer,
-Go++ also supports anonymous [records](/features/records), and ordinary Go
+Go++ also supports anonymous [structs](/features/structs), and ordinary Go
 structs remain fully usable.
 
 Continue with [polymorphism](/features/polymorphism),

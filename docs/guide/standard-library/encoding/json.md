@@ -37,12 +37,12 @@ fmt.Println(string(encoded))
 
 :::
 
-## Records, lists, and boundary checks
+## Structs, lists, and boundary checks
 
-Records work well for small response shapes that do not need a named class:
+Anonymous structs work well for small response shapes that do not need a named class:
 
 ```go
-payload := encoding.ToJSON(record(ok: true, count: len(users)))
+payload := encoding.ToJSON(struct(ok: true, count: len(users)))
 ```
 
 Generic decoding works for slices as well as individual classes:
