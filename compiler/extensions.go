@@ -131,13 +131,21 @@ func transformExtensions(src string, context constructorContext) (string, error)
 }
 
 func transformExtensionsWithTypes(src string, context constructorContext, inheritedTypes map[string]string) (string, error) {
+	return transformExtensionsWithTypesMode(src, context, inheritedTypes, false)
+}
+
+func transformExtensionsBeforeExceptions(src string, context constructorContext) (string, error) {
+	return transformExtensionsWithTypesMode(src, context, nil, true)
+}
+
+func transformExtensionsWithTypesMode(src string, context constructorContext, inheritedTypes map[string]string, skipLambdaCalls bool) (string, error) {
 	if len(context.Extensions) == 0 {
 		return src, nil
 	}
 	if inheritedTypes == nil {
 		inheritedTypes = context.CurrentParameterTypes
 	}
-	if transformed, handled, err := transformExtensionsAST(src, context, inheritedTypes); handled {
+	if transformed, handled, err := transformExtensionsAST(src, context, inheritedTypes, skipLambdaCalls); handled {
 		return transformed, err
 	}
 	return src, nil
@@ -154,7 +162,7 @@ type extensionASTBody struct {
 	types map[string]string
 }
 
-func transformExtensionsAST(src string, context constructorContext, inheritedTypes map[string]string) (string, bool, error) {
+func transformExtensionsAST(src string, context constructorContext, inheritedTypes map[string]string, skipLambdaCalls bool) (string, bool, error) {
 	tokens, err := LexSource("extensions", src)
 	if err != nil {
 		return src, false, nil
@@ -217,6 +225,10 @@ func transformExtensionsAST(src string, context constructorContext, inheritedTyp
 				return seenResults[key]
 			}
 			seenCalls[key] = true
+			if skipLambdaCalls && (callHasCallbackArgument(call) || callSpanHasLambdaArrow(src, span)) {
+				seenResults[key] = true
+				return true
+			}
 			rendered, lowered, renderErr := renderExtensionASTCall(call, context, body.types)
 			if renderErr != nil {
 				resolutionErr = renderErr
@@ -251,6 +263,34 @@ func transformExtensionsAST(src string, context constructorContext, inheritedTyp
 		src = src[:edit.start] + edit.text + src[edit.end:]
 	}
 	return src, true, nil
+}
+
+func callHasCallbackArgument(call *CallExpr) bool {
+	if call == nil {
+		return false
+	}
+	for _, argument := range call.Arguments {
+		expression := argument.Value
+		for {
+			parenthesized, ok := expression.(*ParenthesizedExpr)
+			if !ok {
+				break
+			}
+			expression = parenthesized.Inner
+		}
+		switch expression.(type) {
+		case *LambdaExpr, *FunctionLiteralExpr:
+			return true
+		}
+	}
+	return false
+}
+
+func callSpanHasLambdaArrow(source string, span Span) bool {
+	if span.Start < 0 || span.End > len(source) || span.End <= span.Start {
+		return false
+	}
+	return strings.Contains(source[span.Start:span.End], "=>")
 }
 
 func collectExtensionStatementTypes(block *BlockStmt, types map[string]string, context constructorContext) {
@@ -812,6 +852,12 @@ func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, 
 			return nil, false
 		}
 		_, expectedFunction := parameters[parameterIndex].TypeAST.(*FunctionType)
+		if expectedFunction && extensionHasVoidLambdaOverload(extension, actualType, parameterIndex, argument.Value, context) {
+			functionType := parameters[parameterIndex].TypeAST.(*FunctionType)
+			if strings.TrimSpace(functionTypeResultText(functionType)) != "" {
+				return nil, false
+			}
+		}
 		_, namedFunction := argument.Value.(*NameExpr)
 		if actual != "" && !(expectedFunction && namedFunction) && !generic[expected] && !extensionArgumentMatches(actual, expected, text, context) && !genericExtensionArgumentMatches(actual, expected, generic) {
 			return nil, false
@@ -839,6 +885,36 @@ func resolveExtensionArgumentsAST(extension extensionMethod, actualType string, 
 	return resolved, true
 }
 
+func extensionHasVoidLambdaOverload(extension extensionMethod, actualType string, parameterIndex int, argument ExprNode, context constructorContext) bool {
+	lambda, ok := argument.(*LambdaExpr)
+	if !ok || lambda.BlockBody != nil {
+		return false
+	}
+	if _, call := lambda.Body.(*CallExpr); !call {
+		return false
+	}
+	for _, candidate := range context.Extensions {
+		if candidate.Method.Name != extension.Method.Name || !extensionTargetMatches(candidate.Target, candidate.ReceiverType, actualType, context) {
+			continue
+		}
+		parameters, err := parameterInfosForMethod(candidate.Method)
+		if err != nil || parameterIndex >= len(parameters) {
+			continue
+		}
+		bindings := extensionTargetBindings(candidate.Target, actualType)
+		typeNode := parseTypeText(substituteLambdaType(parameters[parameterIndex].typeText(), bindings))
+		function, ok := typeNode.(*FunctionType)
+		if !ok || strings.TrimSpace(functionTypeResultText(function)) != "" {
+			continue
+		}
+		lambdaParameters, err := lambdaParametersFromTokens(lambda.Parameters)
+		if err == nil && len(lambdaParameters) == len(function.Parameters) {
+			return true
+		}
+	}
+	return false
+}
+
 func extensionFunctionArgumentMatches(argument ExprNode, expected TypeNode, context constructorContext, generic map[string]bool) bool {
 	expectedFunction, ok := expected.(*FunctionType)
 	if !ok {
@@ -846,6 +922,7 @@ func extensionFunctionArgumentMatches(argument ExprNode, expected TypeNode, cont
 	}
 	var parameterTypes map[string]TypeNode
 	var resultType string
+	knownVoidBlock := false
 	switch value := argument.(type) {
 	case *LambdaExpr:
 		lambdaParameters, err := lambdaParametersFromTokens(value.Parameters)
@@ -864,6 +941,7 @@ func extensionFunctionArgumentMatches(argument ExprNode, expected TypeNode, cont
 			}
 		}
 		parameterTypes = lambdaParameterTypeNodes(lambdaParameters)
+		knownVoidBlock = value.BlockBody != nil && !blockHasValueReturn(value.BlockBody)
 		actualResult, err := typeNodeSource(lambdaResultTypeNodeAST(value, parameterTypes, context))
 		if err == nil {
 			resultType = actualResult
@@ -881,10 +959,14 @@ func extensionFunctionArgumentMatches(argument ExprNode, expected TypeNode, cont
 			}
 		}
 		resultType = functionTypeResultText(actualFunction)
+		knownVoidBlock = len(actualFunction.Results) == 0 && value.Body != nil && !blockHasValueReturn(value.Body)
 	default:
 		return true
 	}
 	expectedResult := strings.TrimSpace(functionTypeResultText(expectedFunction))
+	if knownVoidBlock {
+		return expectedResult == ""
+	}
 	if containsGenericTypeParameter(expectedResult, generic) {
 		return true
 	}

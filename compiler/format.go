@@ -392,6 +392,7 @@ func canonicalizeFormatLine(line string) string {
 	}
 	line = canonicalizeInlineBlockSpacing(line)
 	line = canonicalizeCommaSpacing(line)
+	line = canonicalizeClosingParenSpacing(line)
 	return canonicalizeColonSpacing(line)
 }
 
@@ -507,6 +508,47 @@ func canonicalizeCommaSpacing(line string) string {
 		}
 	}
 	return output.String()
+}
+
+func canonicalizeClosingParenSpacing(line string) string {
+	output := make([]byte, 0, len(line))
+	for index := 0; index < len(line); {
+		character := line[index]
+		if character == '"' || character == '\'' || character == '`' {
+			quote := character
+			start := index
+			index++
+			for index < len(line) {
+				if line[index] == '\\' && quote != '`' {
+					index += 2
+					continue
+				}
+				if line[index] == quote {
+					index++
+					break
+				}
+				index++
+			}
+			output = append(output, line[start:index]...)
+			continue
+		}
+		if character == '/' && index+1 < len(line) && (line[index+1] == '/' || line[index+1] == '*') {
+			output = append(output, line[index:]...)
+			break
+		}
+		if character == ')' {
+			for len(output) > 0 {
+				last := output[len(output)-1]
+				if last != ' ' && last != '\t' {
+					break
+				}
+				output = output[:len(output)-1]
+			}
+		}
+		output = append(output, character)
+		index++
+	}
+	return string(output)
 }
 
 func canonicalizeColonSpacing(line string) string {

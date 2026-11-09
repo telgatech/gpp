@@ -298,6 +298,23 @@ return             "{{this.Named.Name}} is a {{this.Role}}"
 	}
 }
 
+func TestFormatSourceRemovesSpaceBeforeClosingParentheses(t *testing.T) {
+	source := `func main(){
+people.Each(person => fmt.Printf("  %d %s\n", person.Id, person.Name) )
+outer(inner() )
+println("keep this ) ")
+}`
+	want := `func main() {
+    people.Each(person => fmt.Printf("  %d %s\n", person.Id, person.Name))
+    outer(inner())
+    println("keep this ) ")
+}
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("space before a closing parenthesis was not removed safely:\n%s", got)
+	}
+}
+
 func TestFormatSourceTrimsBlockEdgeBlankLinesAndPreservesOpaqueWhitespace(t *testing.T) {
 	source := "func main(){\n\nraw := `first\n  \n  \nlast`\ncall()\n\n}\n" +
 		"template Page() {\n<div>\n  \n\n\n</div>\n}\n"

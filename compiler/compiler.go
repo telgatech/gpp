@@ -194,7 +194,7 @@ func CompileProgramWithOptions(program *Program, outputDir string, options Compi
 	outputNames := generatedOutputNames(program.Files)
 
 	if options.ModulePath != "" {
-		if err := ensureGoModule(outputDir, options.ModulePath); err != nil {
+		if err := ensureGoModule(outputDir, options.ModulePath, options.IncrementalOutput); err != nil {
 			return err
 		}
 		if programUsesModule(model, "golang.org/x/net/websocket") {
@@ -1053,7 +1053,7 @@ func cleanGeneratedOutput(outputDir string) error {
 	return nil
 }
 
-func ensureGoModule(outputDir, modulePath string) error {
+func ensureGoModule(outputDir, modulePath string, allowModuleChange bool) error {
 	if !isModulePath(modulePath) {
 		return fmt.Errorf("invalid generated module path %q", modulePath)
 	}
@@ -1069,6 +1069,10 @@ func ensureGoModule(outputDir, modulePath string) error {
 			fields := strings.Fields(line)
 			if len(fields) == 2 && fields[0] == "module" {
 				if fields[1] != modulePath {
+					if allowModuleChange {
+						content := fmt.Sprintf("module %s\n\ngo 1.26\n", modulePath)
+						return writeFileIfChanged(goModPath, []byte(content), 0644)
+					}
 					return fmt.Errorf(
 						"generated module is %q, requested %q in %s",
 						fields[1],

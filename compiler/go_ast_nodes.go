@@ -736,6 +736,10 @@ func goExprNode(expression ExprNode) (ast.Expr, error) {
 			if argument.Name != "" {
 				return nil, fmt.Errorf("named call argument %q is not lowered", argument.Name)
 			}
+			if argument.Value == nil {
+				callee, _ := expressionNodeSource(value.Callee)
+				return nil, fmt.Errorf("call to %s has no lowered argument", callee)
+			}
 			spread, isSpread := argument.Value.(*SpreadExpr)
 			expression := argument.Value
 			if isSpread {

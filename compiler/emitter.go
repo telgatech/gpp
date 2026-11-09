@@ -1537,9 +1537,27 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	if err != nil {
 		return "", err
 	}
-	code, err = transformImplicitErrorPromotion(code, context)
+	hasExceptionSyntax := blockContainsExceptionSyntax(function.Method.BodyAST)
+	lambdaTokens, lambdaLexErr := LexSource("exception lambdas", code)
+	lambdasLoweredBeforeExceptions := hasExceptionSyntax && lambdaLexErr == nil && tokenSequence(lambdaTokens, "=>")
+	if lambdasLoweredBeforeExceptions {
+		code, err = transformLambdas(code, context)
+		if err != nil {
+			return "", err
+		}
+	}
+	// Preserve local receiver types through callback inference, then lower
+	// ordinary extensions before exception lowering wraps try blocks in Go
+	// closures that obscure those types.
+	code, err = transformExtensionsBeforeExceptions(code, context)
 	if err != nil {
 		return "", err
+	}
+	if !hasExceptionSyntax {
+		code, err = transformImplicitErrorPromotion(code, context)
+		if err != nil {
+			return "", err
+		}
 	}
 	if transformed, handled, exceptionErr := transformExceptionMethodBodyAST(code, &function.Method, context); handled {
 		if exceptionErr != nil {
@@ -1552,9 +1570,11 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 			return "", err
 		}
 	}
-	code, err = transformLambdas(code, context)
-	if err != nil {
-		return "", err
+	if !lambdasLoweredBeforeExceptions {
+		code, err = transformLambdas(code, context)
+		if err != nil {
+			return "", err
+		}
 	}
 	code, err = stripDefaultParameterValues(code)
 	if err != nil {
