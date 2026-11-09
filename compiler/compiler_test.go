@@ -2771,6 +2771,35 @@ func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	}
 }
 
+func TestCompileFilesWithOptionsUpdatesModuleForIncrementalOutput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	if err := os.WriteFile(sourcePath, []byte("func main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{
+		ModulePath:        "generated",
+		IncrementalOutput: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const requestedModule = "github.com/example/project"
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{
+		ModulePath:        requestedModule,
+		IncrementalOutput: true,
+	}); err != nil {
+		t.Fatalf("incremental output should update its generated module path: %v", err)
+	}
+	goMod, err := os.ReadFile(filepath.Join(outputDir, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(goMod), "module "+requestedModule+"\n") {
+		t.Fatalf("generated go.mod did not update its module path:\n%s", goMod)
+	}
+}
+
 func TestCompileFilesWithOptionsCleansGeneratedOutput(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3499,14 +3528,30 @@ class Base {
 	if err := os.WriteFile(main, []byte(`package main
 
 import (
+    "database/sql"
+    "fmt"
     demo.base
     gppsql "gpp/sql"
 )
+
+struct Person {
+    Id int
+    Name string
+}
 
 class Server: base.Base {
     func Rows() {
         rows := this.DB.Select[struct(ID: int)]("SELECT 1")
         _ = rows
+    }
+}
+
+func Consume(db *sql.DB) {
+    try {
+        rows := db.Select[Person]("SELECT 1")
+        rows.Each((value Person) => { fmt.Printf("%d %s\\n", value.Id, value.Name) })
+    } catch err {
+        println(err)
     }
 }
 
@@ -3525,12 +3570,51 @@ func main() {}
 	if !strings.Contains(string(generated), "gppsql.GppExt_ptr_sql_DB_Select_") {
 		t.Fatalf("extension call on inherited *sql.DB field was not lowered through gpp/sql:\n%s", generated)
 	}
+	if strings.Contains(string(generated), "rows.Each(") || !strings.Contains(string(generated), "GppPreludeExt___T_Each_") {
+		t.Fatalf("Each callback inside try was not lowered alongside imported SQL extensions:\n%s", generated)
+	}
 
 	command := exec.Command("go", "build", "./...")
 	command.Dir = outputDir
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("imported extension on inherited field did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileSQLExampleLowersEachInsideTry(t *testing.T) {
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join("..", "examples", "sql.gpp")
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	functions := parseTopLevelFunctions(sourcePath, "main", string(source), 0, string(source), "", 0)
+	for _, function := range functions {
+		if function == nil || function.Method.BodyAST == nil {
+			continue
+		}
+		collectExtensionASTCalls(function.Method.BodyAST, func(call *CallExpr) bool {
+			if _, name, _, ok := extensionASTCallParts(call); ok && name == "Each" {
+				if len(call.Arguments) != 1 || call.Arguments[0].Value == nil {
+					t.Errorf("parsed Each call has incomplete argument AST: %#v", call.Arguments)
+				}
+			}
+			return true
+		})
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{
+		ModulePath:  "example.com/gpp-example-smoke",
+		Development: true,
+	}); err != nil {
+		t.Fatalf("SQL example with inline Each callback did not compile: %v", err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "sql.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(generated), "people.Each(") || !strings.Contains(string(generated), "GppPreludeExt___T_Each_") {
+		t.Fatalf("inline Each call was not lowered in generated SQL example:\n%s", generated)
 	}
 }
 

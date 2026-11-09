@@ -9,6 +9,9 @@
 - Fixed LSP member completion after generic callback calls such as `Map(value => value.ToUpper()).`.
 - Added whole-source compiler fuzzing alongside regression fuzzers for callback lowering and inherited default-method calls.
 - Fixed inherited static method lowering when calls pass multiple values to a variadic parameter, including ORM model `Select` queries.
+- Added `examples/sql.gpp` to demonstrate typed full-SQL queries through `gpp/sql` and shared execution across database handles and transactions.
+- Updated managed incremental build workspaces when the project module path changes, avoiding stale generated `go.mod` mismatches.
+- Fixed generic extension lowering and callback overload selection inside `try` blocks, including inline `.Each(...)` calls.
 
 ## 2026-11-08
 

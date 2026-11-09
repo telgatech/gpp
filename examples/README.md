@@ -63,6 +63,9 @@ The examples cover:
   PostgreSQL. Lifecycle hooks receive a shared `SQLExecutor`, so child writes
   use the active transaction automatically. The example records hook events as
   `Event` models through `event.Insert(exec)`.
+- `sql.gpp` — direct full-SQL access through `gpp/sql`, with typed scalar and
+  struct results, the shared `Executor` interface, and queries through both a
+  database handle and an active transaction.
 - `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.

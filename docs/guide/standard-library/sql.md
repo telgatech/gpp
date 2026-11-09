@@ -30,6 +30,16 @@ events := db.Select[struct(employee_id: int64, event: string)](
 
 `Get[T]` returns one value and `Select[T]` returns a slice. Use a pointer type
 argument such as `db.Get[*User](...)` when you want pointer results.
+`Select[T]` accepts one result type and returns `[]T`; tuple types such as
+`[int64, string]` are not supported as row shapes. Use an anonymous struct
+when a query selects multiple columns.
+
+For struct results, SQL column labels match field names without regard
+to case, underscores, or hyphens. For example, `created_at`, `CreatedAt`, and
+`created-at` match `CreatedAt`. Extra columns are discarded, and unmatched
+fields keep their zero values. Use explicit SQL aliases if labels are
+ambiguous or multiple fields normalize to the same name. If two columns map to
+the same field, the query returns an error.
 
 For full-SQL queries into ORM models, use `orm.GetSQL[T]` and
 `orm.SelectSQL[T]`. The ORM owns model metadata and uses the executor contract

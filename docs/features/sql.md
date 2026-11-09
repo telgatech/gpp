@@ -34,14 +34,23 @@ user := db.Get[struct(ID: int64, Name: string)](
 )
 ```
 
+`T` is one result type, so `Select[T]` returns `[]T`. Go++ does not currently
+have tuple types for storing each row; `[int64, string]` or `[[int64, string]]`
+cannot describe a pair of columns. Use an anonymous struct to give each
+selected column a name and type.
+
 Database queries often create type explosion: projections, joins, and
 aggregates can each return a different shape. Inline structs put that shape
 beside the query without requiring a named struct for every result.
 
-Anonymous structs and Go structs match column labels to field names case-insensitively and
-ignore underscores. Unmatched result columns are discarded. Use explicit SQL
-aliases when a query expression or join makes a label ambiguous. Scalar result
-types expect a single column. `Get[T]` reads one row; `Select[T]` reads all rows.
+Anonymous structs and Go structs match column labels to field names
+without regard to case, underscores, or hyphens. For example, `created_at`,
+`CreatedAt`, and `created-at` all match `CreatedAt`. Extra result columns are
+discarded, and fields with no matching column keep their zero values. If
+multiple fields normalize to the same name, or a query produces ambiguous
+labels, use explicit SQL aliases. If two result columns map to the same field,
+the query returns an error. Scalar result types expect a single column.
+`Get[T]` reads one row; `Select[T]` reads all rows.
 
 ## Pointer results
 
