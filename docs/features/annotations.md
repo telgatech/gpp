@@ -170,7 +170,7 @@ class App : http.Server @{
 } {
     func Health(ctx *http.Context) error
         @{http.GET("/health")} {
-        return ctx.JSON(record(ok: true))
+        return ctx.JSON(struct(ok: true))
     }
 
     func Admin(ctx *http.Context) error

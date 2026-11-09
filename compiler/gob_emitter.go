@@ -94,7 +94,7 @@ func gobSerializationFields(class *ClassDecl, context constructorContext) ([]gob
 			name += "_"
 		}
 		used[name] = true
-		path := append(append([]string{"this"}, field.Path...), field.Name)
+		path := append(append([]string{"this"}, field.Path...), generatedMemberName(field.Name))
 		result = append(result, gobSerializationField{
 			Name:      name,
 			Type:      transformPolymorphicType(field.Type, context),

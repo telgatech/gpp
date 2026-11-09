@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"fmt"
-	"go/token"
 	"strconv"
 	"strings"
 )
@@ -329,7 +328,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	}
 	out.WriteString("}, Fields: []GppField{\n")
 	for _, field := range fields {
-		path := append(append([]string(nil), field.Path...), field.Name)
+		path := append(append([]string(nil), field.Path...), generatedMemberName(field.Name))
 		access := strings.Join(path, ".")
 		owner := field.Owner
 		if owner == "" {
@@ -387,28 +386,17 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 }
 
 func filterInaccessibleInheritedFields(class *ClassDecl, fields []constructorField) []constructorField {
-	if class == nil || class.Owner == nil {
+	if class == nil {
 		return fields
 	}
-	currentPackage := filePackageIdentity(class.Owner)
 	accessible := fields[:0]
 	for _, field := range fields {
-		if len(field.Path) > 0 && field.File != nil && !token.IsExported(field.Name) && filePackageIdentity(field.File) != currentPackage {
+		if len(field.Path) > 0 && !memberVisibleToSubclass(field.Name) {
 			continue
 		}
 		accessible = append(accessible, field)
 	}
 	return accessible
-}
-
-func filePackageIdentity(file *File) string {
-	if file == nil {
-		return ""
-	}
-	if file.OfficialPackage != "" {
-		return file.OfficialPackage
-	}
-	return file.Package
 }
 
 type methodDescriptor struct {

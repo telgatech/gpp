@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -296,6 +297,12 @@ class Pair[A, B] {
 	}
 }
 
+extend []string {
+	func Join(separator string) string {
+		return strings.Join(this, separator)
+	}
+}
+
 extend []T where T comparable {
 	func Contains(value T) bool {
 		for _, candidate := range this {
@@ -372,6 +379,14 @@ extend []T where T cmp.Ordered {
 }
 
 extend string {
+	func Reverse() string {
+		characters := []rune(this)
+		for left, right := 0, len(characters)-1; left < right; left, right = left+1, right-1 {
+			characters[left], characters[right] = characters[right], characters[left]
+		}
+		return string(characters)
+	}
+
 	func CompileRegex() (*regexp.Regexp, error) {
 		value, err := regexp.Compile(this)
 		return value, err
@@ -389,6 +404,26 @@ extend string {
 		return strings.TrimRight(this, cutset)
 	}
 
+	func TrimPrefix(prefix string) string {
+		return strings.TrimPrefix(this, prefix)
+	}
+
+	func TrimSuffix(suffix string) string {
+		return strings.TrimSuffix(this, suffix)
+	}
+
+	func TrimFunc(predicate func(rune) bool) string {
+		return strings.TrimFunc(this, predicate)
+	}
+
+	func TrimLeftFunc(predicate func(rune) bool) string {
+		return strings.TrimLeftFunc(this, predicate)
+	}
+
+	func TrimRightFunc(predicate func(rune) bool) string {
+		return strings.TrimRightFunc(this, predicate)
+	}
+
 	func TrimSpace() string {
 		return strings.TrimSpace(this)
 	}
@@ -401,8 +436,28 @@ extend string {
 		return strings.ToUpper(this)
 	}
 
+	func ToTitle() string {
+		return strings.ToTitle(this)
+	}
+
+	func ToValidUTF8(replacement string) string {
+		return strings.ToValidUTF8(this, replacement)
+	}
+
 	func Contains(substr string) bool {
 		return strings.Contains(this, substr)
+	}
+
+	func ContainsAny(characters string) bool {
+		return strings.ContainsAny(this, characters)
+	}
+
+	func ContainsRune(character rune) bool {
+		return strings.ContainsRune(this, character)
+	}
+
+	func ContainsFunc(predicate func(rune) bool) bool {
+		return strings.ContainsFunc(this, predicate)
 	}
 
 	func HasPrefix(prefix string) bool {
@@ -421,8 +476,43 @@ extend string {
 		return strings.ReplaceAll(this, old, new)
 	}
 
+	func Cut(separator string) (string, string, bool) {
+		before, after, found := strings.Cut(this, separator)
+		return before, after, found
+	}
+
+	func CutLast(separator string) (string, string, bool) {
+		index := strings.LastIndex(this, separator)
+		if index < 0 {
+			return this, "", false
+		}
+		return this[:index], this[index+len(separator):], true
+	}
+
+	func CutPrefix(prefix string) (string, bool) {
+		value, found := strings.CutPrefix(this, prefix)
+		return value, found
+	}
+
+	func CutSuffix(suffix string) (string, bool) {
+		value, found := strings.CutSuffix(this, suffix)
+		return value, found
+	}
+
 	func Split(sep string) []string {
 		return strings.Split(this, sep)
+	}
+
+	func SplitN(separator string, count int) []string {
+		return strings.SplitN(this, separator, count)
+	}
+
+	func SplitAfter(separator string) []string {
+		return strings.SplitAfter(this, separator)
+	}
+
+	func SplitAfterN(separator string, count int) []string {
+		return strings.SplitAfterN(this, separator, count)
 	}
 
 	func Fields() []string {
@@ -435,6 +525,34 @@ extend string {
 
 	func LastIndex(substr string) int {
 		return strings.LastIndex(this, substr)
+	}
+
+	func IndexAny(characters string) int {
+		return strings.IndexAny(this, characters)
+	}
+
+	func IndexRune(character rune) int {
+		return strings.IndexRune(this, character)
+	}
+
+	func IndexByte(character byte) int {
+		return strings.IndexByte(this, character)
+	}
+
+	func IndexFunc(predicate func(rune) bool) int {
+		return strings.IndexFunc(this, predicate)
+	}
+
+	func LastIndexAny(characters string) int {
+		return strings.LastIndexAny(this, characters)
+	}
+
+	func LastIndexByte(character byte) int {
+		return strings.LastIndexByte(this, character)
+	}
+
+	func LastIndexFunc(predicate func(rune) bool) int {
+		return strings.LastIndexFunc(this, predicate)
 	}
 
 	func Count(substr string) int {
@@ -470,6 +588,114 @@ extend string {
 	func Words() []string {
 		return strings.Fields(this)
 	}
+
+	func Map(mapping func(rune) rune) string {
+		return strings.Map(mapping, this)
+	}
+
+	func ToInt(fallback int = 0) int {
+		value, err := strconv.Atoi(this)
+		if err != nil {
+			return fallback
+		}
+		return value
+	}
+
+	func ToInt64(fallback int64 = 0) int64 {
+		value, err := strconv.ParseInt(this, 10, 64)
+		if err != nil {
+			return fallback
+		}
+		return value
+	}
+
+	func ToUint64(fallback uint64 = 0) uint64 {
+		value, err := strconv.ParseUint(this, 10, 64)
+		if err != nil {
+			return fallback
+		}
+		return value
+	}
+
+	func ToFloat32(fallback float32 = 0) float32 {
+		value, err := strconv.ParseFloat(this, 32)
+		if err != nil {
+			return fallback
+		}
+		return float32(value)
+	}
+
+	func ToFloat64(fallback float64 = 0) float64 {
+		value, err := strconv.ParseFloat(this, 64)
+		if err != nil {
+			return fallback
+		}
+		return value
+	}
+
+	func ToBool(fallback bool = false) bool {
+		value, err := strconv.ParseBool(this)
+		if err != nil {
+			return fallback
+		}
+		return value
+	}
+}
+
+extend int {
+	func String() string { return strconv.Itoa(this) }
+}
+
+extend int8 {
+	func String() string { return strconv.FormatInt(int64(this), 10) }
+}
+
+extend int16 {
+	func String() string { return strconv.FormatInt(int64(this), 10) }
+}
+
+extend int32 {
+	func String() string { return strconv.FormatInt(int64(this), 10) }
+}
+
+extend int64 {
+	func String() string { return strconv.FormatInt(this, 10) }
+}
+
+extend uint {
+	func String() string { return strconv.FormatUint(uint64(this), 10) }
+}
+
+extend uint8 {
+	func String() string { return strconv.FormatUint(uint64(this), 10) }
+}
+
+extend uint16 {
+	func String() string { return strconv.FormatUint(uint64(this), 10) }
+}
+
+extend uint32 {
+	func String() string { return strconv.FormatUint(uint64(this), 10) }
+}
+
+extend uint64 {
+	func String() string { return strconv.FormatUint(this, 10) }
+}
+
+extend uintptr {
+	func String() string { return strconv.FormatUint(uint64(this), 10) }
+}
+
+extend float32 {
+	func String() string { return strconv.FormatFloat(float64(this), 'g', -1, 32) }
+}
+
+extend float64 {
+	func String() string { return strconv.FormatFloat(this, 'g', -1, 64) }
+}
+
+extend bool {
+	func String() string { return strconv.FormatBool(this) }
 }
 
 extend map[K]V {

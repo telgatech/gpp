@@ -146,7 +146,7 @@ class Employee @{model.Table("employees")} {
 
 Method:
 
-func Show(id int) record @{web.Get("/users/:id"), web.Auth} {
+func Show(id int) struct @{web.Get("/users/:id"), web.Auth} {
 }
 
 Parameter:
@@ -641,11 +641,11 @@ annotation (
 Application:
 
 class Users @{web.Auth} {
-    func Show(id int) record @{web.Get("/users/:id")} {
+    func Show(id int) struct @{web.Get("/users/:id")} {
         ...
     }
 
-    func Create() record @{web.Post("/users"), web.Role("admin")} {
+    func Create() struct @{web.Post("/users"), web.Role("admin")} {
         ...
     }
 }

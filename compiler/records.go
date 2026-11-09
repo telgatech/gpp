@@ -120,7 +120,7 @@ func (context *recordContext) definitions() string {
 }
 
 func transformRecords(src string, context constructorContext) (string, error) {
-	if context.Records == nil || !strings.Contains(src, "record") && !strings.Contains(src, "let") {
+	if context.Records == nil || !strings.Contains(src, "record") && !strings.Contains(src, "struct") && !strings.Contains(src, "let") {
 		return src, nil
 	}
 
@@ -747,7 +747,7 @@ func replaceRecordTypeNode(target *TypeNode, kind, goType string) bool {
 	name := &NamedType{Parts: strings.Split(goType, ".")}
 	switch value := (*target).(type) {
 	case *NamedType:
-		if kind != "record" || len(value.Parts) != 1 || value.Parts[0] != "record" {
+		if kind != "record" || !isAnonymousStructMarker(value.Parts) {
 			return false
 		}
 		*target = name
@@ -756,7 +756,7 @@ func replaceRecordTypeNode(target *TypeNode, kind, goType string) bool {
 		if kind != "slice" {
 			return false
 		}
-		if named, ok := value.Element.(*NamedType); !ok || len(named.Parts) != 1 || named.Parts[0] != "record" {
+		if named, ok := value.Element.(*NamedType); !ok || !isAnonymousStructMarker(named.Parts) {
 			return false
 		}
 		value.Element = name
@@ -765,7 +765,7 @@ func replaceRecordTypeNode(target *TypeNode, kind, goType string) bool {
 		if kind != "map" {
 			return false
 		}
-		if named, ok := value.Value.(*NamedType); !ok || len(named.Parts) != 1 || named.Parts[0] != "record" {
+		if named, ok := value.Value.(*NamedType); !ok || !isAnonymousStructMarker(named.Parts) {
 			return false
 		}
 		value.Value = name
@@ -788,7 +788,7 @@ func rewriteLetSyntax(src string) string {
 
 func transformRecordLiterals(src string, valueTypes map[string]string, context constructorContext, strict bool) (string, error) {
 	tokens, err := LexSource("record", src)
-	if err != nil || !tokenSequence(tokens, "record", "(") {
+	if err != nil || !tokenSequence(tokens, "record", "(") && !tokenSequence(tokens, "struct", "(") {
 		return src, nil
 	}
 	if transformed, handled, err := transformRecordLiteralsAST(src, valueTypes, context, strict); handled {
@@ -1015,11 +1015,20 @@ func collectRecordCalls(expression ExprNode, result *[]recordCallNode) {
 	}
 	switch value := expression.(type) {
 	case *CallExpr:
-		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "record" {
+		if name, ok := value.Callee.(*NameExpr); ok && isAnonymousStructCall(name.Name) {
 			span := value.Span()
 			*result = append(*result, recordCallNode{call: value, start: span.Start, end: span.End})
 		}
-		collectRecordCalls(value.Callee, result)
+		switch callee := value.Callee.(type) {
+		case *IndexExpr:
+			// Anonymous struct calls in generic arguments describe a type. Their
+			// lowering is handled separately by lowerGenericRecordTypeArguments.
+			collectRecordCalls(callee.Receiver, result)
+		case *IndexListExpr:
+			collectRecordCalls(callee.Receiver, result)
+		default:
+			collectRecordCalls(value.Callee, result)
+		}
 		for _, argument := range value.Arguments {
 			collectRecordCalls(argument.Value, result)
 		}
@@ -1153,7 +1162,11 @@ func rewriteRecordCollectionLiterals(src string, context constructorContext) (st
 			index = end
 			continue
 		}
-		if !keywordAt(src, index, "record") || (index > 0 && isIdentPart(src[index-1])) {
+		keyword := "record"
+		if !keywordAt(src, index, keyword) {
+			keyword = "struct"
+		}
+		if !keywordAt(src, index, keyword) || (index > 0 && isIdentPart(src[index-1])) {
 			output.WriteByte(src[index])
 			index++
 			continue
@@ -1167,10 +1180,10 @@ func rewriteRecordCollectionLiterals(src string, context constructorContext) (st
 			index++
 			continue
 		}
-		open := skipSpace(src, index+len("record"))
+		open := skipSpace(src, index+len(keyword))
 		if open >= len(src) || src[open] != '{' {
-			output.WriteString(src[index : index+len("record")])
-			index += len("record")
+			output.WriteString(src[index : index+len(keyword)])
+			index += len(keyword)
 			continue
 		}
 		close, err := findMatchingBrace(src, open)
@@ -1218,7 +1231,7 @@ func rewriteRecordCollectionLiteralsAST(src string, context constructorContext) 
 				return
 			}
 			elementType := collectionType.recordCollectionElement()
-			if named, namedOK := elementType.(*NamedType); !namedOK || len(named.Parts) != 1 || named.Parts[0] != "record" {
+			if named, namedOK := elementType.(*NamedType); !namedOK || !isAnonymousStructMarker(named.Parts) {
 				return
 			}
 			shapeName := ""
@@ -1492,6 +1505,11 @@ func inferRecordExprType(expression ExprNode, valueTypes map[string]string, cont
 				if field.Name == value.Name {
 					return fieldTypeSource(field)
 				}
+			}
+		}
+		for _, field := range context.StructConstructors[strings.TrimPrefix(base, "*")] {
+			if field.Name == value.Name {
+				return field.Type
 			}
 		}
 	}
@@ -1856,10 +1874,18 @@ func recordResultKindAST(typeNode TypeNode) (string, bool) {
 }
 
 func namedRecordResultKind(parts []string) (string, bool) {
-	if len(parts) == 1 && parts[0] == "record" {
+	if isAnonymousStructMarker(parts) {
 		return "record", true
 	}
 	return "", false
+}
+
+func isAnonymousStructMarker(parts []string) bool {
+	return len(parts) == 1 && (parts[0] == "record" || parts[0] == "struct")
+}
+
+func isAnonymousStructCall(name string) bool {
+	return name == "record" || name == "struct"
 }
 
 func inferRecordFunctionResultAST(block *BlockStmt, kind string, valueTypes map[string]string, context constructorContext, functionName string) (string, error) {
@@ -2175,7 +2201,7 @@ func recordShapeDescription(goName string, context *recordContext) string {
 }
 
 func transformRecordMethodResult(result, body string, context constructorContext) (string, string, error) {
-	if context.Records == nil || (!strings.Contains(result, "record") && !strings.Contains(body, "record") && !strings.Contains(body, "let")) {
+	if context.Records == nil || (!strings.Contains(result, "record") && !strings.Contains(result, "struct") && !strings.Contains(body, "record") && !strings.Contains(body, "struct") && !strings.Contains(body, "let")) {
 		return result, body, nil
 	}
 	wrapped := "func __gpp_scope()"

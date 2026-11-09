@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -54,6 +55,9 @@ func (s *server) nativeGoExternalHover(state *fileState, name string, offset int
 		object = s.nativeGoObjectAt(state, name, offset)
 	} else {
 		object = s.nativeGoImportedObjectAt(state, name, offset)
+		if object == nil {
+			object = s.nativeGoGoPlusObjectAt(state, name, offset)
+		}
 	}
 	if object == nil || object.Pkg() == nil {
 		return nil
@@ -116,15 +120,15 @@ func (s *server) nativeGoImportedObjectAt(state *fileState, name string, offset 
 	if state == nil || state.File == nil || name == "" {
 		return nil
 	}
-	token, ok := identifierTokenAt(state.File.Tokens, offset)
+	identifier, ok := identifierTokenAt(state.File.Tokens, offset)
 	if !ok {
 		return nil
 	}
-	index := tokenIndexAt(state.File.Tokens, token.Span.Start)
+	index := tokenIndexAt(state.File.Tokens, identifier.Span.Start)
 	if index < 2 || state.File.Tokens[index-1].Text != "." {
 		return nil
 	}
-	selector := selectorChainBefore(state.Source[:token.Span.Start])
+	selector := selectorChainBefore(state.Source[:identifier.Span.Start])
 	parts := strings.Split(selector, ".")
 	if len(parts) == 0 {
 		return nil
@@ -179,7 +183,97 @@ func (s *server) nativeGoImportedObjectAt(state *fileState, name string, offset 
 }
 
 func (s *server) nativeGoImportedDefinition(state *fileState, name string, offset int) *Location {
+	if location := s.nativeGoImportedSourceDefinition(state, name, offset); location != nil {
+		return location
+	}
 	object := s.nativeGoImportedObjectAt(state, name, offset)
+	if object == nil {
+		object = s.nativeGoGoPlusObjectAt(state, name, offset)
+	}
+	return s.nativeGoDefinitionForObject(object)
+}
+
+func (s *server) nativeGoImportedSourceDefinition(state *fileState, name string, offset int) *Location {
+	if state == nil || state.File == nil || name == "" {
+		return nil
+	}
+	identifier, ok := identifierTokenAt(state.File.Tokens, offset)
+	if !ok {
+		return nil
+	}
+	index := tokenIndexAt(state.File.Tokens, identifier.Span.Start)
+	if index < 2 || state.File.Tokens[index-1].Text != "." {
+		return nil
+	}
+	qualifier := selectorReceiverBefore(state, state.File.Tokens[index-1].Span.Start)
+	var importPath string
+	for _, imported := range state.File.Imports {
+		if imported.LogicalPackage {
+			continue
+		}
+		alias := imported.Alias
+		if alias == "" {
+			alias = packageLeaf(imported.Path)
+			if packageName, _, found := s.workspacePackageForImport(state, imported.Path); found {
+				alias = packageName
+			}
+		}
+		if alias == qualifier {
+			importPath = imported.Path
+			break
+		}
+	}
+	if importPath == "" {
+		return nil
+	}
+	packageDir := filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(importPath))
+	entries, err := os.ReadDir(packageDir)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		path := filepath.Join(packageDir, entry.Name())
+		fset := token.NewFileSet()
+		file, parseErr := parser.ParseFile(fset, path, nil, parser.AllErrors)
+		if parseErr != nil || file == nil {
+			continue
+		}
+		var sourcePosition token.Pos
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch declaration := node.(type) {
+			case *ast.TypeSpec:
+				if declaration.Name.Name == name {
+					sourcePosition = declaration.Name.Pos()
+				}
+			case *ast.FuncDecl:
+				if declaration.Recv == nil && declaration.Name.Name == name {
+					sourcePosition = declaration.Name.Pos()
+				}
+			case *ast.ValueSpec:
+				for _, declared := range declaration.Names {
+					if declared.Name == name {
+						sourcePosition = declared.Pos()
+						break
+					}
+				}
+			}
+			return !sourcePosition.IsValid()
+		})
+		if sourcePosition.IsValid() {
+			source, readErr := os.ReadFile(path)
+			if readErr == nil {
+				start := fset.Position(sourcePosition).Offset
+				return &Location{URI: uriForPath(path), Range: rangeForOffsets(string(source), start, start+len(name))}
+			}
+		}
+	}
+	return nil
+}
+
+func (s *server) nativeGoDefinitionForObject(object types.Object) *Location {
 	if object == nil || object.Pkg() == nil {
 		return nil
 	}
@@ -202,6 +296,73 @@ func (s *server) nativeGoImportedDefinition(state *fileState, name string, offse
 			source, readErr := os.ReadFile(path)
 			if readErr == nil {
 				return &Location{URI: uriForPath(path), Range: rangeForOffsets(string(source), start, end)}
+			}
+		}
+	}
+	return nil
+}
+
+func (s *server) nativeGoGoPlusObjectAt(state *fileState, name string, offset int) types.Object {
+	if state == nil || state.File == nil || name == "" {
+		return nil
+	}
+	token, ok := identifierTokenAt(state.File.Tokens, offset)
+	if !ok {
+		return nil
+	}
+	memberIndex := tokenIndexAt(state.File.Tokens, token.Span.Start)
+	if memberIndex < 2 || state.File.Tokens[memberIndex-1].Text != "." {
+		return nil
+	}
+	dot := state.File.Tokens[memberIndex-1]
+	receiver := selectorReceiverBefore(state, dot.Span.Start)
+	if receiver == "" {
+		return nil
+	}
+	binding, found := s.localBindingAt(state, dot.Span.Start, receiver)
+	var receiverType types.Type
+	if found && binding.Method != nil {
+		_, initializer := bindingInitializer(binding.Method.BodyAST, binding.Declaration)
+		receiverType = s.nativeGoTypeForGoPlusExpression(state, binding.Method, initializer, 0)
+		if receiverType == nil {
+			receiverType = s.nativeGoTypeFromGoPlusTypeName(state, binding.Type)
+		}
+	} else {
+		receiverType = s.nativeGoTypeForGoPlusPackageValue(state, receiver, dot.Span.Start)
+	}
+	if receiverType == nil {
+		return nil
+	}
+	selected, _, _ := types.LookupFieldOrMethod(receiverType, true, nil, name)
+	return selected
+}
+
+func (s *server) nativeGoTypeForGoPlusPackageValue(state *fileState, name string, offset int) types.Type {
+	if state == nil || state.File == nil || name == "" {
+		return nil
+	}
+	method, _ := enclosingMethod(state, offset)
+	for _, declaration := range state.File.Decls {
+		value, ok := declaration.(*compiler.ValueDecl)
+		if !ok {
+			continue
+		}
+		for index, declaredName := range value.Names {
+			if declaredName.Text != name {
+				continue
+			}
+			if value.Type != nil {
+				span := value.Type.Span()
+				if span.Start >= 0 && span.End <= len(state.Source) && span.End > span.Start {
+					if receiverType := s.nativeGoTypeFromGoPlusTypeName(state, state.Source[span.Start:span.End]); receiverType != nil {
+						return receiverType
+					}
+				}
+			}
+			if method != nil && index < len(value.Values) {
+				if receiverType := s.nativeGoTypeForGoPlusExpression(state, method, value.Values[index], 0); receiverType != nil {
+					return receiverType
+				}
 			}
 		}
 	}
@@ -930,6 +1091,225 @@ func (s *server) nativeGoMembersForExpression(state *fileState, receiver string,
 		if info.Symbol.Parent == named.Obj().Name() && (info.Symbol.Kind == compiler.DocField || info.Symbol.Kind == compiler.DocMethod || info.Symbol.Kind == compiler.DocExtension || info.Symbol.Kind == compiler.DocValue) {
 			result = append(result, info)
 		}
+	}
+	return result
+}
+
+func (s *server) nativeGoMembersForGoPlusExpression(state *fileState, receiver string, dotOffset int) []symbolInfo {
+	if state == nil || state.File == nil || receiver == "" || dotOffset <= 0 {
+		return nil
+	}
+	binding, found := s.localBindingAt(state, dotOffset-1, receiver)
+	var typeOfReceiver types.Type
+	if found && binding.Method != nil {
+		_, initializer := bindingInitializer(binding.Method.BodyAST, binding.Declaration)
+		typeOfReceiver = s.nativeGoTypeForGoPlusExpression(state, binding.Method, initializer, 0)
+		if typeOfReceiver == nil {
+			typeOfReceiver = s.nativeGoTypeFromGoPlusTypeName(state, binding.Type)
+		}
+	} else {
+		typeOfReceiver = s.nativeGoTypeForGoPlusPackageValue(state, receiver, dotOffset)
+	}
+	if typeOfReceiver == nil {
+		return nil
+	}
+	if pointer, ok := types.Unalias(typeOfReceiver).(*types.Pointer); ok {
+		typeOfReceiver = pointer.Elem()
+	}
+	named, ok := types.Unalias(typeOfReceiver).(*types.Named)
+	if !ok || named.Obj() == nil {
+		return nil
+	}
+	packageName := ""
+	if named.Obj().Pkg() != nil {
+		packageName = named.Obj().Pkg().Name()
+	}
+	var result []symbolInfo
+	seen := map[string]bool{}
+	for _, methodSetType := range []types.Type{types.NewPointer(named), named} {
+		methodSet := types.NewMethodSet(methodSetType)
+		for index := 0; index < methodSet.Len(); index++ {
+			method, ok := methodSet.At(index).Obj().(*types.Func)
+			if !ok || !method.Exported() || seen[method.Name()] {
+				continue
+			}
+			seen[method.Name()] = true
+			symbol := compiler.DocSymbol{
+				Kind:      compiler.DocMethod,
+				Name:      method.Name(),
+				FullName:  packageName + "." + named.Obj().Name() + "." + method.Name(),
+				Package:   packageName,
+				Parent:    named.Obj().Name(),
+				Signature: nativeGoCompletionSignature(method.Name(), method.Type()),
+				Doc:       nativeGoExternalDocumentation(method),
+				Exported:  true,
+			}
+			result = append(result, symbolInfo{Symbol: symbol})
+		}
+	}
+	if structure, ok := named.Underlying().(*types.Struct); ok {
+		for index := 0; index < structure.NumFields(); index++ {
+			field := structure.Field(index)
+			if !field.Exported() || seen[field.Name()] {
+				continue
+			}
+			seen[field.Name()] = true
+			symbol := compiler.DocSymbol{
+				Kind:      compiler.DocField,
+				Name:      field.Name(),
+				FullName:  packageName + "." + named.Obj().Name() + "." + field.Name(),
+				Package:   packageName,
+				Parent:    named.Obj().Name(),
+				Signature: types.TypeString(field.Type(), nil),
+				Exported:  true,
+			}
+			result = append(result, symbolInfo{Symbol: symbol})
+		}
+	}
+	return result
+}
+
+func (s *server) nativeGoTypeForGoPlusExpression(state *fileState, method *compiler.Method, expression compiler.ExprNode, depth int) types.Type {
+	if expression == nil || depth > 64 {
+		return nil
+	}
+	switch value := expression.(type) {
+	case *compiler.CallExpr:
+		selector, ok := value.Callee.(*compiler.SelectorExpr)
+		if !ok {
+			return nil
+		}
+		memberOffset := selector.SpanValue.End - len(selector.Name)
+		function, ok := s.nativeGoImportedObjectAt(state, selector.Name, memberOffset).(*types.Func)
+		if !ok {
+			receiverType := s.nativeGoTypeForGoPlusExpression(state, method, selector.Receiver, depth+1)
+			if receiverType == nil {
+				return nil
+			}
+			selected, _, _ := types.LookupFieldOrMethod(receiverType, true, nil, selector.Name)
+			function, ok = selected.(*types.Func)
+			if !ok {
+				return nil
+			}
+		}
+		signature, ok := function.Type().(*types.Signature)
+		if !ok || signature.Results() == nil || signature.Results().Len() == 0 {
+			return nil
+		}
+		return signature.Results().At(0).Type()
+	case *compiler.NameExpr:
+		binding, found := s.localBindingAt(state, value.SpanValue.Start, value.Name)
+		if !found || binding.Method == nil {
+			return nil
+		}
+		_, initializer := bindingInitializer(binding.Method.BodyAST, binding.Declaration)
+		if result := s.nativeGoTypeForGoPlusExpression(state, binding.Method, initializer, depth+1); result != nil {
+			return result
+		}
+		return s.nativeGoTypeFromGoPlusTypeName(state, binding.Type)
+	case *compiler.SelectorExpr:
+		receiverType := s.nativeGoTypeForGoPlusExpression(state, method, value.Receiver, depth+1)
+		if receiverType == nil {
+			return nil
+		}
+		selected, _, _ := types.LookupFieldOrMethod(receiverType, true, nil, value.Name)
+		if selected == nil {
+			return nil
+		}
+		if field, ok := selected.(*types.Var); ok {
+			return field.Type()
+		}
+		if function, ok := selected.(*types.Func); ok {
+			if signature, ok := function.Type().(*types.Signature); ok && signature.Results() != nil && signature.Results().Len() > 0 {
+				return signature.Results().At(0).Type()
+			}
+		}
+	case *compiler.ParenthesizedExpr:
+		return s.nativeGoTypeForGoPlusExpression(state, method, value.Inner, depth+1)
+	}
+	return nil
+}
+
+func (s *server) nativeGoTypeFromGoPlusTypeName(state *fileState, typeName string) types.Type {
+	typeName = strings.TrimSpace(typeName)
+	pointer := strings.HasPrefix(typeName, "*")
+	typeName = strings.TrimPrefix(typeName, "*")
+	separator := strings.LastIndexByte(typeName, '.')
+	if separator <= 0 || separator == len(typeName)-1 {
+		return nil
+	}
+	qualifier, name := typeName[:separator], typeName[separator+1:]
+	var importPath string
+	for _, imported := range state.File.Imports {
+		if imported.LogicalPackage {
+			continue
+		}
+		alias := imported.Alias
+		if alias == "" {
+			alias = packageLeaf(imported.Path)
+			if packageName, _, found := s.workspacePackageForImport(state, imported.Path); found {
+				alias = packageName
+			}
+		}
+		if alias == qualifier {
+			importPath = imported.Path
+			break
+		}
+	}
+	if importPath == "" {
+		return nil
+	}
+	packageValue, err := importer.Default().Import(importPath)
+	if err != nil || packageValue == nil {
+		return nil
+	}
+	typeObject, ok := packageValue.Scope().Lookup(name).(*types.TypeName)
+	if !ok {
+		return nil
+	}
+	result := typeObject.Type()
+	if pointer {
+		result = types.NewPointer(result)
+	}
+	return result
+}
+
+func nativeGoCompletionSignature(name string, value types.Type) string {
+	signature, ok := value.(*types.Signature)
+	if !ok {
+		return "func " + name + "()"
+	}
+	qualifier := func(pkg *types.Package) string {
+		if pkg == nil {
+			return ""
+		}
+		return pkg.Name()
+	}
+	var parameters []string
+	for index := 0; index < signature.Params().Len(); index++ {
+		parameter := signature.Params().At(index)
+		parameterName := parameter.Name()
+		if parameterName == "" || parameterName == "_" {
+			parameterName = "arg" + strconv.Itoa(index+1)
+		}
+		parameterType := parameter.Type()
+		if signature.Variadic() && index == signature.Params().Len()-1 {
+			if slice, ok := parameterType.(*types.Slice); ok {
+				parameters = append(parameters, parameterName+" ..."+types.TypeString(slice.Elem(), qualifier))
+				continue
+			}
+		}
+		parameters = append(parameters, parameterName+" "+types.TypeString(parameterType, qualifier))
+	}
+	result := "func " + name + "(" + strings.Join(parameters, ", ") + ")"
+	if signature.Results().Len() == 1 {
+		result += " " + types.TypeString(signature.Results().At(0).Type(), qualifier)
+	} else if signature.Results().Len() > 1 {
+		results := make([]string, signature.Results().Len())
+		for index := range results {
+			results[index] = types.TypeString(signature.Results().At(index).Type(), qualifier)
+		}
+		result += " (" + strings.Join(results, ", ") + ")"
 	}
 	return result
 }

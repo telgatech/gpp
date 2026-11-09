@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	std "gpp/std"
 	tpl "gpp/tpl"
 )
 
@@ -1078,19 +1079,21 @@ type gppHTTPErrorData struct {
 	Path    string
 }
 
+// Server runs an HTTP application with annotated routes, middleware hooks, and mounted routers.
 class Server {
 	HTTPServer *stdhttp.Server
 	PublicDir string
 	DirListing bool
 	PublicCacheControl string
 	mounts []gppHTTPMount
-	ShutdownSetup *sync.Once
-	ShutdownLifecycle *sync.Once
-	ShutdownResult error
-	TemplateWatchStop chan struct{}
-	TemplateWatchDone chan struct{}
-	TemplateWatchOnce *sync.Once
+	shutdownSetup *sync.Once
+	shutdownLifecycle *sync.Once
+	shutdownResult error
+	templateWatchStop chan struct{}
+	templateWatchDone chan struct{}
+	templateWatchOnce *sync.Once
 
+	// Mount registers a router class at one or more host and path addresses.
 	func Mount(router any, addresses ...string) error {
 		if this.HTTPServer != nil {
 			return fmt.Errorf("http: mount routers before Serve or Listen")
@@ -1126,15 +1129,15 @@ class Server {
 		return nil
 	}
 
-	func SetupShutdownHandler() {
+	func SetupShutdownHandler() @{std.Hook} {
 		app := any(this)
 		if this.GppDynamicObject != nil {
 			app = this.GppDynamicObject
 		}
-		if this.ShutdownSetup == nil {
-			this.ShutdownSetup = &sync.Once{}
+		if this.shutdownSetup == nil {
+			this.shutdownSetup = &sync.Once{}
 		}
-		this.ShutdownSetup.Do(func() {
+		this.shutdownSetup.Do(func() {
 			signals := make(chan os.Signal, 1)
 			signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 			go func() {
@@ -1147,45 +1150,45 @@ class Server {
 		})
 	}
 
-	func BeforeListen() error {
+	func BeforeListen() error @{std.Hook} {
 		return nil
 	}
 
-	func AfterListen() error {
+	func AfterListen() error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeShutdown() error {
+	func BeforeShutdown() error @{std.Hook} {
 		return nil
 	}
 
-	func AfterShutdown() error {
+	func AfterShutdown() error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeRequest(ctx *Context) error {
+	func BeforeRequest(ctx *Context) error @{std.Hook} {
 		return nil
 	}
 
-	func Handle(ctx *Context) error {
+	func Handle(ctx *Context) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterRequest(ctx *Context) error {
+	func AfterRequest(ctx *Context) error @{std.Hook} {
 		return nil
 	}
 
-	func OAuthLogin(ctx *Context, identity *OAuthIdentity) {}
+	func OAuthLogin(ctx *Context, identity *OAuthIdentity) @{std.Hook} {}
 
-	func OAuthLogin(ctx *Context, identity *OAuthIdentity, token *OAuthToken) {}
+	func OAuthLogin(ctx *Context, identity *OAuthIdentity, token *OAuthToken) @{std.Hook} {}
 
-	func OAuthError(ctx *Context, provider string, err error) {}
+	func OAuthError(ctx *Context, provider string, err error) @{std.Hook} {}
 
-	func ErrorTemplate() string {
+	func ErrorTemplate() string @{std.Hook} {
 		return gppDefaultErrorTemplate
 	}
 
-	func Error(ctx *Context, code int, cause error) error {
+	func Error(ctx *Context, code int, cause error) error @{std.Hook} {
 		data := gppHTTPErrorData{
 			Code: code,
 			Message: stdhttp.StatusText(code),
@@ -1195,13 +1198,14 @@ class Server {
 		if this.GppDynamicObject != nil {
 			app = this.GppDynamicObject
 		}
-		if err := ctx.renderTemplate(code, gppErrorTemplate(app), data); err != nil {
+		if err := ctx.HTML(code, data, gppErrorTemplate(app)); err != nil {
 			gppWriteMinimalError(ctx)
 			return err
 		}
 		return nil
 	}
 
+	// Listen starts the server on the selected TCP port; port 0 asks the OS to choose one.
 	func Listen(port int = 0) error {
 		app := any(this)
 		if this.GppDynamicObject != nil {
@@ -1229,6 +1233,7 @@ class Server {
 		return this.Serve(listener)
 	}
 
+	// Serve runs the application using an existing listener.
 	func Serve(listener net.Listener) error {
 		app := any(this)
 		if this.GppDynamicObject != nil {
@@ -1301,50 +1306,51 @@ class Server {
 		listenerAddress := gppHTTPListenerAddress(listener.Addr())
 		log.Printf("gpp/http: listening on %s", listenerAddress)
 		if len(tpl.ManagedSourcePaths()) > 0 {
-			this.TemplateWatchStop = make(chan struct{})
-			this.TemplateWatchDone = make(chan struct{})
-			this.TemplateWatchOnce = &sync.Once{}
-			go gppWatchTemplates(this.TemplateWatchStop, this.TemplateWatchDone)
+			this.templateWatchStop = make(chan struct{})
+			this.templateWatchDone = make(chan struct{})
+			this.templateWatchOnce = &sync.Once{}
+			go gppWatchTemplates(this.templateWatchStop, this.templateWatchDone)
 		}
 		serveErr := <-done
-		this.StopTemplateWatcher()
+		this.stopTemplateWatcher()
 		return serveErr
 	}
 
-	func StopTemplateWatcher() {
-		if this.TemplateWatchOnce == nil {
+	func stopTemplateWatcher() {
+		if this.templateWatchOnce == nil {
 			return
 		}
-		this.TemplateWatchOnce.Do(func() {
-			close(this.TemplateWatchStop)
-			<-this.TemplateWatchDone
+		this.templateWatchOnce.Do(func() {
+			close(this.templateWatchStop)
+			<-this.templateWatchDone
 		})
 	}
 
+	// Shutdown gracefully stops the server and runs its shutdown hooks.
 	func Shutdown(ctx context.Context) error {
 		app := any(this)
 		if this.GppDynamicObject != nil {
 			app = this.GppDynamicObject
 		}
-		if this.ShutdownLifecycle == nil {
-			this.ShutdownLifecycle = &sync.Once{}
+		if this.shutdownLifecycle == nil {
+			this.shutdownLifecycle = &sync.Once{}
 		}
-		this.ShutdownLifecycle.Do(func() {
-			this.StopTemplateWatcher()
+		this.shutdownLifecycle.Do(func() {
+			this.stopTemplateWatcher()
 			beforeErr := gppCallHook(app, "BeforeShutdown", nil)
 			shutdownErr := error(nil)
 			if this.HTTPServer != nil {
 				shutdownErr = this.HTTPServer.Shutdown(ctx)
 			}
 			afterErr := gppCallHook(app, "AfterShutdown", nil)
-			this.ShutdownResult = shutdownErr
-			if this.ShutdownResult == nil {
-				this.ShutdownResult = beforeErr
+			this.shutdownResult = shutdownErr
+			if this.shutdownResult == nil {
+				this.shutdownResult = beforeErr
 			}
-			if this.ShutdownResult == nil {
-				this.ShutdownResult = afterErr
+			if this.shutdownResult == nil {
+				this.shutdownResult = afterErr
 			}
 		})
-		return this.ShutdownResult
+		return this.shutdownResult
 	}
 }

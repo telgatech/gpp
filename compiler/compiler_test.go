@@ -348,6 +348,11 @@ func upper(value string) string {
     return strings.ToUpper(value)
 }
 
+func isDash(character rune) bool { return character == '-' }
+func isE(character rune) bool { return character == 'é' }
+func isB(character rune) bool { return character == 'b' }
+func uppercaseASCII(character rune) rune { return character - 32 }
+
 func main() {
     var output bytes.Buffer
 	if err := tpl.Execute(&output, "<h1>{{{{.}}}}</h1>", "unsafe &"); err != nil { panic(err) }
@@ -377,6 +382,63 @@ func main() {
 		!"go".EqualFold("GO") ||
 		"a\r\nb".Lines()[1] != "b" {
 		panic("string prelude extension failed")
+	}
+	if "café".Reverse() != "éfac" ||
+		"/api/users".TrimPrefix("/api") != "/users" ||
+		"report.json".TrimSuffix(".json") != "report" ||
+		"--title--".TrimFunc(isDash) != "title" ||
+		"-title-".TrimLeftFunc(isDash) != "title-" ||
+		"-title-".TrimRightFunc(isDash) != "-title" ||
+		"hello WORLD".ToTitle() != "HELLO WORLD" ||
+		"a,b,c".SplitN(",", 2)[1] != "b,c" ||
+		"a,b,".SplitAfter(",")[1] != "b," ||
+		"a,b,c".SplitAfterN(",", 2)[1] != "b,c" ||
+		[]string{"api", "users"}.Join("/") != "api/users" {
+		panic("string trim, split, reverse, or join extension failed")
+	}
+	before, after, found := "a/b/c".Cut("/")
+	if before != "a" || after != "b/c" || !found {
+		panic("string Cut extension failed")
+	}
+	before, after, found = "a/b/c".CutLast("/")
+	if before != "a/b" || after != "c" || !found {
+		panic("string CutLast extension failed")
+	}
+	withoutPrefix, found := "https://example.com".CutPrefix("https://")
+	if withoutPrefix != "example.com" || !found {
+		panic("string CutPrefix extension failed")
+	}
+	withoutSuffix, found := "report.json".CutSuffix(".json")
+	if withoutSuffix != "report" || !found {
+		panic("string CutSuffix extension failed")
+	}
+	if !"hello".ContainsAny("aeiou") || !"café".ContainsRune('é') ||
+		!"café".ContainsFunc(isE) ||
+		"abc".IndexAny("xz") != -1 || "abc".IndexByte(byte('b')) != 1 ||
+		"café".IndexRune('é') != 3 || "abc".IndexFunc(isB) != 1 ||
+		"abca".LastIndexAny("ac") != 3 || "abc".LastIndexByte(byte('b')) != 1 ||
+		"abc".LastIndexFunc(isB) != 1 {
+		panic("string search extension failed")
+	}
+	if "abc".Map(uppercaseASCII) != "ABC" ||
+		"\xff".ToValidUTF8("?") != "?" {
+		panic("string rune transform extension failed")
+	}
+	if "42".ToInt() != 42 || "bad".ToInt() != 0 || "bad".ToInt(fallback: -1) != -1 ||
+		"42".ToInt64() != 42 || "42".ToUint64() != 42 ||
+		"1.5".ToFloat32() != 1.5 || "1.5".ToFloat64() != 1.5 ||
+		!"true".ToBool() || "invalid".ToBool() || "invalid".ToBool(fallback: true) != true {
+		panic("string conversion extension failed")
+	}
+	intValue := -42
+	var int64Value int64 = 43
+	var uintValue uint64 = 44
+	var float32Value float32 = 1.5
+	var float64Value float64 = 2.5
+	boolValue := true
+	if intValue.String() != "-42" || int64Value.String() != "43" || uintValue.String() != "44" ||
+		float32Value.String() != "1.5" || float64Value.String() != "2.5" || boolValue.String() != "true" {
+		panic("scalar String extension failed")
 	}
 	values := []int{1, 2, 3}
 	doubled := values.Map(func(value int) int { return value * 2 })
@@ -2614,6 +2676,69 @@ func main() {
 	}
 }
 
+func TestCompileFilesIncludesTransitiveImportsForInheritedMethods(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sources := map[string]string{
+		"core.gpp": `package demo.core
+
+import (
+    "context"
+    "net"
+    std "gpp/std"
+)
+
+class Server {
+    func Serve(listener net.Listener) error @{std.Hook} { return nil }
+    func Shutdown(ctx context.Context) error { return nil }
+}
+`,
+		"common.gpp": `package demo.common
+
+import (
+    demo.core
+)
+
+class Server : core.Server {}
+`,
+		"apps.gpp": `package demo.apps
+
+import (
+    demo.common
+)
+
+class Server : common.Server {}
+`,
+		"main.gpp": `package main
+
+import (
+    demo.apps
+)
+
+func main() {
+    _ = apps.Server()
+}
+`,
+	}
+	paths := make([]string, 0, len(sources))
+	for name, source := range sources {
+		path := filepath.Join(inputDir, name)
+		if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	if err := CompileFilesWithOptions(paths, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "build", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE="+t.TempDir(), "GOPROXY=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("transitive imports used by inherited methods were not available in derived packages: %v\n%s", err, output)
+	}
+}
+
 func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3355,6 +3480,320 @@ func main() {}
 	}
 }
 
+func TestCompileFilesResolvesExtensionsOnInheritedImportedFields(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	base := filepath.Join(inputDir, "base.gpp")
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(base, []byte(`package demo.base
+
+import "database/sql"
+
+class Base {
+    DB *sql.DB
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, []byte(`package main
+
+import (
+    demo.base
+    gppsql "gpp/sql"
+)
+
+class Server: base.Base {
+    func Rows() {
+        rows := this.DB.Select[struct(ID: int)]("SELECT 1")
+        _ = rows
+    }
+}
+
+func main() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{base, main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "gppsql.GppExt_ptr_sql_DB_Select_") {
+		t.Fatalf("extension call on inherited *sql.DB field was not lowered through gpp/sql:\n%s", generated)
+	}
+
+	command := exec.Command("go", "build", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("imported extension on inherited field did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesAppliesDefaultsToImportedChainedMethodCalls(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	base := filepath.Join(inputDir, "base.gpp")
+	common := filepath.Join(inputDir, "common.gpp")
+	server := filepath.Join(inputDir, "server.gpp")
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(base, []byte(`package demo.http
+
+class Server {
+    func Listen(port int = 0) error { return nil }
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(common, []byte(`package demo.common
+
+import demo.http
+
+class Server : http.Server {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(server, []byte(`package demo.server
+
+import demo.common
+
+class Server : common.Server {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, []byte(`package main
+
+import demo.server
+
+func main() {
+    go server.Server().Listen()
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CompileFilesWithOptions([]string{base, common, server, main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), ".Listen(0)") {
+		t.Fatalf("default method argument was not added to a chained call:\n%s", generated)
+	}
+
+	command := exec.Command("go", "build", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("chained call with default argument did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesResolvesPreludeExtensionsOnNestedAnonymousStructFields(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(main, []byte(`package main
+
+func value() struct { return struct(c: struct(e: "ok")) }
+
+func main() {
+    blank := value().c.e.Trim(" ").IsBlank()
+    _ = blank
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "GppPreludeExt_string_Trim_") || !strings.Contains(string(generated), "GppPreludeExt_string_IsBlank_") {
+		t.Fatalf("string extensions on nested anonymous struct fields were not lowered:\n%s", generated)
+	}
+
+	command := exec.Command("go", "build", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("string extensions on nested anonymous struct fields did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func TestCompileFilesLowersPreludeExtensionsInsideMapLambdas(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	main := filepath.Join(inputDir, "main.gpp")
+
+	if err := os.WriteFile(main, []byte(`package main
+
+func main() {
+    values := []string{"x"}
+    upper := values.Map(value => value.ToUpper())
+    upperBlock := values.Map(value => { return value.ToUpper() })
+    _ = upper
+    _ = upperBlock
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "GppPreludeExt_string_ToUpper_") {
+		t.Fatalf("string extension inside a Map lambda was not lowered:\n%s", generated)
+	}
+
+	command := exec.Command("go", "build", "./...")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("string extension inside a Map lambda did not produce buildable Go: %v\n%s", err, output)
+	}
+}
+
+func FuzzPreludeMapLambdaAcceptedProgramsBuild(f *testing.F) {
+	f.Add([]byte{0})
+	f.Add([]byte{1, 2, 0, 1})
+	f.Add([]byte{0, 1, 2, 2})
+	f.Fuzz(func(t *testing.T, choices []byte) {
+		if len(choices) > 32 {
+			t.Skip()
+		}
+		operations := []string{`.ToUpper()`, `.ToLower()`, `.Trim(" ")`}
+		steps := 1
+		if len(choices) > 0 {
+			steps += int(choices[0] % 4)
+		}
+		body := "value"
+		for i := 0; i < steps; i++ {
+			choice := byte(i)
+			if len(choices) > 0 {
+				choice = choices[i%len(choices)]
+			}
+			body += operations[int(choice)%len(operations)]
+		}
+		block := len(choices) > 0 && choices[0]&1 != 0
+		if block {
+			body = "{ return " + body + " }"
+		}
+		inputDir := t.TempDir()
+		outputDir := t.TempDir()
+		main := filepath.Join(inputDir, "main.gpp")
+		source := `package main
+
+func main() {
+    values := []string{"x"}
+    mapped := values.Map(value => ` + body + `)
+    _ = mapped
+}
+`
+		if err := os.WriteFile(main, []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := CompileFilesWithOptions([]string{main}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+			return
+		}
+		command := exec.Command("go", "build", "./...")
+		command.Dir = outputDir
+		command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("accepted Map lambda did not generate buildable Go: %v\n%s\nGo++ source:\n%s", err, output, source)
+		}
+	})
+}
+
+func FuzzInheritedDefaultMethodCallAcceptedProgramsBuild(f *testing.F) {
+	f.Add(byte(0))
+	f.Add(byte(1))
+	f.Add(byte(2))
+	f.Add(byte(3))
+	f.Fuzz(func(t *testing.T, choice byte) {
+		receiver := "server.Server()"
+		prefix := ""
+		if choice&4 != 0 {
+			prefix = "    instance := server.Server()\n"
+			receiver = "instance"
+		}
+		calls := []string{
+			"go " + receiver + ".Listen()",
+			receiver + ".Listen()",
+			"go " + receiver + ".Listen(port: 8080)",
+			receiver + ".Listen(8080)",
+		}
+		call := calls[int(choice)%len(calls)]
+		inputDir := t.TempDir()
+		outputDir := t.TempDir()
+		base := filepath.Join(inputDir, "base.gpp")
+		common := filepath.Join(inputDir, "common.gpp")
+		server := filepath.Join(inputDir, "server.gpp")
+		main := filepath.Join(inputDir, "main.gpp")
+		sources := []struct {
+			path   string
+			source string
+		}{
+			{base, `package demo.http
+
+class Server {
+    func Listen(port int = 0) error { return nil }
+}
+`},
+			{common, `package demo.common
+
+import demo.http
+
+class Server : http.Server {}
+`},
+			{server, `package demo.server
+
+import demo.common
+
+class Server : common.Server {}
+`},
+			{main, `package main
+
+import demo.server
+
+func main() {
+` + prefix + `
+    ` + call + `
+}
+`},
+		}
+		paths := make([]string, 0, len(sources))
+		for _, file := range sources {
+			if err := os.WriteFile(file.path, []byte(file.source), 0644); err != nil {
+				t.Fatal(err)
+			}
+			paths = append(paths, file.path)
+		}
+		if err := CompileFilesWithOptions(paths, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+			return
+		}
+		command := exec.Command("go", "build", "./...")
+		command.Dir = outputDir
+		command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("accepted inherited method call did not generate buildable Go: %v\n%s\nGo++ call: %s", err, output, call)
+		}
+	})
+}
+
 func TestCompileFilesSupportsImportedGoPlusExtensions(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3643,7 +4082,6 @@ package main
 import (
     "database/sql"
     orm "gpp/orm"
-    gppsql "gpp/sql"
 )
 
 func LoadEmployee(db *sql.DB, id int64) {
@@ -3681,13 +4119,15 @@ func PersistModel(db *sql.DB, employee *Employee) {
 }
 
 func RawEmployee(db *sql.DB, id int64) {
-    employee := db.Get[Employee]("SELECT id, name FROM employees WHERE id = $1", id)
+	employee, err := orm.GetSQL[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
     _ = employee
+	_ = err
 }
 
 func RawEmployees(db *sql.DB, prefix string) {
-    employees := db.Select[Employee]("SELECT id, name FROM employees WHERE name LIKE $1", prefix + "%")
+	employees, err := orm.SelectSQL[Employee](db, "SELECT id, name FROM employees WHERE name LIKE $1", prefix + "%")
     _ = employees
+	_ = err
 }
 
 func main() {}

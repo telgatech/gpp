@@ -1,6 +1,6 @@
 # `gpp/encoding`
 
-`gpp/encoding` provides generic helpers for JSON, YAML, and GOB, including for records and other values without a named class. A class marked `encoding.Serializable` also gets instance encoders such as `user.ToJSON()` and typed class decoders such as `User.FromJSON(data)`.
+`gpp/encoding` provides generic helpers for JSON, YAML, and GOB, including for anonymous structs and other values without a named class. A class marked `encoding.Serializable` also gets instance encoders such as `user.ToJSON()` and typed class decoders such as `User.FromJSON(data)`.
 
 ## Why one package?
 

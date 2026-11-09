@@ -1838,7 +1838,7 @@ user_test.gpp:18
 
 ```text
 strings
-records
+anonymous structs
 classes
 slices
 maps

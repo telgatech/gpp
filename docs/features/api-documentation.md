@@ -32,7 +32,7 @@ Route annotations provide the input for the generated document:
 class App : http.Server @{http.OpenAPI, http.Swagger} {
     func Health(ctx *http.Context) error
         @{http.GET("/health")} {
-        return ctx.JSON(record(ok: true))
+        return ctx.JSON(struct(ok: true))
     }
 }
 ```

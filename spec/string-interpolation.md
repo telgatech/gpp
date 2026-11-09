@@ -1100,20 +1100,20 @@ This behavior follows directly from the two parsing stages.
 
 ---
 
-# 41. Interpolation in Struct/Record Fields
+# 41. Interpolation in Struct Fields
 
 Interpolation works wherever a normal string expression is valid.
 
 Example:
 
 ```gpp
-data := record(
+data := struct(
     Title: "Order {{order.ID}}",
     Total: "{{order.Total:%.2f}}",
 )
 ```
 
-No special record behavior is required.
+No special struct behavior is required.
 
 ---
 

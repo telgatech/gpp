@@ -11,7 +11,7 @@ extend sql.DB {
         ...
     }
 
-    func Exists[T](filters record) (bool, error) {
+    func Exists[T](filters struct) (bool, error) {
         ...
     }
 }
@@ -22,7 +22,7 @@ Usage:
 
 ```gpp
 exists, err := db.Exists[Employee](
-    record(Email: "a@b.com"),
+    struct(Email: "a@b.com"),
 )
 ```
 
@@ -355,14 +355,14 @@ resolve statically.
 
 An extension overload must never hide an applicable real method.
 
-## Records
+## Anonymous structs
 
-Extension methods should work naturally with the `record` feature.
+Extension methods should work naturally with anonymous structs.
 
 Example:
 
 extend sql.DB {
-    func Exists[T](filters record) (bool, error) {
+    func Exists[T](filters struct) (bool, error) {
         ...
     }
 }
@@ -371,14 +371,14 @@ Usage:
 
 ```gpp
 db.Exists[Employee](
-    record(
+    struct(
         Email: "bob@example.com",
         Active: true,
     ),
 )
 ```
 
-The record remains statically typed.
+The struct remains statically typed.
 
 ## Class introspection
 

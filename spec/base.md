@@ -98,9 +98,10 @@
 - Named arguments may initialize inherited fields; if multiple parents expose
   the same field name, qualify it with the parent name, such as `A.Name`.
 - Constructor syntax should reduce repetitive Go initialization ceremony.
-- The proposed pointer-returning constructor and instance `init` semantics are
-  specified in `spec/constructors.md`. Until that proposal is implemented,
-  this section describes the historical value-literal lowering.
+- Constructor-style calls return pointers and run the class's validated
+  instance `init` hook after assigning fields. Initializer errors are returned
+  or promoted according to the trailing-error rules in `spec/constructors.md`.
+- Ordinary Go composite literals remain values and bypass the initializer.
 
 ## String interpolation
 - Support simple interpolation:
@@ -233,8 +234,8 @@
 - known function and method result types for polymorphic call expressions
 - explicit `?.` safe access for nullable class pointers/interfaces
 - configurable CLI output directory
-- anonymous structural records with deterministic generated Go structs; see
-  `spec.records.md`
+- anonymous structural structs with deterministic generated Go structs; see
+  `spec/structs.md` and field visibility in `spec/structs.visibility.md`
 - compile-time-generated class descriptors through `obj.class` and
   `Class.fields`; see `spec.introspection.md`
 - an implicit standard prelude for small slice, map, and string helpers; see

@@ -659,7 +659,7 @@ enum Status string {
 and:
 
 ```go
-record(
+struct(
     id: 123,
     status: Status.Active,
 )
@@ -711,7 +711,7 @@ enum Priority int {
 then:
 
 ```go
-record(
+struct(
     priority: Priority.High,
 )
 ```
@@ -831,21 +831,21 @@ No enum-specific annotation should be required.
 
 ---
 
-# Records
+# Anonymous structs
 
-Enums should work naturally in anonymous records.
+Enums should work naturally in anonymous structs.
 
 Example:
 
 ```go
-r := record(
+r := struct(
     id: 123,
     status: Status.Active,
     role: Role.Admin,
 )
 ```
 
-The record retains the actual enum types internally.
+The struct retains the actual enum types internally.
 
 Serialization emits backing values.
 
@@ -882,8 +882,8 @@ Enum handling should work recursively.
 Example:
 
 ```go
-record(
-    user: record(
+struct(
+    user: struct(
         status: Status.Active,
     ),
 )

@@ -94,7 +94,7 @@ func gppBindValues(values map[string][]string, target any, tagName string) error
 		if hasProvider {
 			fieldTarget := provider.GppRecordField(index)
 			if fieldTarget == nil {
-				return fmt.Errorf("http: could not access record field %q", fieldType.Name)
+				return fmt.Errorf("http: could not access struct field %q", fieldType.Name)
 			}
 			fieldValue = reflect.ValueOf(fieldTarget).Elem()
 		} else if fieldType.PkgPath != "" || !fieldValue.CanSet() {
@@ -118,7 +118,7 @@ func gppBindValues(values map[string][]string, target any, tagName string) error
 func gppBindJSONRecord(body io.Reader, target any) error {
 	provider, ok := target.(gppHTTPRecordFieldProvider)
 	if !ok {
-		return fmt.Errorf("http: JSON record target does not expose its fields")
+		return fmt.Errorf("http: JSON struct target does not expose its fields")
 	}
 	var values map[string]json.RawMessage
 	if err := json.NewDecoder(body).Decode(&values); err != nil {
@@ -135,7 +135,7 @@ func gppBindJSONRecord(body io.Reader, target any) error {
 			}
 			fieldTarget := provider.GppRecordField(index)
 			if fieldTarget == nil {
-				return fmt.Errorf("http: could not access record field %q", fieldType.Name)
+				return fmt.Errorf("http: could not access struct field %q", fieldType.Name)
 			}
 			if err := json.Unmarshal(raw, fieldTarget); err != nil {
 				return fmt.Errorf("http: bind field %s: %w", fieldType.Name, err)

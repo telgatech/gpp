@@ -272,7 +272,7 @@ class TodoApp : http.Server @{
         http.Summary("List todos"),
         http.Description("Returns every todo, including its completion state and timestamps."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo list", "application/json", record(Items: []Todo{}))
+        http.ResponseBody(200, "Todo list", "application/json", struct(Items: []Todo{}))
     } {
         todos := db.Todos()
         return ctx.JSON(TodoList{Items: todos})
@@ -283,7 +283,7 @@ class TodoApp : http.Server @{
         http.Summary("List completed todos"),
         http.Description("Returns todos that have been marked complete."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Completed todo list", "application/json", record(Items: []*Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
+        http.ResponseBody(200, "Completed todo list", "application/json", struct(Items: []*Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
     } {
         todos := db.CompletedTodos()
         return ctx.JSON(TodoList{Items: todos})
@@ -294,9 +294,9 @@ class TodoApp : http.Server @{
         http.Summary("Create a todo"),
         http.Description("Creates a todo from a JSON title and returns the stored record."),
         http.Tags("Todos"),
-        http.RequestBody("application/json", "The todo title to create", record(Title: "Write the next Go++ example")),
-        http.ResponseBody(201, "Todo created", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
-        http.ResponseBody(400, "The request body is invalid or the title is empty", "application/json", record(Error: "todo title is required"))
+        http.RequestBody("application/json", "The todo title to create", struct(Title: "Write the next Go++ example")),
+        http.ResponseBody(201, "Todo created", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(400, "The request body is invalid or the title is empty", "application/json", struct(Error: "todo title is required"))
     } {
         request := CreateTodoRequest()
         body := stdhttp.MaxBytesReader(ctx.Response, ctx.Request.Body, 1<<20)
@@ -317,9 +317,9 @@ class TodoApp : http.Server @{
         http.Summary("Get a todo"),
         http.Description("Returns one todo by its numeric ID."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo found", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
-        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
-        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+        http.ResponseBody(200, "Todo found", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
         var id int64
         id, err := this.parseTodoID(ctx.Param("id"))
@@ -340,9 +340,9 @@ class TodoApp : http.Server @{
         http.Summary("Complete a todo"),
         http.Description("Marks a todo complete and records when it was completed."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo completed", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)),
-        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
-        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+        http.ResponseBody(200, "Todo completed", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)),
+        http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
         var id int64
         id, err := this.parseTodoID(ctx.Param("id"))
@@ -366,9 +366,9 @@ class TodoApp : http.Server @{
         http.Summary("Reopen a todo"),
         http.Description("Clears a todo's completion state and completion timestamp."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo reopened", "application/json", record(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
-        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
-        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+        http.ResponseBody(200, "Todo reopened", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
         var id int64
         id, err := this.parseTodoID(ctx.Param("id"))
@@ -390,8 +390,8 @@ class TodoApp : http.Server @{
         http.Description("Permanently removes a todo by its numeric ID."),
         http.Tags("Todos"),
         http.ResponseBody(204, "Todo deleted", "", nil),
-        http.ResponseBody(400, "The ID is not a number", "application/json", record(Error: "invalid todo ID")),
-        http.ResponseBody(404, "No todo has this ID", "application/json", record(Error: "todo not found"))
+        http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
+        http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
         var id int64
         id, err := this.parseTodoID(ctx.Param("id"))

@@ -398,7 +398,7 @@ Example:
 ```gpp
 func CreateUser(ctx *http.Context) error @{
     http.POST("/users"),
-    http.RequestBody("application/json", "The user to create", record(Name: "Ada"))
+    http.RequestBody("application/json", "The user to create", struct(Name: "Ada"))
 }
 ```
 
@@ -461,15 +461,15 @@ Visibility and serialization annotations must be respected.
 
 ---
 
-# 17. Record Schemas
+# 17. Anonymous Struct Schemas
 
-Anonymous records used in HTTP-visible signatures should also generate schemas.
+Anonymous structs used in HTTP-visible signatures should also generate schemas.
 
 Example:
 
 ```gpp
-func Status() record {
-    return record(
+func Status() struct {
+    return struct(
         Status: "ok",
         Version: version,
     )
@@ -479,13 +479,13 @@ func Status() record {
 may expose a structural OpenAPI schema equivalent to:
 
 ```text
-record{
+struct{
     Status string
     Version string
 }
 ```
 
-Internal generated record type names must not appear in OpenAPI.
+Internal generated anonymous struct type names must not appear in OpenAPI.
 
 ---
 
@@ -675,12 +675,12 @@ Do not infer status semantics merely from the HTTP verb if the runtime does not 
 ```gpp
 func CreateUser(ctx *http.Context) error @{
     http.POST("/users"),
-    http.ResponseBody(201, "User created", "application/json", record(Id: 1, Name: "Ada")),
-    http.ResponseBody(400, "The request is invalid", "application/json", record(Error: "invalid user"))
+    http.ResponseBody(201, "User created", "application/json", struct(Id: 1, Name: "Ada")),
+    http.ResponseBody(400, "The request is invalid", "application/json", struct(Error: "invalid user"))
 }
 ```
 
-The example value determines the response schema and is included as the media type's OpenAPI `example`. A `record(...)` literal can provide an inline shape and sample without defining a helper function or a one-use response class. It does not set or validate the handler's runtime status. Use an empty content type and nil example for a response with no body.
+The example value determines the response schema and is included as the media type's OpenAPI `example`. A `struct(...)` literal can provide an inline shape and sample without defining a helper function or a one-use response class. It does not set or validate the handler's runtime status. Use an empty content type and nil example for a response with no body.
 
 ---
 
@@ -765,8 +765,8 @@ func User(ctx *http.Context) error @{
     http.Summary("Get a user"),
     http.Description("Returns the user identified by the path parameter."),
     http.Tags("Users"),
-    http.ResponseBody(200, "User returned", "application/json", record(Id: 1, Name: "Ada")),
-    http.ResponseBody(404, "No user exists with that ID", "application/json", record(Error: "user not found"))
+    http.ResponseBody(200, "User returned", "application/json", struct(Id: 1, Name: "Ada")),
+    http.ResponseBody(404, "No user exists with that ID", "application/json", struct(Error: "user not found"))
 } {
     // Handle the request.
 }
@@ -968,7 +968,7 @@ handler signatures
 bound parameters
 return types
 classes
-records
+structs
 enums
 annotations
 authentication

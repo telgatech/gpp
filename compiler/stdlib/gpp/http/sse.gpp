@@ -8,10 +8,12 @@ import (
 	"unicode/utf8"
 )
 
+// SSEStream writes server-sent events to the current HTTP response.
 class SSEStream {
 	Context *Context
 	Started bool
 
+	// Write sends one event and flushes it so the client can receive it immediately.
 	func Write(data string, event string = "", id *string = nil, retryMS *int = nil) error {
 		if this.Context == nil {
 			return fmt.Errorf("http: SSE stream is not attached to a request")

@@ -26,7 +26,7 @@ class CreateUserRequest {
 
 class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
     func Status(ctx *http.Context) error @{http.GET("/status")} {
-        return ctx.JSON(record(Area: "admin"))
+        return ctx.JSON(struct(Area: "admin"))
     }
 }
 
@@ -56,11 +56,11 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         http.Tags("Health"),
         http.ResponseBody(200, "Service is healthy", "application/json", HealthStatus{OK: true})
     } {
-        return ctx.JSON(record(OK: true))
+        return ctx.JSON(struct(OK: true))
     }
 
     func SearchUsers(ctx *http.Context, name string @{http.Query}, active bool @{http.Query}) error @{http.GET("/users")} {
-        return ctx.JSON(200, record(Name: name, Active: active))
+        return ctx.JSON(200, struct(Name: name, Active: active))
     }
 
     func CreateUser(ctx *http.Context, input *CreateUserRequest @{http.Body}) error @{http.POST("/users")} {
@@ -68,7 +68,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
     }
 
     func CreateUserFromRecord(ctx *http.Context) error @{http.POST("/users/record")} {
-        input := ctx.Bind[record(Name: string, Email: string)]()
+        input := ctx.Bind[struct(Name: string, Email: string)]()
         return ctx.JSON(201, input)
     }
 
@@ -91,7 +91,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         http.Tags("Resources"),
         http.ResponseBody(201, "Resource created", "application/json", HealthStatus{OK: true})
     } {
-        return ctx.JSON(201, record(OK: true))
+        return ctx.JSON(201, struct(OK: true))
     }
 
     func Preview(ctx *http.Context) error @{

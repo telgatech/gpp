@@ -1,30 +1,8 @@
 package gpp.orm
 
+import std "gpp/std"
+
 class Model {
-	func GppSQLGetQuery(where string) (string, error) {
-		entity := gppORMDynamicObject(this)
-		descriptor := gppORMRuntimeClass(entity)
-		query, _, err := gppORMQuery(descriptor, where, "LIMIT 1")
-		return query, err
-	}
-
-	func GppSQLSelectQuery(where string) (string, error) {
-		entity := gppORMDynamicObject(this)
-		descriptor := gppORMRuntimeClass(entity)
-		query, _, err := gppORMQuery(descriptor, where, "")
-		return query, err
-	}
-
-	func GppSQLScanTargets(columnNames []string) ([]any, error) {
-		entity := gppORMDynamicObject(this)
-		descriptor := gppORMRuntimeClass(entity)
-		columns, err := gppORMColumns(descriptor)
-		if err != nil {
-			return nil, err
-		}
-		return gppORMModelScanTargets(entity, columnNames, columns)
-	}
-
 	static func Get(exec SQLExecutor, where string, args ...any) (*self, error) {
 		return gppORMGetModel[self](exec, where, args...)
 	}
@@ -58,42 +36,69 @@ class Model {
 	}
 
 	func Destroy(exec SQLExecutor) error {
-		return gppORMDelete(exec, this)
+		entity := gppORMDynamicObject(this).(gppORMHooks)
+		if err := entity.BeforeDelete(exec); err != nil {
+			return err
+		}
+		if err := gppORMDelete(exec, entity); err != nil {
+			return err
+		}
+		return entity.AfterDelete(exec)
 	}
 
 	func Insert(exec SQLExecutor) error {
-		return gppORMInsert(exec, this)
+		entity := gppORMDynamicObject(this).(gppORMHooks)
+		if err := entity.Validate(exec); err != nil {
+			return err
+		}
+		if err := entity.BeforeCreate(exec); err != nil {
+			return err
+		}
+		if err := gppORMInsert(exec, entity); err != nil {
+			return err
+		}
+		return entity.AfterCreate(exec)
 	}
 
 	func Update(exec SQLExecutor) error {
-		return gppORMUpdate(exec, this)
+		entity := gppORMDynamicObject(this).(gppORMHooks)
+		if err := entity.Validate(exec); err != nil {
+			return err
+		}
+		if err := entity.BeforeUpdate(exec); err != nil {
+			return err
+		}
+		if err := gppORMUpdate(exec, entity); err != nil {
+			return err
+		}
+		return entity.AfterUpdate(exec)
 	}
 
-	func Validate(exec SQLExecutor) error {
+	func Validate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeCreate(exec SQLExecutor) error {
+	func BeforeCreate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterCreate(exec SQLExecutor) error {
+	func AfterCreate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeUpdate(exec SQLExecutor) error {
+	func BeforeUpdate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterUpdate(exec SQLExecutor) error {
+	func AfterUpdate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeDelete(exec SQLExecutor) error {
+	func BeforeDelete(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterDelete(exec SQLExecutor) error {
+	func AfterDelete(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 }

@@ -3,6 +3,7 @@ package compiler
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 )
 
 type Program struct {
@@ -334,6 +335,35 @@ type Method struct {
 	BodyTokens           []Token
 	BodyAST              *BlockStmt
 	Annotations          []AnnotationUse
+}
+
+// memberVisibleToSubclass reports whether a member is inherited by child
+// classes. Uppercase names are public, leading underscores are protected, and
+// lowercase names are private.
+func memberVisibleToSubclass(name string) bool {
+	return memberVisibility(name) != memberPrivate
+}
+
+func memberVisibleToCallers(name string) bool {
+	return memberVisibility(name) == memberPublic
+}
+
+type memberVisibilityLevel uint8
+
+const (
+	memberPrivate memberVisibilityLevel = iota
+	memberProtected
+	memberPublic
+)
+
+func memberVisibility(name string) memberVisibilityLevel {
+	if strings.HasPrefix(name, "_") {
+		return memberProtected
+	}
+	if exportedDocName(name) {
+		return memberPublic
+	}
+	return memberPrivate
 }
 
 func (*Method) node() {}

@@ -64,7 +64,7 @@ suite.
 ## Out of scope for the initial compatibility pass
 
 - Making Go++ source compatible with every future Go release automatically.
-- Structural compatibility between Go++ records/classes and arbitrary native
+- Structural compatibility between Go++ structs/classes and arbitrary native
   Go types.
 - Changing intentionally different Go++ syntax such as `class`, compact
-  construction, named/default arguments, `record(...)`, or `?.`.
+  construction, named/default arguments, `struct(...)`, or `?.`.

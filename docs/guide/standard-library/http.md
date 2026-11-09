@@ -29,7 +29,7 @@ class App : http.Server @{
 	}
 
 	func CreateUser(ctx *http.Context) error @{http.POST("/users")} {
-		return ctx.JSON(201, record(OK: true))
+		return ctx.JSON(201, struct(OK: true))
 	}
 
 	func Echo(ctx *http.Context) error @{http.WebSocket("/ws/echo")} {
@@ -153,11 +153,11 @@ class CreateUserRequest {
 
 class App : http.Server {
 	func User(ctx *http.Context, id int @{http.Path}) error @{http.GET("/users/{id}")} {
-		return ctx.JSON(record(ID: id))
+		return ctx.JSON(struct(ID: id))
 	}
 
 	func Search(ctx *http.Context, term string @{http.Query("q")}, active bool @{http.Query}) error @{http.GET("/users")} {
-		return ctx.JSON(record(Term: term, Active: active))
+		return ctx.JSON(struct(Term: term, Active: active))
 	}
 
 	func Create(ctx *http.Context, input *CreateUserRequest @{http.Body}) error @{http.POST("/users")} {
@@ -266,13 +266,13 @@ after upgrade is logged and closes the socket because an HTTP error response
 can no longer be sent. See the [WebSocket specification](/reference/specifications/std.http.websocket)
 for full lifecycle behavior.
 
-When returning a record through `ctx.JSON`, capitalize fields that should appear in the response. Go records preserve Go's export rules, and `encoding/json` omits lowercase, unexported fields.
+When returning an anonymous struct through `ctx.JSON`, capitalize fields that should appear in the response. Go structs preserve Go's export rules, and `encoding/json` omits lowercase, unexported fields.
 
 ```go
 class App : http.Server @{http.Prefix("/api")} {
 	func Search(ctx *http.Context) error @{http.GET("/search")} {
 		term := ctx.Query("q")
-		return ctx.JSON(record(Term: term, Results: search(term)))
+		return ctx.JSON(struct(Term: term, Results: search(term)))
 	}
 
 	func Hello(ctx *http.Context) error @{http.GET("/hello/{name}")} {
@@ -290,7 +290,7 @@ Keep routes on the server class for small applications. For larger services, put
 ```gpp
 class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
 	func Status(ctx *http.Context) error @{http.GET("/status")} {
-		return ctx.JSON(record(Area: "admin"))
+		return ctx.JSON(struct(Area: "admin"))
 	}
 }
 
@@ -324,10 +324,10 @@ class App : http.Server {
 			return err
 		}
 		if input.Name.IsBlank() {
-			return ctx.JSON(400, record(Message: "name is required"))
+			return ctx.JSON(400, struct(Message: "name is required"))
 		}
 
-		return ctx.JSON(201, record(Name: input.Name, Email: input.Email))
+		return ctx.JSON(201, struct(Name: input.Name, Email: input.Email))
 	}
 }
 ```
@@ -520,9 +520,9 @@ class App : http.Server @{
 		http.Summary("Check service health"),
 		http.Description("Reports whether the service is available."),
 		http.Tags("Health"),
-		http.ResponseBody(200, "Service is healthy", "application/json", record(OK: true))
+		http.ResponseBody(200, "Service is healthy", "application/json", struct(OK: true))
 	} {
-		return ctx.JSON(record(OK: true))
+		return ctx.JSON(struct(OK: true))
 	}
 }
 ```

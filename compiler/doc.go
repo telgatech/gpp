@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type DocKind string
@@ -134,7 +135,7 @@ func (index *DocIndex) add(symbol DocSymbol) {
 			Parent:      symbol.Name,
 			Doc:         field.Doc,
 			Signature:   field.Name + " " + field.Type,
-			Exported:    exportedDocName(field.Name),
+			Exported:    memberVisibleToCallers(field.Name),
 			SourceFile:  symbol.SourceFile,
 			SourceLine:  symbol.SourceLine,
 			Annotations: field.Annotations,
@@ -601,7 +602,7 @@ func documentationMethod(packageName, parent string, method Method, sourceFile s
 	signature := methodSignature(parent, method)
 	return DocSymbol{Kind: kind, Name: method.Name, FullName: fullName, Package: packageName, Parent: parent,
 		Doc: method.Doc, Signature: signature, Source: signature, SourceFile: sourceFile, SourceLine: sourceLine,
-		Exported: exportedDocName(method.Name), Generated: method.Generated, Annotations: formatAnnotationUses(method.Annotations)}
+		Exported: memberVisibleToCallers(method.Name), Generated: method.Generated, Annotations: formatAnnotationUses(method.Annotations)}
 }
 
 func documentationMixedFunctions(packageName string, raw *MixedDecl) []DocSymbol {
@@ -722,10 +723,8 @@ func documentationPackagePath(packageName string) string {
 }
 
 func exportedDocName(name string) bool {
-	for _, runeValue := range name {
-		return unicode.IsUpper(runeValue)
-	}
-	return false
+	first, _ := utf8.DecodeRuneInString(name)
+	return unicode.IsUpper(first)
 }
 
 func documentationPackageSymbol(index *DocIndex, packageName string) *DocSymbol {

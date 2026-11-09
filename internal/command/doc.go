@@ -338,7 +338,7 @@ func languageDocTopic(query string) (string, bool) {
 		"catch":      "try / catch / finally\n\ncatch handles Go++ thrown errors.",
 		"class":      "class\n\nA class defines fields, methods, constructors, and optional parent classes.",
 		"extend":     "extend\n\nAn extend block adds methods to an existing type without changing its declaration.",
-		"record":     "record\n\nA record expression creates an anonymous structural value.",
+		"struct":     "struct\n\nAnonymous structs create statically checked structural values; named structs declare reusable data types.",
 		"template":   "template\n\nA template declaration defines a typed html/template source.",
 		"annotation": "annotation\n\nAn annotation declaration defines typed metadata usable on supported source declarations.",
 		"??":         "operator ??\n\nExpression-level error fallback evaluates the right side only when the left side fails.",

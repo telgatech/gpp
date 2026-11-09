@@ -698,6 +698,12 @@ func conversionCallOpen(tokens []Token) int {
 	if len(tokens) < 3 {
 		return -1
 	}
+	// `struct(field: value, ...)` is Go++'s inferred anonymous-struct
+	// constructor. Keep it as an ordinary named CallExpr instead of parsing
+	// `struct` as the start of a Go type conversion.
+	if tokens[0].Text == "struct" && tokens[1].Text == "(" {
+		return -1
+	}
 	first := tokens[0].Text
 	if first != "[" && first != "*" && first != "chan" && first != "<-" && first != "map" && first != "interface" && first != "struct" && first != "func" {
 		return -1

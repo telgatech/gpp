@@ -17,7 +17,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Constructor hook: class `init()`](./classes#constructor-hook-init)
 - [Static methods and factories](./static-methods)
 - [Named arguments and defaults](./named-arguments)
-- [Structural records](./records)
+- [Anonymous structs](./structs)
 - [Enums](./enums)
 - [String interpolation](./interpolation)
 - [Lambdas](./lambdas)

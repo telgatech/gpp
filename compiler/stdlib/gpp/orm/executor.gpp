@@ -1,9 +1,17 @@
 package gpp.orm
 
-import "database/sql"
+import sql "gpp/sql"
 
 type SQLExecutor interface {
-	Exec(query string, args ...any) (sql.Result, error)
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
+	sql.Executor
+}
+
+type gppORMHooks interface {
+	Validate(exec SQLExecutor) error
+	BeforeCreate(exec SQLExecutor) error
+	AfterCreate(exec SQLExecutor) error
+	BeforeUpdate(exec SQLExecutor) error
+	AfterUpdate(exec SQLExecutor) error
+	BeforeDelete(exec SQLExecutor) error
+	AfterDelete(exec SQLExecutor) error
 }

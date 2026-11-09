@@ -898,7 +898,7 @@ Swagger UI should expose the schemas generated from Go++:
 
 ```text
 classes
-records
+structs
 enums
 collections
 request types

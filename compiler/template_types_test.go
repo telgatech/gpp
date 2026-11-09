@@ -139,6 +139,42 @@ template Page(user User, posts []Post) {
 	}
 }
 
+func TestTypedTemplateCannotAccessPrivateOrProtectedClassMembers(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+	}{
+		{name: "private field", path: ".secret"},
+		{name: "protected field", path: "._state"},
+		{name: "private method", path: ".hidden"},
+		{name: "protected method", path: "._reset"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := `package main
+class User {
+    Name string
+    secret string
+    _state string
+    func hidden() string { return "private" }
+    func _reset() string { return "protected" }
+}
+template Page(user User) { {{` + test.path + `}} }
+`
+			err := validateTemplateSourceForTest(t, source, "Page")
+			if err == nil || !strings.Contains(err.Error(), "field or method") {
+				t.Fatalf("template should not access %s, got %v", test.path, err)
+			}
+		})
+	}
+	public := `package main
+class User { Name string }
+template Page(user User) { {{.Name}} }
+`
+	if err := validateTemplateSourceForTest(t, public, "Page"); err != nil {
+		t.Fatalf("templates should retain access to public members: %v", err)
+	}
+}
+
 func TestTypedTemplateLeavesAnyAccessForRuntime(t *testing.T) {
 	source := `package main
 template Dynamic(data any) { {{.UnknownAtCompileTime}} }

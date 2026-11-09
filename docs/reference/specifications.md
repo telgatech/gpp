@@ -27,7 +27,7 @@ before each docs development or production build.
 - [Exceptions](./specifications/exceptions)
 - [Expression catch](./specifications/expr-catch)
 - [Lambdas](./specifications/lambdas)
-- [Records](./specifications/records)
+- [Structs](./specifications/structs)
 - [Serialization](./specifications/serialization)
 - [String interpolation](./specifications/string-interpolation)
 

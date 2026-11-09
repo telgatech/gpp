@@ -43,3 +43,29 @@ func TestBackendDiagnosticsCollapseDuplicateGeneratedReports(t *testing.T) {
 		t.Fatalf("formatted backend diagnostics = %q, want %q", got, want)
 	}
 }
+
+func TestBackendDiagnosticsHideGeneratedExtensionFunctionNames(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "prelude extension",
+			line: "main.gpp:99: in call to GppPreludeExt___T_Map_3494d723, type int does not match []T\n  note: GppPreludeExt___T_Map_3494d723",
+			want: "main.gpp:99: in call to Map, type int does not match []T\n  note: Map",
+		},
+		{
+			name: "package extension",
+			line: "main.gpp:13: in call to GppExt_ptr_sql_DB_Select_5c7ce863, invalid type",
+			want: "main.gpp:13: in call to Select, invalid type",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := newBackendDiagnosticError(test.line)
+			if got := compiler.FormatError(err); got != test.want {
+				t.Fatalf("formatted backend diagnostic = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

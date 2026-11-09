@@ -368,14 +368,30 @@ annotation Route(path string) on method
 annotation Table(name string) on class
 class User @{Table("users")} {
 	Name string
+	secret string
+	_secret string
 	func Save() @{Route("/")} {}
+	func hidden() {}
+	func inspectPrivate() { _ = this. }
 }
+class Parent {
+	inheritedSecret string
+	_protectedState string
+	func _helper() {}
+}
+class Child : Parent { func inspect() { _ = this. } }
+func inspectChild(child Child) { _ = child. }
 extend User { func Slug() string { return "slug" } }
 template UserCard(user User) { <strong>{{.Name}}</strong> }
 func inspect(users []User, user User) {
 	local := "name"
+	userValue := User()
+	childValue := Child()
+	labels := []string{"a", "b"}
 	profile := record(Name: "Ada", Age: 42)
 	_ = user.Name
+	_ = userValue
+	_ = labels.Any(item => item != "")
 	_ = user?.Name
 	_ = profile.Name
 	_ = users.Any(item => item.Name != "")
@@ -388,7 +404,7 @@ func inspect(users []User, user User) {
 	}
 	userFile.SourcePath = filepath.Join(root, "main.gpp")
 	state := &fileState{Path: userFile.SourcePath, URI: uriForPath(userFile.SourcePath), Source: mainSource, File: userFile}
-	otherSource := "package foo.bar\nclass Widget { Name string }\n"
+	otherSource := "package foo.bar\nclass Widget { Name string }\nfunc PublicHelper() {}\nfunc privateHelper() {}\n"
 	otherFile, err := compiler.ParseFile("widget.gpp", otherSource)
 	if err != nil {
 		t.Fatal(err)
@@ -419,6 +435,42 @@ func inspect(users []User, user User) {
 			t.Errorf("receiver/scope completion omitted %q: %#v", expected, memberItems)
 		}
 	}
+	if memberItems["secret"] || memberItems["_secret"] || memberItems["hidden"] {
+		t.Errorf("class-private members leaked to a same-package consumer: %#v", memberItems)
+	}
+	constructorOffset := strings.Index(mainSource, "userValue := User()") + len("userValue := User(")
+	constructorItems := completionLabels(server.contextualCompletions(state, constructorOffset))
+	if constructorItems["secret"] {
+		t.Errorf("class-private fields leaked to constructor completions: %#v", constructorItems)
+	}
+	childConstructorOffset := strings.Index(mainSource, "childValue := Child()") + len("childValue := Child(")
+	childConstructorItems := completionLabels(server.contextualCompletions(state, childConstructorOffset))
+	if !childConstructorItems["_protectedState"] || childConstructorItems["inheritedSecret"] {
+		t.Errorf("child constructor completions should offer inherited protected fields but omit private ones: %#v", childConstructorItems)
+	}
+	privateCompletionOffset := strings.Index(mainSource, "this. }") + len("this.")
+	privateItems := completionLabels(server.contextualCompletions(state, privateCompletionOffset))
+	if !privateItems["secret"] || !privateItems["_secret"] || !privateItems["hidden"] {
+		t.Errorf("a class should see its own private members: %#v", privateItems)
+	}
+	labelsOffset := strings.Index(mainSource, "labels.Any") + len("labels.")
+	labelsType := server.receiverType(state, "labels", labelsOffset)
+	labelsItems := completionLabels(server.contextualCompletions(state, labelsOffset))
+	for _, expected := range []string{"Any", "Filter", "Map"} {
+		if !labelsItems[expected] {
+			t.Errorf("local string slice completion omitted %q (type %q, receiver %q): %#v", expected, labelsType, selectorReceiverBefore(state, labelsOffset-1), labelsItems)
+		}
+	}
+	childOffset := strings.Index(mainSource, "child Child) { _ = child.") + len("child Child) { _ = child.")
+	childItems := completionLabels(server.contextualCompletions(state, childOffset))
+	if childItems["inheritedSecret"] || childItems["_protectedState"] || childItems["_helper"] {
+		t.Errorf("ordinary callers should not see private or protected member completions: %#v", childItems)
+	}
+	childMethodOffset := strings.LastIndex(mainSource, "_ = this.") + len("_ = this.")
+	childMethodItems := completionLabels(server.contextualCompletions(state, childMethodOffset))
+	if !childMethodItems["_protectedState"] || !childMethodItems["_helper"] || childMethodItems["inheritedSecret"] {
+		t.Errorf("a child class should see protected members but not private members: %#v", childMethodItems)
+	}
 	if memberItems["Widget"] {
 		t.Errorf("receiver completion leaked an unrelated package class: %#v", memberItems)
 	}
@@ -438,6 +490,16 @@ func inspect(users []User, user User) {
 		withImport := mainSource[:start] + edit.NewText + mainSource[end:]
 		if _, parseErr := compiler.ParseFile("completion.gpp", withImport); parseErr != nil {
 			t.Errorf("completion import edit should leave valid Go++ source: %v\n%s", parseErr, withImport)
+		}
+	}
+	for _, item := range server.contextualCompletions(state, importCompletionOffset) {
+		if item.Label == "bar.privateHelper" {
+			t.Errorf("unexported package function should not be offered as an import completion: %#v", item)
+		}
+		if item.Label == "bar.PublicHelper" {
+			if len(item.AdditionalTextEdits) != 1 || !strings.Contains(item.AdditionalTextEdits[0].NewText, "import foo.bar") {
+				t.Errorf("exported package function completion should add its import: %#v", item)
+			}
 		}
 	}
 	safeOffset := strings.Index(mainSource, "user?.Name") + len("user?.")
@@ -577,7 +639,7 @@ func TestCallableSnippetExtractsNamedGroupedAndUnnamedParameters(t *testing.T) {
 		{signature: "func Load(ctx context.Context, ids []int64, limit int) []Row", name: "Load", want: "Load(${1:ctx}, ${2:ids}, ${3:limit})$0"},
 		{signature: "func Pair(a, b int)", name: "Pair", want: "Pair(${1:a}, ${2:b})$0"},
 		{signature: "func Convert(int, string, map[string]int)", name: "Convert", want: "Convert(${1:arg1}, ${2:arg2}, ${3:arg3})$0"},
-		{signature: "func Map[T any](values []T, fn func(T) U)", name: "Map", want: "Map(${1:values}, ${2:fn})$0"},
+		{signature: "func Map[T any](values []T, fn func(T) U)", name: "Map", want: "Map(${1:values}, ${2:value => ${3:}})$0"},
 		{signature: "func Reset()", name: "Reset", want: "Reset()$0"},
 	}
 	for _, test := range tests {
@@ -694,6 +756,264 @@ func (Widget) Save() error { return nil }
 	}
 	if items["Widget"] {
 		t.Errorf("imported Go type completion leaked package-level symbols: %#v", items)
+	}
+}
+
+func TestCompletionResolvesMembersAcrossGenericSliceAndStringChains(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+func main() {
+	a := []string{"a", "b"}
+	a.Each(it => print(it))
+mapped := a.Map(value => value.ToUpper()).
+	bool := a.First().ToUpper().
+}
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("completion sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	files := []*compiler.File{file}
+	if prelude, loadErr := compiler.LoadPrelude(); loadErr == nil {
+		files = append(files, prelude)
+	} else {
+		t.Fatalf("load standard prelude: %v", loadErr)
+	}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	workspace.docIndex = compiler.BuildDocIndex(files)
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+	cursor := strings.Index(source, "bool := a.First().ToUpper().") + len("bool := a.First().ToUpper().")
+	items := completionLabels(server.contextualCompletions(state, cursor))
+	for _, expected := range []string{"ToUpper", "TrimSpace", "ToLower"} {
+		if !items[expected] {
+			t.Errorf("chained completion omitted string extension %q: %#v", expected, items)
+		}
+	}
+	mapDot := strings.Index(source, "mapped := a.Map(value => value.ToUpper()).") + len("mapped := a.Map(value => value.ToUpper()).")
+	mapItems := completionLabels(server.contextualCompletions(state, mapDot))
+	for _, expected := range []string{"Each", "First", "Map"} {
+		if !mapItems[expected] {
+			t.Errorf("Map chain completion omitted slice extension %q: %#v", expected, mapItems)
+		}
+	}
+}
+
+func TestMethodCompletionDoesNotInsertResultAssignment(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+class Store {
+	func Read() (string, error) { return "", nil }
+}
+func use(store Store) {
+	store.
+}
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("completion sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	workspace.docIndex = compiler.BuildDocIndex([]*compiler.File{file})
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+	cursor := strings.Index(source, "store.") + len("store.")
+	for _, item := range server.completions(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI}, Position: positionAtOffset(source, cursor),
+	}) {
+		if item.Label != "Read" {
+			continue
+		}
+		if item.TextEdit == nil || item.TextEdit.NewText != item.InsertText || strings.Contains(item.TextEdit.NewText, " := ") {
+			t.Fatalf("method completion should insert only the callable snippet, got %#v", item)
+		}
+		return
+	}
+	t.Fatal("method completion omitted Read")
+}
+
+func TestNamedStructConstructorCompletionOffersFields(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+struct User { Name string }
+func use() { User( ) }
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("struct constructor completion sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	workspace.docIndex = compiler.BuildDocIndex([]*compiler.File{file})
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+	cursor := strings.Index(source, "User(") + len("User(")
+	items := completionLabels(server.contextualCompletions(state, cursor))
+	if !items["Name"] {
+		t.Fatalf("named struct constructor completion omitted its field: %#v", items)
+	}
+}
+
+func TestFunctionResultTypeCompletionOffersTypesOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/completions\n\ngo 1.27\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := "package main\nimport cron \"example.test/completions/cron\"\nfunc quux() str { return \"ok\" }\n"
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("function result completion sample should parse: %v", err)
+	}
+	mainPath := filepath.Join(root, "main.gpp")
+	file.SourcePath = mainPath
+	state := &fileState{Path: mainPath, URI: uriForPath(mainPath), Source: source, File: file}
+	importedPath := filepath.Join(root, "cron", "cron.go")
+	importedSource := "package cron\ntype Scheduler struct{}\nfunc Start() {}\n"
+	importedFile, err := compiler.ParseFile(importedPath, importedSource)
+	if err != nil {
+		t.Fatalf("imported package completion sample should parse: %v", err)
+	}
+	importedFile.SourcePath = importedPath
+	importedState := &fileState{Path: importedPath, URI: uriForPath(importedPath), Source: importedSource, File: importedFile}
+	workspace := &workspaceState{
+		files: map[string]*fileState{mainPath: state, importedPath: importedState},
+		symbols: []symbolInfo{
+			{Symbol: compiler.DocSymbol{Kind: compiler.DocFunction, Name: "helper", Package: "main", Exported: false}, Path: mainPath},
+			{Symbol: compiler.DocSymbol{Kind: compiler.DocType, Name: "User", Package: "main", Exported: true}, Path: mainPath},
+			{Symbol: compiler.DocSymbol{Kind: compiler.DocFunction, Name: "Start", Package: "cron", Exported: true}, Path: importedPath},
+			{Symbol: compiler.DocSymbol{Kind: compiler.DocType, Name: "Scheduler", Package: "cron", Exported: true}, Path: importedPath},
+		},
+	}
+	server := &server{workspace: workspace}
+	cursor := strings.Index(source, "str {") + len("str")
+	labels := completionLabels(server.contextualCompletions(state, cursor))
+	for _, expected := range []string{"string", "User", "cron.Scheduler"} {
+		if !labels[expected] {
+			t.Errorf("function result type completion omitted %q: %#v", expected, labels)
+		}
+	}
+	for _, unexpected := range []string{"helper", "cron.Start"} {
+		if labels[unexpected] {
+			t.Errorf("function result type completion included non-type %q: %#v", unexpected, labels)
+		}
+	}
+}
+
+func TestAnonymousStructFunctionResultOffersMemberCompletion(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+func quux() struct { return struct(works: true, count: 3, amount: 2.0, profile: struct(active: true), c: struct(d: 1, e: "ok", meta: struct(enabled: true))) }
+func main() { _ = quux().works; _ = quux().profile.active; _ = quux().c.e.ToUpper(); _ = quux().c.meta.enabled; _ = quux().c.e.ToUpper(). }
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("anonymous struct member completion sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	files := []*compiler.File{file}
+	if prelude, loadErr := compiler.LoadPrelude(); loadErr == nil {
+		files = append(files, prelude)
+	} else {
+		t.Fatalf("load standard prelude: %v", loadErr)
+	}
+	workspace.docIndex = compiler.BuildDocIndex(files)
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+	worksOffset := strings.LastIndex(source, "quux().works") + len("quux().")
+	items := completionLabels(server.contextualCompletions(state, worksOffset))
+	for _, expected := range []string{"works", "count", "amount", "profile", "c"} {
+		if !items[expected] {
+			t.Errorf("anonymous struct result completion omitted %q: %#v", expected, items)
+		}
+	}
+	nestedOffset := strings.LastIndex(source, "quux().profile.active") + len("quux().profile.")
+	nestedItems := completionLabels(server.contextualCompletions(state, nestedOffset))
+	if !nestedItems["active"] {
+		t.Fatalf("nested anonymous struct result completion omitted active: %#v", nestedItems)
+	}
+	innerOffset := strings.LastIndex(source, "quux().c.e") + len("quux().c.")
+	innerItems := completionLabels(server.contextualCompletions(state, innerOffset))
+	for _, expected := range []string{"d", "e", "meta"} {
+		if !innerItems[expected] {
+			t.Errorf("nested anonymous struct field completion omitted %q: %#v", expected, innerItems)
+		}
+	}
+	deepOffset := strings.LastIndex(source, "quux().c.meta.enabled") + len("quux().c.meta.")
+	deepItems := completionLabels(server.contextualCompletions(state, deepOffset))
+	if !deepItems["enabled"] {
+		t.Fatalf("three-level anonymous struct completion omitted enabled: %#v", deepItems)
+	}
+	stringFieldOffset := strings.LastIndex(source, "quux().c.e.ToUpper") + len("quux().c.e.")
+	stringFieldItems := completionLabels(server.contextualCompletions(state, stringFieldOffset))
+	for _, expected := range []string{"ToUpper", "TrimSpace", "ToLower"} {
+		if !stringFieldItems[expected] {
+			t.Errorf("nested string field completion omitted %q: %#v", expected, stringFieldItems)
+		}
+	}
+	stringOffset := strings.LastIndex(source, "quux().c.e.ToUpper().") + len("quux().c.e.ToUpper().")
+	stringItems := completionLabels(server.contextualCompletions(state, stringOffset))
+	for _, expected := range []string{"ToUpper", "TrimSpace", "ToLower"} {
+		if !stringItems[expected] {
+			t.Errorf("nested string field completion omitted %q: %#v", expected, stringItems)
+		}
+	}
+	fieldOffset := strings.LastIndex(source, "works")
+	hoverResult := server.hover(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, fieldOffset),
+	})
+	if hoverResult == nil || !strings.Contains(hoverResult.Contents.Value, "**field** `works` : `bool`") {
+		t.Fatalf("anonymous struct result field hover should show its inferred type: %#v", hoverResult)
+	}
+	for fieldName, wantType := range map[string]string{"count": "int", "amount": "float64", "e": "string"} {
+		fieldOffset := strings.LastIndex(source, "quux().c.e.ToUpper") + len("quux().c.")
+		if fieldName != "e" {
+			fieldOffset = strings.Index(source, fieldName+":")
+		} else {
+			fieldOffset = strings.LastIndex(source, ".e.") + 1
+		}
+		result := server.hover(textDocumentPositionParams{
+			TextDocument: textDocumentIdentifier{URI: state.URI},
+			Position:     positionAtOffset(source, fieldOffset),
+		})
+		if result == nil || !strings.Contains(result.Contents.Value, "**field** `"+fieldName+"` : `"+wantType+"`") {
+			t.Errorf("anonymous struct field %q hover should show %s: %#v", fieldName, wantType, result)
+		}
+	}
+	literalFieldOffset := strings.Index(source, "works")
+	literalHover := server.hover(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, literalFieldOffset),
+	})
+	if literalHover == nil || !strings.Contains(literalHover.Contents.Value, "**field** `works` : `bool`") {
+		t.Fatalf("anonymous struct literal field hover should show its inferred type: %#v", literalHover)
+	}
+	cOffset := strings.Index(source, "c: struct")
+	cHover := server.hover(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, cOffset),
+	})
+	if cHover == nil || !strings.Contains(cHover.Contents.Value, "**field** `c` : `anonymous struct`") || strings.Contains(cHover.Contents.Value, "struct(d:") {
+		t.Fatalf("nested anonymous struct hover should show its type without literal details: %#v", cHover)
+	}
+	nestedFieldOffset := strings.LastIndex(source, "active")
+	nestedHover := server.hover(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, nestedFieldOffset),
+	})
+	if nestedHover == nil || !strings.Contains(nestedHover.Contents.Value, "**field** `active` : `bool`") {
+		t.Fatalf("nested anonymous struct field hover should show its inferred type: %#v", nestedHover)
 	}
 }
 
@@ -870,7 +1190,7 @@ func TestImportCompletionEditsPreserveBlankLinesAndLineEndings(t *testing.T) {
 	root := t.TempDir()
 	widgetPath := filepath.Join(root, "foo", "widget.gpp")
 	workspace := &workspaceState{symbols: []symbolInfo{{
-		Symbol: compiler.DocSymbol{Kind: compiler.DocClass, Name: "Widget", FullName: "foo.bar.Widget", Package: "foo.bar", Signature: "class Widget"},
+		Symbol: compiler.DocSymbol{Kind: compiler.DocClass, Name: "Widget", FullName: "foo.bar.Widget", Package: "foo.bar", Signature: "class Widget", Exported: true},
 		Path:   widgetPath,
 	}}}
 	server := &server{workspace: workspace}
@@ -1070,6 +1390,54 @@ func TestHoverAndNavigationResolveLocalBindings(t *testing.T) {
 	parameterDefinition := server.definitions(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: state.URI}, Position: parameterDeclarationPosition})
 	if len(parameterDefinition) != 1 || offsetAt(source, parameterDefinition[0].Range.Start) != parameterDeclaration {
 		t.Fatalf("parameter declaration should define itself, got %#v", parameterDefinition)
+	}
+}
+
+func TestDocumentHighlightsAndFoldingRangesCoverLocalCodeAndComments(t *testing.T) {
+	source := "package main\n/* intro\n   details */\nfunc main() {\n\tvalue := 1\n\t_ = value\n}\n"
+	file, err := compiler.ParseFile("editor_features.gpp", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "editor_features.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	server := &server{workspace: workspace}
+
+	useOffset := strings.LastIndex(source, "value")
+	highlights := server.documentHighlights(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, useOffset),
+	})
+	if len(highlights) != 2 {
+		t.Fatalf("local variable should have declaration and use highlights, got %#v", highlights)
+	}
+	seenDeclaration, seenUse := false, false
+	for _, highlight := range highlights {
+		switch highlight.Kind {
+		case 3:
+			seenDeclaration = true
+		case 2:
+			seenUse = true
+		}
+	}
+	if !seenDeclaration || !seenUse {
+		t.Fatalf("local highlights should mark the declaration and read separately, got %#v", highlights)
+	}
+
+	ranges := server.foldingRanges(state.URI)
+	seenComment, seenFunction := false, false
+	for _, folded := range ranges {
+		if folded.Kind == "comment" && folded.StartLine == 1 && folded.EndLine == 2 {
+			seenComment = true
+		}
+		if folded.StartLine == 3 && folded.EndLine == 6 {
+			seenFunction = true
+		}
+	}
+	if !seenComment || !seenFunction {
+		t.Fatalf("folding ranges should include multiline comments and function bodies, got %#v", ranges)
 	}
 }
 
@@ -1356,6 +1724,11 @@ func main() {
 	instanceCompletions := completionLabels(server.contextualCompletions(state, instanceCompletionOffset))
 	if !instanceCompletions["DB"] || !instanceCompletions["PublicDir"] {
 		t.Fatalf("inherited fields should appear in instance member completion: %#v", instanceCompletions)
+	}
+	for _, privateMember := range []string{"mounts", "shutdownLifecycle", "shutdownResult", "stopTemplateWatcher"} {
+		if instanceCompletions[privateMember] {
+			t.Errorf("imported class completion leaked private member %q: %#v", privateMember, instanceCompletions)
+		}
 	}
 	completionOffset := strings.LastIndex(files["main.gpp"], "server.Listen") + len("server.Li")
 	completions := completionLabels(server.contextualCompletions(state, completionOffset))
@@ -3429,9 +3802,10 @@ func TestTypeDefinitionResolvesNativeGoTypesThroughImportAliases(t *testing.T) {
 		t.Fatalf("type definition should follow an aliased module import to its Go declaration, got %#v", definitions)
 	}
 	typeOffset := strings.Index(mainSource, "people.Person") + len("people.")
+	directPosition := positionAtOffset(mainSource, typeOffset)
 	directDefinitions := server.typeDefinitions(textDocumentPositionParams{
 		TextDocument: textDocumentIdentifier{URI: state.URI},
-		Position:     positionAtOffset(mainSource, typeOffset),
+		Position:     directPosition,
 	})
 	if len(directDefinitions) != 1 || directDefinitions[0].URI != uriForPath(modelPath) {
 		t.Fatalf("direct imported type definition should preserve its package identity among duplicate names: %#v", directDefinitions)
@@ -4162,8 +4536,8 @@ func TestORMInheritedMethodsResolveAndInferSelfTypes(t *testing.T) {
 		{declaration: "ada :=", name: "ada", typeName: "*Employee"},
 		{declaration: "employees :=", name: "employees", typeName: "[]*Employee"},
 		{declaration: "target :=", name: "target", typeName: "*Employee"},
-		{declaration: "employee := db.Get[Employee]", name: "employee", typeName: "Employee"},
-		{declaration: "employeePointers :=", name: "employeePointers", typeName: "[]*Employee"},
+		{declaration: "employee, employeeErr := orm.GetSQL[Employee]", name: "employee", typeName: "*Employee"},
+		{declaration: "employees, employeesErr := orm.SelectSQL[Employee]", name: "employees", typeName: "[]*Employee"},
 	} {
 		declarationOffset := strings.Index(source, testCase.declaration)
 		if declarationOffset < 0 {
@@ -4176,7 +4550,7 @@ func TestORMInheritedMethodsResolveAndInferSelfTypes(t *testing.T) {
 		}
 	}
 
-	dbGetOffset := strings.Index(source, "db.Get[Employee]") + len("db.")
+	dbGetOffset := strings.Index(source, "db.Get[int64]") + len("db.")
 	dbGetChoices := server.resolveSymbolsAt(state.URI, positionAtOffset(source, dbGetOffset), "Get")
 	if len(dbGetChoices) != 1 || dbGetChoices[0].Symbol.Kind != compiler.DocExtension || !strings.Contains(dbGetChoices[0].Symbol.Signature, "Get[T any]") {
 		t.Errorf("db.Get[T] should resolve to the imported SQL extension, got %#v", dbGetChoices)
@@ -4247,6 +4621,28 @@ func TestRangeMultiRangeAndOnTypeFormattingRespectRequestedLines(t *testing.T) {
 	for _, edit := range newline {
 		if edit.Range.Start.Line < 1 || edit.Range.End.Line > 2 {
 			t.Fatalf("newline formatting should stay within the adjacent lines: %#v", newline)
+		}
+	}
+}
+
+func TestLSPFormattingPreservesUnderscoreVisibilityNames(t *testing.T) {
+	source := "package main\nclass Base{_state string\nfunc _reset(){this._state=\"\"}}\n"
+	path := filepath.Join(t.TempDir(), "visibility.gpp")
+	uri := uriForPath(path)
+	file, err := compiler.ParseFile(path, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uri, Source: source, File: file}
+	server := &server{workspace: &workspaceState{files: map[string]*fileState{path: state}}}
+	edits := server.formatting(uri)
+	if len(edits) != 1 {
+		t.Fatalf("expected formatting edit for unformatted source, got %#v", edits)
+	}
+	for _, member := range []string{"_state", "_reset", "this._state"} {
+		if !strings.Contains(edits[0].NewText, member) {
+			t.Errorf("LSP formatting changed protected member name %q:\n%s", member, edits[0].NewText)
 		}
 	}
 }

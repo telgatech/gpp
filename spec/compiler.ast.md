@@ -83,7 +83,7 @@ The frontend MUST provide a lossless, source-oriented AST for:
 * classes, inheritance, fields, methods, and constructors;
 * functions, parameters, results, and default values;
 * enums and enum members;
-* records and record construction;
+* anonymous struct values and construction;
 * extensions and extension constraints;
 * annotations and annotation arguments;
 * embeds and templates, including layout metadata;
@@ -220,7 +220,7 @@ must cover:
 * interfaces and Go-compatible composite types;
 * generic type applications and constraints;
 * nullable/class references used by safe access;
-* record types;
+* anonymous struct types;
 * enum types;
 * `any` and `error`.
 
@@ -269,7 +269,7 @@ compiler reports an error rather than falling back to string assembly.
 
 Expressions include identifiers, literals, selectors, calls, indexing,
 composite construction, unary/binary operators, assignments, lambdas,
-interpolation, records, safe access, coalescing, and named/default arguments.
+interpolation, anonymous structs, safe access, coalescing, and named/default arguments.
 
 Go++-specific operators MUST have explicit nodes or an explicit operator enum;
 they MUST NOT be hidden in text substitutions. Examples include `?.`, `??`,
@@ -331,7 +331,7 @@ produces Go AST or a small internal IR. Lowering owns:
 * inheritance and polymorphic dispatch;
 * exception propagation and catch dispatch;
 * interpolation and Go++ operators;
-* records, enums, annotations, serialization, and templates.
+* anonymous structs, enums, annotations, serialization, and templates.
 
 Lowering MUST preserve source spans so generated diagnostics can map back to
 Go++ nodes.

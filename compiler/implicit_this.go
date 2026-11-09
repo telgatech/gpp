@@ -20,6 +20,9 @@ func qualifyImplicitClassFields(body string, class *ClassDecl, classes map[strin
 	fields := map[string]bool{}
 	for _, candidate := range classesForClass(constructorContext{Targets: map[string]constructorTarget{class.Name: {Class: class, Classes: classes}}}, class) {
 		for _, field := range candidate.Fields {
+			if candidate != class && !memberVisibleToSubclass(field.Name) {
+				continue
+			}
 			fields[field.Name] = true
 		}
 	}

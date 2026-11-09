@@ -1,11 +1,30 @@
 # Changelog
 
+## 2026-11-09
+
+- Updated BSD-3-Clause attribution to name Telga Technologies Pvt Ltd, aligned the docs footer, and clarified source redistribution notices in the README.
+- Expanded prelude string helpers with Unicode code-point reversal, cut/trim/split/search operations, rune transforms, string joining, fallback-based string parsing, and scalar-to-string formatting.
+- Added anonymous `struct(...)` values, short `struct Name { ... }` declarations, and named struct construction with `Name(...)`; retained compiler-internal shape metadata for static inference.
+- Improved prelude extension lowering in expression and block lambdas and nested anonymous struct fields; backend diagnostics no longer expose generated helper names.
+- Fixed LSP member completion after generic callback calls such as `Map(value => value.ToUpper()).`.
+- Added whole-source compiler fuzzing alongside regression fuzzers for callback lowering and inherited default-method calls.
+
 ## 2026-11-08
 
 - Expanded LSP editor support with semantic token range and delta updates, inlay hints, selection ranges, code lenses, signature help, inline completions, and range/on-type formatting.
 - Added workspace-aware Go++ and native Go hover, completion, navigation, references, rename, type/call hierarchy, and implementation support across files and packages.
+- Fixed member completions for class constructor call results, including inherited methods when completion is triggered immediately after the selector dot.
+- Enforced lowercase class-member privacy across inheritance and completions; made HTTP shutdown/watcher state private, limited imported-package completions to exported symbols, and matched generic slice/map extensions.
+- Limited constructor-field completions to open constructor argument lists, preserving member completions after a completed constructor call.
+- Added completion for exported fields and methods on native Go values returned by imported Go functions, such as `sql.Open`.
+- Added the `std.Hook` method annotation to hide framework callback methods from completion lists while keeping them callable and overridable.
+- Restricted direct Go++ calls to annotated hooks to the class that first declares each hook; framework dispatch and overrides remain supported.
+- Moved ORM lifecycle hook ordering into `Model.Insert`, `Update`, and `Destroy`; a required interface dispatch preserves child overrides, and SQL helpers now only perform persistence.
+- Refactored the ORM/SQL boundary so `gpp/orm` depends on the shared executor in `gpp/sql`; full-SQL model queries use `orm.GetSQL`/`orm.SelectSQL`.
 - Improved LSP code actions and diagnostics, including generated-Go type errors, pull diagnostics, watched-file and workspace-folder updates, and request cancellation.
-- Fixed formatter spacing around inheritance colons in class declarations.
+- Fixed formatter spacing around inheritance colons in class declarations and collapsed repeated blank lines to match gofmt.
+- Enforced class member visibility across selectors, composite literals, templates, extensions, constructors, and Go declarations embedded in `.gpp`: uppercase is public, lowercase is private, and a leading underscore marks protected members visible to subclasses. Updated generated Go names and LSP completions.
+- Improved LSP navigation and completion for imported Go methods and types, chained call results, callback lambdas, and inferred return bindings that preserve Go++ error promotion.
 
 ## 2026-11-07
 

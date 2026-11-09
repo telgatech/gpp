@@ -50,17 +50,34 @@ func availableImportsForFile(file *File, model *SemanticModel, modulePath string
 	if pkg == nil {
 		return imports
 	}
-	for alias, importPath := range pkg.Imports {
-		imports[alias] = importPath
-		if logical, ok := logicalPackageForImport(importPath, modulePath, model); ok {
-			if imported := model.Packages[logical]; imported != nil {
-				for importedAlias, importedPath := range imported.Imports {
-					if _, exists := imports[importedAlias]; !exists {
-						imports[importedAlias] = importedPath
+	visited := map[string]bool{}
+	var addImportedPackage func(string)
+	addImportedPackage = func(importPath string) {
+		logicalPackage, ok := logicalPackageForImport(importPath, modulePath, model)
+		if !ok || visited[logicalPackage] {
+			return
+		}
+		visited[logicalPackage] = true
+		imported := model.Packages[logicalPackage]
+		if imported == nil {
+			return
+		}
+		for alias, nestedPath := range imported.Imports {
+			if _, exists := imports[alias]; !exists {
+				resolvedPath := nestedPath
+				if modulePath != "" {
+					if _, localPackage := model.Packages[nestedPath]; localPackage {
+						resolvedPath = modulePath + "/" + strings.ReplaceAll(nestedPath, ".", "/")
 					}
 				}
+				imports[alias] = resolvedPath
 			}
+			addImportedPackage(nestedPath)
 		}
+	}
+	for alias, importPath := range pkg.Imports {
+		imports[alias] = importPath
+		addImportedPackage(importPath)
 	}
 	return imports
 }

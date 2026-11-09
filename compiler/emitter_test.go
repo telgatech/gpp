@@ -618,6 +618,103 @@ func main() {
 	}
 }
 
+func TestEmitDoesNotPromotePrivateInheritedMethods(t *testing.T) {
+	file, err := ParseFile("private_inherited_methods.gpp", `
+class Parent {
+    func helper() {}
+    func Public() {}
+}
+
+class Child : Parent {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if strings.Contains(generated, "func (this *Child) helper()") {
+		t.Fatalf("private parent method was promoted to the child:\n%s", generated)
+	}
+	if !strings.Contains(generated, "func (this *Child) Public()") {
+		t.Fatalf("exported parent method was not promoted to the child:\n%s", generated)
+	}
+}
+
+func TestEmitProtectedMembersUseAccessibleGeneratedNames(t *testing.T) {
+	file, err := ParseFile("protected_members.gpp", `class Parent {
+    _state string
+    func _reset() { this._state = "" }
+    static func _factory() Parent { return Parent{} }
+}
+class Child : Parent {
+    func Reset() { this._reset(); this._state = "ready" }
+    static func New() Parent { return Parent._factory() }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendMixedSourceDecl(file, `func makeChild() Child { return Child(_state: "ready") }`)
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"GppProtected_state string",
+		"GppProtected_reset()",
+		"this.GppProtected_reset()",
+		"GppStatic_Parent_GppProtected_factory()",
+		"GppProtected_state: \"ready\"",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Errorf("generated Go did not include %q:\n%s", expected, generated)
+		}
+	}
+}
+
+func TestConstructorFieldsDoNotPromotePrivateInheritedFields(t *testing.T) {
+	file, err := ParseFile("private_inherited_fields.gpp", `
+class Parent {
+    secret string
+    _protected string
+    Public string
+}
+
+class Child : Parent {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classes := map[string]*ClassDecl{}
+	for _, declaration := range file.Decls {
+		if class, ok := declaration.(*ClassDecl); ok {
+			classes[class.Name] = class
+		}
+	}
+	fields, err := constructorFieldsVisibleToClass(classes["Child"], classes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range fields {
+		if field.Name == "secret" {
+			t.Fatalf("private parent field was promoted to the child constructor: %#v", fields)
+		}
+	}
+	if len(fields) != 2 || fields[0].Name != "_protected" || fields[1].Name != "Public" {
+		t.Fatalf("expected protected and public inherited fields, got %#v", fields)
+	}
+	parentFields, err := constructorFields(classes["Parent"], classes, nil, map[*ClassDecl]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parentFields) != 3 || parentFields[0].Name != "secret" {
+		t.Fatalf("private state should remain in the declaring class metadata, got %#v", parentFields)
+	}
+}
+
 func TestEmitRequiresQualifiedAmbiguousInheritedField(t *testing.T) {
 	file, err := ParseFile("ambiguous.gpp", `
 class A {
@@ -1499,6 +1596,134 @@ func main() {
 	}
 	if strings.Contains(generated, "let user") {
 		t.Fatalf("let syntax was not lowered:\n%s", code)
+	}
+}
+
+func TestEmitSupportsAnonymousStructs(t *testing.T) {
+	file, err := ParseFile("structs.gpp", `
+func GetUser() struct {
+    return struct(
+        name: "Bob",
+        age: 42,
+        profile: struct(active: true),
+    )
+}
+
+func main() {
+    user := GetUser()
+    _ = user.name
+    _ = user.profile.active
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	generated := string(code)
+	for _, expected := range []string{
+		"type __gpp_record_",
+		"func GetUser() __gpp_record_",
+		"name: \"Bob\"",
+		"age: 42",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("anonymous struct output missing %q:\n%s", expected, code)
+		}
+	}
+	if strings.Contains(generated, "struct(name") {
+		t.Fatalf("anonymous struct call was not lowered:\n%s", code)
+	}
+}
+
+func TestEmitInfersAnonymousStructFieldsFromNamedStructSelector(t *testing.T) {
+	file, err := ParseFile("named_struct_selector.gpp", `
+struct User {
+    Name string
+    Age int
+}
+
+func makeSummary(user User) struct {
+    return struct(name: user.Name, age: user.Age)
+}
+
+func printSummary(summary struct) string {
+    return summary.name
+}
+
+func main() {
+    summary := makeSummary(User(Name: "Ada", Age: 36))
+    _ = summary.name
+    _ = printSummary(makeSummary(User(Name: "Ada", Age: 36)))
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(file); err != nil {
+		t.Fatalf("expected named struct fields to infer anonymous result fields: %v", err)
+	}
+}
+
+func TestEmitLowersAnonymousStructGenericTypeArguments(t *testing.T) {
+	file, err := ParseFile("struct_generic_type_argument.gpp", `
+func Identity[T any](value T) T {
+    return value
+}
+
+func main() {
+    _ = Identity[struct(Name: string, Age: int)](struct(Name: "Ada", Age: 36))
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatalf("expected anonymous struct generic type argument to lower: %v", err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "Identity[__gpp_record_") {
+		t.Fatalf("anonymous struct generic argument was not lowered to a generated type:\n%s", generated)
+	}
+}
+
+func TestEmitSupportsShortStructDeclarations(t *testing.T) {
+	file, err := ParseFile("short_structs.gpp", `
+struct User {
+	Name string
+}
+struct Box[T any] {
+	Value T
+}
+type Profile struct { Name string }
+
+func main() {
+	user := User(Name: "Ada")
+	_ = user.Name
+	profile := Profile(Name: "Grace")
+	_ = profile.Name
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{"type User struct", "type Box[T any] struct"} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("short struct declaration output missing %q:\n%s", expected, generated)
+		}
+	}
+	if !strings.Contains(generated, "User{Name: \"Ada\"}") || !strings.Contains(generated, "Profile{Name: \"Grace\"}") || strings.Contains(generated, "User(Name:") {
+		t.Fatalf("named struct constructor was not lowered to a keyed Go literal:\n%s", generated)
 	}
 }
 

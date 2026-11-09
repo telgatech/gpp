@@ -536,21 +536,21 @@ but the primary DX for `Serializable` classes should be the generated class API.
 Package-level functions remain useful for:
 
 * native Go values
-* records
+* anonymous structs
 * generic infrastructure
 * HTTP internals
 * values that cannot receive generated methods
 
 ---
 
-# Records
+# Anonymous structs
 
-Records should be serializable through package functions without requiring an annotation.
+Anonymous structs should be serializable through package functions without requiring an annotation.
 
 Example:
 
 ```go
-value := record(
+value := struct(
     ok: true,
     count: 3,
 )
@@ -558,7 +558,7 @@ value := record(
 data, err := encoding.ToJSON(value)
 ```
 
-Because anonymous records do not have a user-declared class namespace, do not require generated methods such as:
+Because anonymous structs do not have a user-declared class namespace, do not require generated methods such as:
 
 ```go
 value.ToJSON()

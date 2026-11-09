@@ -18,7 +18,7 @@ In Go, filtering is usually written as a loop:
 ```go [Go++]
 adultSummaries := people
 	.Filter(person => person.Age >= 18)
-	.Map(person => record(name: person.Name, age: person.Age))
+	.Map(person => struct(name: person.Name, age: person.Age))
 ```
 
 ```go [Go]
@@ -76,6 +76,15 @@ Returns a new slice with values placed before the existing elements. Reassign th
 
 ```go
 items = items.Prepend(first, second)
+```
+
+#### `Join(separator string) string` on `[]string`
+
+Joins the strings with `separator` between adjacent elements. An empty slice
+returns an empty string.
+
+```go
+path := []string{"api", "users"}.Join("/")
 ```
 
 #### `Pop() (T, []T, bool)`
@@ -395,6 +404,17 @@ highest, hasScores := scores.Max()
 
 ### String extensions
 
+#### `Reverse() string`
+
+Returns a new string with its Unicode code points in reverse order. It does not
+modify the original string. Combining marks are reversed as separate code
+points, so this is not grapheme-cluster reversal. Invalid UTF-8 bytes are
+converted to the Unicode replacement rune during reversal.
+
+```go
+reversed := "café".Reverse()
+```
+
 #### `CompileRegex() (*regexp.Regexp, error)`
 
 Compiles the string as a regular expression and returns `(*regexp.Regexp, error)`. Invalid patterns are reported through the error result.
@@ -427,6 +447,25 @@ Removes trailing code points from `cutset`, leaving the left side unchanged.
 filename := "report...".TrimRight(".")
 ```
 
+#### `TrimPrefix(prefix string) string` and `TrimSuffix(suffix string) string`
+
+Remove the given prefix or suffix once when it matches; otherwise return the
+string unchanged.
+
+```go
+route := "/api/users".TrimPrefix("/api")
+filename := "report.json".TrimSuffix(".json")
+```
+
+#### `TrimFunc`, `TrimLeftFunc`, and `TrimRightFunc`
+
+Trim runes from both ends, the left end, or the right end while the supplied
+`func(rune) bool` predicate returns true.
+
+```go
+clean := input.TrimFunc(character => character == '-')
+```
+
 #### `TrimSpace() string`
 
 Removes leading and trailing whitespace.
@@ -451,6 +490,14 @@ Returns the string converted to uppercase.
 label := status.ToUpper()
 ```
 
+#### `ToTitle() string`
+
+Converts each rune to title case using Go's Unicode-aware string operation.
+
+#### `ToValidUTF8(replacement string) string`
+
+Replaces each run of invalid UTF-8 bytes with `replacement`.
+
 #### `Contains(substr string) bool`
 
 Reports whether `substr` occurs anywhere in the string.
@@ -458,6 +505,15 @@ Reports whether `substr` occurs anywhere in the string.
 ```go
 isGo := title.Contains("Go")
 ```
+
+#### `ContainsAny(characters string) bool` and `ContainsRune(character rune) bool`
+
+Report whether the string contains any rune from `characters`, or the exact
+specified rune.
+
+#### `ContainsFunc(predicate func(rune) bool) bool`
+
+Reports whether any rune satisfies the predicate.
 
 #### `HasPrefix(prefix string) bool`
 
@@ -491,6 +547,20 @@ Returns a copy with every non-overlapping occurrence of `old` replaced by `new`.
 slug := title.ReplaceAll(" ", "-")
 ```
 
+#### `Cut(separator string) (string, string, bool)` and `CutLast(separator string) (string, string, bool)`
+
+Split around the first or last separator. The boolean reports whether the
+separator was found; if absent, the original string is returned as the first
+result and the second result is empty.
+
+```go
+before, after, found := header.Cut(":")
+```
+
+#### `CutPrefix(prefix string) (string, bool)` and `CutSuffix(suffix string) (string, bool)`
+
+Remove a matching prefix or suffix and report whether it matched.
+
 #### `Split(sep string) []string`
 
 Splits the string around each occurrence of `sep`. An empty separator splits between UTF-8 sequences.
@@ -498,6 +568,16 @@ Splits the string around each occurrence of `sep`. An empty separator splits bet
 ```go
 fields := csvLine.Split(",")
 ```
+
+#### `SplitN(separator string, count int) []string`
+
+Splits like `Split`, but limits the result to at most `count` elements, with
+the final element containing any unsplit remainder.
+
+#### `SplitAfter(separator string) []string` and `SplitAfterN(separator string, count int) []string`
+
+Split while retaining each separator at the end of the corresponding piece.
+`SplitAfterN` also limits the number of returned pieces.
 
 #### `Fields() []string`
 
@@ -522,6 +602,12 @@ Returns the byte index of the last occurrence of `substr`, or `-1` when absent.
 ```go
 lastSlash := path.LastIndex("/")
 ```
+
+#### `IndexAny`, `LastIndexAny`, `IndexByte`, `LastIndexByte`, `IndexRune`, and `IndexFunc`
+
+Find the first or last byte/rune or rune from a character set. The `IndexFunc`
+and `LastIndexFunc` forms accept a `func(rune) bool` predicate. All index
+methods return a byte offset or `-1` when no match is found.
 
 #### `Count(substr string) int`
 
@@ -579,6 +665,44 @@ Splits on Unicode whitespace, like `Fields()`. It is provided as a word-oriented
 
 ```go
 words := sentence.Words()
+```
+
+#### `Map(mapping func(rune) rune) string`
+
+Returns a copy with each rune replaced by the mapping result. Return `-1` from
+the mapping to remove a rune.
+
+```go
+asciiUpper := "abc".Map(character => character - 32)
+```
+
+### String and scalar conversions
+
+String parsing helpers return a caller-provided fallback when parsing fails.
+The fallback defaults to the destination type's zero value. Parsing uses
+decimal notation for integers.
+
+```go
+count := "42".ToInt()                 // 42; invalid input returns 0
+count := input.ToInt(fallback: -1)     // invalid input returns -1
+ratio := input.ToFloat64(fallback: 1)  // invalid input returns 1
+enabled := input.ToBool(fallback: false)
+```
+
+Available string methods are `ToInt`, `ToInt64`, `ToUint64`, `ToFloat32`,
+`ToFloat64`, and `ToBool`.
+
+Integer, unsigned integer, floating-point, and boolean values provide
+`String() string`, using base-10 numeric formatting and Go's shortest
+round-trippable float format.
+
+```go
+id := 42
+ratio := 1.5
+enabled := true
+idText := id.String()
+ratioText := ratio.String()
+enabledText := enabled.String()
 ```
 
 ### Map extensions

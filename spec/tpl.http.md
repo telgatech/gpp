@@ -178,12 +178,12 @@ There is no required `http.ErrorData` class.
 
 # 6. Default Error Data
 
-The server may construct an ordinary record for its default error template.
+The server may construct an anonymous struct for its default error template.
 
 For example:
 
 ```gpp
-data := record(
+data := struct(
     Code:    code,
     Message: http.StatusText(code),
     Path:    ctx.Request.URL.Path,
@@ -200,7 +200,7 @@ ctx.HTML(
 )
 ```
 
-Because record fields preserve normal Go capitalization/export semantics, exported fields such as `Code`, `Message`, and `Path` are naturally accessible to `html/template`.
+Because anonymous struct fields preserve normal Go capitalization/export semantics, exported fields such as `Code`, `Message`, and `Path` are naturally accessible to `html/template`.
 
 Thus:
 
@@ -214,14 +214,14 @@ works normally.
 
 ---
 
-# 7. Record Field Visibility
+# 7. Struct Field Visibility
 
-Error-page records should use exported field names when template access is intended.
+Error-page structs should use exported field names when template access is intended.
 
 Preferred:
 
 ```gpp
-record(
+struct(
     Code: 404,
     Message: "Page not found",
     Path: "/missing",
@@ -231,13 +231,13 @@ record(
 rather than:
 
 ```gpp
-record(
+struct(
     code: 404,
     message: "Page not found",
 )
 ```
 
-Record fields follow normal Go++ / Go capitalization semantics.
+Struct fields follow normal Go++ / Go capitalization semantics.
 
 Uppercase fields are exported.
 
@@ -250,13 +250,13 @@ Lowercase fields remain package-private.
 Applications are not restricted to:
 
 ```gpp
-record(Code: code)
+struct(Code: code)
 ```
 
 They may pass richer data:
 
 ```gpp
-record(
+struct(
     Code:    code,
     Message: http.StatusText(code),
     Path:    ctx.Request.URL.Path,
@@ -264,10 +264,10 @@ record(
 )
 ```
 
-or their own class/record:
+or their own class/struct:
 
 ```gpp
-data := record(
+data := struct(
     Code:       404,
     Message:    "Page not found",
     Path:       ctx.Request.URL.Path,
@@ -287,7 +287,7 @@ The template contract is determined by whatever data the server/application choo
 An application may define:
 
 ```gpp
-template ErrorPage(data record) {
+template ErrorPage(data struct) {
     {{if eq .Code 404}}
         <h1>Sorry, that page does not exist.</h1>
     {{else if eq .Code 403}}
@@ -308,7 +308,7 @@ class App : http.Server {
 }
 ```
 
-The exact record shape is inferred from the value supplied by the server/application according to normal Go++ record rules.
+The exact anonymous struct shape is inferred from the value supplied by the server/application according to normal Go++ struct rules.
 
 A named class may also be used if preferred.
 
@@ -331,7 +331,7 @@ func ErrorTemplate(code int) string
 The status code is normally part of the supplied template data:
 
 ```gpp
-record(
+struct(
     Code: code,
     ...
 )
@@ -410,12 +410,12 @@ It does not have to be exposed to the production template.
 
 # 13. Production Safety
 
-The default production error record should not expose sensitive internals unnecessarily.
+The default production error struct should not expose sensitive internals unnecessarily.
 
 A production response might use:
 
 ```gpp
-record(
+struct(
     Code:    code,
     Message: http.StatusText(code),
     Path:    ctx.Request.URL.Path,
@@ -427,7 +427,7 @@ Development mode may construct richer diagnostic data.
 For example:
 
 ```gpp
-record(
+struct(
     Code:    code,
     Message: err.Error(),
     Path:    ctx.Request.URL.Path,
@@ -963,12 +963,12 @@ func ShowPost(
 
 ---
 
-# 33. Rich Error Record Example
+# 33. Rich Error Struct Example
 
 An application error page may receive:
 
 ```gpp
-data := record(
+data := struct(
     Code:    404,
     Message: "Page not found",
     Path:    ctx.Request.URL.Path,
@@ -999,14 +999,14 @@ Template:
 
 ---
 
-# 34. Minimal Error Record Example
+# 34. Minimal Error Struct Example
 
 Applications may also keep it minimal:
 
 ```gpp
 ctx.HTML(
     404,
-    record(
+    struct(
         Code: 404,
     ),
     this.ErrorTemplate(),
@@ -1047,7 +1047,7 @@ func Error(
     code int,
     err error,
 ) {
-    data := record(
+    data := struct(
         Code:    code,
         Message: http.StatusText(code),
         Path:    ctx.Request.URL.Path,
@@ -1131,7 +1131,7 @@ Customization uses mechanisms Go++ already has:
 ```text
 normal virtual method override
 normal template declarations
-normal records/classes
+normal structs/classes
 tpl.Execute
 ```
 
@@ -1154,7 +1154,7 @@ Context
 tpl.Execute
     resolves and executes the template
 
-record/class supplied as data
+struct/class supplied as data
     defines what the template sees as `.`
 ```
 
@@ -1202,7 +1202,7 @@ class App : http.Server {
 Example template:
 
 ```gpp
-template ErrorPage(data record) {
+template ErrorPage(data struct) {
     {{if eq .Code 404}}
         <h1>Page not found</h1>
     {{else}}
@@ -1216,7 +1216,7 @@ Example response:
 ```gpp
 ctx.HTML(
     404,
-    record(
+    struct(
         Code:    404,
         Message: "Page not found",
         Path:    ctx.Request.URL.Path,

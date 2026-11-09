@@ -436,13 +436,19 @@ func (checker *templateTypeChecker) classField(class *ClassDecl, name string, se
 	seen[class.Name] = true
 	for index := range class.Fields {
 		if class.Fields[index].Name == name {
-			return &class.Fields[index], true
+			if memberVisibleToCallers(class.Fields[index].Name) {
+				return &class.Fields[index], true
+			}
+			return nil, false
 		}
 	}
 	for _, parentName := range class.ParentNames() {
 		if parent := checker.classInScope(class, parentName); parent != nil {
 			if field, ok := checker.classField(parent, name, seen); ok {
-				return field, true
+				if memberVisibleToCallers(field.Name) {
+					return field, true
+				}
+				return nil, false
 			}
 		}
 	}
@@ -456,13 +462,18 @@ func (checker *templateTypeChecker) classMethod(class *ClassDecl, name string, s
 	seen[class.Name] = true
 	for index := range class.Methods {
 		if class.Methods[index].Name == name && !class.Methods[index].IsStatic {
-			return &class.Methods[index], class
+			if memberVisibleToCallers(class.Methods[index].Name) {
+				return &class.Methods[index], class
+			}
+			return nil, class
 		}
 	}
 	for _, parentName := range class.ParentNames() {
 		if parent := checker.classInScope(class, parentName); parent != nil {
 			if method, owner := checker.classMethod(parent, name, seen); method != nil {
 				return method, owner
+			} else if owner != nil {
+				return nil, owner
 			}
 		}
 	}

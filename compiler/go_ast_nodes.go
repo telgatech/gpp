@@ -1035,14 +1035,15 @@ type constructorASTLiteral struct {
 func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
 	name, target, ok := constructorTargetForCallee(call.Callee, context)
 	if !ok {
-		return nil, false, nil
+		return namedStructConstructorExprNode(call, context)
 	}
 	class := target.Class
 	classes := classesForClass(context, class)
-	fields, err := constructorFields(class, classes, nil, map[*ClassDecl]bool{})
+	fields, err := constructorFieldsVisibleToClass(class, classes)
 	if err != nil {
 		return nil, true, err
 	}
+	fields = constructorFieldsVisibleToCaller(fields, context.CurrentClass)
 	root := &constructorASTLiteral{Values: map[string]ExprNode{}, Children: map[string]*constructorASTLiteral{}}
 	named := false
 	positional := false
@@ -1092,6 +1093,40 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		return instance, true, nil
 	}
 	return constructorInitializationExpr(name, instance, initializers), true, nil
+}
+
+func namedStructConstructorExprNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
+	name, fields, ok := namedStructConstructorForCallee(call.Callee, context)
+	if !ok {
+		return nil, false, nil
+	}
+	available := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		available[field.Name] = true
+	}
+	elements := make([]CompositeElement, 0, len(call.Arguments))
+	seen := map[string]bool{}
+	for _, argument := range call.Arguments {
+		if argument.Name == "" {
+			return nil, true, sourceLineError(argument.Value.Span(), fmt.Errorf("%s constructor arguments must be named", name))
+		}
+		if !available[argument.Name] {
+			span := argument.NameSpan
+			if span.Line == 0 {
+				span = call.Span()
+			}
+			return nil, true, sourceLineError(span, fmt.Errorf("%s has no field %s", name, argument.Name))
+		}
+		if seen[argument.Name] {
+			return nil, true, sourceLineError(argument.NameSpan, fmt.Errorf("%s constructor repeats field %s", name, argument.Name))
+		}
+		seen[argument.Name] = true
+		elements = append(elements, CompositeElement{
+			Key:   &NameExpr{Name: argument.Name, SpanValue: argument.NameSpan},
+			Value: argument.Value,
+		})
+	}
+	return &CompositeLiteralExpr{Type: parseTypeText(name), Elements: elements, SpanValue: call.Span()}, true, nil
 }
 
 type constructorInitializer struct {
@@ -1200,7 +1235,7 @@ func constructorASTLiteralExpr(name string, class *ClassDecl, literal *construct
 	}
 	for _, field := range class.Fields {
 		if value, ok := literal.Values[field.Name]; ok {
-			elements = append(elements, CompositeElement{Key: &NameExpr{Name: field.Name}, Value: value})
+			elements = append(elements, CompositeElement{Key: &NameExpr{Name: generatedMemberName(field.Name)}, Value: value})
 		}
 	}
 	return &CompositeLiteralExpr{Type: parseTypeText(name), Elements: elements}

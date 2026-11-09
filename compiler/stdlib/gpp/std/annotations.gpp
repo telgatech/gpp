@@ -1,3 +1,7 @@
 package gpp.std
 
 annotation Deprecated(message string)
+
+// Hook marks a method intended for framework dispatch rather than direct use.
+// Hook methods remain callable and overridable, but are omitted from completion lists.
+annotation Hook on method

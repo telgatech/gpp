@@ -731,7 +731,7 @@ The implementation resolves lexical parameters and declarations in the active
 function or method, class members, receiver members, and applicable extension
 methods. Receiver lookup understands explicit and safe selectors, inferred
 class and string values, lambda parameters where their collection element type
-is known, and fields declared in anonymous records. Dotted Go++ imports expose
+is known, and fields declared in anonymous structs. Dotted Go++ imports expose
 their logical package members and package path segments. Annotation completion
 filters declarations by the target currently being annotated.
 
@@ -1153,7 +1153,7 @@ template
 extension method
 static method
 deprecated symbol
-record field
+anonymous struct field
 ```
 
 The language server provides full-document semantic tokens with a stable
@@ -1532,7 +1532,7 @@ documentation
 annotations
 deprecation
 extension methods
-records
+anonymous structs
 enums
 templates
 ```

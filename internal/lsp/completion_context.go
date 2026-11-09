@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"go/types"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -55,6 +56,27 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 		return sortedCompletionItems(items)
 	}
 
+	if functionResultTypeContext(state, offset) {
+		for _, info := range s.workspace.symbols {
+			if info.Symbol.Package != "prelude" && info.Symbol.Package != state.File.Package {
+				continue
+			}
+			if info.Symbol.Kind == compiler.DocClass || info.Symbol.Kind == compiler.DocEnum || info.Symbol.Kind == compiler.DocType {
+				add(completionForSymbol(info.Symbol))
+			}
+		}
+		for _, item := range s.importedTypeCompletions(state) {
+			add(item)
+		}
+		for _, item := range s.importTypeCompletions(state) {
+			add(item)
+		}
+		for _, name := range []string{"any", "bool", "byte", "complex64", "complex128", "error", "float32", "float64", "int", "int8", "int16", "int32", "int64", "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "struct"} {
+			add(CompletionItem{Label: name, Kind: 25, Detail: "type"})
+		}
+		return sortedCompletionItems(items)
+	}
+
 	selectorPrefix := prefix
 	if state.File != nil {
 		if token, ok := identifierTokenAt(state.File.Tokens, offset); ok && token.Span.Start < offset {
@@ -87,6 +109,9 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 		}
 		if className := s.classTypeExpression(state, receiver, offset); className != "" {
 			for _, info := range s.classMembersForType(state, className, "", true) {
+				if !s.classMemberVisibleInCompletion(state, offset, info.Symbol) {
+					continue
+				}
 				add(completionForSymbol(contextualizeMethodForClass(info.Symbol, className)))
 			}
 			return sortedCompletionItems(items)
@@ -94,17 +119,26 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 		for _, info := range s.nativeGoMembersForExpression(state, receiver, offset) {
 			add(completionForSymbol(info.Symbol))
 		}
-		typeName := s.receiverType(state, receiver, offset)
+		for _, info := range s.nativeGoMembersForGoPlusExpression(state, receiver, offset) {
+			add(completionForSymbol(info.Symbol))
+		}
+		typeName := s.receiverTypeForExpression(state, receiver, len(selectorPrefix)-1, offset)
 		if typeName != "" {
 			if packageName, packageDir, memberType, ok := s.importedTypePackage(state, typeName); ok {
 				var matched []CompletionItem
 				for _, info := range s.packageSymbols(packageName, packageDir) {
 					if info.Symbol.Parent == memberType && (info.Symbol.Kind == compiler.DocField || info.Symbol.Kind == compiler.DocMethod || info.Symbol.Kind == compiler.DocExtension || info.Symbol.Kind == compiler.DocValue) {
+						if !s.classMemberVisibleInCompletion(state, offset, info.Symbol) {
+							continue
+						}
 						matched = append(matched, completionForSymbol(info.Symbol))
 					}
 				}
 				if len(matched) == 0 {
 					for _, info := range s.inheritedMembersForType(packageName, packageDir, memberType, "") {
+						if !s.classMemberVisibleInCompletion(state, offset, info.Symbol) {
+							continue
+						}
 						matched = append(matched, completionForSymbol(info.Symbol))
 					}
 				}
@@ -115,6 +149,9 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 			if !strings.HasPrefix(strings.TrimSpace(typeName), "[]") {
 				className := s.classTypeForReceiver(state, receiver, offset)
 				for _, info := range s.classMembersForType(state, typeName, "", false) {
+					if !s.classMemberVisibleInCompletion(state, offset, info.Symbol) {
+						continue
+					}
 					if className != "" {
 						add(completionForSymbol(contextualizeMethodForClass(info.Symbol, className)))
 					} else {
@@ -122,6 +159,9 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 					}
 				}
 				for _, info := range s.classMembersForType(state, typeName, "", true) {
+					if !s.classMemberVisibleInCompletion(state, offset, info.Symbol) {
+						continue
+					}
 					if className != "" {
 						add(completionForSymbol(contextualizeMethodForClass(info.Symbol, className)))
 					} else {
@@ -137,6 +177,12 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 			return sortedCompletionItems(items)
 		}
 		if fields := recordFieldCompletions(state, receiver, offset); len(fields) > 0 {
+			for _, field := range fields {
+				add(field)
+			}
+			return sortedCompletionItems(items)
+		}
+		if fields := s.returnedStructFieldCompletions(state, receiver, len(selectorPrefix)-1); len(fields) > 0 {
 			for _, field := range fields {
 				add(field)
 			}
@@ -182,6 +228,149 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 	return sortedCompletionItems(items)
 }
 
+func functionResultTypeContext(state *fileState, offset int) bool {
+	if state == nil || state.File == nil {
+		return false
+	}
+	tokens := state.File.Tokens
+	for index, token := range tokens {
+		if token.Text != "func" || token.Span.Start >= offset {
+			continue
+		}
+		close, ok := functionParameterList(tokens, index)
+		if !ok || offset <= tokens[close].Span.End {
+			continue
+		}
+		body := functionBodyOpen(tokens, close+1)
+		if body < 0 || offset <= tokens[body].Span.Start {
+			return true
+		}
+	}
+	return false
+}
+
+func functionParameterList(tokens []compiler.Token, functionIndex int) (int, bool) {
+	index := nextCompletionToken(tokens, functionIndex+1)
+	if index < 0 {
+		return 0, false
+	}
+	if tokens[index].Text == "(" {
+		receiverClose := matchingCompletionToken(tokens, index, "(", ")")
+		if receiverClose < 0 {
+			return 0, false
+		}
+		afterReceiver := nextCompletionToken(tokens, receiverClose+1)
+		if afterReceiver >= 0 && tokens[afterReceiver].Kind == compiler.TokenIdentifier {
+			afterName := nextCompletionToken(tokens, afterReceiver+1)
+			if afterName >= 0 && tokens[afterName].Text == "[" {
+				genericClose := matchingCompletionToken(tokens, afterName, "[", "]")
+				if genericClose < 0 {
+					return 0, false
+				}
+				afterName = nextCompletionToken(tokens, genericClose+1)
+			}
+			if afterName >= 0 && tokens[afterName].Text == "(" {
+				index = afterName
+			}
+		} else {
+			return receiverClose, true
+		}
+	} else if tokens[index].Kind == compiler.TokenIdentifier {
+		index = nextCompletionToken(tokens, index+1)
+		if index >= 0 && tokens[index].Text == "[" {
+			genericClose := matchingCompletionToken(tokens, index, "[", "]")
+			if genericClose < 0 {
+				return 0, false
+			}
+			index = nextCompletionToken(tokens, genericClose+1)
+		}
+	}
+	if index < 0 || tokens[index].Text != "(" {
+		return 0, false
+	}
+	close := matchingCompletionToken(tokens, index, "(", ")")
+	return close, close >= 0
+}
+
+func matchingCompletionToken(tokens []compiler.Token, open int, opening, closing string) int {
+	depth := 0
+	for index := open; index < len(tokens); index++ {
+		if tokens[index].Kind == compiler.TokenComment {
+			continue
+		}
+		switch tokens[index].Text {
+		case opening:
+			depth++
+		case closing:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func nextCompletionToken(tokens []compiler.Token, index int) int {
+	for index < len(tokens) {
+		if tokens[index].Kind != compiler.TokenComment && tokens[index].Kind != compiler.TokenNewline && tokens[index].Kind != compiler.TokenEOF {
+			return index
+		}
+		index++
+	}
+	return -1
+}
+
+func functionBodyOpen(tokens []compiler.Token, start int) int {
+	parenDepth, bracketDepth, structDepth := 0, 0, 0
+	for index := start; index < len(tokens); index++ {
+		if tokens[index].Kind == compiler.TokenComment || tokens[index].Kind == compiler.TokenNewline {
+			continue
+		}
+		switch tokens[index].Text {
+		case "(":
+			parenDepth++
+		case ")":
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case "[":
+			bracketDepth++
+		case "]":
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case "{":
+			if structDepth > 0 {
+				structDepth++
+				continue
+			}
+			previous := nextCompletionTokenBackward(tokens, index-1)
+			if previous >= 0 && (tokens[previous].Text == "struct" || tokens[previous].Text == "interface") {
+				structDepth = 1
+				continue
+			}
+			if parenDepth == 0 && bracketDepth == 0 {
+				return index
+			}
+		case "}":
+			if structDepth > 0 {
+				structDepth--
+			}
+		}
+	}
+	return -1
+}
+
+func nextCompletionTokenBackward(tokens []compiler.Token, index int) int {
+	for ; index >= 0; index-- {
+		if tokens[index].Kind != compiler.TokenComment && tokens[index].Kind != compiler.TokenNewline && tokens[index].Kind != compiler.TokenEOF {
+			return index
+		}
+	}
+	return -1
+}
+
 func (s *server) importedTypePackage(state *fileState, typeName string) (string, string, string, bool) {
 	for separator := strings.LastIndexByte(typeName, '.'); separator > 0; separator = strings.LastIndexByte(typeName[:separator], '.') {
 		qualifier, memberType := typeName[:separator], typeName[separator+1:]
@@ -193,6 +382,54 @@ func (s *server) importedTypePackage(state *fileState, typeName string) (string,
 }
 
 func (s *server) importCompletions(state *fileState) []CompletionItem {
+	return s.importCompletionsMatching(state, false)
+}
+
+func (s *server) importTypeCompletions(state *fileState) []CompletionItem {
+	return s.importCompletionsMatching(state, true)
+}
+
+func (s *server) importedTypeCompletions(state *fileState) []CompletionItem {
+	if state == nil || state.File == nil {
+		return nil
+	}
+	var result []CompletionItem
+	for _, declaration := range state.File.Imports {
+		alias := declaration.Alias
+		if alias == "" {
+			if declaration.LogicalPackage {
+				alias = packageLeaf(declaration.Path)
+			} else if packageName, _, found := s.workspacePackageForImport(state, declaration.Path); found {
+				alias = packageName
+			} else {
+				alias = packageLeaf(declaration.Path)
+			}
+		}
+		if alias == "" || alias == "_" || alias == "." {
+			continue
+		}
+		packageName, packageDir, found := s.importedPackageForQualifier(state, alias)
+		if !found {
+			continue
+		}
+		for _, info := range s.packageSymbols(packageName, packageDir) {
+			if info.Symbol.Kind != compiler.DocClass && info.Symbol.Kind != compiler.DocEnum && info.Symbol.Kind != compiler.DocType {
+				continue
+			}
+			if info.Symbol.Package != state.File.Package && !info.Symbol.Exported {
+				continue
+			}
+			item := completionForSymbol(info.Symbol)
+			item.Label = alias + "." + info.Symbol.Name
+			item.InsertText = item.Label
+			item.InsertTextFormat = 1
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func (s *server) importCompletionsMatching(state *fileState, typesOnly bool) []CompletionItem {
 	if state == nil || state.File == nil {
 		return nil
 	}
@@ -222,7 +459,14 @@ func (s *server) importCompletions(state *fileState) []CompletionItem {
 		if info.Path == "" || symbol.Package == "prelude" || filepath.Clean(filepath.Dir(info.Path)) == filepath.Clean(filepath.Dir(state.Path)) {
 			continue
 		}
-		if symbol.Kind != compiler.DocClass && symbol.Kind != compiler.DocEnum && symbol.Kind != compiler.DocType && symbol.Kind != compiler.DocFunction {
+		if !symbol.Exported {
+			continue
+		}
+		if typesOnly {
+			if symbol.Kind != compiler.DocClass && symbol.Kind != compiler.DocEnum && symbol.Kind != compiler.DocType {
+				continue
+			}
+		} else if symbol.Kind != compiler.DocClass && symbol.Kind != compiler.DocEnum && symbol.Kind != compiler.DocType && symbol.Kind != compiler.DocFunction {
 			continue
 		}
 		importPath := symbol.Package
@@ -428,33 +672,99 @@ func selectorReceiverBefore(state *fileState, dotOffset int) string {
 		return ""
 	}
 	end := dot - 1
-	if tokens[end].Text == ")" {
-		depth := 1
-		open := end - 1
-		for ; open >= 0; open-- {
-			switch tokens[open].Text {
-			case ")":
-				depth++
-			case "(":
-				depth--
+	minStart, parentheses, brackets := 0, 0, 0
+	type lambdaBoundary struct {
+		start int
+		depth int
+	}
+	var lambdaBoundaries []lambdaBoundary
+	for index := 0; index <= end; index++ {
+		if tokens[index].Kind == compiler.TokenNewline && parentheses == 0 && brackets == 0 {
+			previous := previousSignificantToken(tokens, index-1)
+			next := nextSignificantToken(tokens, index+1, end)
+			if !selectorLineContinuation(previous, next) {
+				minStart = index + 1
 			}
-			if depth == 0 {
-				break
+			continue
+		}
+		switch tokens[index].Text {
+		case "(":
+			parentheses++
+		case ")":
+			if parentheses > 0 {
+				parentheses--
+			}
+			for len(lambdaBoundaries) > 0 && lambdaBoundaries[len(lambdaBoundaries)-1].depth > parentheses {
+				lambdaBoundaries = lambdaBoundaries[:len(lambdaBoundaries)-1]
+			}
+		case "[":
+			brackets++
+		case "]":
+			if brackets > 0 {
+				brackets--
+			}
+		case "=>":
+			lambdaBoundaries = append(lambdaBoundaries, lambdaBoundary{start: index + 1, depth: parentheses})
+		case ":=", "=", ";":
+			if parentheses == 0 && brackets == 0 {
+				minStart = index + 1
 			}
 		}
-		if open < 1 {
-			return ""
+	}
+	if len(lambdaBoundaries) > 0 && lambdaBoundaries[len(lambdaBoundaries)-1].start > minStart {
+		minStart = lambdaBoundaries[len(lambdaBoundaries)-1].start
+	}
+	// Parse candidate suffixes until one forms a complete expression. This
+	// keeps nested calls and selectors together, for example
+	// `a.First().ToUpper()`; peeling only the final call would incorrectly
+	// return just `ToUpper` as the receiver of the last dot.
+	for start := minStart; start <= end; start++ {
+		if tokens[start].Kind == compiler.TokenEOF || tokens[start].Kind == compiler.TokenComment {
+			continue
 		}
-		end = open - 1
+		candidate := tokens[start : end+1]
+		if expression, err := compiler.ParseExpressionTokens(candidate); err == nil && expression != nil {
+			if _, incomplete := expression.(*compiler.TokenExpr); !incomplete {
+				span := expression.Span()
+				if span.Start == tokens[start].Span.Start && span.End == tokens[end].Span.End {
+					return strings.TrimSpace(state.Source[span.Start:span.End])
+				}
+			}
+		}
 	}
-	if end < 0 || tokens[end].Kind != compiler.TokenIdentifier {
-		return ""
+	return ""
+}
+
+func previousSignificantToken(tokens []compiler.Token, index int) compiler.Token {
+	for index >= 0 {
+		if tokens[index].Kind != compiler.TokenNewline && tokens[index].Kind != compiler.TokenComment {
+			return tokens[index]
+		}
+		index--
 	}
-	start := end
-	for start >= 2 && tokens[start-1].Text == "." && tokens[start-2].Kind == compiler.TokenIdentifier {
-		start -= 2
+	return compiler.Token{}
+}
+
+func nextSignificantToken(tokens []compiler.Token, index, end int) compiler.Token {
+	for index <= end {
+		if tokens[index].Kind != compiler.TokenNewline && tokens[index].Kind != compiler.TokenComment {
+			return tokens[index]
+		}
+		index++
 	}
-	return strings.TrimSpace(state.Source[tokens[start].Span.Start:tokens[dot-1].Span.End])
+	return compiler.Token{}
+}
+
+func selectorLineContinuation(previous, next compiler.Token) bool {
+	switch previous.Text {
+	case ".", "?.", ",", ":=", "=", "=>", "+", "-", "*", "/", "&&", "||", "??", "(", "[":
+		return true
+	}
+	switch next.Text {
+	case ".", "?.", ",", "=>", "+", "-", "*", "/", "&&", "||", "??":
+		return true
+	}
+	return false
 }
 
 func (s *server) constructorClassAt(state *fileState, offset int) (string, string, []symbolInfo, bool) {
@@ -462,10 +772,7 @@ func (s *server) constructorClassAt(state *fileState, offset int) (string, strin
 		return "", "", nil, false
 	}
 	tokens := state.File.Tokens
-	limit := tokenIndexAt(tokens, offset)
-	if limit < 0 || limit > len(tokens) {
-		limit = len(tokens)
-	}
+	limit := tokenLimitAtOffset(tokens, offset)
 	var stack []int
 	for index := 0; index < limit; index++ {
 		switch tokens[index].Text {
@@ -512,6 +819,18 @@ func (s *server) constructorClassAt(state *fileState, offset int) (string, strin
 			classes = append(classes, info)
 		}
 	}
+	if len(classes) == 0 {
+		for _, info := range s.packageSymbols(packageName, packageDir) {
+			if info.Symbol.Kind == compiler.DocType && info.Symbol.Name == className {
+				for _, field := range s.packageSymbols(packageName, filepath.Dir(info.Path)) {
+					if field.Symbol.Parent == className && field.Symbol.Kind == compiler.DocField {
+						classes = append(classes, info)
+						break
+					}
+				}
+			}
+		}
+	}
 	return packageName, className, classes, len(classes) > 0
 }
 
@@ -520,10 +839,7 @@ func (s *server) constructorFieldCompletions(state *fileState, offset int) []Com
 		return nil
 	}
 	tokens := state.File.Tokens
-	limit := tokenIndexAt(tokens, offset)
-	if limit < 0 || limit > len(tokens) {
-		limit = len(tokens)
-	}
+	limit := tokenLimitAtOffset(tokens, offset)
 	packageName, className, classes, ok := s.constructorClassAt(state, offset)
 	if !ok {
 		return nil
@@ -543,36 +859,88 @@ func (s *server) constructorFieldCompletions(state *fileState, offset int) []Com
 	if len(delimiters) > 0 {
 		open = delimiters[len(delimiters)-1]
 	}
-	if open >= 0 {
-		depth := 0
-		segmentStart := open + 1
-		for index := open + 1; index < limit; index++ {
-			switch tokens[index].Text {
-			case "(", "[", "{":
-				depth++
-			case ")", "]", "}":
-				if depth > 0 {
-					depth--
-				}
-			case ",":
-				if depth == 0 {
-					segmentStart = index + 1
-				}
-			case ":":
-				if depth == 0 && index >= segmentStart {
-					return nil
-				}
+	if open < 0 {
+		return nil
+	}
+	depth := 0
+	segmentStart := open + 1
+	for index := open + 1; index < limit; index++ {
+		switch tokens[index].Text {
+		case "(", "[", "{":
+			depth++
+		case ")", "]", "}":
+			if depth > 0 {
+				depth--
+			}
+		case ",":
+			if depth == 0 {
+				segmentStart = index + 1
+			}
+		case ":":
+			if depth == 0 && index >= segmentStart {
+				return nil
 			}
 		}
 	}
 	members := s.constructorFieldSymbols(packageName, className, classes)
 	var result []CompletionItem
 	for _, info := range members {
-		if info.Symbol.Kind == compiler.DocField {
+		constructorVisible := info.Symbol.Exported || strings.HasPrefix(info.Symbol.Name, "_") || enclosingClassName(state, offset) == info.Symbol.Parent
+		if len(classes) > 0 && classes[0].Symbol.Kind == compiler.DocType {
+			constructorVisible = info.Symbol.Exported || packageName == state.File.Package
+		}
+		if info.Symbol.Kind == compiler.DocField && constructorVisible {
 			result = append(result, completionForSymbol(info.Symbol))
 		}
 	}
 	return result
+}
+
+func (s *server) classMemberVisibleInCompletion(state *fileState, offset int, symbol compiler.DocSymbol) bool {
+	if symbol.Exported {
+		return true
+	}
+	currentClass := enclosingClassName(state, offset)
+	if currentClass == symbol.Parent {
+		return true
+	}
+	if strings.HasPrefix(symbol.Name, "_") {
+		return s.classContextIsSubclassOf(state, currentClass, symbol.Parent, map[string]bool{})
+	}
+	return false
+}
+
+func (s *server) classContextIsSubclassOf(state *fileState, className, parentName string, visiting map[string]bool) bool {
+	if className == "" || parentName == "" || visiting[className] {
+		return false
+	}
+	visiting[className] = true
+	defer delete(visiting, className)
+	for _, symbol := range s.typeSymbolsForName(state, className) {
+		if symbol.Symbol.Kind != compiler.DocClass {
+			continue
+		}
+		file := s.fileForSymbolPath(symbol.Path)
+		if file == nil {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			class, ok := declaration.(*compiler.ClassDecl)
+			if !ok || class.Name != symbol.Symbol.Name {
+				continue
+			}
+			for _, parent := range class.ParentNames() {
+				parentLeaf := parent
+				if dot := strings.LastIndexByte(parentLeaf, '.'); dot >= 0 {
+					parentLeaf = parentLeaf[dot+1:]
+				}
+				if parentLeaf == parentName || s.classContextIsSubclassOf(state, parent, parentName, visiting) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (s *server) constructorFieldSymbols(packageName, className string, classes []symbolInfo) []symbolInfo {
@@ -595,15 +963,27 @@ func calledExpressionCallee(state *fileState, expression string, offset int) str
 		return ""
 	}
 	tokens := state.File.Tokens
-	member, ok := identifierTokenAt(tokens, offset)
-	if !ok {
+	separator := -1
+	if member, ok := identifierTokenAt(tokens, offset); ok {
+		memberIndex := tokenIndexAt(tokens, member.Span.Start)
+		if memberIndex > 0 && (tokens[memberIndex-1].Text == "." || tokens[memberIndex-1].Text == "?.") {
+			separator = memberIndex - 1
+		}
+	}
+	// On the completion trigger itself there may not be a member-name token
+	// yet. Resolve the call result from the selector separator at the cursor.
+	if separator < 0 {
+		for index, token := range tokens {
+			if (token.Text == "." || token.Text == "?.") && token.Span.End == offset {
+				separator = index
+				break
+			}
+		}
+	}
+	if separator < 1 {
 		return ""
 	}
-	memberIndex := tokenIndexAt(tokens, member.Span.Start)
-	if memberIndex < 2 || tokens[memberIndex-1].Text != "." {
-		return ""
-	}
-	end := memberIndex - 2
+	end := separator - 1
 	if end < 0 || tokens[end].Text != ")" {
 		return ""
 	}
@@ -639,6 +1019,12 @@ func calledExpressionCallee(state *fileState, expression string, offset int) str
 }
 
 func completionForSymbol(symbol compiler.DocSymbol) CompletionItem {
+	for _, annotation := range symbol.Annotations {
+		name := strings.TrimPrefix(annotation, "@")
+		if name == "Hook" || strings.HasSuffix(name, ".Hook") {
+			return CompletionItem{}
+		}
+	}
 	item := CompletionItem{Label: symbol.Name, Kind: lspSymbolKind(symbol.Kind), Detail: symbol.Signature, Documentation: symbol.Doc, Deprecated: deprecated(symbol)}
 	if symbol.Kind == compiler.DocFunction || symbol.Kind == compiler.DocMethod || symbol.Kind == compiler.DocExtension {
 		item.InsertText = callableSnippet(symbol.Name, symbol.Signature)
@@ -652,57 +1038,101 @@ func callableSnippet(label, signature string) string {
 	if len(parameters) == 0 {
 		return label + "()$0"
 	}
+	types := callableParameterTypes(signature)
 	placeholders := make([]string, len(parameters))
+	nextTabStop := 1
 	for index, name := range parameters {
-		placeholders[index] = "${" + strconv.Itoa(index+1) + ":" + name + "}"
+		if index < len(types) {
+			if lambda := callableLambdaSnippet(types[index], nextTabStop+1); lambda != "" {
+				placeholders[index] = "${" + strconv.Itoa(nextTabStop) + ":" + lambda + "}"
+				nextTabStop += 2
+				continue
+			}
+		}
+		placeholders[index] = "${" + strconv.Itoa(nextTabStop) + ":" + name + "}"
+		nextTabStop++
 	}
 	return label + "(" + strings.Join(placeholders, ", ") + ")$0"
 }
 
+func callableParameterTypes(signature string) []string {
+	parts, _ := callableSignatureParts(signature)
+	result := make([]string, len(parts))
+	for partIndex, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if strings.HasPrefix(trimmed, "func(") {
+			result[partIndex] = trimmed
+			continue
+		}
+		if strings.HasPrefix(trimmed, "...") {
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "..."))
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) >= 2 {
+			typeStart := strings.Index(trimmed, fields[1])
+			if typeStart >= 0 && strings.HasPrefix(trimmed[typeStart:], "func(") {
+				result[partIndex] = trimmed[typeStart:]
+			}
+		}
+	}
+	return result
+}
+
+func callableLambdaSnippet(functionType string, bodyTabStop int) string {
+	index := strings.Index(functionType, "func")
+	if index < 0 {
+		return ""
+	}
+	open := strings.IndexByte(functionType[index+len("func"):], '(')
+	if open < 0 {
+		return ""
+	}
+	open += index + len("func")
+	close, ok := matchingSignatureDelimiter(functionType, open, '(', ')')
+	if !ok {
+		return ""
+	}
+	var names []string
+	for _, parameter := range splitSignatureParameters(functionType[open+1 : close]) {
+		fields := strings.Fields(strings.TrimSpace(parameter))
+		if len(fields) >= 2 && validSnippetIdentifier(strings.TrimSuffix(fields[0], ",")) {
+			names = append(names, strings.TrimSuffix(fields[0], ","))
+		} else {
+			names = append(names, inferredLambdaParameterName(parameter))
+		}
+	}
+	left := strings.Join(names, ", ")
+	if len(names) != 1 {
+		left = "(" + left + ")"
+	}
+	return left + " => ${" + strconv.Itoa(bodyTabStop) + ":}"
+}
+
+func inferredLambdaParameterName(typeText string) string {
+	typeText = strings.TrimSpace(typeText)
+	typeText = strings.TrimPrefix(typeText, "...")
+	typeText = strings.TrimLeft(typeText, "*[]")
+	if bracket := strings.IndexByte(typeText, '['); bracket >= 0 {
+		typeText = typeText[:bracket]
+	}
+	if dot := strings.LastIndexByte(typeText, '.'); dot >= 0 {
+		typeText = typeText[dot+1:]
+	}
+	if typeText == "" || len(typeText) == 1 && typeText[0] >= 'A' && typeText[0] <= 'Z' {
+		return "value"
+	}
+	runes := []rune(typeText)
+	if len(runes) > 0 {
+		runes[0] = unicode.ToLower(runes[0])
+		if unicode.IsLetter(runes[0]) || runes[0] == '_' {
+			return string(runes)
+		}
+	}
+	return "value"
+}
+
 func callableParameterNames(signature string) []string {
-	function := strings.Index(signature, "func")
-	if function < 0 {
-		return nil
-	}
-	index := function + len("func")
-	skipSpace := func() {
-		for index < len(signature) && unicode.IsSpace(rune(signature[index])) {
-			index++
-		}
-	}
-	skipSpace()
-	if index < len(signature) && signature[index] == '(' {
-		end, ok := matchingSignatureDelimiter(signature, index, '(', ')')
-		if !ok {
-			return nil
-		}
-		index = end + 1
-		skipSpace()
-	}
-	for index < len(signature) && (isIdentifierByte(signature[index]) || signature[index] == '.' || signature[index] >= 0x80) {
-		index++
-	}
-	skipSpace()
-	if index < len(signature) && (signature[index] == '[' || signature[index] == '<') {
-		open, close := byte('['), byte(']')
-		if signature[index] == '<' {
-			open, close = '<', '>'
-		}
-		end, ok := matchingSignatureDelimiter(signature, index, open, close)
-		if !ok {
-			return nil
-		}
-		index = end + 1
-		skipSpace()
-	}
-	if index >= len(signature) || signature[index] != '(' {
-		return nil
-	}
-	end, ok := matchingSignatureDelimiter(signature, index, '(', ')')
-	if !ok || end == index+1 {
-		return nil
-	}
-	parts := splitSignatureParameters(signature[index+1 : end])
+	parts, _ := callableSignatureParts(signature)
 	result := make([]string, 0, len(parts))
 	for partIndex, part := range parts {
 		fields := strings.Fields(strings.TrimSpace(part))
@@ -721,6 +1151,108 @@ func callableParameterNames(signature string) []string {
 		result = append(result, name)
 	}
 	return result
+}
+
+func callableSignatureParts(signature string) (parameters, results []string) {
+	function := strings.Index(signature, "func")
+	if function < 0 {
+		return nil, nil
+	}
+	index := function + len("func")
+	functionEnd := index
+	skipSpace := func() {
+		for index < len(signature) && unicode.IsSpace(rune(signature[index])) {
+			index++
+		}
+	}
+	skipSpace()
+	if index < len(signature) && signature[index] == '(' && index > functionEnd {
+		end, ok := matchingSignatureDelimiter(signature, index, '(', ')')
+		if !ok {
+			return nil, nil
+		}
+		afterReceiver := end + 1
+		for afterReceiver < len(signature) && unicode.IsSpace(rune(signature[afterReceiver])) {
+			afterReceiver++
+		}
+		// A method signature has a receiver followed by its name. A bare
+		// function type starts its parameter list immediately after `func`.
+		if afterReceiver < len(signature) && (isIdentifierByte(signature[afterReceiver]) || signature[afterReceiver] == '[') {
+			index = afterReceiver
+		}
+	}
+	bracketDepth := 0
+	for index < len(signature) {
+		switch signature[index] {
+		case '[', '<':
+			bracketDepth++
+		case ']', '>':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '(':
+			if bracketDepth == 0 {
+				goto parameterList
+			}
+		}
+		index++
+	}
+	return nil, nil
+
+parameterList:
+	if index >= len(signature) || signature[index] != '(' {
+		return nil, nil
+	}
+	parameterEnd, ok := matchingSignatureDelimiter(signature, index, '(', ')')
+	if !ok {
+		return nil, nil
+	}
+	parameters = splitSignatureParameters(signature[index+1 : parameterEnd])
+	resultText := strings.TrimSpace(signature[parameterEnd+1:])
+	if resultText == "" {
+		return parameters, nil
+	}
+	if strings.HasPrefix(resultText, "(") {
+		resultEnd, ok := matchingSignatureDelimiter(resultText, 0, '(', ')')
+		if !ok {
+			return parameters, nil
+		}
+		resultText = resultText[1:resultEnd]
+	}
+	return parameters, splitSignatureParameters(resultText)
+}
+
+func (s *server) receiverTypeForExpression(state *fileState, receiver string, dotOffset, offset int) string {
+	if state == nil || state.File == nil || receiver == "" || dotOffset < len(receiver) {
+		return s.receiverType(state, receiver, offset)
+	}
+	start, end := dotOffset-len(receiver), dotOffset
+	if start < 0 || end > len(state.Source) || state.Source[start:end] != receiver {
+		return s.receiverType(state, receiver, offset)
+	}
+	var tokens []compiler.Token
+	for _, token := range state.File.Tokens {
+		if token.Span.Start >= start && token.Span.End <= end && token.Kind != compiler.TokenEOF {
+			tokens = append(tokens, token)
+		}
+	}
+	expression, err := compiler.ParseExpressionTokens(tokens)
+	if err != nil || expression == nil {
+		return s.receiverType(state, receiver, offset)
+	}
+	method, _ := enclosingMethod(state, dotOffset)
+	if typeName := s.expressionType(state, method, expression, 0); typeName != "" {
+		return typeName
+	}
+	if nativeType := s.nativeGoTypeForGoPlusExpression(state, method, expression, 0); nativeType != nil {
+		return types.TypeString(nativeType, func(pkg *types.Package) string {
+			if pkg == nil {
+				return ""
+			}
+			return pkg.Name()
+		})
+	}
+	return s.receiverType(state, receiver, offset)
 }
 
 func splitSignatureParameters(source string) []string {
@@ -1034,6 +1566,14 @@ func (s *server) receiverType(state *fileState, receiver string, offset int) str
 	if receiver == "this" {
 		return enclosingClassName(state, offset)
 	}
+	// At the `.` completion trigger there is no member-name token yet. Query
+	// the receiver binding just before the separator so local values such as
+	// `server.` still resolve to their inferred type.
+	if offset > 0 {
+		if binding, found := s.localBindingAt(state, offset-1, receiver); found && binding.Type != "" && binding.Type != "inferred" {
+			return binding.Type
+		}
+	}
 	if callee := calledExpressionCallee(state, receiver, offset); callee != "" {
 		var packageName, packageDir, className string
 		if separator := strings.LastIndexByte(callee, '.'); separator >= 0 {
@@ -1215,7 +1755,7 @@ func recordFieldCompletions(state *fileState, receiver string, offset int) []Com
 			continue
 		}
 		for cursor := index + 2; cursor+1 < len(tokens) && tokens[cursor].Span.Start < offset; cursor++ {
-			if tokens[cursor].Text != "record" || cursor+1 >= len(tokens) || tokens[cursor+1].Text != "(" {
+			if tokens[cursor].Text != "record" && tokens[cursor].Text != "struct" || cursor+1 >= len(tokens) || tokens[cursor+1].Text != "(" {
 				continue
 			}
 			depth := 0
@@ -1228,7 +1768,7 @@ func recordFieldCompletions(state *fileState, receiver string, offset int) []Com
 				case ":":
 					if depth == 1 && fieldIndex > 0 && tokens[fieldIndex-1].Kind == compiler.TokenIdentifier {
 						name := tokens[fieldIndex-1].Text
-						fields[name] = CompletionItem{Label: name, Kind: 10, Detail: "record field"}
+						fields[name] = CompletionItem{Label: name, Kind: 5, Detail: "anonymous struct field"}
 					}
 				}
 			}
@@ -1240,6 +1780,238 @@ func recordFieldCompletions(state *fileState, receiver string, offset int) []Com
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Label < result[j].Label })
 	return result
+}
+
+func (s *server) returnedStructFieldCompletions(state *fileState, receiver string, dotOffset int) []CompletionItem {
+	fields := s.returnedStructFields(state, receiver, dotOffset)
+	result := make([]CompletionItem, 0, len(fields))
+	for name := range fields {
+		result = append(result, CompletionItem{Label: name, Kind: 5, Detail: "anonymous struct field"})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Label < result[j].Label })
+	return result
+}
+
+type returnedStructField struct {
+	Type   string
+	Span   compiler.Span
+	Nested map[string]returnedStructField
+}
+
+func (s *server) returnedStructFields(state *fileState, receiver string, dotOffset int) map[string]returnedStructField {
+	if state == nil || state.File == nil || s.workspace == nil {
+		return nil
+	}
+	receiverStart := dotOffset - len(receiver)
+	if receiverStart < 0 || dotOffset > len(state.Source) || state.Source[receiverStart:dotOffset] != receiver {
+		return nil
+	}
+	var tokens []compiler.Token
+	for _, token := range state.File.Tokens {
+		if token.Span.Start >= receiverStart && token.Span.End <= dotOffset && token.Kind != compiler.TokenEOF {
+			tokens = append(tokens, token)
+		}
+	}
+	expression, err := compiler.ParseExpressionTokens(tokens)
+	if err != nil || expression == nil {
+		return nil
+	}
+	var path []string
+	for {
+		selector, ok := expression.(*compiler.SelectorExpr)
+		if !ok {
+			break
+		}
+		path = append(path, selector.Name)
+		expression = selector.Receiver
+	}
+	call, ok := expression.(*compiler.CallExpr)
+	if !ok {
+		return nil
+	}
+	calleeName := ""
+	calleeOffset := call.Callee.Span().Start
+	switch callee := call.Callee.(type) {
+	case *compiler.NameExpr:
+		calleeName = callee.Name
+	case *compiler.SelectorExpr:
+		calleeName = callee.Name
+		calleeOffset = callee.SpanValue.End - len(callee.Name)
+	}
+	if calleeName == "" {
+		return nil
+	}
+	calleePosition := positionAtOffset(state.Source, calleeOffset)
+	files := map[string]*fileState{}
+	for _, symbol := range s.resolveSymbolsAt(state.URI, calleePosition, calleeName) {
+		if symbol.Symbol.Kind != compiler.DocFunction {
+			continue
+		}
+		if functionFile := s.workspace.files[symbol.Path]; functionFile != nil && functionFile.File != nil {
+			files[symbol.Path] = functionFile
+		}
+	}
+	if len(files) == 0 && call.Callee != nil {
+		if _, local := call.Callee.(*compiler.NameExpr); local {
+			files[state.Path] = state
+		}
+	}
+	fields := map[string]returnedStructField{}
+	for _, functionFile := range files {
+		for _, function := range functionDeclarations(functionFile.File) {
+			if function.Name == calleeName {
+				collectReturnedStructFields(s, functionFile, function, function.Method.BodyAST, fields)
+			}
+		}
+	}
+	for index := len(path) - 1; index >= 0; index-- {
+		field, found := fields[path[index]]
+		if !found {
+			return nil
+		}
+		fields = field.Nested
+	}
+	return fields
+}
+
+func (s *server) returnedStructFieldAt(state *fileState, name string, offset int) (returnedStructField, bool) {
+	if state == nil || state.File == nil {
+		return returnedStructField{}, false
+	}
+	token, ok := identifierTokenAt(state.File.Tokens, offset)
+	if !ok {
+		return returnedStructField{}, false
+	}
+	index := tokenIndexAt(state.File.Tokens, token.Span.Start)
+	if index <= 0 || state.File.Tokens[index-1].Text != "." {
+		return returnedStructField{}, false
+	}
+	dot := state.File.Tokens[index-1]
+	receiver := selectorReceiverBefore(state, dot.Span.Start)
+	field, found := s.returnedStructFields(state, receiver, dot.Span.Start)[name]
+	return field, found
+}
+
+func (s *server) anonymousStructFieldDeclarationAt(state *fileState, name string, offset int) (returnedStructField, bool) {
+	if state == nil || state.File == nil {
+		return returnedStructField{}, false
+	}
+	for _, function := range functionDeclarations(state.File) {
+		fields := map[string]returnedStructField{}
+		collectReturnedStructFields(s, state, function, function.Method.BodyAST, fields)
+		if field, found := returnedStructFieldAtSpan(fields, name, offset); found {
+			return field, true
+		}
+	}
+	return returnedStructField{}, false
+}
+
+func returnedStructFieldAtSpan(fields map[string]returnedStructField, name string, offset int) (returnedStructField, bool) {
+	for fieldName, field := range fields {
+		if fieldName == name && field.Span.Start <= offset && offset <= field.Span.End {
+			return field, true
+		}
+		if field, found := returnedStructFieldAtSpan(field.Nested, name, offset); found {
+			return field, true
+		}
+	}
+	return returnedStructField{}, false
+}
+
+func functionDeclarations(file *compiler.File) []*compiler.FunctionDecl {
+	if file == nil {
+		return nil
+	}
+	var result []*compiler.FunctionDecl
+	for _, declaration := range file.Decls {
+		switch value := declaration.(type) {
+		case *compiler.FunctionDecl:
+			result = append(result, value)
+		case *compiler.MixedDecl:
+			result = append(result, value.Functions...)
+		}
+	}
+	return result
+}
+
+func collectReturnedStructFields(s *server, state *fileState, function *compiler.FunctionDecl, block *compiler.BlockStmt, fields map[string]returnedStructField) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		switch value := statement.(type) {
+		case *compiler.ReturnStmt:
+			for _, expression := range value.Values {
+				call, ok := expression.(*compiler.CallExpr)
+				if !ok {
+					continue
+				}
+				callee, ok := call.Callee.(*compiler.NameExpr)
+				if !ok || callee.Name != "struct" && callee.Name != "record" {
+					continue
+				}
+				collectStructLiteralFields(s, state, function, call, fields)
+			}
+		case *compiler.IfStmt:
+			collectReturnedStructFields(s, state, function, value.Body, fields)
+			collectReturnedStructFields(s, state, function, value.Else, fields)
+			if value.ElseIf != nil {
+				collectReturnedStructFields(s, state, function, &compiler.BlockStmt{Statements: []compiler.Stmt{value.ElseIf}}, fields)
+			}
+		case *compiler.TryStmt:
+			collectReturnedStructFields(s, state, function, value.Body, fields)
+			for _, clause := range value.Catches {
+				collectReturnedStructFields(s, state, function, clause.Body, fields)
+			}
+			collectReturnedStructFields(s, state, function, value.Finally, fields)
+		case *compiler.ForStmt:
+			collectReturnedStructFields(s, state, function, value.Body, fields)
+		case *compiler.SwitchStmt:
+			collectReturnedStructFields(s, state, function, value.Body, fields)
+		case *compiler.CaseStmt:
+			collectReturnedStructFields(s, state, function, value.Clause.Body, fields)
+		case *compiler.BlockStmt:
+			collectReturnedStructFields(s, state, function, value, fields)
+		case *compiler.TokenStmt:
+			collectReturnedStructFields(s, state, function, value.Body, fields)
+			collectReturnedStructFields(s, state, function, &compiler.BlockStmt{Statements: value.Children}, fields)
+		}
+	}
+}
+
+func collectStructLiteralFields(s *server, state *fileState, function *compiler.FunctionDecl, literal *compiler.CallExpr, fields map[string]returnedStructField) {
+	for _, argument := range literal.Arguments {
+		if argument.Name == "" {
+			continue
+		}
+		fieldType := s.expressionType(state, &function.Method, argument.Value, 0)
+		if fieldType == "" && argument.Value != nil {
+			fieldType = sourceType(state.Source, argument.Value.Span())
+		}
+		field := returnedStructField{Type: fieldType, Span: argument.NameSpan}
+		if nested, ok := anonymousStructLiteralCall(argument.Value); ok {
+			field.Type = "anonymous struct"
+			field.Nested = map[string]returnedStructField{}
+			collectStructLiteralFields(s, state, function, nested, field.Nested)
+		}
+		fields[argument.Name] = field
+	}
+}
+
+func anonymousStructLiteralCall(expression compiler.ExprNode) (*compiler.CallExpr, bool) {
+	for {
+		parenthesized, ok := expression.(*compiler.ParenthesizedExpr)
+		if !ok {
+			break
+		}
+		expression = parenthesized.Inner
+	}
+	call, ok := expression.(*compiler.CallExpr)
+	if !ok {
+		return nil, false
+	}
+	callee, ok := call.Callee.(*compiler.NameExpr)
+	return call, ok && (callee.Name == "struct" || callee.Name == "record")
 }
 
 func parameterTypeFromTokens(tokens []compiler.Token, span compiler.Span, name string) string {
@@ -1313,6 +2085,15 @@ func tokenIndexAt(tokens []compiler.Token, start int) int {
 		}
 	}
 	return -1
+}
+
+func tokenLimitAtOffset(tokens []compiler.Token, offset int) int {
+	for index, token := range tokens {
+		if token.Span.Start >= offset {
+			return index
+		}
+	}
+	return len(tokens)
 }
 
 func (s *server) extensionMethodsFor(typeName string) []compiler.DocSymbol {
