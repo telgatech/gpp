@@ -134,6 +134,47 @@ This remains valid ordinary Go-style handling:
 width, height, err := Dimensions()
 ```
 
+## Call Form Does Not Change Promotion
+
+The trailing-error rule applies to every resolved call signature, regardless
+of how the callee is written. This includes local and imported functions,
+package-qualified generic functions, methods, and extension methods. Generic
+type arguments and variadic arguments do not change the rule.
+
+For example, both calls below omit the trailing error and therefore promote a
+non-nil error. `Lookup` accepts more than one variadic argument; its argument
+count does not make it a different error-handling case:
+
+```go
+user := store.Lookup[User](db, "name = $1 AND id = $2", name, id)
+users := store.Select[User](db, "active = $1", true)
+```
+
+The same applies inside `try`; `try` provides a handler for the promoted
+exception but does not change which results the call returns or whether its
+trailing error is omitted:
+
+```go
+try {
+    user := store.Lookup[User](db, "name = $1 AND id = $2", name, id)
+    use(user)
+} catch err {
+    report(err)
+}
+```
+
+An explicit assignment that captures all results, including the trailing
+error, keeps ordinary Go error-value semantics:
+
+```go
+user, err := store.Lookup[User](db, "id = $1", id)
+```
+
+The compiler must determine the full result signature before lowering the
+call. In particular, it must recognize variadic parameters when matching a
+call's arguments; additional values supplied to the final variadic parameter
+must not disable trailing-error promotion.
+
 ---
 
 # Error Must Be Trailing

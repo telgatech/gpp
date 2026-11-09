@@ -21,7 +21,7 @@ export default defineConfig({
   themeConfig: {
     logo: {
       src: '/go-gopher-nav.webp',
-      alt: 'Go++ gopher face and cape in a circular badge'
+      alt: 'Go++ blue gopher head'
     },
     siteTitle: false,
     nav: [

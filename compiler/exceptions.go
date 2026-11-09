@@ -3866,7 +3866,8 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 		}
 	}
 	for _, candidate := range candidates {
-		if len(call.Arguments) < requiredParameterCount(candidate) || len(call.Arguments) > len(candidate.Parameters) {
+		if len(call.Arguments) < requiredParameterCount(candidate) ||
+			(variadicParameterIndex(candidate) < 0 && len(call.Arguments) > len(candidate.Parameters)) {
 			continue
 		}
 		resultTypes := resultTypesFromText(candidate.resultText())
@@ -3902,7 +3903,16 @@ func promotedCandidatesForLoweredExpr(expression ExprNode, context constructorCo
 	case *NameExpr:
 		return promotedCandidatesForLoweredName(value.Name, context)
 	case *SelectorExpr:
+		if receiver, ok := value.Receiver.(*NameExpr); ok {
+			if signatures := context.ImportedFunctionSignatures[receiver.Name][value.Name]; len(signatures) > 0 {
+				return signatures
+			}
+		}
 		return promotedCandidatesForLoweredName(value.Name, context)
+	case *IndexExpr:
+		return promotedCandidatesForLoweredExpr(value.Receiver, context)
+	case *IndexListExpr:
+		return promotedCandidatesForLoweredExpr(value.Receiver, context)
 	}
 	return nil
 }

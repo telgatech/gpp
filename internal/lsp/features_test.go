@@ -4536,8 +4536,8 @@ func TestORMInheritedMethodsResolveAndInferSelfTypes(t *testing.T) {
 		{declaration: "ada :=", name: "ada", typeName: "*Employee"},
 		{declaration: "employees :=", name: "employees", typeName: "[]*Employee"},
 		{declaration: "target :=", name: "target", typeName: "*Employee"},
-		{declaration: "employee, employeeErr := orm.GetSQL[Employee]", name: "employee", typeName: "*Employee"},
-		{declaration: "employees, employeesErr := orm.SelectSQL[Employee]", name: "employees", typeName: "[]*Employee"},
+		{declaration: "employee := orm.Get[Employee]", name: "employee", typeName: "*Employee"},
+		{declaration: "departmentEmployees := orm.Select[Employee]", name: "departmentEmployees", typeName: "[]*Employee"},
 	} {
 		declarationOffset := strings.Index(source, testCase.declaration)
 		if declarationOffset < 0 {
@@ -4550,10 +4550,16 @@ func TestORMInheritedMethodsResolveAndInferSelfTypes(t *testing.T) {
 		}
 	}
 
-	dbGetOffset := strings.Index(source, "db.Get[int64]") + len("db.")
-	dbGetChoices := server.resolveSymbolsAt(state.URI, positionAtOffset(source, dbGetOffset), "Get")
-	if len(dbGetChoices) != 1 || dbGetChoices[0].Symbol.Kind != compiler.DocExtension || !strings.Contains(dbGetChoices[0].Symbol.Signature, "Get[T any]") {
-		t.Errorf("db.Get[T] should resolve to the imported SQL extension, got %#v", dbGetChoices)
+	ormGetOffset := strings.Index(source, "orm.Get[Employee]") + len("orm.")
+	ormGetChoices := server.resolveSymbolsAt(state.URI, positionAtOffset(source, ormGetOffset), "Get")
+	ormGetFunctionFound := false
+	for _, choice := range ormGetChoices {
+		if choice.Symbol.Kind == compiler.DocFunction && strings.Contains(choice.Symbol.Signature, "Get[T any]") {
+			ormGetFunctionFound = true
+		}
+	}
+	if !ormGetFunctionFound {
+		t.Errorf("orm.Get[T] should resolve to the imported ORM function, got %#v", ormGetChoices)
 	}
 }
 

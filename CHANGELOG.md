@@ -2,6 +2,9 @@
 
 ## 2026-11-09
 
+- Renamed full-SQL ORM model query helpers to `orm.Get[T]` and `orm.Select[T]`.
+- Kept the ORM example focused on model operations, with a joined full-SQL model query; generic scalar and struct SQL queries are demonstrated in `examples/sql.gpp`.
+- Added generic insertion-ordered maps and circular rings to `gpp/container`.
 - Added Homebrew install and update instructions, and changed the first-program guide to start with `gpp init`.
 - Updated BSD-3-Clause attribution to name Telga Technologies Pvt Ltd, aligned the docs footer, and clarified source redistribution notices in the README.
 - Expanded prelude string helpers with Unicode code-point reversal, cut/trim/split/search operations, rune transforms, string joining, fallback-based string parsing, and scalar-to-string formatting.
@@ -13,6 +16,7 @@
 - Added `examples/sql.gpp` to demonstrate typed full-SQL queries through `gpp/sql` and shared execution across database handles and transactions.
 - Updated managed incremental build workspaces when the project module path changes, avoiding stale generated `go.mod` mismatches.
 - Fixed generic extension lowering and callback overload selection inside `try` blocks, including inline `.Each(...)` calls.
+- Specified and fixed implicit error promotion for generic imported calls with multiple variadic arguments; bumped the build-cache schema so compiler updates regenerate stale Go output.
 
 ## 2026-11-08
 
@@ -25,7 +29,7 @@
 - Added the `std.Hook` method annotation to hide framework callback methods from completion lists while keeping them callable and overridable.
 - Restricted direct Go++ calls to annotated hooks to the class that first declares each hook; framework dispatch and overrides remain supported.
 - Moved ORM lifecycle hook ordering into `Model.Insert`, `Update`, and `Destroy`; a required interface dispatch preserves child overrides, and SQL helpers now only perform persistence.
-- Refactored the ORM/SQL boundary so `gpp/orm` depends on the shared executor in `gpp/sql`; full-SQL model queries use `orm.GetSQL`/`orm.SelectSQL`.
+- Refactored the ORM/SQL boundary so `gpp/orm` depends on the shared executor in `gpp/sql`; full-SQL model queries use `orm.Get`/`orm.Select`.
 - Improved LSP code actions and diagnostics, including generated-Go type errors, pull diagnostics, watched-file and workspace-folder updates, and request cancellation.
 - Fixed formatter spacing around inheritance colons in class declarations and collapsed repeated blank lines to match gofmt.
 - Enforced class member visibility across selectors, composite literals, templates, extensions, constructors, and Go declarations embedded in `.gpp`: uppercase is public, lowercase is private, and a leading underscore marks protected members visible to subclasses. Updated generated Go names and LSP completions.

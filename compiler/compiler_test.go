@@ -4205,14 +4205,32 @@ func PersistModel(db *sql.DB, employee *Employee) {
 }
 
 func RawEmployee(db *sql.DB, id int64) {
-	employee, err := orm.GetSQL[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
+	try {
+		employee := orm.Get[Employee](db, "SELECT id, name FROM employees WHERE name = $1 AND id = $2", "Grace", id)
+		_ = employee
+	} catch err {
+		_ = err
+	}
+}
+
+func RawEmployeeWithExplicitError(db *sql.DB, id int64) {
+	employee, err := orm.Get[Employee](db, "SELECT id, name FROM employees WHERE name = $1 AND id = $2", "Grace", id)
     _ = employee
 	_ = err
 }
 
 func RawEmployees(db *sql.DB, prefix string) {
-	employees, err := orm.SelectSQL[Employee](db, "SELECT id, name FROM employees WHERE name LIKE $1", prefix + "%")
-    _ = employees
+	try {
+		employees := orm.Select[Employee](db, "SELECT id, name FROM employees WHERE name LIKE $1", prefix + "%")
+		_ = employees
+	} catch err {
+		_ = err
+	}
+}
+
+func RawEmployeesWithExplicitError(db *sql.DB, prefix string) {
+	employees, err := orm.Select[Employee](db, "SELECT id, name FROM employees WHERE name LIKE $1", prefix + "%")
+	_ = employees
 	_ = err
 }
 
@@ -4234,11 +4252,37 @@ func main() {}
 	if strings.Contains(string(generated), "employees := orm.GppStatic_Model_Select[Employee]") {
 		t.Fatalf("static query error was not promoted:\n%s", generated)
 	}
+	if !strings.Contains(string(generated), "__gppUnwrap(orm.Get[Employee]") {
+		t.Fatalf("generic imported ORM call inside try was not promoted:\n%s", generated)
+	}
+	if !strings.Contains(string(generated), "__gppUnwrap(orm.Select[Employee]") {
+		t.Fatalf("generic imported ORM select inside try was not promoted:\n%s", generated)
+	}
 	command := exec.Command("go", "test", "./...")
 	command.Dir = outputDir
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("ORM static and full-query APIs did not compile: %v\n%s\nGenerated source:\n%s", err, output, generated)
+	}
+}
+
+func TestCompileORMExamplePromotesGenericFullSQLQueries(t *testing.T) {
+	examplePath := filepath.Join("..", "examples", "orm.gpp")
+	outputDir := t.TempDir()
+	if err := CompileFilesWithOptions([]string{examplePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "orm.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []string{
+		"__gppUnwrap(orm.Get[Employee](db",
+		"__gppUnwrap(orm.Select[Employee](db",
+	} {
+		if !strings.Contains(string(generated), call) {
+			t.Errorf("ORM example call was not promoted: %s\nGenerated source:\n%s", call, generated)
+		}
 	}
 }
 

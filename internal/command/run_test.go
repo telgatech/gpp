@@ -239,6 +239,74 @@ func TestRunAcceptsGoDirectoryWithoutGoPlusSources(t *testing.T) {
 	}
 }
 
+func TestOrderedMapAndRingContainers(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("GPP_CACHE", t.TempDir())
+	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module containerstest\n\ngo 1.26\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package main
+import (
+	"fmt"
+	"gpp/container"
+)
+func main() {
+	var ordered container.OrderedMap[string, int]
+	ordered.Set("a", 1)
+	ordered.Set("b", 2)
+	ordered.Set("a", 3)
+	ordered.Delete("a")
+	ordered.Set("a", 4)
+	var visited []string
+	entries := ordered.Entries()
+	for _, entry := range entries {
+		visited = append(visited, fmt.Sprintf("%s:%d", entry.Key, entry.Value))
+		if entry.Key == "b" {
+			ordered.Delete("a")
+			ordered.Set("c", 5)
+		}
+	}
+	fmt.Println(ordered.Keys(), ordered.Values(), visited)
+
+	var compacted container.OrderedMap[int, int]
+	for value := 0; value < 80; value++ {
+		compacted.Set(value, value)
+	}
+	for value := 0; value < 60; value++ {
+		compacted.Delete(value)
+	}
+	compacted.Set(80, 80)
+	lastMapValue, foundLast := compacted.Get(79)
+	if compacted.Len() != 21 || !foundLast || lastMapValue != 79 || compacted.Keys()[0] != 60 {
+		panic("ordered map compaction lost entries or order")
+	}
+
+	var ring container.Ring[string]
+	_, empty := ring.Current()
+	ring.PushBack("compile")
+	ring.PushBack("test")
+	ring.PushFront("lint")
+	current, _ := ring.Current()
+	firstNext, _ := ring.Next()
+	wrapped, _ := ring.Move(1)
+	removed, _ := ring.RemoveCurrent()
+	previous, _ := ring.Prev()
+	fmt.Println(empty, ring.Values(), current, firstNext, wrapped, removed, previous)
+	last, _ := ring.Move(1000000001)
+	fmt.Println(last, ring.Len())
+}`
+	path := filepath.Join(directory, "main.gpp")
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runCommandAndCaptureStdout(t, []string{"run", path})
+	want := "[b c] [2 5] [b:2 a:4]\nfalse [compile test] compile test lint lint test\ncompile 2\n"
+	if got != want {
+		t.Fatalf("container output = %q, want %q", got, want)
+	}
+}
+
 func runCommandAndCaptureStdout(t *testing.T, args []string) string {
 	t.Helper()
 	reader, writer, err := os.Pipe()

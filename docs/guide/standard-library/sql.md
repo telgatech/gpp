@@ -2,7 +2,9 @@
 
 `gpp/sql` adds typed `Get[T]` and `Select[T]` methods to Go's `*sql.DB` and
 `*sql.Tx`. It keeps full SQL queries while returning scalars, inline structs,
-and structs with static Go++ types. ORM model mapping belongs to `gpp/orm`.
+and structs with static Go++ types.
+
+For Go++ model mapping and CRUD helpers, see the [ORM guide](/guide/standard-library/orm).
 
 Import `gpp/sql` to enable its database extension methods:
 
@@ -10,7 +12,6 @@ Import `gpp/sql` to enable its database extension methods:
 import (
     "database/sql"
     gppsql "gpp/sql"
-    orm "gpp/orm"
 )
 ```
 
@@ -41,20 +42,8 @@ fields keep their zero values. Use explicit SQL aliases if labels are
 ambiguous or multiple fields normalize to the same name. If two columns map to
 the same field, the query returns an error.
 
-For full-SQL queries into ORM models, use `orm.GetSQL[T]` and
-`orm.SelectSQL[T]`. The ORM owns model metadata and uses the executor contract
-from this package. They return `*T` or `[]*T` with an error:
-
-```gpp
-employee, err := orm.GetSQL[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
-if err != nil { panic(err) }
-employees, err := orm.SelectSQL[Employee](db, "SELECT id, name FROM employees ORDER BY id")
-if err != nil { panic(err) }
-```
-
 The destination-based `Get` and `Select` overloads are deprecated. Use a type
-argument to make a full-SQL result shape explicit. For model conditions and
-CRUD helpers, use the model methods from [`gpp/orm`](/guide/standard-library/orm).
+argument to make a full-SQL result shape explicit.
 
 The [typed SQL feature guide](/features/sql) covers struct mapping and pointer
 results. See the [SQL package specification](/reference/specifications/std.sql)

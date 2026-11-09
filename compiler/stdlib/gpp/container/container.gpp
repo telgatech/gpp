@@ -49,6 +49,141 @@ class Set[T comparable] {
 	}
 }
 
+// orderedMapEntry stores one insertion-ordered key/value pair.
+class orderedMapEntry[K comparable, V any] {
+	Key K
+	Value V
+	Active bool
+}
+
+// OrderedMapEntry is one key/value pair returned by OrderedMap.Entries.
+class OrderedMapEntry[K comparable, V any] {
+	Key K
+	Value V
+}
+
+// OrderedMap maps keys to values while preserving insertion order. Its zero value is ready to use.
+class OrderedMap[K comparable, V any] {
+	entries []orderedMapEntry[K, V]
+	indexes map[K]int
+	size int
+
+	func Set(key K, value V) {
+		if index, found := this.indexes[key]; found {
+			this.entries[index].Value = value
+			return
+		}
+		if this.indexes == nil {
+			this.indexes = make(map[K]int)
+		}
+		var entry orderedMapEntry[K, V]
+		entry.Key = key
+		entry.Value = value
+		entry.Active = true
+		this.indexes[key] = len(this.entries)
+		this.entries = append(this.entries, entry)
+		this.size++
+	}
+
+	func Get(key K) (V, bool) {
+		index, found := this.indexes[key]
+		if !found {
+			var zero V
+			return zero, false
+		}
+		return this.entries[index].Value, true
+	}
+
+	func Contains(key K) bool {
+		_, found := this.indexes[key]
+		return found
+	}
+
+	func Delete(key K) bool {
+		index, found := this.indexes[key]
+		if !found {
+			return false
+		}
+		delete(this.indexes, key)
+		var zeroKey K
+		var zeroValue V
+		this.entries[index].Key = zeroKey
+		this.entries[index].Value = zeroValue
+		this.entries[index].Active = false
+		this.size--
+		if this.size == 0 {
+			this.entries = nil
+			this.indexes = nil
+			return true
+		}
+		if len(this.entries) >= 64 && len(this.entries) > this.size*2 {
+			this.compact()
+		}
+		return true
+	}
+
+	func Len() int {
+		return this.size
+	}
+
+	func IsEmpty() bool {
+		return this.size == 0
+	}
+
+	func Clear() {
+		this.entries = nil
+		this.indexes = nil
+		this.size = 0
+	}
+
+	func Keys() []K {
+		keys := make([]K, 0, this.size)
+		for _, entry := range this.entries {
+			if entry.Active {
+				keys = append(keys, entry.Key)
+			}
+		}
+		return keys
+	}
+
+	func Values() []V {
+		values := make([]V, 0, this.size)
+		for _, entry := range this.entries {
+			if entry.Active {
+				values = append(values, entry.Value)
+			}
+		}
+		return values
+	}
+
+	func Entries() []OrderedMapEntry[K, V] {
+		entries := make([]OrderedMapEntry[K, V], 0, this.size)
+		for _, entry := range this.entries {
+			if entry.Active {
+				var pair OrderedMapEntry[K, V]
+				pair.Key = entry.Key
+				pair.Value = entry.Value
+				entries = append(entries, pair)
+			}
+		}
+		return entries
+	}
+
+	func compact() {
+		entries := make([]orderedMapEntry[K, V], 0, this.size)
+		indexes := make(map[K]int, this.size)
+		for _, entry := range this.entries {
+			if !entry.Active {
+				continue
+			}
+			indexes[entry.Key] = len(entries)
+			entries = append(entries, entry)
+		}
+		this.entries = entries
+		this.indexes = indexes
+	}
+}
+
 // Stack is a last-in, first-out container. Its zero value is ready to use.
 class Stack[T] {
 	items []T
@@ -365,6 +500,166 @@ class List[T] {
 		values := make([]T, 0, this.size)
 		for index := this.head; index != 0; index = this.nodes[index].Next {
 			values = append(values, this.nodes[index].Value)
+		}
+		return values
+	}
+}
+
+// ringNode is an internal typed node stored by Ring.
+class ringNode[T] {
+	Value T
+	Previous *ringNode[T]
+	Next *ringNode[T]
+}
+
+// Ring stores values in a circular doubly linked sequence. Its zero value is ready to use.
+class Ring[T] {
+	first *ringNode[T]
+	last *ringNode[T]
+	current *ringNode[T]
+	size int
+
+	func PushFront(value T) {
+		var node ringNode[T]
+		node.Value = value
+		if this.size == 0 {
+			node.Previous = &node
+			node.Next = &node
+			this.first = &node
+			this.last = &node
+			this.current = &node
+			this.size = 1
+			return
+		}
+
+		node.Previous = this.last
+		node.Next = this.first
+		this.last.Next = &node
+		this.first.Previous = &node
+		this.first = &node
+		this.size++
+	}
+
+	func PushBack(value T) {
+		var node ringNode[T]
+		node.Value = value
+		if this.size == 0 {
+			node.Previous = &node
+			node.Next = &node
+			this.first = &node
+			this.last = &node
+			this.current = &node
+			this.size = 1
+			return
+		}
+
+		node.Previous = this.last
+		node.Next = this.first
+		this.last.Next = &node
+		this.first.Previous = &node
+		this.last = &node
+		this.size++
+	}
+
+	func Current() (T, bool) {
+		if this.current == nil {
+			var zero T
+			return zero, false
+		}
+		return this.current.Value, true
+	}
+
+	func Next() (T, bool) {
+		if this.current == nil {
+			var zero T
+			return zero, false
+		}
+		this.current = this.current.Next
+		return this.current.Value, true
+	}
+
+	func Prev() (T, bool) {
+		if this.current == nil {
+			var zero T
+			return zero, false
+		}
+		this.current = this.current.Previous
+		return this.current.Value, true
+	}
+
+	func Move(steps int) (T, bool) {
+		if this.current == nil {
+			var zero T
+			return zero, false
+		}
+		steps %= this.size
+		for steps > 0 {
+			this.current = this.current.Next
+			steps--
+		}
+		for steps < 0 {
+			this.current = this.current.Previous
+			steps++
+		}
+		return this.current.Value, true
+	}
+
+	func RemoveCurrent() (T, bool) {
+		if this.current == nil {
+			var zero T
+			return zero, false
+		}
+
+		node := this.current
+		value := node.Value
+		if this.size == 1 {
+			this.first = nil
+			this.last = nil
+			this.current = nil
+			this.size = 0
+		} else {
+			node.Previous.Next = node.Next
+			node.Next.Previous = node.Previous
+			if node == this.first {
+				this.first = node.Next
+			}
+			if node == this.last {
+				this.last = node.Previous
+			}
+			this.current = node.Next
+			this.size--
+		}
+		var zero T
+		node.Value = zero
+		node.Previous = nil
+		node.Next = nil
+		return value, true
+	}
+
+	func Len() int {
+		return this.size
+	}
+
+	func IsEmpty() bool {
+		return this.size == 0
+	}
+
+	func Clear() {
+		this.first = nil
+		this.last = nil
+		this.current = nil
+		this.size = 0
+	}
+
+	func Values() []T {
+		values := make([]T, 0, this.size)
+		if this.first == nil {
+			return values
+		}
+		node := this.first
+		for index := 0; index < this.size; index++ {
+			values = append(values, node.Value)
+			node = node.Next
 		}
 		return values
 	}

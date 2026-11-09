@@ -230,6 +230,39 @@ extend *DB {
 	}
 }
 
+func TestPromotedCallAcceptsMultipleVariadicArguments(t *testing.T) {
+	expression, err := ParseExpressionTokens(expressionTokens(t, `orm.Get[Employee](db, "SELECT 1 WHERE name = ? AND id = ?", "Grace", id)`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, ok := expression.(*CallExpr)
+	if !ok {
+		t.Fatalf("expected call expression, got %T", expression)
+	}
+	context := constructorContext{
+		ImportedFunctionSignatures: map[string]map[string][]callableSignature{
+			"orm": {
+				"Get": {{
+					Name: "Get",
+					Parameters: []parameterInfo{
+						{Name: "exec", TypeAST: parseTypeText("SQLExecutor")},
+						{Name: "query", TypeAST: parseTypeText("string")},
+						{Name: "args", TypeAST: &VariadicType{Element: parseTypeText("any")}},
+					},
+					ResultAST: &TupleType{Elements: []TypeNode{
+						parseTypeText("*T"),
+						parseTypeText("error"),
+					}},
+				}},
+			},
+		},
+	}
+	result, found := promotedCallForExpr(call, context, nil)
+	if !found || !result.trailingError || len(result.types) != 2 {
+		t.Fatalf("generic call with multiple variadic arguments was not promoted: found=%v result=%#v", found, result)
+	}
+}
+
 func TestLowerTryUsesGoASTWrapper(t *testing.T) {
 	catchTokens, err := LexSource("catch-body", `println(err)`)
 	if err != nil {

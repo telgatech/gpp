@@ -55,9 +55,11 @@ up a model by its inferred or explicitly marked primary key. `All`, `First`, and
 primary key by default; `All` and `First` use ascending order, while `Last` uses
 descending order. They accept an optional persisted field or column name to
 sort by. `Find` requires a primary key; a custom sort field lets the other
-three work without one. For full-SQL model queries, use `orm.GetSQL[T]` or
-`orm.SelectSQL[T]` with a complete `SELECT` statement. For anonymous structs and scalars,
-and plain structs, use the separate [`gpp/sql` package](/guide/standard-library/sql).
+three work without one. `Employee.Get` and `Employee.Select` take condition
+fragments, not complete `SELECT` statements. For a complete query that should
+populate ORM models, the package exposes `orm.Get[T]` and
+`orm.Select[T]`. For scalar or ordinary struct results, use the separate
+[`gpp/sql` package](/guide/standard-library/sql).
 
 `Page` returns the first 50 rows in primary-key order. Pass the last row's
 primary-key value on subsequent calls to continue paging. Paging is sequential

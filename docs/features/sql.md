@@ -66,13 +66,13 @@ same way.
 
 ## Query ORM models
 
-The ORM owns model-specific column mapping. Use `orm.GetSQL` and
-`orm.SelectSQL` for full-SQL queries into model classes:
+The ORM owns model-specific column mapping. Use `orm.Get` and
+`orm.Select` for full-SQL queries into model classes:
 
 ```gpp
-employee, err := orm.GetSQL[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
+employee, err := orm.Get[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
 if err != nil { panic(err) }
-employees, err := orm.SelectSQL[Employee](db, "SELECT id, name FROM employees ORDER BY id")
+employees, err := orm.Select[Employee](db, "SELECT id, name FROM employees ORDER BY id")
 if err != nil { panic(err) }
 ```
 

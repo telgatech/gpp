@@ -3985,6 +3985,7 @@ func (s *server) callExpressionType(state *fileState, method *compiler.Method, c
 		if memberOffset >= 0 && memberOffset <= len(state.Source) {
 			position := positionAtOffset(state.Source, memberOffset)
 			receiverText := sourceExpression(state.Source, selector.Receiver)
+			_, _, packageQualifier := s.importedPackageForQualifier(state, receiverText)
 			dynamicType := s.expressionType(state, method, selector.Receiver, depth+1)
 			if dynamicType == "" {
 				dynamicType = s.receiverType(state, receiverText, memberOffset)
@@ -3994,6 +3995,9 @@ func (s *server) callExpressionType(state *fileState, method *compiler.Method, c
 			}
 			for _, info := range s.resolveSymbolsAt(state.URI, position, selector.Name) {
 				if info.Symbol.Kind != compiler.DocMethod && info.Symbol.Kind != compiler.DocExtension && info.Symbol.Kind != compiler.DocFunction {
+					continue
+				}
+				if packageQualifier && (info.Symbol.Kind != compiler.DocFunction || info.Symbol.Parent != "") {
 					continue
 				}
 				if result := callableResultTypeFor(info, dynamicType, typeArguments); result != "" {

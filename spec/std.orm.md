@@ -218,8 +218,8 @@ class Model {
     }
 }
 
-func GetSQL[T any](exec SQLExecutor, query string, args ...any) (*T, error)
-func SelectSQL[T any](exec SQLExecutor, query string, args ...any) ([]*T, error)
+func Get[T any](exec SQLExecutor, query string, args ...any) (*T, error)
+func Select[T any](exec SQLExecutor, query string, args ...any) ([]*T, error)
 ```
 
 All hooks are optional.
@@ -324,7 +324,7 @@ employees, err := Employee.Select(db, "active = $1", true)
 
 These methods work with `*sql.DB` and `*sql.Tx`. `Get` returns one model and
 `Select` returns a slice of model pointers. For full-SQL queries into model
-types, use `orm.GetSQL` and `orm.SelectSQL`. The generic `gpp/sql` package
+types, use `orm.Get` and `orm.Select`. The generic `gpp/sql` package
 handles scalar, anonymous struct, and named struct result shapes.
 
 # Insert

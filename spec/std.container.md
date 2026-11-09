@@ -53,10 +53,9 @@ keeping element storage and operations statically typed end to end.
 
 ## Initial API
 
-The first release includes `Set[T comparable]`, `Stack[T]`, `Queue[T]`,
-`Deque[T]`, `List[T]`, and `PriorityQueue[T]`. A circular ring, ordered map,
-ordered set, multimap, and linked-list node handles are outside this initial
-scope.
+The initial API includes `Set[T comparable]`, `OrderedMap[K comparable, V any]`, `Stack[T]`,
+`Queue[T]`, `Deque[T]`, `List[T]`, `Ring[T]`, and `PriorityQueue[T]`. An
+ordered set, multimap, and linked-list node handles are outside this scope.
 
 ### Set
 
@@ -84,6 +83,43 @@ func (this *Set[T]) Values() []T
 `Add` returns true only when it inserts a previously absent value. `Remove`
 returns true only when it removes a present value. `Values` returns a new slice;
 its order is unspecified. Mutating the returned slice must not modify the set.
+
+### Ordered map
+
+`OrderedMap[K comparable, V any]` maps comparable keys to values and iterates entries in
+insertion order. Its zero value is ready to use. `Entries` returns a snapshot of
+public `OrderedMapEntry[K, V]` values, which can be iterated with slice methods.
+
+```gpp
+var settings container.OrderedMap[string, int]
+settings.Set("retries", 3)
+settings.Set("timeout", 10)
+value, found := settings.Get("retries")
+keys := settings.Keys() // ["retries", "timeout"]
+```
+
+Required methods:
+
+```gpp
+func (this *OrderedMap[K, V]) Set(key K, value V)
+func (this *OrderedMap[K, V]) Get(key K) (V, bool)
+func (this *OrderedMap[K, V]) Contains(key K) bool
+func (this *OrderedMap[K, V]) Delete(key K) bool
+func (this *OrderedMap[K, V]) Len() int
+func (this *OrderedMap[K, V]) IsEmpty() bool
+func (this *OrderedMap[K, V]) Clear()
+func (this *OrderedMap[K, V]) Keys() []K
+func (this *OrderedMap[K, V]) Values() []V
+func (this *OrderedMap[K, V]) Entries() []OrderedMapEntry[K, V]
+```
+
+`OrderedMapEntry[K, V]` has public `Key K` and `Value V` fields.
+
+Setting an existing key replaces its value without changing its position.
+Deleting and then setting a key again places it at the end. `Keys` and
+`Values` return new slices in insertion order. `Entries` returns a new slice
+of key/value snapshots in insertion order; changing the map after the call
+does not change the returned entries.
 
 ### Stack
 
@@ -195,6 +231,41 @@ func (this *List[T]) Values() []T
 
 Endpoint insertion and removal must be O(1). `Values` returns a new slice in
 front-to-back order. The list does not expose internal nodes or links.
+
+### Ring
+
+`Ring[T]` stores values in a circular doubly linked sequence. Its zero value is
+ready to use. The first inserted value becomes current; `Next` and `Prev` move
+the current position and wrap around the ring.
+
+```gpp
+var schedule container.Ring[string]
+schedule.PushBack("compile")
+schedule.PushBack("test")
+current, ok := schedule.Current() // "compile", true
+next, ok := schedule.Next()       // "test", true
+```
+
+Required methods:
+
+```gpp
+func (this *Ring[T]) PushFront(value T)
+func (this *Ring[T]) PushBack(value T)
+func (this *Ring[T]) Current() (T, bool)
+func (this *Ring[T]) Next() (T, bool)
+func (this *Ring[T]) Prev() (T, bool)
+func (this *Ring[T]) Move(steps int) (T, bool)
+func (this *Ring[T]) RemoveCurrent() (T, bool)
+func (this *Ring[T]) Len() int
+func (this *Ring[T]) IsEmpty() bool
+func (this *Ring[T]) Clear()
+func (this *Ring[T]) Values() []T
+```
+
+Positive `Move` steps advance like `Next`; negative steps advance like `Prev`.
+Steps wrap modulo the ring length. `RemoveCurrent` returns the current value
+and makes its successor current. `Values` returns a new slice from the first
+value through the last, regardless of the current position.
 
 ### Priority queue
 

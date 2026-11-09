@@ -44,4 +44,22 @@ func main() {
 	priorities.Push(5)
 	firstPriority, hasPriority := priorities.Pop()
 	fmt.Println("priority queue:", firstPriority, hasPriority)
+
+	var settings ctr.OrderedMap[string, int]
+	settings.Set("retries", 3)
+	settings.Set("timeout", 10)
+	settings.Set("retries", 5)
+	settings.Delete("timeout")
+	settings.Set("timeout", 20)
+	fmt.Println("ordered map:", settings.Keys(), settings.Values())
+
+	var schedule ctr.Ring[string]
+	schedule.PushBack("compile")
+	schedule.PushBack("test")
+	schedule.PushBack("package")
+	current, hasCurrent := schedule.Current()
+	next, hasNext := schedule.Next()
+	wrapped, hasWrapped := schedule.Move(1)
+	removed, hasRemoved := schedule.RemoveCurrent()
+	fmt.Println("ring:", schedule.Values(), current, hasCurrent, next, hasNext, wrapped, hasWrapped, removed, hasRemoved)
 }
