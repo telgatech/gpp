@@ -8,6 +8,7 @@
 - Improved prelude extension lowering in expression and block lambdas and nested anonymous struct fields; backend diagnostics no longer expose generated helper names.
 - Fixed LSP member completion after generic callback calls such as `Map(value => value.ToUpper()).`.
 - Added whole-source compiler fuzzing alongside regression fuzzers for callback lowering and inherited default-method calls.
+- Fixed inherited static method lowering when calls pass multiple values to a variadic parameter, including ORM model `Select` queries.
 
 ## 2026-11-08
 

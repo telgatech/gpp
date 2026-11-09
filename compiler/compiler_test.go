@@ -4092,6 +4092,8 @@ func LoadEmployee(db *sql.DB, id int64) {
 func LoadEmployees(db *sql.DB, prefix string) {
     employees := Employee.Select(db, "name LIKE $1 ORDER BY name", prefix + "%")
     _ = employees
+    employeesWithMultipleArgs := Employee.Select(db, "id = $1 AND name LIKE $2", int64(1), prefix + "%")
+    _ = employeesWithMultipleArgs
 }
 
 func LoadByPrimaryKey(db *sql.DB, id int64) {

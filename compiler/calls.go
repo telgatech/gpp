@@ -946,7 +946,23 @@ func resolveCallableCall(name string, args []string, signatures []callableSignat
 	}
 	if !named {
 		for _, signature := range signatures {
-			if len(args) > len(signature.Parameters) || len(args) < requiredParameterCount(signature) {
+			variadicIndex := variadicParameterIndex(signature)
+			if (variadicIndex < 0 && len(args) > len(signature.Parameters)) || len(args) < requiredParameterCount(signature) {
+				continue
+			}
+			if variadicIndex >= 0 {
+				result := append([]string{}, args...)
+				for index := len(args); index < variadicIndex; index++ {
+					parameter := signature.Parameters[index]
+					if !parameter.HasDefault {
+						result = nil
+						break
+					}
+					result = append(result, parameter.defaultText())
+				}
+				if result != nil {
+					return result, len(result) != len(args), nil
+				}
 				continue
 			}
 			if len(args) == len(signature.Parameters) || callableHasDefaults(signature) {
@@ -1128,6 +1144,35 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 			break
 		}
 	}
+	variadicIndex := variadicParameterIndex(signature)
+	if !named && variadicIndex >= 0 {
+		if !staticCall {
+			return nil, false, nil
+		}
+		if len(call.Arguments) < requiredParameterCount(signature) {
+			return nil, false, nil
+		}
+		arguments := append([]CallArg(nil), call.Arguments...)
+		for index := len(arguments); index < variadicIndex; index++ {
+			parameter := signature.Parameters[index]
+			if !parameter.HasDefault || parameter.DefaultAST == nil {
+				return nil, false, nil
+			}
+			arguments = append(arguments, CallArg{Value: parameter.DefaultAST})
+		}
+		callee := call.Callee
+		if staticCall && signature.GoName != "" {
+			callee = staticCallCalleeForSignature(call.Callee, signature, context)
+			if signature.StaticSelf {
+				var err error
+				callee, err = bindStaticSelfCall(callee, call.Callee)
+				if err != nil {
+					return nil, true, err
+				}
+			}
+		}
+		return &CallExpr{Callee: callee, Arguments: arguments, SpanValue: call.SpanValue}, true, nil
+	}
 	if !named && len(call.Arguments) == len(signature.Parameters) {
 		if !staticCall || signature.GoName == "" {
 			return call, false, nil
@@ -1146,7 +1191,7 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 			SpanValue: call.SpanValue,
 		}, true, nil
 	}
-	if !named && len(call.Arguments) > len(signature.Parameters) {
+	if !named && variadicIndex < 0 && len(call.Arguments) > len(signature.Parameters) {
 		return nil, false, nil
 	}
 	if !named && len(call.Arguments) < requiredParameterCount(signature) {
@@ -1446,6 +1491,16 @@ func requiredParameterCount(signature callableSignature) int {
 		}
 	}
 	return count
+}
+
+func variadicParameterIndex(signature callableSignature) int {
+	if len(signature.Parameters) == 0 {
+		return -1
+	}
+	if _, variadic := signature.Parameters[len(signature.Parameters)-1].TypeAST.(*VariadicType); variadic {
+		return len(signature.Parameters) - 1
+	}
+	return -1
 }
 
 func transformCallableCalls(src string, context constructorContext) (string, error) {
