@@ -9,11 +9,32 @@ resolution, building, and execution to the Go toolchain.
 - Go 1.26 or newer
 - Node.js 20 or newer only when developing this documentation site
 
-Install the CLI from the repository module:
-
-```bash
-go install github.com/telgatech/gpp@main
-```
+<div class="install-options">
+  <section class="install-card">
+    <div class="install-card-heading">
+      <img src="/homebrew.svg" width="32" height="32" alt="Homebrew icon">
+      <h3>Homebrew</h3>
+    </div>
+    <ol>
+      <li><a href="https://brew.sh/">Install Homebrew</a> if needed.</li>
+      <li>Add the Go++ tap: <pre><code>brew tap telgatech/gpp</code></pre></li>
+      <li>Install Go++ and verify it: <pre><code>brew install --HEAD telgatech/gpp/gpp
+gpp version</code></pre></li>
+      <li>Update to the latest commit on <code>main</code>: <pre><code>brew update
+brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
+    </ol>
+    <p>The formula currently tracks <code>main</code>, so <code>--HEAD</code> is required until a versioned release. Homebrew Core also has an unrelated formula named <code>gpp</code>; uninstall it first if present, since Homebrew cannot install both same-named formulae side by side.</p>
+  </section>
+  <section class="install-card">
+    <div class="install-card-heading">
+      <img src="/go.svg" width="32" height="32" alt="Go icon">
+      <h3>Go install</h3>
+    </div>
+    <p>For Go developers who already have Go 1.26 or newer and want to try Go++ quickly:</p>
+    <pre><code>go install github.com/telgatech/gpp@main</code></pre>
+    <p>Check the installation with <code>gpp version</code>.</p>
+  </section>
+</div>
 
 Try the command:
 
@@ -59,27 +80,35 @@ Use `~/.zshrc` for the default shell on macOS, or `~/.bashrc` for Bash on Linux
 
 ## Your first program
 
-Create `hello.gpp`:
+Start with a project directory:
+
+```bash
+gpp init hello
+cd hello
+```
+
+`gpp init` creates a starter project with `main.gpp` and a Go module.
+
+The generated `main.gpp` contains:
 
 ```go
 import "fmt"
 
 func main() {
-    name := "Go++"
-    fmt.Println("Hello {{name}}")
+	fmt.Println("Hello from Go++")
 }
 ```
 
-Run it directly:
+Run the project:
 
 ```bash
-gpp run hello.gpp
+gpp run
 ```
 
-The same source can be compiled as a native executable:
+Build and run a native executable:
 
 ```bash
-gpp build hello.gpp
+gpp build
 ./hello
 ```
 

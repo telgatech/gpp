@@ -160,6 +160,68 @@ html.dark .VPHomeHero .container .image-container::after {
   border-radius: 14px;
 }
 
+.install-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.install-card {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 14px;
+  background: var(--vp-c-bg-soft);
+}
+
+.install-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.install-card-heading img {
+  flex: 0 0 32px;
+  object-fit: contain;
+}
+
+.install-card-heading h3 {
+  margin: 0;
+  border: 0;
+  color: var(--vp-c-text-1);
+  font-size: 1.15rem;
+}
+
+.install-card p,
+.install-card li {
+  color: var(--vp-c-text-2);
+  line-height: 1.65;
+}
+
+.install-card ol {
+  padding-left: 1.35rem;
+}
+
+.install-card li + li {
+  margin-top: 10px;
+}
+
+.install-card pre {
+  overflow-x: auto;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 9px;
+  background: var(--vp-c-bg);
+  line-height: 1.5;
+}
+
+.install-card code {
+  font-family: var(--vp-font-family-mono);
+}
+
 .VPHome .home-updates {
   max-width: 1152px;
   margin: 0 auto;
