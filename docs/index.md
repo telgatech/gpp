@@ -83,7 +83,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>How can I try Go++?</summary>
-<p>Install the CLI with Homebrew by adding the <code>telgatech/gpp</code> tap, then run <code>brew install --HEAD telgatech/gpp/gpp</code>. Go developers who already have Go 1.26 or newer can install it with <code>go install github.com/telgatech/gpp@main</code>. Then create and run a starter project with <code>gpp init hello</code> and <code>gpp run</code>. The <a href="/guide/getting-started">getting started guide</a> includes update instructions.</p>
+<p>Follow the <a href="/guide/getting-started">Getting Started guide</a> to install Go++ and create your first project.</p>
 </details>
 
 </div>
