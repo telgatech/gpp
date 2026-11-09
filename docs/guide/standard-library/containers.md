@@ -4,7 +4,10 @@
 collection patterns. Import it explicitly:
 
 ```gpp
-import "gpp/container"
+import (
+	"fmt"
+	"gpp/container"
+)
 ```
 
 Each structure stores its element type directly. For example,
@@ -16,15 +19,17 @@ element does not require a type assertion.
 | Type | Use it for | Order |
 | --- | --- | --- |
 | `Set[T comparable]` | Unique values and membership checks | `Values()` order is unspecified |
+| `OrderedMap[K, V]` | Key/value lookup with predictable traversal | Insertion order |
 | `Stack[T]` | Last-in, first-out work | Most recently pushed item comes out first |
 | `Queue[T]` | First-in, first-out work | Earliest enqueued item comes out first |
 | `Deque[T]` | Adding or removing at either end | Preserves front-to-back order |
 | `List[T]` | Stable endpoint operations with linked storage | Front-to-back order |
+| `Ring[T]` | Cyclic traversal and round-robin work | Wraps from either end |
 | `PriorityQueue[T]` | Repeatedly selecting the next item by priority | Comparator decides which item comes out first |
 
-The zero values of `Set`, `Stack`, `Queue`, `Deque`, and `List` are ready to
-use. A `PriorityQueue` needs an ordering function and must be created with
-`NewPriorityQueue`.
+The zero values of `Set`, `OrderedMap`, `Stack`, `Queue`, `Deque`, `List`, and
+`Ring` are ready to use. A `PriorityQueue` needs an ordering function and must
+be created with `NewPriorityQueue`.
 
 ## Set
 
@@ -46,6 +51,33 @@ values := seen.Values()
 ```
 
 `Values` returns a new slice. Its ordering is unspecified.
+
+## Ordered map
+
+`OrderedMap[K, V]` provides map lookup while keeping keys in insertion order.
+Updating an existing key keeps its position; deleting and adding it again
+moves it to the end. The zero value is ready to use:
+
+```gpp
+var settings container.OrderedMap[string, int]
+settings.Set("retries", 3)
+settings.Set("timeout", 10)
+settings.Set("retries", 5)
+
+value, found := settings.Get("retries") // 5, true
+fmt.Println(settings.Keys())            // [retries timeout]
+
+entries := settings.Entries()
+
+for _, entry := range entries {
+    fmt.Printf("%s=%d ", entry.Key, entry.Value)
+}
+```
+
+`Get` returns `(zero, false)` for a missing key. `Keys` and `Values` return
+new slices in insertion order. `Entries` returns a snapshot slice of
+`OrderedMapEntry` values with public `Key` and `Value` fields. Iterate over the
+snapshot with Go++'s `for range` syntax.
 
 ## Stack and queue
 
@@ -100,6 +132,29 @@ last, ok := history.PopBack()
 
 `Values` returns a new front-to-back slice. `Front`, `Back`, `PopFront`, and
 `PopBack` return `(zero, false)` when the list is empty.
+
+## Ring
+
+`Ring[T]` stores a circular doubly linked sequence. It is useful when work
+should cycle through a set of values, such as a round-robin schedule. The zero
+value is ready to use. The first inserted value becomes current:
+
+```gpp
+var schedule container.Ring[string]
+schedule.PushBack("compile")
+schedule.PushBack("test")
+schedule.PushBack("package")
+
+current, hasCurrent := schedule.Current() // "compile", true
+next, hasNext := schedule.Next()          // "test", true
+previous, hasPrevious := schedule.Prev()  // "compile", true
+schedule.Move(-1)                          // wraps to "package"
+```
+
+`Next` and `Prev` move the current position and wrap around the ring. `Move`
+accepts positive or negative steps. `RemoveCurrent` removes the current value
+and makes its successor current. `Values` returns the sequence from its first
+value to its last, independent of the current position.
 
 ## Priority queue
 

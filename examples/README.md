@@ -51,18 +51,15 @@ The examples cover:
 - `annotation_inheritance.gpp` — direct class annotations, inherited field and
   method metadata, original owners, parameter annotations, and unannotated
   overrides.
-- `orm.gpp` — a mini in-memory SQLite app using `gpp/sql` typed scalar/struct
-  queries and `gpp/orm` model helpers,
-  annotated models, runtime metadata inspection, model validation, lifecycle
-  hooks, and ordinary `database/sql`, including condition-based model queries
-  and `orm.GetSQL`/`orm.SelectSQL` for full-SQL model queries on both `*sql.DB`
-  and `*sql.Tx`.
+- `orm.gpp` — a mini in-memory SQLite app with annotated `Employee` and
+  `Department` models, CRUD, condition-based queries, ordering and paging, and
+  a full-SQL employee query joined to departments with `orm.Get` and
+  `orm.Select`.
   It uses the pure-Go `modernc.org/sqlite` driver; `gpp build` and `gpp run`
   resolve it through `go mod tidy`.
   Query filters use numbered `$1`, `$2`, ... placeholders shared by SQLite and
-  PostgreSQL. Lifecycle hooks receive a shared `SQLExecutor`, so child writes
-  use the active transaction automatically. The example records hook events as
-  `Event` models through `event.Insert(exec)`.
+  PostgreSQL. Generic scalar and struct SQL results are demonstrated in
+  `sql.gpp`.
 - `sql.gpp` — direct full-SQL access through `gpp/sql`, with typed scalar and
   struct results, the shared `Executor` interface, and queries through both a
   database handle and an active transaction.

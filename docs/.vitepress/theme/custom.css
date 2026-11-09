@@ -5,7 +5,7 @@
   --vp-button-brand-bg: var(--vp-c-brand-1);
   --vp-button-brand-hover-bg: var(--vp-c-brand-2);
   --vp-button-brand-active-bg: var(--vp-c-brand-3);
-  --vp-nav-logo-height: 42px;
+  --vp-nav-logo-height: 48px;
   --vp-layout-top-height: 40px;
 }
 
@@ -47,8 +47,8 @@
 
 .VPNav .VPNavBarTitle .logo {
   box-sizing: border-box;
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
   object-fit: cover;
   object-position: center;
   filter: drop-shadow(0 1px 1px rgb(20 36 72 / 12%));

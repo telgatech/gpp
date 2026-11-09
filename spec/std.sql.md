@@ -75,8 +75,8 @@ unmatched fields retain their zero values. If multiple fields normalize to the
 same name, the query must use an explicit alias to disambiguate them. Duplicate
 columns mapping to one field are an error.
 
-ORM model metadata is not handled by this package. Use `orm.GetSQL[T]` and
-`orm.SelectSQL[T]` for full-SQL model queries; those functions live in
+ORM model metadata is not handled by this package. Use `orm.Get[T]` and
+`orm.Select[T]` for full-SQL model queries; those functions live in
 `gpp/orm` and use the executor contract declared here.
 
 ## Destination overloads

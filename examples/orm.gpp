@@ -5,81 +5,73 @@ import (
     "fmt"
     _ "modernc.org/sqlite"
     orm "gpp/orm"
-    gppsql "gpp/sql"
 )
 
 class Employee : orm.Model {
     Id int64
     Name string
     Email string
+    DepartmentId int64
     DisplayLabel string @{orm.Ignore}
 }
 
-func ModelAPIExample(db *sql.DB) {
-    ada := Employee(Id: 1, Name: "Ada Lovelace", Email: "ada@example.com", DisplayLabel: "Ada")
-    grace := Employee(Id: 2, Name: "Grace Hopper", Email: "grace@example.com", DisplayLabel: "Grace")
-    ada.Insert(db)
-    grace.Insert(db)
-
-    ada.Email = "ada@analytical.example"
-    ada.Update(db)
-
-    // Model queries use conditions while SQL is built from model metadata.
-    employees := Employee.Select(db, "name LIKE $1", "A%")
-    target := Employee.Get(db, "id = $1", ada.Id)
-    found := Employee.Find(db, ada.Id)
-    fmt.Println("model queries:", len(employees), "selected, get:", target.Name)
-    fmt.Println("inferred primary key:", found.Name)
-
-    first := Employee.First(db)
-    last := Employee.Last(db)
-    var page []*Employee = Employee.Page(db, 1)
-    fmt.Println("first/last:", first.Name, last.Name)
-    if page.NotEmpty() {
-        nextPage := Employee.Page(db, 1, page.Last().Id)
-        fmt.Println("next page:", len(nextPage))
-    }
-
-    // Delete through the model so the ORM builds the statement from its metadata.
-    target.Destroy(db)
-}
-
-func GenericDBExample(db *sql.DB) {
-    // Use Exec for raw SQL writes, and generic queries when you want typed results.
-    db.Exec("INSERT INTO employee_events (employee_id, event) VALUES ($1, $2)", int64(2), "selected")
-
-    employeeCount := db.Get[int64]("SELECT COUNT(*) FROM employee")
-    event := db.Get[struct(employee_id: int64, event: string)](
-        "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
-        int64(2),
-    )
-    eventPointer := db.Get[*struct(employee_id: int64, event: string)](
-        "SELECT employee_id, event FROM employee_events WHERE employee_id = $1",
-        int64(2),
-    )
-    eventPointers := db.Select[*struct(employee_id: int64, event: string)](
-        "SELECT employee_id, event FROM employee_events ORDER BY employee_id",
-    )
-    employee, employeeErr := orm.GetSQL[Employee](db, "SELECT id, name, email FROM employee WHERE id = $1", int64(2))
-    if employeeErr != nil { panic(employeeErr) }
-    employees, employeesErr := orm.SelectSQL[Employee](db, "SELECT id, name, email FROM employee ORDER BY id")
-    if employeesErr != nil { panic(employeesErr) }
-    fmt.Println("scalar query:", employeeCount)
-    fmt.Println("struct query:", event.employee_id, event.event)
-    fmt.Println("pointer struct query:", eventPointer.employee_id, eventPointer.event)
-    fmt.Println("pointer struct select:", eventPointers[0].employee_id, eventPointers[0].event)
-    fmt.Println("full SQL model queries:", employee.Name, len(employees))
+class Department : orm.Model {
+    Id int64
+    Name string
 }
 
 func main() {
     try {
         db := sql.Open("sqlite", ":memory:")
         defer db.Close()
-        db.Exec(`CREATE TABLE employee (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)`)
-        db.Exec(`CREATE TABLE employee_events (employee_id INTEGER NOT NULL, event TEXT NOT NULL)`)
+        db.Exec(`CREATE TABLE department (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`)
+        db.Exec(`CREATE TABLE employee (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, department_id INTEGER NOT NULL)`)
 
-        ModelAPIExample(db)
-        GenericDBExample(db)
+        engineering := Department(Id: 1, Name: "Engineering")
+        research := Department(Id: 2, Name: "Research")
+        engineering.Insert(db)
+        research.Insert(db)
+
+        ada := Employee(Id: 1, Name: "Ada Lovelace", Email: "ada@example.com", DepartmentId: engineering.Id, DisplayLabel: "Ada")
+        grace := Employee(Id: 2, Name: "Grace Hopper", Email: "grace@example.com", DepartmentId: research.Id, DisplayLabel: "Grace")
+        ada.Insert(db)
+        grace.Insert(db)
+
+        ada.Email = "ada@analytical.example"
+        ada.Update(db)
+
+        // Model queries use conditions while SQL is built from model metadata.
+        employees := Employee.Select(db, "name LIKE $1", "A%")
+        target := Employee.Get(db, "id = $1", ada.Id)
+        found := Employee.Find(db, ada.Id)
+        fmt.Println("model queries:", len(employees), "selected, get:", target.Name)
+        fmt.Println("inferred primary key:", found.Name)
+
+        first := Employee.First(db)
+        last := Employee.Last(db)
+        var page []*Employee = Employee.Page(db, 1)
+        fmt.Println("first/last:", first.Name, last.Name)
+        if page.NotEmpty() {
+            nextPage := Employee.Page(db, 1, page.Last().Id)
+            fmt.Println("next page:", len(nextPage))
+        }
+
+        // A join filters ORM models by related data, beyond a model condition fragment.
+        employee := orm.Get[Employee](db, `
+            SELECT e.id, e.name, e.email, e.department_id
+            FROM employee e
+            JOIN department d ON d.id = e.department_id
+            WHERE d.name = $1 AND e.id = $2`, "Research", int64(2))
+        departmentEmployees := orm.Select[Employee](db, `
+            SELECT e.id, e.name, e.email, e.department_id
+            FROM employee e
+            JOIN department d ON d.id = e.department_id
+            WHERE d.name = $1
+            ORDER BY e.name`, "Engineering")
+        fmt.Println("full SQL model queries:", employee.Name, len(departmentEmployees))
+
+        // Delete through the model so the ORM builds the statement from its metadata.
+        target.Destroy(db)
     } catch err {
         fmt.Println("ORM example:", err)
     }
