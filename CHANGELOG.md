@@ -2,6 +2,7 @@
 
 ## 2026-11-09
 
+- Added Homebrew install and update instructions, and changed the first-program guide to start with `gpp init`.
 - Updated BSD-3-Clause attribution to name Telga Technologies Pvt Ltd, aligned the docs footer, and clarified source redistribution notices in the README.
 - Expanded prelude string helpers with Unicode code-point reversal, cut/trim/split/search operations, rune transforms, string joining, fallback-based string parsing, and scalar-to-string formatting.
 - Added anonymous `struct(...)` values, short `struct Name { ... }` declarations, and named struct construction with `Name(...)`; retained compiler-internal shape metadata for static inference.

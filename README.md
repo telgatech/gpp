@@ -118,11 +118,29 @@ those methods can work in generated projects by default. Until then, generic
 free functions, static methods, and extension methods are available, while
 generic instance methods are not yet supported end to end.
 
-The repository root is the installable Go++ CLI:
-
-```bash
-go install github.com/telgatech/gpp@main
-```
+<table>
+<tr>
+<td valign="top">
+<h3><img src="docs/public/homebrew.svg" width="28" height="28" alt="Homebrew icon"> Homebrew</h3>
+<ol>
+<li><a href="https://brew.sh/">Install Homebrew</a> if needed.</li>
+<li>Add the Go++ tap:<pre><code>brew tap telgatech/gpp</code></pre></li>
+<li>Install and verify Go++:<pre><code>brew install --HEAD telgatech/gpp/gpp
+gpp version</code></pre></li>
+<li>Update to the latest commit on <code>main</code>:<pre><code>brew update
+brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
+</ol>
+<p>The formula currently tracks <code>main</code>, so <code>--HEAD</code> is required until a versioned release. Homebrew Core also has an unrelated formula named <code>gpp</code>; uninstall it first if present, since Homebrew cannot install both same-named formulae side by side.</p>
+</td>
+</tr>
+<tr>
+<td valign="top">
+<h3><img src="docs/public/go.svg" width="28" height="28" alt="Go icon"> Go install</h3>
+<p>For Go developers who already have Go 1.26 or newer and want to try Go++ quickly:</p>
+<pre><code>go install github.com/telgatech/gpp@main</code></pre>
+</td>
+</tr>
+</table>
 
 It provides one `gpp` executable with project commands:
 
