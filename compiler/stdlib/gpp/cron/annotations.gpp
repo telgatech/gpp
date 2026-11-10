@@ -4,5 +4,5 @@ import "time"
 
 var _ time.Duration
 
-annotation Cron(expression string) on function
-annotation Every(interval time.Duration) on function
+annotation Cron(expression string) on function, method
+annotation Every(interval time.Duration) on function, method

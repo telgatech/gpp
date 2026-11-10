@@ -37,70 +37,115 @@ type runningScheduler struct {
     done chan struct{}
 }
 
-var cronState = struct {
+type schedulerState struct {
     sync.Mutex
     jobs []registeredJob
     running *runningScheduler
-}{}
+}
+
+var cronState schedulerState
 
 var ErrInvalidSchedule = errors.New("invalid cron schedule")
 
-// Register is emitted by the Go++ compiler for each function with a Cron
-// annotation. Applications should call Start rather than registering jobs
-// directly.
-func Register(name string, expression string, function JobFunc) error {
-    if strings.TrimSpace(name) == "" {
+func registerJob(state *schedulerState, job registeredJob, allowExisting bool) error {
+    if strings.TrimSpace(job.name) == "" {
         return errors.New("cron job name cannot be empty")
     }
-    if function == nil {
-        return fmt.Errorf("cron job %q has no function", name)
+    if job.function == nil {
+        return fmt.Errorf("cron job %q has no function", job.name)
     }
-    cronState.Lock()
-    defer cronState.Unlock()
-    if cronState.running != nil {
+    state.Lock()
+    defer state.Unlock()
+    if state.running != nil {
+        if allowExisting {
+            for _, existing := range state.jobs {
+                if existing.name == job.name && existing.expression == job.expression && existing.interval == job.interval && existing.every == job.every {
+                    return nil
+                }
+            }
+        }
         return errors.New("cannot register cron jobs after Start")
     }
-    for _, job := range cronState.jobs {
-        if job.name == name {
-            return fmt.Errorf("duplicate cron job %q", name)
+    for _, existing := range state.jobs {
+        if existing.name == job.name {
+            if allowExisting && existing.expression == job.expression && existing.interval == job.interval && existing.every == job.every {
+                return nil
+            }
+            return fmt.Errorf("duplicate cron job %q", job.name)
         }
     }
-    cronState.jobs = append(cronState.jobs, registeredJob{name: name, expression: expression, function: function})
-    return nil
-}
-
-// RegisterEvery is emitted by the Go++ compiler for functions annotated with
-// Every. Applications should use the annotation and call Start to run jobs.
-func RegisterEvery(name string, interval time.Duration, function JobFunc) error {
-    if strings.TrimSpace(name) == "" {
-        return errors.New("cron job name cannot be empty")
-    }
-    if function == nil {
-        return fmt.Errorf("cron job %q has no function", name)
-    }
-    cronState.Lock()
-    defer cronState.Unlock()
-    if cronState.running != nil {
-        return errors.New("cannot register cron jobs after Start")
-    }
-    for _, job := range cronState.jobs {
-        if job.name == name {
-            return fmt.Errorf("duplicate cron job %q", name)
-        }
-    }
-    cronState.jobs = append(cronState.jobs, registeredJob{name: name, interval: interval, every: true, function: function})
+    state.jobs = append(state.jobs, job)
     return nil
 }
 
 // Start validates all registered schedules and starts them in the background.
 // It returns immediately; call Stop during application shutdown.
 func Start() error {
-    cronState.Lock()
-    defer cronState.Unlock()
-    if cronState.running != nil {
+	if err := registerAnnotatedFunctions(); err != nil {
+		return err
+	}
+    return startScheduler(&cronState)
+}
+
+func registerAnnotatedFunctions() error {
+	for _, function := range __gppRegisteredFunctions() {
+		for _, annotation := range function.Annotations {
+			if annotation.FullName != "gpp.cron.Cron" && annotation.FullName != "gpp.cron.Every" {
+				continue
+			}
+			if function.Invoke == nil {
+				return fmt.Errorf("cron function %s has no generated invoker", function.Name)
+			}
+			if len(function.Parameters) != 1 || function.Parameters[0].Type == nil || function.Parameters[0].Type.Name != "context.Context" || function.Result == nil || function.Result.Name != "error" {
+				return fmt.Errorf("cron function %s must have signature func(context.Context) error", function.Name)
+			}
+			if len(annotation.Args) != 1 {
+				return fmt.Errorf("cron annotation on %s requires one argument", function.Name)
+			}
+			job := registeredJob{name: function.Name}
+			if annotation.FullName == "gpp.cron.Cron" {
+				expression, ok := annotation.Args[0].(string)
+				if !ok {
+					return fmt.Errorf("cron expression on %s must be a string", function.Name)
+				}
+				job.expression = expression
+			} else {
+				interval, ok := annotation.Args[0].(time.Duration)
+				if !ok {
+					return fmt.Errorf("cron interval on %s must be a time.Duration", function.Name)
+				}
+				job.interval = interval
+				job.every = true
+			}
+			job.function = func(ctx context.Context) error {
+				results, err := function.Invoke([]any{ctx})
+				if err != nil {
+					return err
+				}
+				if len(results) != 1 || results[0] == nil {
+					return nil
+				}
+				result, ok := results[0].(error)
+				if !ok {
+					return fmt.Errorf("cron function %s did not return error", function.Name)
+				}
+				return result
+			}
+			if err := registerJob(&cronState, job, true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func startScheduler(state *schedulerState) error {
+    state.Lock()
+    defer state.Unlock()
+    if state.running != nil {
         return nil
     }
-    jobs := append([]registeredJob(nil), cronState.jobs...)
+    jobs := append([]registeredJob(nil), state.jobs...)
     schedules := make([]parsedSchedule, len(jobs))
     for index, job := range jobs {
         if job.every {
@@ -119,7 +164,7 @@ func Start() error {
 
     ctx, cancel := context.WithCancel(context.Background())
     running := &runningScheduler{cancel: cancel, done: make(chan struct{})}
-    cronState.running = running
+    state.running = running
     var workers sync.WaitGroup
     for index, job := range jobs {
         workers.Add(1)
@@ -134,26 +179,35 @@ func Start() error {
 
 // Stop cancels scheduled work and waits for running jobs to return or ctx to
 // expire. A later Start call may start the registered jobs again.
-func Stop(ctx context.Context) error {
+
+func Stop() error {
+	return stopScheduler(&cronState, context.Background())
+}
+
+func StopWithContext(ctx context.Context) error {
+    return stopScheduler(&cronState, ctx)
+}
+
+func stopScheduler(state *schedulerState, ctx context.Context) error {
     if ctx == nil {
-        return errors.New("cron.Stop requires a context")
+        ctx = context.Background()
     }
-    cronState.Lock()
-    running := cronState.running
+    state.Lock()
+    running := state.running
     if running == nil {
-        cronState.Unlock()
+        state.Unlock()
         return nil
     }
     running.cancel()
-    cronState.Unlock()
+    state.Unlock()
 
     select {
     case <-running.done:
-        cronState.Lock()
-        if cronState.running == running {
-            cronState.running = nil
+        state.Lock()
+        if state.running == running {
+            state.running = nil
         }
-        cronState.Unlock()
+        state.Unlock()
         return nil
     case <-ctx.Done():
         return ctx.Err()

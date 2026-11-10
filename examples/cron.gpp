@@ -7,27 +7,47 @@ import (
     cron "gpp/cron"
 )
 
-var runs int
-
-func Heartbeat(ctx context.Context) error @{cron.Every(time.Second)} {
+// Package-level jobs use one shared scheduler controlled by cron.Start/Stop.
+func RefreshSharedCache(ctx context.Context) error @{cron.Every(time.Second)} {
     if ctx.Err() != nil {
         return ctx.Err()
     }
-    runs++
-    fmt.Println("scheduled run", runs)
+    fmt.Println("package job RefreshSharedCache: refreshing shared cache")
     return nil
 }
 
-func WeekdayMaintenance(ctx context.Context) error @{cron.Cron("*/15 9-17 * * 1-5")} {
-    if ctx.Err() != nil {
-        return ctx.Err()
+// A cron.Cron subclass groups jobs on its own instance scheduler. Each
+// Maintenance value gets independent state and must be started separately.
+class Maintenance : cron.Cron {
+    Runs int
+
+    func Heartbeat(ctx context.Context) error @{cron.Every(time.Second)} {
+        if ctx.Err() != nil {
+            return ctx.Err()
+        }
+        this.Runs++
+        fmt.Println("Maintenance job Heartbeat: run", this.Runs)
+        return nil
     }
-    fmt.Println("weekday maintenance")
-    return nil
+
+    func Weekday(ctx context.Context) error @{cron.Cron("*/15 9-17 * * 1-5")} {
+        if ctx.Err() != nil {
+            return ctx.Err()
+        }
+        fmt.Println("weekday maintenance")
+        return nil
+    }
 }
 
 func main() {
+    // Starts package-level annotated functions, including imported packages.
     cron.Start()
+
+    // Starts only this Maintenance instance's annotated methods.
+    maintenance := Maintenance()
+    maintenance.Start()
     time.Sleep(2200 * time.Millisecond)
-    cron.Stop(context.Background())
+    // Stop each scheduler independently during shutdown.
+    cron.Stop()
+    maintenance.Stop()
 }

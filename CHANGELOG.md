@@ -6,6 +6,7 @@
 - Extended method overload resolution to distinguish generic and non-generic overloads through explicit type arguments, including methods with trailing defaults.
 - Added inferred `map(...)` literals to the prelude, with strongly typed homogeneous maps, `any` fallback for mixed values, and generic `Each`, `Get`, `Keys`, `Values`, and `Delete` helpers. `Get(key)` returns `(value, found)`; `Get(key, fallback)` returns the fallback when absent.
 - Added the experimental `gpp/exp/http.Client` with base URL and timeout constructor arguments, cookie persistence, overloaded raw and generic JSON `Get`/`Post` methods, optional request contexts, typed anonymous-struct form and upload fields, and streamed multipart file uploads.
+- Added per-instance `gpp/cron.Cron` schedulers that discover annotated class methods through generic runtime metadata and bind typed invokers to each instance.
 
 ## 2026-11-09
 

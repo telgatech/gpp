@@ -69,8 +69,8 @@ The examples cover:
 - `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed,
   multi-type, and catch-all handlers, `finally`, custom Go++ errors, and
   explicit error capture.
-- `cron.gpp` — interval and full five-field cron schedules, explicit scheduler
-  startup, context-aware jobs, and graceful shutdown.
+- `cron.gpp` — related annotated jobs grouped on a `cron.Cron` instance,
+  explicit startup, context-aware callbacks, and graceful shutdown.
 - `todo-app.gpp` — a server-rendered SQLite todo app with a JSON API, OpenAPI
   and Swagger UI, ORM static query methods with exception-based error handling,
   and a context-aware cron cleanup job.

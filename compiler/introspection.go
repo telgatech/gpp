@@ -83,6 +83,8 @@ func introspectionRuntimeDefinitionsWithAliases(fmtAlias, reflectAlias, strconvA
 	definitions := `type GppType struct {
 	Name string
 }
+
+func GppInvocationError(message string) error { return gppFmt.Errorf("%s", message) }
 type GppAnnotationType struct {
 	Name     string
 	FullName string
@@ -155,7 +157,30 @@ type GppMethod struct {
 	Result      *GppType
 	Static      bool
 	Annotations GppAnnotations
+	Invoke      func(any, []any) ([]any, error)
 }
+
+type GppFunction struct {
+	Name        string
+	Parameters  []GppParameter
+	Result      *GppType
+	Annotations GppAnnotations
+	Invoke      func([]any) ([]any, error)
+}
+
+var gppRegisteredFunctions []GppFunction
+
+func RegisterFunction(function GppFunction) {
+	gppRegisteredFunctions = append(gppRegisteredFunctions, function)
+}
+
+func RegisteredFunctions() []GppFunction {
+	return append([]GppFunction(nil), gppRegisteredFunctions...)
+}
+
+func __gppInvocationError(message string) error { return GppInvocationError(message) }
+func __gppRegisterFunction(function GppFunction) { RegisterFunction(function) }
+func __gppRegisteredFunctions() []GppFunction { return RegisteredFunctions() }
 
 type GppParameter struct {
 	Name        string
@@ -276,14 +301,89 @@ type GppAnnotation = gppRuntime.GppAnnotation
 type GppAnnotations = gppRuntime.GppAnnotations
 type GppField = gppRuntime.GppField
 type GppMethod = gppRuntime.GppMethod
+type GppFunction = gppRuntime.GppFunction
 type GppParameter = gppRuntime.GppParameter
 type GppClass = gppRuntime.GppClass
+
+func __gppInvocationError(message string) error { return gppRuntime.GppInvocationError(message) }
+func __gppRegisterFunction(function GppFunction) { gppRuntime.RegisterFunction(function) }
+func __gppRegisteredFunctions() []GppFunction { return gppRuntime.RegisteredFunctions() }
 
 func __gppFormatObject(class *GppClass, object any, pretty bool) string {
 	return gppRuntime.FormatObject(class, object, pretty)
 }
-
 `
+}
+
+func annotatedFunctionRegistrationSource(function *FunctionDecl, context constructorContext) (string, error) {
+	if function == nil || len(function.Annotations) == 0 {
+		return "", nil
+	}
+	name := function.Name
+	if overloaded := overloadFunctionName(function, context.Overloads); overloaded != "" {
+		name = overloaded
+	}
+	invoker := "nil"
+	if len(function.Method.TypeParamsAST) == 0 && !methodHasVariadicParameter(function.Method) {
+		var err error
+		invoker, err = functionInvocationLiteral(function.Method, name, context)
+		if err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("\nfunc init() { __gppRegisterFunction(GppFunction{Name: %q, Parameters: %s, Result: %s, Annotations: %s, Invoke: %s}) }\n",
+		context.Package+"."+name,
+		methodParametersLiteral(function.Method, context),
+		methodResultLiteral(function.Method),
+		annotationUsesLiteral(function.Annotations, context),
+		invoker), nil
+}
+
+func methodHasVariadicParameter(method Method) bool {
+	parameters, err := parameterInfosForMethod(method)
+	if err != nil {
+		return true
+	}
+	for _, parameter := range parameters {
+		if strings.HasPrefix(strings.TrimSpace(parameter.typeText()), "...") {
+			return true
+		}
+	}
+	return false
+}
+
+func functionInvocationLiteral(method Method, name string, context constructorContext) (string, error) {
+	parameters, err := parameterInfosForMethod(method)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	out.WriteString("func(args []any) ([]any, error) {\n")
+	arguments := make([]string, 0, len(parameters))
+	for index, parameter := range parameters {
+		argName := fmt.Sprintf("arg%d", index)
+		arguments = append(arguments, argName)
+		fmt.Fprintf(&out, "if len(args) <= %d { return nil, __gppInvocationError(%q) }; %s, ok := args[%d].(%s); if !ok { return nil, __gppInvocationError(%q) }\n", index, fmt.Sprintf("%s expects %d arguments", name, len(parameters)), argName, index, transformPolymorphicType(parameter.typeText(), context), fmt.Sprintf("argument %d has the wrong type", index+1))
+	}
+	fmt.Fprintf(&out, "if len(args) != %d { return nil, __gppInvocationError(%q) }\n", len(parameters), fmt.Sprintf("%s expects %d arguments", name, len(parameters)))
+	call := name + "(" + strings.Join(arguments, ", ") + ")"
+	result := transformPolymorphicResultType(strings.TrimSpace(methodResultSource(method)), context)
+	if result == "" {
+		fmt.Fprintf(&out, "%s; return nil, nil\n", call)
+	} else {
+		resultTypes := methodResultTypes(method)
+		if len(resultTypes) <= 1 {
+			fmt.Fprintf(&out, "result := %s; return []any{result}, nil\n", call)
+		} else {
+			resultNames := make([]string, len(resultTypes))
+			for index := range resultNames {
+				resultNames[index] = fmt.Sprintf("result%d", index)
+			}
+			fmt.Fprintf(&out, "%s := %s; return []any{%s}, nil\n", strings.Join(resultNames, ", "), call, strings.Join(resultNames, ", "))
+		}
+	}
+	out.WriteString("}")
+	return out.String(), nil
 }
 
 func ensureIntrospectionRuntimeImport(body, importPath string) string {
@@ -317,7 +417,14 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		return err
 	}
 	for _, descriptor := range methods {
-		fmt.Fprintf(out, "\t{Name: %q, Parameters: %s, Result: %s, Annotations: %s},\n", descriptor.Method.Name, methodParametersLiteral(descriptor.Method, context), methodResultLiteral(descriptor.Method), annotationUsesLiteral(descriptor.Method.Annotations, context))
+		invoker := "nil"
+		if descriptor.Owner == class.Name && len(descriptor.Method.Annotations) > 0 && len(descriptor.Method.TypeParamsAST) == 0 && !methodHasVariadicParameter(descriptor.Method) {
+			invoker, err = methodInvocationLiteral(descriptor.Method, context)
+			if err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(out, "\t{Name: %q, Parameters: %s, Result: %s, Annotations: %s, Invoke: %s},\n", descriptor.Method.Name, methodParametersLiteral(descriptor.Method, context), methodResultLiteral(descriptor.Method), annotationUsesLiteral(descriptor.Method.Annotations, context), invoker)
 	}
 	staticMethods, err := effectiveStaticMethodDescriptors(class, classes, map[*ClassDecl]bool{})
 	if err != nil {
@@ -383,6 +490,75 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	}
 	out.WriteString("}\n\n")
 	return nil
+}
+
+// methodInvocationLiteral emits a typed adapter for annotated instance methods.
+// The adapter keeps runtime annotation consumers independent of method names
+// and avoids reflection when invoking them.
+func methodInvocationLiteral(method Method, context constructorContext) (string, error) {
+	parameters, err := parameterInfosForMethod(method)
+	if err != nil {
+		return "", err
+	}
+	if method.IsStatic {
+		return "nil", nil
+	}
+	var out strings.Builder
+	out.WriteString("func(receiver any, args []any) ([]any, error) {\n")
+	interfaceName := "invoker"
+	parameterTypes := make([]string, 0, len(parameters))
+	arguments := make([]string, 0, len(parameters))
+	for index, parameter := range parameters {
+		typeName := transformPolymorphicType(parameter.typeText(), context)
+		parameterTypes = append(parameterTypes, fmt.Sprintf("%s %s", methodOutputNameForParameter(parameter.Name, index), typeName))
+		arguments = append(arguments, methodOutputNameForParameter(parameter.Name, index))
+	}
+	result := transformPolymorphicResultType(strings.TrimSpace(methodResultSource(method)), context)
+	fmt.Fprintf(&out, "type %s interface { %s(%s)", interfaceName, methodOutputName(method), strings.Join(parameterTypes, ", "))
+	if result != "" {
+		fmt.Fprintf(&out, " %s", result)
+	}
+	out.WriteString(" }\n")
+	fmt.Fprintf(&out, "target, ok := receiver.(%s); if !ok { return nil, __gppInvocationError(%q) }\n", interfaceName, "receiver does not implement "+methodOutputName(method))
+	fmt.Fprintf(&out, "if len(args) != %d { return nil, __gppInvocationError(%q) }\n", len(parameters), fmt.Sprintf("%s expects %d arguments", methodOutputName(method), len(parameters)))
+	for index, parameter := range parameters {
+		name := methodOutputNameForParameter(parameter.Name, index)
+		fmt.Fprintf(&out, "%s, ok := args[%d].(%s); if !ok { return nil, __gppInvocationError(%q) }\n", name, index, transformPolymorphicType(parameter.typeText(), context), fmt.Sprintf("argument %d has the wrong type", index+1))
+	}
+	call := "target." + methodOutputName(method) + "(" + strings.Join(arguments, ", ") + ")"
+	if result == "" {
+		fmt.Fprintf(&out, "%s; return nil, nil\n", call)
+	} else {
+		resultTypes := methodResultTypes(method)
+		if len(resultTypes) <= 1 {
+			fmt.Fprintf(&out, "result := %s; return []any{result}, nil\n", call)
+		} else {
+			resultNames := make([]string, len(resultTypes))
+			for index := range resultNames {
+				resultNames[index] = fmt.Sprintf("result%d", index)
+			}
+			fmt.Fprintf(&out, "%s := %s; return []any{%s}, nil\n", strings.Join(resultNames, ", "), call, strings.Join(resultNames, ", "))
+		}
+	}
+	out.WriteString("}")
+	return out.String(), nil
+}
+
+func methodOutputNameForParameter(name string, index int) string {
+	if name == "" || name == "_" {
+		return fmt.Sprintf("arg%d", index)
+	}
+	return "arg" + strconv.Itoa(index)
+}
+
+func methodResultTypes(method Method) []TypeNode {
+	if method.ResultAST == nil {
+		return nil
+	}
+	if tuple, ok := method.ResultAST.(*TupleType); ok {
+		return tuple.Elements
+	}
+	return []TypeNode{method.ResultAST}
 }
 
 func filterInaccessibleInheritedFields(class *ClassDecl, fields []constructorField) []constructorField {
