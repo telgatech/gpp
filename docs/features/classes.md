@@ -52,6 +52,75 @@ The compiler emits a Go struct for the fields and Go receiver methods for the
 behavior. That makes the relationship clear in source while preserving Go's
 types and execution model in the result.
 
+## Generics
+
+A class can declare type parameters after its name. Use them for fields and
+instance method parameters or results, just as you would in a Go generic type:
+
+```go
+class Box[T] {
+    Value T
+
+    func Get() T {
+        return this.Value
+    }
+
+    func Set(value T) {
+        this.Value = value
+    }
+}
+
+numberBox := Box[int](Value: 42)
+nameBox := Box[string](Value: "Ada")
+fmt.Println(numberBox.Get(), nameBox.Get())
+```
+
+An omitted constraint defaults to `any`. Add a Go-compatible constraint when
+an operation requires one. For example, map keys must be `comparable`:
+
+```go
+class Index[K comparable, V] {
+    Entries map[K]V
+
+    func Get(key K) (V, bool) {
+        value, found := this.Entries[key]
+        return value, found
+    }
+}
+
+ages := Index[string, int](Entries: map[string]int{"Ada": 36})
+age, found := ages.Get("Ada")
+```
+
+Generic class constructor calls require explicit type arguments, even when the
+constructor fields might appear to determine them. Once instantiated, the
+class type arguments supply the types used by its fields and ordinary instance
+methods.
+
+An instance method may also declare its own type parameters, separate from
+those on its class. Go++ infers method type arguments from arguments when
+possible, or you can write them explicitly:
+
+```go
+class Echo {
+    func Identity[T](value T) T {
+        return value
+    }
+}
+
+echo := Echo()
+word := echo.Identity("hello")
+number := echo.Identity[int](42)
+```
+
+Generic methods work on concrete class instances, including child instances
+that inherit the method. They cannot be called through an interface-dispatched
+base-class value because Go interfaces cannot declare generic methods. The
+project requires Go 1.27 or newer. See the
+[generic classes specification](/reference/specifications/generic-classes)
+and runnable [generics example](https://github.com/telgatech/gpp/blob/main/examples/generics.gpp)
+for further details.
+
 Inside an instance method, class fields can be used without writing `this.`.
 Unqualified calls to other instance methods use the same receiver. An explicit
 `this.` remains valid when it makes the receiver clearer, and parameters or

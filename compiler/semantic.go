@@ -795,10 +795,11 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 
 	type methodEntry struct {
-		index     int
-		arity     int
-		typeKey   string
-		parameter []parameterInfo
+		index        int
+		arity        int
+		typeKey      string
+		genericArity int
+		parameter    []parameterInfo
 	}
 	methods := map[string][]methodEntry{}
 	for index, method := range class.Methods {
@@ -836,20 +837,22 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			return methodDiagnosticf(class, &method, "class %s method %s has invalid parameters: %w", class.Name, method.Name, err)
 		}
 		typeKey := parameterSignatureKey(parameters)
+		genericArity := len(method.TypeParamsAST)
 		methodKey := method.Name
 		if method.IsStatic {
 			methodKey += "\x00static"
 		}
 		for _, previous := range methods[methodKey] {
-			if previous.typeKey == typeKey {
+			if previous.typeKey == typeKey && previous.genericArity == genericArity {
 				return methodDiagnosticf(class, &method, "class %s declares method %s more than once with parameter types %s", class.Name, method.Name, typeKey)
 			}
 		}
 		methods[methodKey] = append(methods[methodKey], methodEntry{
-			index:     index,
-			arity:     arity,
-			typeKey:   typeKey,
-			parameter: parameters,
+			index:        index,
+			arity:        arity,
+			typeKey:      typeKey,
+			genericArity: genericArity,
+			parameter:    parameters,
 		})
 	}
 	for _, classMethods := range methods {
@@ -864,7 +867,14 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			name := class.Methods[method.index].Name
 			goName := overloadedName(name, method.arity)
 			if arityCounts[method.arity] > 1 {
-				goName = overloadedTypedName(name, method.arity, method.typeKey)
+				typeKey := method.typeKey
+				for _, other := range classMethods {
+					if other.typeKey == method.typeKey && other.genericArity != method.genericArity {
+						typeKey += fmt.Sprintf("\x00generic_%d", method.genericArity)
+						break
+					}
+				}
+				goName = overloadedTypedName(name, method.arity, typeKey)
 			}
 			class.Methods[method.index].GoName = goName
 		}

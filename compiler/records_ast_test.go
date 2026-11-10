@@ -26,6 +26,86 @@ func TestCollectRecordValueTypesUsesBodyAST(t *testing.T) {
 	}
 }
 
+func TestCollectMapExpectedTypesFromTypedDeclaration(t *testing.T) {
+	source := `func main() {
+    var empty map[string]int = map()
+}`
+	valueTypes := collectRecordValueTypes(source, constructorContext{})
+	expected := collectMapExpectedTypes(source, valueTypes, constructorContext{})
+	if len(expected) != 1 {
+		t.Fatalf("expected typed map declaration to provide an empty map literal type, got %#v", expected)
+	}
+	for _, typeName := range expected {
+		if typeName != "map[string]int" {
+			t.Fatalf("expected map[string]int context, got %q", typeName)
+		}
+	}
+}
+
+func TestCollectMapExpectedTypesFromFunctionArguments(t *testing.T) {
+	source := `func consume(values map[string]any) {}
+func main() {
+    consume(map(name: "Ada", level: 3))
+}`
+	parameterType := &MapType{
+		Key:   &NamedType{Parts: []string{"string"}},
+		Value: &NamedType{Parts: []string{"any"}},
+	}
+	context := constructorContext{FunctionSignatures: map[string][]callableSignature{
+		"consume": {{Name: "consume", Parameters: []parameterInfo{{Name: "values", TypeAST: parameterType}}}},
+	}}
+	valueTypes := collectRecordValueTypes(source, context)
+	expected := collectMapExpectedTypes(source, valueTypes, context)
+	if len(expected) != 1 {
+		t.Fatalf("expected function parameter to provide a map literal type, got %#v", expected)
+	}
+	for _, typeName := range expected {
+		if typeName != "map[string]any" {
+			t.Fatalf("expected map[string]any context, got %q", typeName)
+		}
+	}
+	transformed, err := transformMapLiterals(source, valueTypes, context, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(transformed, `consume(map[string]any{"name": "Ada", "level": 3})`) {
+		t.Fatalf("function argument did not use its expected map type:\n%s", transformed)
+	}
+}
+
+func TestTransformNestedEmptyMapWithExpectedType(t *testing.T) {
+	source := `func main() {
+    var groups map[string]map[string]int = map(team: map())
+}`
+	transformed, err := transformMapLiterals(source, map[string]string{}, constructorContext{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `map[string]map[string]int{"team": map[string]int{}}`
+	if !strings.Contains(transformed, want) {
+		t.Fatalf("nested empty map did not inherit its expected type %q:\n%s", want, transformed)
+	}
+}
+
+func TestTransformMapLiteralInfersStrongAndMixedValueTypes(t *testing.T) {
+	source := `func main() {
+    prices := map(coffee: 1.23)
+    form := map(name: "Ada", level: 3)
+}`
+	transformed, err := transformMapLiterals(source, map[string]string{}, constructorContext{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`map[string]float64{"coffee": 1.23}`,
+		`map[string]any{"name": "Ada", "level": 3}`,
+	} {
+		if !strings.Contains(transformed, expected) {
+			t.Errorf("map literal did not lower to %q:\n%s", expected, transformed)
+		}
+	}
+}
+
 func TestCollectRecordValueTypesUsesImportedFunctionResults(t *testing.T) {
 	source := `func main() {
     keyID := common.GetEnv("KEY_ID", "")

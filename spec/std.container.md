@@ -53,7 +53,7 @@ keeping element storage and operations statically typed end to end.
 
 ## Initial API
 
-The initial API includes `Set[T comparable]`, `OrderedMap[K comparable, V any]`, `Stack[T]`,
+The initial API includes `Set[T comparable]`, `OrderedMap[K comparable, V]`, `Stack[T]`,
 `Queue[T]`, `Deque[T]`, `List[T]`, `Ring[T]`, and `PriorityQueue[T]`. An
 ordered set, multimap, and linked-list node handles are outside this scope.
 
@@ -86,7 +86,7 @@ its order is unspecified. Mutating the returned slice must not modify the set.
 
 ### Ordered map
 
-`OrderedMap[K comparable, V any]` maps comparable keys to values and iterates entries in
+`OrderedMap[K comparable, V]` maps comparable keys to values and iterates entries in
 insertion order. Its zero value is ready to use. `Entries` returns a snapshot of
 public `OrderedMapEntry[K, V]` values, which can be iterated with slice methods.
 

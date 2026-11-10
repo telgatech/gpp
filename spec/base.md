@@ -150,6 +150,10 @@
 - Overloads with different parameter counts remain supported.
 - Overloads with the same parameter count may differ by exact static parameter
   types, such as `Format(int)` and `Format(string)`.
+- A generic class method and a non-generic method may share a name and
+  parameter types; an explicit `[T]` selects the generic overload.
+- Trailing default parameters contribute each accepted call arity to overload
+  resolution.
 - Calls with literals and statically known local values resolve by exact type;
   a derived class is assignable to a base class for polymorphic calls.
 - Ambiguous or unknown call types remain ordinary Go++ errors to be tightened as

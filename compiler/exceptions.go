@@ -3835,29 +3835,39 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 			}
 		}
 	case *IndexExpr:
-		candidates = append(candidates, promotedCandidatesForLoweredExpr(function.Receiver, context)...)
-	case *IndexListExpr:
-		candidates = append(candidates, promotedCandidatesForLoweredExpr(function.Receiver, context)...)
-	case *SelectorExpr:
-		actualType := staticExpressionTypeNode(function.Receiver, context, valueTypes)
-		if receiver, ok := function.Receiver.(*NameExpr); ok {
-			candidates = append(candidates, context.ImportedFunctionSignatures[receiver.Name][function.Name]...)
-			if _, isClass := context.Targets[receiver.Name]; isClass {
-				candidates = append(candidates, context.StaticMethodSignatures[receiver.Name][function.Name]...)
-			} else {
-				className := strings.TrimPrefix(strings.TrimSpace(actualType), "*")
-				if receiver.Name == "this" && context.CurrentClass != "" {
-					className = context.CurrentClass
-				}
-				candidates = append(candidates, context.ClassMethodSignatures[className][function.Name]...)
+		if selector, ok := function.Receiver.(*SelectorExpr); ok {
+			selectorCandidates := promotedSelectorCandidates(selector, call, context, valueTypes)
+			candidates = append(candidates, selectorCandidates...)
+			if len(selectorCandidates) == 0 {
+				candidates = append(candidates, promotedCandidatesForLoweredExpr(selector, context)...)
 			}
+			if native, ok := promotedNativePackageCall(selector, call, context); ok {
+				return native, true
+			}
+			if native, ok := promotedNativeMethodCall(selector, call, context, valueTypes); ok {
+				return native, true
+			}
+		} else {
+			candidates = append(candidates, promotedCandidatesForLoweredExpr(function.Receiver, context)...)
 		}
-		// Resolve extension overloads with their arguments so promotion uses the
-		// selected signature when callback overloads have different results.
-		for _, extension := range applicableExtensionASTs(function.Name, actualType, call.Arguments, nil, valueTypes, context) {
-			parameters := methodCallParameters(extension.Method.Method)
-			candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: methodResultTypeNode(extension.Method.Method)})
+	case *IndexListExpr:
+		if selector, ok := function.Receiver.(*SelectorExpr); ok {
+			selectorCandidates := promotedSelectorCandidates(selector, call, context, valueTypes)
+			candidates = append(candidates, selectorCandidates...)
+			if len(selectorCandidates) == 0 {
+				candidates = append(candidates, promotedCandidatesForLoweredExpr(selector, context)...)
+			}
+			if native, ok := promotedNativePackageCall(selector, call, context); ok {
+				return native, true
+			}
+			if native, ok := promotedNativeMethodCall(selector, call, context, valueTypes); ok {
+				return native, true
+			}
+		} else {
+			candidates = append(candidates, promotedCandidatesForLoweredExpr(function.Receiver, context)...)
 		}
+	case *SelectorExpr:
+		candidates = append(candidates, promotedSelectorCandidates(function, call, context, valueTypes)...)
 		if native, ok := promotedNativePackageCall(function, call, context); ok {
 			return native, true
 		}
@@ -3876,6 +3886,43 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 		}
 	}
 	return promotedCall{}, false
+}
+
+func promotedSelectorCandidates(function *SelectorExpr, call *CallExpr, context constructorContext, valueTypes map[string]string) []callableSignature {
+	if function == nil || call == nil {
+		return nil
+	}
+	actualType := staticExpressionTypeNode(function.Receiver, context, valueTypes)
+	var candidates []callableSignature
+	if receiver, ok := function.Receiver.(*NameExpr); ok {
+		candidates = append(candidates, context.ImportedFunctionSignatures[receiver.Name][function.Name]...)
+		if _, isClass := context.Targets[receiver.Name]; isClass {
+			candidates = append(candidates, context.StaticMethodSignatures[receiver.Name][function.Name]...)
+		} else {
+			className := strings.TrimPrefix(strings.TrimSpace(actualType), "*")
+			if receiver.Name == "this" && context.CurrentClass != "" {
+				className = context.CurrentClass
+			}
+			methodCandidates := context.ClassMethodSignatures[className][function.Name]
+			if len(methodCandidates) == 0 {
+				for _, signatures := range context.ClassMethodSignatures[className] {
+					for _, signature := range signatures {
+						if signature.GoName == function.Name {
+							methodCandidates = append(methodCandidates, signature)
+						}
+					}
+				}
+			}
+			candidates = append(candidates, methodCandidates...)
+		}
+	}
+	// Resolve extension overloads with their arguments so promotion uses the
+	// selected signature when callback overloads have different results.
+	for _, extension := range applicableExtensionASTs(function.Name, actualType, call.Arguments, nil, valueTypes, context) {
+		parameters := methodCallParameters(extension.Method.Method)
+		candidates = append(candidates, callableSignature{Parameters: parameters, ResultAST: methodResultTypeNode(extension.Method.Method)})
+	}
+	return candidates
 }
 
 func promotedCandidatesForLoweredName(name string, context constructorContext) []callableSignature {

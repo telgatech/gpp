@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-10
+
+- Raised the minimum Go version to 1.27 and enabled generic methods declared directly on classes; generated workspaces now use Go 1.27 and invalidate older cached output.
+- Extended method overload resolution to distinguish generic and non-generic overloads through explicit type arguments, including methods with trailing defaults.
+- Added inferred `map(...)` literals to the prelude, with strongly typed homogeneous maps, `any` fallback for mixed values, and generic `Each`, `Get`, `Keys`, `Values`, and `Delete` helpers. `Get(key)` returns `(value, found)`; `Get(key, fallback)` returns the fallback when absent.
+- Added the experimental `gpp/exp/http.Client` with base URL and timeout constructor arguments, cookie persistence, overloaded raw and generic JSON `Get`/`Post` methods, optional request contexts, typed anonymous-struct form and upload fields, and streamed multipart file uploads.
+
 ## 2026-11-09
 
 - Renamed full-SQL ORM model query helpers to `orm.Get[T]` and `orm.Select[T]`.

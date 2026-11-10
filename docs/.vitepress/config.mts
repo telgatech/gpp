@@ -102,6 +102,7 @@ export default defineConfig({
                 { text: 'OAuth and OIDC', link: '/guide/standard-library/http#oauth-and-oidc' }
               ]
             },
+            { text: 'gpp/exp/http (experimental client)', link: '/guide/standard-library/exp-http' },
             {
               text: 'gpp/encoding',
               items: [

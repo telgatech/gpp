@@ -447,8 +447,49 @@ func main() {
 	}
 	settings := map[string]string{"mode": "test"}
 	copy := settings.Clone()
-	if !settings.Has("mode") || settings.GetOr("missing", "default") != "default" || copy.GetOr("mode", "") != "test" || settings.IsEmpty() {
+	mode, modeFound := settings.Get("mode")
+	missing, missingFound := settings.Get("missing")
+	if !settings.Has("mode") || !modeFound || mode != "test" || missingFound || missing != "" ||
+		settings.Get("missing", "default") != "default" || copy.Get("mode", "") != "test" || settings.IsEmpty() {
 		panic("map prelude extension failed")
+	}
+	if !settings.Delete("mode") || settings.Has("mode") || settings.Delete("missing") {
+		panic("map Delete extension failed")
+	}
+	prices := map(coffee: 2.5, tea: 1.75)
+	priceKeys := prices.Keys()
+	priceValues := prices.Values()
+	if len(priceKeys) != 2 || len(priceValues) != 2 {
+		panic("inferred map Keys or Values extension failed")
+	}
+	prices.Each((name, price) => println(name, price))
+	iterationErr := prices.Each((name, price) => errors.New("stop map iteration"))
+	if iterationErr == nil {
+		panic("map Each did not return the callback error")
+	}
+	var coffeePrice float64 = prices["coffee"]
+	prices["espresso"] = 3.0
+	form := map(name: "Ada", level: 3)
+	form["active"] = true
+	headers := map("X-Request-ID": "req-42")
+	var requestID string = headers["X-Request-ID"]
+	var flexible map[string]any = map(name: "Grace")
+	flexible["level"] = 37
+	if coffeePrice != 2.5 || prices["espresso"] != 3.0 || fmt.Sprintf("%T", form["level"]) != "int" {
+		panic("inferred map literal typing failed")
+	}
+	if requestID != "req-42" || fmt.Sprintf("%T", flexible["level"]) != "int" {
+		panic("map literal keys or contextual value type failed")
+	}
+	var emptyCounts map[string]int = map()
+	emptyCounts["items"] = 2
+	if emptyCounts["items"] != 2 {
+		panic("context-typed empty map literal failed")
+	}
+	mapContainer := struct(prices: map(coffee: 2.5))
+	nestedPrices := map(prices: map(coffee: 2.5))
+	if mapContainer.prices["coffee"] != 2.5 || nestedPrices["prices"]["coffee"] != 2.5 {
+		panic("nested map literal typing failed")
 	}
 	sentinel := errors.New("sentinel")
 	wrapped := fmt.Errorf("wrapped: %w", sentinel)
@@ -489,6 +530,35 @@ func main() {
 		!strings.Contains(result, `<p data-id="42">body</p>`) ||
 		!strings.Contains(result, `<p data-id="7">old</p>`) {
 		t.Fatalf("unexpected ad-hoc template output:\n%s", output)
+	}
+}
+
+func TestCompileFilesDoesNotWidenInferredMapValueType(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+func main() {
+    values := map(ratio: 1.23)
+    values["label"] = "not a float"
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "build", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected a later incompatible map value to fail type checking; output: %s", output)
+	}
+	if !strings.Contains(string(output), "cannot use") {
+		t.Fatalf("expected Go's map value type error, got:\n%s", output)
 	}
 }
 
@@ -773,6 +843,189 @@ func main() {
 	}
 	if !strings.Contains(string(output), "generic HTTP binding passed") {
 		t.Fatalf("generic HTTP binding checks did not finish:\n%s", output)
+	}
+}
+
+func TestCompileFilesRunsHTTPClientHelpers(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	stdhttp "net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	http "gpp/exp/http"
+)
+
+class Reply {
+	Cookie string
+	Name string
+	Filename string
+	Content string
+	Note string
+}
+
+class CreateRequest {
+	Name string
+}
+
+func ensure(ok bool, message string) error {
+	if !ok {
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func main() {
+	server := httptest.NewServer(stdhttp.HandlerFunc(func(response stdhttp.ResponseWriter, request *stdhttp.Request) {
+		switch strings.TrimPrefix(request.URL.Path, "/api") {
+		case "/login":
+			stdhttp.SetCookie(response, &stdhttp.Cookie{Name: "session", Value: "active", Path: "/"})
+			json.NewEncoder(response).Encode(Reply(Cookie: "set"))
+		case "/cookie":
+			cookie, err := request.Cookie("session")
+			if err != nil {
+				stdhttp.Error(response, "cookie missing", stdhttp.StatusUnauthorized)
+				return
+			}
+			json.NewEncoder(response).Encode(Reply(Cookie: cookie.Value))
+		case "/json":
+			var input CreateRequest
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				stdhttp.Error(response, err.Error(), stdhttp.StatusBadRequest)
+				return
+			}
+			json.NewEncoder(response).Encode(Reply(Name: input.Name))
+		case "/json-record":
+			var input map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				stdhttp.Error(response, err.Error(), stdhttp.StatusBadRequest)
+				return
+			}
+			json.NewEncoder(response).Encode(input)
+		case "/anonymous":
+			response.Header().Set("Content-Type", "application/json")
+			response.Write([]byte("{\"name\":\"Ada\",\"level\":37}"))
+		case "/post":
+			if request.Method != stdhttp.MethodPost || request.Header.Get("Content-Type") != "text/plain" {
+				stdhttp.Error(response, "unexpected POST request", stdhttp.StatusBadRequest)
+				return
+			}
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				stdhttp.Error(response, err.Error(), stdhttp.StatusBadRequest)
+				return
+			}
+			response.Write(body)
+		case "/form", "/simple-form":
+			if err := request.ParseForm(); err != nil {
+				stdhttp.Error(response, err.Error(), stdhttp.StatusBadRequest)
+				return
+			}
+			json.NewEncoder(response).Encode(Reply(Name: request.FormValue("name"), Note: request.FormValue("level")))
+		case "/upload", "/simple-upload":
+			file, header, err := request.FormFile("attachment")
+			if err != nil {
+				stdhttp.Error(response, err.Error(), stdhttp.StatusBadRequest)
+				return
+			}
+			defer file.Close()
+			content, err := io.ReadAll(file)
+			if err != nil {
+				stdhttp.Error(response, err.Error(), stdhttp.StatusBadRequest)
+				return
+			}
+			json.NewEncoder(response).Encode(Reply(Filename: header.Filename, Content: string(content), Note: request.FormValue("note")))
+		case "/missing":
+			stdhttp.Error(response, "missing item", stdhttp.StatusNotFound)
+		default:
+			stdhttp.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client := http.Client(BaseURL: server.URL+"/api", Timeout: 10*time.Second)
+	ctx := context.Background()
+	client.Get("/login", ctx).Body.Close()
+	cookieReply := client.Get[Reply]("/cookie")
+	ensure(cookieReply.Cookie == "active", "cookie jar did not retain the session")
+
+	jsonReply := client.Post[Reply]("/json", CreateRequest(Name: "Ada"), ctx)
+	ensure(jsonReply.Name == "Ada", "typed JSON POST failed")
+	postResponse := client.Post("/post", "text/plain", strings.NewReader("raw body"))
+	postBody, err := io.ReadAll(postResponse.Body)
+	postResponse.Body.Close()
+	ensure(err == nil && string(postBody) == "raw body", "raw POST response failed")
+
+	formResponse := client.PostForm("/form", url.Values{"name": []string{"Grace"}})
+	var formReply Reply
+	json.NewDecoder(formResponse.Body).Decode(&formReply)
+	formResponse.Body.Close()
+	ensure(formReply.Name == "Grace", "form POST failed")
+	simpleFormResponse := client.PostForm("/simple-form", struct(name: "Ada", level: 3))
+	var simpleFormReply Reply
+	json.NewDecoder(simpleFormResponse.Body).Decode(&simpleFormReply)
+	simpleFormResponse.Body.Close()
+	ensure(simpleFormReply.Name == "Ada" && simpleFormReply.Note == "3", "anonymous struct form POST failed")
+	postRecord := client.Post[struct(name: string, level: int)]("/json-record", struct(name: "Ada", level: 37))
+	ensure(postRecord.name == "Ada" && postRecord.level == 37, "anonymous struct JSON POST failed")
+	getRecord := client.Get[struct(name: string, level: int)]("/anonymous")
+	ensure(getRecord.name == "Ada" && getRecord.level == 37, "anonymous struct JSON GET failed")
+
+	temporaryFile := os.CreateTemp("", "gpp-http-upload-*")
+	defer os.Remove(temporaryFile.Name())
+	temporaryFile.WriteString("file contents")
+	temporaryFile.Close()
+	uploadResponse := client.UploadFiles("/upload", url.Values{"note": []string{"metadata"}}, []*http.UploadFile{http.UploadFile(Field: "attachment", Path: temporaryFile.Name())})
+	var uploadReply Reply
+	json.NewDecoder(uploadResponse.Body).Decode(&uploadReply)
+	uploadResponse.Body.Close()
+	ensure(uploadReply.Filename == filepath.Base(temporaryFile.Name()), "multipart filename default failed")
+	ensure(uploadReply.Content == "file contents" && uploadReply.Note == "metadata", "multipart upload failed")
+
+	simpleUploadResponse := client.Upload(
+		"/simple-upload",
+		struct(note: 42),
+		map[string]string{"attachment": temporaryFile.Name()},
+	)
+	var simpleUploadReply Reply
+	json.NewDecoder(simpleUploadResponse.Body).Decode(&simpleUploadReply)
+	simpleUploadResponse.Body.Close()
+	ensure(simpleUploadReply.Filename == filepath.Base(temporaryFile.Name()), "anonymous struct multipart filename default failed")
+	ensure(simpleUploadReply.Content == "file contents" && simpleUploadReply.Note == "42", "anonymous struct multipart upload failed")
+
+	_, statusError := client.Get[Reply]("/missing")
+	ensure(statusError != nil && strings.Contains(statusError.Error(), "404 Not Found"), "non-success status was not returned as an error")
+	fmt.Println("HTTP client passed")
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HTTP client program did not run: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "HTTP client passed") {
+		t.Fatalf("HTTP client checks did not finish:\n%s", output)
 	}
 }
 
@@ -2757,7 +3010,7 @@ func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(goMod) != "module example.com/acme/app\n\ngo 1.26\n" {
+	if string(goMod) != "module example.com/acme/app\n\ngo 1.27\n" {
 		t.Fatalf("unexpected generated go.mod:\n%s", goMod)
 	}
 
@@ -2768,6 +3021,33 @@ func TestCompileFilesWithOptionsCreatesAndChecksGoModule(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "generated module is") {
 		t.Fatalf("expected module mismatch error, got %v", err)
+	}
+}
+
+func TestCompileFilesWithOptionsUpgradesExistingGoModuleVersion(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	if err := os.WriteFile(sourcePath, []byte("func main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	goModPath := filepath.Join(outputDir, "go.mod")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	original := "module example.com/acme/app\n\ngo 1.26\n\nrequire example.com/dep v1.2.3\n"
+	if err := os.WriteFile(goModPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "example.com/acme/app"}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.ReadFile(goModPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "go 1.27") || !strings.Contains(string(updated), "require example.com/dep v1.2.3") {
+		t.Fatalf("existing generated go.mod was not upgraded while preserving dependencies:\n%s", updated)
 	}
 }
 

@@ -705,7 +705,43 @@ ratioText := ratio.String()
 enabledText := enabled.String()
 ```
 
+### Inferred map literals
+
+Use `map(...)` to create a regular string-keyed Go map without spelling its
+type. Bare labels become string keys; quote a key when it is not an identifier.
+The compiler infers one value type when all entries agree, and uses `any` for
+mixed values:
+
+```gpp
+prices := map(coffee: 2.5, tea: 1.75) // map[string]float64
+price := prices["coffee"]             // float64
+
+form := map(name: "Ada", level: 3) // map[string]any
+level := form["level"]             // any; dynamic value is int
+```
+
+The mixed map stores each value with its original runtime type, but a lookup
+has static type `any`. The inferred map type stays fixed, so later assignments
+must be assignable to that value type. Give a map an expected type when it
+needs to accept mixed values from the start, or when constructing an empty map:
+
+```gpp
+var settings map[string]any = map()
+settings["enabled"] = true
+```
+
+For non-string keys, use Go's typed map literal syntax.
+
 ### Map extensions
+
+#### `Each(fn func(K, V))` and `Each(fn func(K, V) error) error`
+
+Visits each key/value pair in unspecified map order. The error-returning form
+stops at the first callback error and returns it.
+
+```gpp
+prices.Each((name, price) => println(name, price))
+```
 
 #### `Keys() []K`
 
@@ -731,12 +767,24 @@ Reports whether the key exists, including when its associated value is the value
 configured := settings.Has("port")
 ```
 
-#### `GetOr(key K, fallback V) V`
+#### `Delete(key K) bool`
 
-Returns the value for `key`, or `fallback` when the key is absent. Use `Has` when you need to distinguish an absent key from a present zero value.
+Removes `key` from the map and reports whether it existed. It returns `false`
+when the key was already absent.
+
+```gpp
+removed := settings.Delete("theme")
+```
+
+#### `Get(key K) (V, bool)` and `Get(key K, fallback V) V`
+
+With one key argument, returns the value and whether the key exists, like Go's
+two-result map lookup. With a fallback argument, returns the value or the
+fallback when the key is absent.
 
 ```go
-port := settings.GetOr("port", 8080)
+port, found := settings.Get("port")
+portWithDefault := settings.Get("port", 8080)
 ```
 
 #### `IsEmpty() bool`
@@ -781,7 +829,7 @@ Returns the error wrapped directly by this error, or `nil` when there is no dire
 cause := err.Unwrap()
 ```
 
-#### `As[T any]() T`
+#### `As[T]() T`
 
 Searches the error chain for a value assignable to `T` and returns it. If no matching error exists, it returns `T`'s zero value; use `Is` or an appropriate nil check when absence matters.
 

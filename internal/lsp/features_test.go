@@ -1017,6 +1017,148 @@ func main() { _ = quux().works; _ = quux().profile.active; _ = quux().c.e.ToUppe
 	}
 }
 
+func TestInferredMapLiteralProvidesTypedMapCompletions(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+func main() {
+    prices := map(coffee: 2.5, tea: 1.75)
+    prices.
+}
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("map literal completion sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	prelude, err := compiler.LoadPrelude()
+	if err != nil {
+		t.Fatalf("load standard prelude: %v", err)
+	}
+	workspace.docIndex = compiler.BuildDocIndex([]*compiler.File{file, prelude})
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+	offset := strings.Index(source, "prices.\n") + len("prices.")
+	items := completionLabels(server.contextualCompletions(state, offset))
+	for _, expected := range []string{"Each", "Get", "Keys", "Values", "Has", "Clone"} {
+		if !items[expected] {
+			t.Errorf("inferred map completion omitted %q (receiver type %q): %#v", expected, server.receiverType(state, "prices", offset), items)
+		}
+	}
+}
+
+func TestMapGetHoverSelectsCallOverloadAndListsAlternatives(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+func main() {
+    values := map(item: "value")
+    value, found := values.Get("item")
+    fallback := values.Get("missing", "default")
+    _, _ = value, found
+    _ = fallback
+}
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("map overload hover sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	prelude, err := compiler.LoadPrelude()
+	if err != nil {
+		t.Fatalf("load standard prelude: %v", err)
+	}
+	workspace.docIndex = compiler.BuildDocIndex([]*compiler.File{file, prelude})
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+
+	for _, testCase := range []struct {
+		call        string
+		active      string
+		alternative string
+	}{
+		{call: `Get("item")`, active: `Get(key K) (V, bool)`, alternative: `Get(key K, fallback V) V`},
+		{call: `Get("missing", "default")`, active: `Get(key K, fallback V) V`, alternative: `Get(key K) (V, bool)`},
+	} {
+		offset := strings.Index(source, testCase.call)
+		if offset < 0 {
+			t.Fatalf("test call %q not found", testCase.call)
+		}
+		hover := server.hover(textDocumentPositionParams{
+			TextDocument: textDocumentIdentifier{URI: state.URI},
+			Position:     positionAtOffset(source, offset),
+		})
+		if hover == nil || !strings.Contains(hover.Contents.Value, testCase.active) ||
+			!strings.Contains(hover.Contents.Value, "**Other overloads**") || !strings.Contains(hover.Contents.Value, testCase.alternative) {
+			t.Errorf("hover for %s should show the active overload and its alternative, got %#v", testCase.call, hover)
+		}
+	}
+}
+
+func TestMapGetInfersConcreteTypesInLocalHoverAndInlayHints(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+func main() {
+    config := map(port: "8080", host: "localhost")
+    port, portFound := config.Get("port")
+    missingHost, hostFound := config.Get("missing")
+    fallbackHost := config.Get("missing", "localhost")
+    _, _, _, _ = port, portFound, missingHost, hostFound
+    _ = fallbackHost
+}
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("map local type sample should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	prelude, err := compiler.LoadPrelude()
+	if err != nil {
+		t.Fatalf("load standard prelude: %v", err)
+	}
+	workspace.docIndex = compiler.BuildDocIndex([]*compiler.File{file, prelude})
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+
+	configHover := server.hover(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, strings.Index(source, "config :=")+1),
+	})
+	if configHover == nil || !strings.Contains(configHover.Contents.Value, "`config` : `map[string]string`") {
+		t.Fatalf("map local hover should show the concrete inferred type, got %#v", configHover)
+	}
+
+	hints := server.inlayHints(state.URI, fullDocumentRange(source))
+	labelsByLine := map[int][]string{}
+	for _, hint := range hints {
+		labelsByLine[hint.Position.Line] = append(labelsByLine[hint.Position.Line], hint.Label)
+	}
+	for line, expected := range map[int]string{
+		2: ": map[string]string",
+		3: ": string",
+		4: ": string",
+		5: ": string",
+	} {
+		found := false
+		for _, label := range labelsByLine[line] {
+			if strings.Contains(label, expected) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("line %d should include inlay type %q, got %v", line+1, expected, labelsByLine[line])
+		}
+	}
+}
+
 func TestNativeGoCompletionResolvesMembersOnLocalTypes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "models.go")
@@ -2979,7 +3121,7 @@ func TestDeletingSourceFileClearsGeneratedDiagnostics(t *testing.T) {
 
 func TestWorkspaceDiagnosticsIncludeGeneratedGoTypeErrors(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/lspgenerated\n\ngo 1.26\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/lspgenerated\n\ngo 1.27\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "main.gpp")

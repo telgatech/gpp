@@ -486,6 +486,137 @@ func main() {
 	}
 }
 
+func TestCompileFilesRunsGenericMethodDeclaredOnClass(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `class Client {
+    func Echo[T any](value T) (T, error) {
+        return value, nil
+    }
+}
+
+class Child : Client {}
+
+func main() {
+    client := Client()
+    explicit := client.Echo[string]("Ada")
+    inferred := client.Echo(42)
+    child := Child()
+    inherited := child.Echo[float64](3.5)
+    println(explicit, inferred, inherited)
+}`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "go-cache"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		generated, readErr := os.ReadFile(filepath.Join(outputDir, "main.go"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		t.Fatalf("generated generic method program did not run: %v\n%s\nGenerated source:\n%s", err, output, generated)
+	}
+	if string(output) != "Ada 42 3.5\n" {
+		t.Fatalf("unexpected generic method output: %q", output)
+	}
+}
+
+func TestCompileFilesResolvesGenericMethodOverloadByExplicitTypeArguments(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `class Client {
+    func Get(url string, context string = "") string {
+        return "raw"
+    }
+
+    func Get[T any](url string, context string = "") T {
+        var decoded T
+        return decoded
+    }
+}
+
+func main() {
+    client := Client()
+    raw := client.Get("/users/1")
+    decoded := client.Get[string]("/users/1")
+    println(raw, decoded)
+}`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "go-cache"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		generated, readErr := os.ReadFile(filepath.Join(outputDir, "main.go"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		t.Fatalf("overloaded generic method program did not run: %v\n%s\nGenerated source:\n%s", err, output, generated)
+	}
+	if string(output) != "raw \n" {
+		t.Fatalf("raw and generic overloads selected the wrong methods: %q", output)
+	}
+}
+
+func TestCompileFilesRunsImportedInheritedGenericMethod(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	basePath := filepath.Join(inputDir, "api", "base.gpp")
+	mainPath := filepath.Join(inputDir, "main.gpp")
+	if err := os.MkdirAll(filepath.Dir(basePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	baseSource := `package api
+
+class Base {
+    func Echo[T any](value T) (T, error) {
+        return value, nil
+    }
+}`
+	mainSource := `package main
+
+import "fixture/api"
+
+class Child : api.Base {}
+
+func main() {
+    child := Child()
+    value := child.Echo[string]("inherited")
+    println(value)
+}`
+	for path, source := range map[string]string{basePath: baseSource, mainPath: mainSource} {
+		if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CompileFilesWithOptions([]string{basePath, mainPath}, outputDir, CompileOptions{ModulePath: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "go-cache"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated inherited generic method program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "inherited\n" {
+		t.Fatalf("unexpected inherited generic method output: %q", output)
+	}
+}
+
 func TestEmitRejectsInvalidInterpolation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -2492,7 +2623,8 @@ func main() {
 
 	options := map[string]string{"mode": "test"}
     _ = options.Has("mode")
-    _ = options.GetOr("missing", "default")
+    _, _ = options.Get("mode")
+    _ = options.Get("missing", "default")
     _ = options.Keys()
     _ = options.Values()
 }

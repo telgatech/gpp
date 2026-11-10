@@ -242,7 +242,7 @@ func TestRunAcceptsGoDirectoryWithoutGoPlusSources(t *testing.T) {
 func TestOrderedMapAndRingContainers(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("GPP_CACHE", t.TempDir())
-	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module containerstest\n\ngo 1.26\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module containerstest\n\ngo 1.27\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	source := `package main

@@ -11,6 +11,16 @@ class GenericHelpers {
 	}
 }
 
+// GenericClient demonstrates a generic method declared directly on a class.
+class GenericClient {
+	func Echo[T any](value T) T {
+		return value
+	}
+}
+
+// Generic methods remain available on concrete child classes through inheritance.
+class AuditedClient : GenericClient {}
+
 // Stack shows one type parameter flowing through a field and method signatures.
 class Stack[T] {
 	Items []T
@@ -85,5 +95,13 @@ func main() {
 
 	first := First[string]([]string{"generic", "function"})
 	identity := GenericHelpers.Identity[int](42)
+
+	client := GenericClient()
+	echoedWord := client.Echo("generic method")
+	echoedNumber := client.Echo[int](42)
+	auditedClient := AuditedClient()
+	inheritedEcho := auditedClient.Echo("inherited method")
+	inheritedEchoExplicit := auditedClient.Echo[int](42)
 	fmt.Println("generic callables:", first, identity)
+	fmt.Println("generic methods:", echoedWord, echoedNumber, inheritedEcho, inheritedEchoExplicit)
 }
