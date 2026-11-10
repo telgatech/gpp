@@ -1,10 +1,9 @@
 # `gpp/cron`
 
-`gpp/cron` schedules top-level functions with a `Cron` annotation. An annotation
-declares when a job should run; `cron.Start()` explicitly starts all registered
-jobs, and `cron.Stop(ctx)` cancels them during shutdown. The compiler generates
-the registration code, so you do not need to construct job classes or maintain
-a separate list of function callbacks.
+`gpp/cron` schedules top-level functions or methods annotated with `Cron` or
+`Every`. Top-level jobs use the package scheduler. For related jobs that share
+dependencies and state, derive a class from `cron.Cron`; each instance owns an
+independent scheduler and binds its annotated methods to that instance.
 
 ## Why use it
 
@@ -52,8 +51,6 @@ func main() {
 
 ```go [Go++]
 import (
-	"context"
-	"time"
 	cron "gpp/cron"
 )
 
@@ -68,9 +65,9 @@ func main() {
 ```
 :::
 
-The Go++ function describes the job and its timing once. The compiler records
-it during package initialization, but nothing runs until `cron.Start()` is
-called. The scheduler invokes jobs in the background and logs returned errors.
+The annotation and callback are recorded as runtime metadata during package
+initialization, but nothing runs until `cron.Start()` is called. The scheduler
+invokes jobs in the background and logs returned errors.
 
 ## Calendar schedules
 
@@ -111,6 +108,47 @@ func RefreshIndex(ctx context.Context) error @{cron.Every(45 * time.Second)} {
 }
 ```
 
+## Group jobs on a class
+
+Derive a class from `cron.Cron` when its scheduled jobs share services or state.
+`Start` walks the instance's runtime method metadata, finds `Cron` and `Every`
+annotations, and binds their generated typed invokers to that instance. Each
+scheduler keeps its own job registrations:
+
+```gpp
+import (
+    "context"
+    "fmt"
+    "time"
+    cron "gpp/cron"
+)
+
+class Maintenance : cron.Cron {
+    Runs int
+
+    func Heartbeat(ctx context.Context) error @{cron.Every(time.Second)} {
+        this.Runs++
+        fmt.Println("scheduled run", this.Runs)
+        return nil
+    }
+
+    func Weekday(ctx context.Context) error @{cron.Cron("*/15 9-17 * * 1-5")} {
+        fmt.Println("weekday maintenance")
+        return nil
+    }
+}
+
+maintenance := Maintenance()
+maintenance.Start()
+// during shutdown:
+maintenance.Stop()
+```
+
+An annotated method has the same `func(context.Context) error` signature as a
+top-level job and must be on a class that extends `cron.Cron`. The base class
+provides `Start`; the package-level scheduler remains useful for simple jobs
+that do not need an owning instance.
+
 ## Start and stop the scheduler
 
 Call `Start` after configuration and dependencies are ready. It validates all
@@ -148,16 +186,14 @@ func main() {
 	cron.Start()
 	app := App()
 	app.Listen(0)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cron.Stop(ctx)
+	cron.Stop()
 }
 ```
 
-Jobs should observe `ctx.Done()` when doing long-running work so shutdown can
-finish promptly. If the shutdown context expires, `Stop` returns its error and
-the job context remains canceled.
+`Stop()` waits using `context.Background()`. Use `StopWithContext(ctx)` when
+shutdown needs a time limit. Jobs should observe their provided `ctx.Done()` so
+shutdown can finish promptly; if the supplied shutdown context expires,
+`StopWithContext` returns its error and the job context remains canceled.
 
 ## Planned: add and remove jobs at runtime
 
@@ -178,14 +214,14 @@ Jobs added before `Start` will start with the scheduler; jobs added after
 `Start` will begin scheduling immediately. `Remove` will stop future runs and
 cancel an in-progress run's context, then return without waiting for the handler
 to exit. Unhandled trailing errors from `Add` and `Remove` become exceptions in
-Go++. Call `Stop(ctx)` when the application needs to wait for all active work
-to finish.
+Go++. `Stop()` uses a background context; use `StopWithContext(ctx)` when
+shutdown needs a deadline.
 
 ::: warning Dynamic job registration is planned
 
-The current package supports annotated functions and the `Start`/`Stop`
-lifecycle. `cron.Add` and `cron.Remove` are specified but are not implemented
-yet.
+The package supports annotated top-level functions, annotated methods on
+`cron.Cron` subclasses, and package or instance `Start`/`Stop` lifecycles.
+`cron.Add` and `cron.Remove` are specified but are not implemented yet.
 
 :::
 
@@ -196,26 +232,31 @@ yet.
   scheduled time, that run is skipped and logged.
 - Returned errors and panics are logged with the function name. They do not
   stop other jobs, and the package does not retry them.
-- Imported Go++ packages can contribute registered jobs, but importing them
-  alone never starts the scheduler. Calling `Start` starts every registered
-  annotated function in the program.
+- Imported Go++ packages can contribute top-level registered jobs, but
+  importing them alone never starts the package scheduler. Calling
+  `cron.Start` starts every registered top-level function; calling an instance's
+  `Start` starts only that class instance's annotated methods.
 - Jobs run in each process independently. Multiple replicas will each run the
   same schedules; use a platform scheduler or distributed lock when only one
   replica should perform a task.
 
-## Function requirements
+## Job handler requirements
 
-For now, an annotated function must be a top-level, non-generic function with
+An annotated top-level function or instance method must be non-generic and have
 this signature:
 
 ```go
 func Job(ctx context.Context) error
 ```
 
-The annotation must use a string literal. `Start` reports invalid schedule
-expressions with the job name. The current parser supports numeric fields and
-does not include month/day names, seconds, time-zone prefixes, or named
-shortcuts.
+`cron.Start()` and an instance's `Start()` discover annotations from generic
+runtime metadata. The compiler generates typed invocation adapters for
+annotated functions and methods; it does not implement Cron scheduling rules.
+Instance methods must be available on a class derived from `cron.Cron`.
+`Cron` accepts a string expression. `Start` reports invalid signatures and
+schedule expressions with the job name before starting the jobs. The current
+parser supports numeric fields and does not include month/day names, seconds,
+time-zone prefixes, or named shortcuts.
 
 ## Specification
 

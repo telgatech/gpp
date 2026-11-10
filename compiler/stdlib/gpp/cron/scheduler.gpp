@@ -1,0 +1,119 @@
+package gpp.cron
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// Cron owns an independent scheduler for one application or related group of
+// annotated methods.
+class Cron {
+	state schedulerState
+
+	// Start discovers this instance's annotated methods and starts its jobs.
+	func Start() error {
+		object := this.GppDynamicObject
+		if object == nil {
+			object = this
+		}
+		provider, ok := object.(interface { GppRuntimeClass() *GppClass })
+		if !ok {
+			return fmt.Errorf("cron.Cron requires a Go++ class instance")
+		}
+		class := provider.GppRuntimeClass()
+		if class == nil {
+			return fmt.Errorf("cron.Cron could not read the runtime class")
+		}
+		for _, method := range class.Methods {
+			if method.Static || len(method.Annotations) == 0 {
+				continue
+			}
+			for _, annotation := range method.Annotations {
+				if annotation.FullName != "gpp.cron.Cron" && annotation.FullName != "gpp.cron.Every" {
+					continue
+				}
+			invoke := cronMethodInvoker(method)
+			if invoke == nil {
+					return fmt.Errorf("cron method %s has no generated invoker", method.Name)
+				}
+				if len(method.Parameters) != 1 || method.Parameters[0].Type == nil || method.Parameters[0].Type.Name != "context.Context" || method.Result == nil || method.Result.Name != "error" {
+					return fmt.Errorf("cron method %s must have signature func(context.Context) error", method.Name)
+				}
+				if len(annotation.Args) != 1 {
+					return fmt.Errorf("cron annotation on %s requires one argument", method.Name)
+				}
+				job := registeredJob{name: class.Package + "." + class.Name + "." + method.Name}
+				if annotation.FullName == "gpp.cron.Cron" {
+					expression, ok := annotation.Args[0].(string)
+					if !ok {
+						return fmt.Errorf("cron expression on %s must be a string", method.Name)
+					}
+					job.expression = expression
+				} else {
+					interval, ok := annotation.Args[0].(time.Duration)
+					if !ok {
+						return fmt.Errorf("cron interval on %s must be a time.Duration", method.Name)
+					}
+					job.interval = interval
+					job.every = true
+				}
+				job.function = func(ctx context.Context) error {
+					results, err := invoke(object, []any{ctx})
+					if err != nil {
+						return err
+					}
+					if len(results) != 1 {
+						return fmt.Errorf("cron method %s returned an invalid result", method.Name)
+					}
+					if results[0] == nil {
+						return nil
+					}
+					result, ok := results[0].(error)
+					if !ok {
+						return fmt.Errorf("cron method %s did not return error", method.Name)
+					}
+					return result
+				}
+				if err := registerJob(&this.state, job, true); err != nil {
+					return err
+				}
+			}
+		}
+		return startScheduler(&this.state)
+	}
+
+	// Stop cancels this scheduler's jobs and waits using a background context.
+	func Stop() error {
+		return stopScheduler(&this.state, context.Background())
+	}
+
+	// StopWithContext cancels this scheduler's jobs and waits up to ctx's deadline.
+	func StopWithContext(ctx context.Context) error {
+		return stopScheduler(&this.state, ctx)
+	}
+}
+
+func cronMethodInvoker(method GppMethod) func(any, []any) ([]any, error) {
+	if method.Invoke != nil {
+		return method.Invoke
+	}
+	if method.Owner == nil {
+		return nil
+	}
+	for _, ownerMethod := range method.Owner.Methods {
+		if ownerMethod.Name == method.Name && ownerMethod.Result != nil && method.Result != nil && ownerMethod.Result.Name == method.Result.Name && len(ownerMethod.Parameters) == len(method.Parameters) {
+			matches := true
+			for index := range method.Parameters {
+				if ownerMethod.Parameters[index].Type == nil || method.Parameters[index].Type == nil || ownerMethod.Parameters[index].Type.Name != method.Parameters[index].Type.Name {
+					matches = false
+					break
+				}
+			}
+			if matches && ownerMethod.Invoke != nil {
+				return ownerMethod.Invoke
+			}
+		}
+	}
+	return nil
+}

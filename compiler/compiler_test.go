@@ -1033,6 +1033,26 @@ func TestCompileFilesSchedulesAnnotatedCronFunctions(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
+	jobsPath := filepath.Join(inputDir, "jobs.gpp")
+	jobsSource := `package jobs
+
+import (
+	"context"
+	"time"
+	cron "gpp/cron"
+)
+
+var Runs int
+
+func Pulse(ctx context.Context) error @{cron.Every(20 * time.Millisecond)} {
+	Runs++
+	return nil
+}
+
+func Nightly(ctx context.Context) error @{cron.Cron("0 2 * * *")} {
+	return nil
+}
+`
 	source := `package main
 
 import (
@@ -1040,34 +1060,43 @@ import (
 	"fmt"
 	"time"
 	cron "gpp/cron"
+	jobs
 )
 
-var runs int
+class Maintenance : cron.Cron {
+	Runs int
 
-func Pulse(ctx context.Context) error @{cron.Every(20 * time.Millisecond)} {
-	runs++
-	return nil
-}
-
-func Nightly(ctx context.Context) error @{cron.Cron("0 2 * * *")} {
-	return nil
+	func PulseInstance(ctx context.Context) error @{cron.Every(20 * time.Millisecond)} {
+		this.Runs++
+		return nil
+	}
 }
 
 func main() {
 	time.Sleep(50 * time.Millisecond)
-	if runs != 0 { panic("cron job ran before Start") }
+	if jobs.Runs != 0 { panic("cron job ran before Start") }
 	if err := cron.Start(); err != nil { panic(err) }
+	maintenance := Maintenance()
+	if err := maintenance.Start(); err != nil { panic(err) }
+	if err := maintenance.Start(); err != nil { panic(err) }
+	secondMaintenance := Maintenance()
+	if err := secondMaintenance.Start(); err != nil { panic(err) }
 	time.Sleep(100 * time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := cron.Stop(ctx); err != nil { panic(err) }
-	fmt.Println(runs > 0)
+	if err := cron.StopWithContext(ctx); err != nil { panic(err) }
+	if err := maintenance.StopWithContext(ctx); err != nil { panic(err) }
+	if err := secondMaintenance.StopWithContext(ctx); err != nil { panic(err) }
+	fmt.Println(jobs.Runs > 0 && maintenance.Runs > 0 && secondMaintenance.Runs > 0)
 }
 `
+	if err := os.WriteFile(jobsPath, []byte(jobsSource), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+	if err := CompileFilesWithOptions([]string{jobsPath, sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
 		t.Fatal(err)
 	}
 	cronTests := `package cron
@@ -1124,6 +1153,34 @@ func TestCompiledCronRejectsMalformedSchedules(t *testing.T) {
 	}
 	if strings.TrimSpace(string(output)) != "true" {
 		t.Fatalf("annotated cron function was not run:\n%s", output)
+	}
+}
+
+func TestCompileAllowsAnnotatedMethodsOutsideCronSchedulerClass(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import (
+	"context"
+	"time"
+	cron "gpp/cron"
+)
+
+class UnmanagedJobs {
+	func Prune(ctx context.Context) error @{cron.Every(time.Minute)} {
+		return nil
+	}
+}
+
+func main() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("generic method annotations should not be restricted to cron.Cron subclasses: %v", err)
 	}
 }
 

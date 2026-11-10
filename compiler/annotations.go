@@ -217,10 +217,10 @@ func validateAnnotationArguments(use AnnotationUse, declaration *AnnotationDecl)
 		}
 		actual := annotationExpressionTypeKey(parsed)
 		if actual == "" {
-			if declaration.Package == "gpp.cron" && declaration.Name == "Every" && expected == "time.Duration" {
+			if expected == "time.Duration" {
 				// Duration expressions commonly combine imported constants such
 				// as time.Second. Their exact types are resolved by Go when the
-				// generated RegisterEvery call is compiled.
+				// generated annotation metadata is compiled.
 				continue
 			}
 			if isSelectorAnnotationExpression(parsed) && isNamedAnnotationType(expected) {

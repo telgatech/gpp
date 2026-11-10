@@ -321,7 +321,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		body = insertAfterImports(body, fmt.Sprintf("import %s %q\n\n", enumDriverAlias, "database/sql/driver"))
 	}
 	if context.Introspection != nil &&
-		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
+		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0 || fileUsesIntrospection(file)) &&
 		(context.IntrospectionRuntimeImport != "" &&
 			(!context.Introspection.RuntimeEmitted || strings.Contains(body, "gppRuntime."))) {
 		body = ensureIntrospectionRuntimeImport(body, context.IntrospectionRuntimeImport)
@@ -339,7 +339,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	localRuntimeDefinitions := ""
 	localRuntimeImports := ""
 	if context.Introspection != nil && context.IntrospectionRuntimeImport == "" &&
-		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
+		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0 || fileUsesIntrospection(file)) &&
 		!context.Introspection.RuntimeEmitted {
 		runtimeImportBody := body
 		if needsFmtImport {
@@ -372,7 +372,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if context.Records != nil {
 		declarationsPrefix += context.Records.definitions()
 	}
-	if context.Introspection != nil && (len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0) &&
+	if context.Introspection != nil && (len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0 || fileUsesIntrospection(file)) &&
 		!context.Introspection.RuntimeEmitted {
 		if context.IntrospectionRuntimeImport == "" {
 			declarationsPrefix += localRuntimeDefinitions
@@ -1089,7 +1089,7 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 					return "", err
 				}
 			}
-			cronRegistration, err := cronFunctionRegistrationSource(d, context)
+			annotationRegistration, err := annotatedFunctionRegistrationSource(d, context)
 			if err != nil {
 				return "", err
 			}
@@ -1098,7 +1098,7 @@ func emitDecls(file *File, context constructorContext, interpolationName string)
 			if !strings.HasSuffix(code, "\n") {
 				out.WriteByte('\n')
 			}
-			out.WriteString(cronRegistration)
+			out.WriteString(annotationRegistration)
 
 		case *GoDecl:
 			structured, err := emitStructuredGoDecls(file, d, context, interpolationName)
