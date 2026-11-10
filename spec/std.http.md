@@ -171,6 +171,7 @@ Potential contents:
 
 - Server base class
 - Context class
+- cookie-aware HTTP client with generic JSON helpers
 - HTTP method annotations
 - listener annotations
 - file-server annotations
@@ -207,6 +208,8 @@ http.ServeMux
 context
 
 where possible.
+
+The HTTP client has moved to the experimental [`gpp/exp/http` package](std.exp.http.md). This specification covers the `gpp/http` server API and annotations.
 
 ## 8. Suggested `gpp/http` annotations
 

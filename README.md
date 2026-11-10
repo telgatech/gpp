@@ -112,11 +112,9 @@ The editor view below shows the [`Todo` model in the full example](examples/todo
 
 ## Install and build
 
-Go++ currently supports Go 1.26 and newer. Go 1.27 adds generic methods with
-their own type parameters; Go++ plans to make Go 1.27 the baseline soon so
-those methods can work in generated projects by default. Until then, generic
-free functions, static methods, and extension methods are available, while
-generic instance methods are not yet supported end to end.
+Go++ requires Go 1.27 or newer. This enables generic methods declared directly
+on classes in generated projects, alongside generic free functions, static
+methods, and extension methods.
 
 <table>
 <tr>
@@ -136,7 +134,7 @@ brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
 <tr>
 <td valign="top">
 <h3><img src="docs/public/go.svg" width="28" height="28" alt="Go icon"> Go install</h3>
-<p>For Go developers who already have Go 1.26 or newer and want to try Go++ quickly:</p>
+<p>For Go developers who already have Go 1.27 or newer and want to try Go++ quickly:</p>
 <pre><code>go install github.com/telgatech/gpp@main</code></pre>
 </td>
 </tr>

@@ -85,6 +85,21 @@ Format("value")
 Resolution happens at compile time. An ambiguous call is a diagnostic; it is
 not deferred to runtime reflection.
 
+Class methods can also overload a non-generic method with a generic one. An
+explicit type argument selects the generic overload, while a call without one
+selects the non-generic overload:
+
+```gpp
+class Client {
+    func Get(path string) string { return "raw response" }
+    func Get[T any](path string) T { var value T; return value }
+}
+
+client := Client()
+raw := client.Get("/users/1")
+user := client.Get[User]("/users/1")
+```
+
 ## Go-compatible assignment operators
 
 Go++ supports Go's compound assignment operators and increment/decrement

@@ -663,8 +663,13 @@ Recommended map extensions:
 
 ```gpp
 extend map[K]V {
+    func Each(fn func(K, V))
+    func Each(fn func(K, V) error) error
+
     func Has(key K) bool
-    func GetOr(key K, fallback V) V
+    func Delete(key K) bool
+    func Get(key K) (V, bool)
+    func Get(key K, fallback V) V
 
     func Keys() []K
     func Values() []V
@@ -675,6 +680,9 @@ extend map[K]V {
     func Clone() map[K]V
 }
 ```
+
+`Each` visits each key/value pair in unspecified order. Its error-returning
+overload stops at the first callback error and returns it.
 
 ---
 
@@ -694,23 +702,23 @@ and returns the boolean result.
 
 ---
 
-# 27. Map `GetOr`
+# 27. Map `Get`
 
 ```gpp
-theme := settings.GetOr("theme", "light")
+theme, found := settings.Get("theme")
+fallbackTheme := settings.Get("theme", "light")
 ```
 
-returns:
+With one argument after the receiver, `Get` returns the value and whether the
+key exists, like Go's two-result map lookup. With a fallback argument, it
+returns the value when present and the fallback otherwise:
 
-```text
-map value
-    if key exists
-
-fallback
-    otherwise
+```gpp
+value, found := settings.Get("theme")
+theme := settings.Get("theme", "light")
 ```
 
-The distinction is key existence, not whether the stored value is zero.
+The boolean reports key presence, even when the stored value is the zero value.
 
 Thus if a key exists with:
 
@@ -725,7 +733,18 @@ that existing value is still returned.
 
 ---
 
-# 28. Map `Keys`
+# 28. Map `Delete`
+
+```gpp
+removed := settings.Delete("theme")
+```
+
+Deletes the key if it exists and returns whether it was present. The map is
+modified in place; deleting a missing key returns `false`.
+
+---
+
+# 29. Map `Keys`
 
 ```gpp
 keys := m.Keys()
@@ -739,7 +758,7 @@ Users requiring ordering should explicitly sort the result.
 
 ---
 
-# 29. Map `Values`
+# 30. Map `Values`
 
 ```gpp
 values := m.Values()
@@ -751,7 +770,7 @@ No ordering guarantee is provided.
 
 ---
 
-# 30. Map `Clone`
+# 31. Map `Clone`
 
 ```gpp
 copy := m.Clone()
@@ -763,7 +782,7 @@ Nested pointers, slices, maps, classes, or reference-containing values are not r
 
 ---
 
-# 31. Error Extensions
+# 32. Error Extensions
 
 Go's `errors` package maps naturally onto extensions on `error`.
 
@@ -786,7 +805,7 @@ or equivalent typed form.
 
 ---
 
-# 32. `error.Is`
+# 33. `error.Is`
 
 Instead of:
 
@@ -808,7 +827,7 @@ errors.Is
 
 ---
 
-# 33. `error.Unwrap`
+# 34. `error.Unwrap`
 
 ```gpp
 cause := err.Unwrap()
@@ -824,7 +843,7 @@ and returns `nil` where the error has no unwrap chain.
 
 ---
 
-# 34. `error.As`
+# 35. `error.As`
 
 The desired ergonomic form is:
 
@@ -838,7 +857,7 @@ If direct generic extension lowering is awkward in v1, this helper may be deferr
 
 ---
 
-# 35. `io.Reader` Extensions
+# 36. `io.Reader` Extensions
 
 A very high-value extension is:
 
@@ -876,7 +895,7 @@ body, err := resp.Body.ReadAll()
 
 ---
 
-# 36. `io.Writer` Extensions
+# 37. `io.Writer` Extensions
 
 A possible useful extension:
 
@@ -898,7 +917,7 @@ This should map to standard Go behavior such as `io.WriteString`.
 
 ---
 
-# 37. Numeric Extensions
+# 38. Numeric Extensions
 
 Numeric extensions should remain deliberately restrained.
 
@@ -917,7 +936,7 @@ Do not grow primitive numeric types into large utility APIs.
 
 ---
 
-# 38. Existing Native Methods Win
+# 39. Existing Native Methods Win
 
 Normal Go++ extension resolution rules apply.
 
@@ -933,7 +952,7 @@ Extensions must not shadow or alter native Go methods.
 
 ---
 
-# 39. No Runtime Type Modification
+# 40. No Runtime Type Modification
 
 Adding:
 
@@ -957,7 +976,7 @@ This preserves full Go interoperability.
 
 ---
 
-# 40. Extension Discovery
+# 41. Extension Discovery
 
 Prelude extensions should be discoverable by Go++ tooling.
 
@@ -987,7 +1006,7 @@ Extension methods should clearly appear as extensions in tooling where useful.
 
 ---
 
-# 41. Documentation
+# 42. Documentation
 
 Each prelude extension should document the corresponding Go standard-library behavior where applicable.
 
@@ -1008,7 +1027,7 @@ This helps Go developers understand that semantics remain familiar.
 
 ---
 
-# 42. Names Should Follow Go Vocabulary
+# 43. Names Should Follow Go Vocabulary
 
 Where an extension directly projects a Go standard-library function, preserve the Go function name.
 
@@ -1032,7 +1051,7 @@ The feature should feel like ergonomic Go, not a foreign standard library layere
 
 ---
 
-# 43. Avoid Excessive Aliases
+# 44. Avoid Excessive Aliases
 
 Do not provide multiple synonymous names such as:
 
@@ -1053,7 +1072,7 @@ Prefer existing Go vocabulary unless Go provides no suitable term.
 
 ---
 
-# 44. Domain-Specific Extensions Stay Out of Prelude
+# 45. Domain-Specific Extensions Stay Out of Prelude
 
 The implicit prelude should not absorb domain-specific conveniences.
 
@@ -1090,7 +1109,7 @@ unless later usage proves a more general abstraction belongs in core.
 
 ---
 
-# 45. Path Helpers
+# 46. Path Helpers
 
 Functions from:
 
@@ -1120,7 +1139,7 @@ or belong to a more explicitly typed/path-oriented helper layer later.
 
 ---
 
-# 46. URL and Regex Helpers
+# 47. URL and Regex Helpers
 
 Similarly, avoid extensions such as:
 
@@ -1144,7 +1163,7 @@ unless dogfooding demonstrates clear repeated friction.
 
 ---
 
-# 47. Mutation Policy
+# 48. Mutation Policy
 
 Prelude extension methods should avoid hidden mutation where practical.
 
@@ -1167,7 +1186,7 @@ This reduces surprises in fluent chains.
 
 ---
 
-# 48. Nil Behavior
+# 49. Nil Behavior
 
 Extensions must follow normal Go++ nil behavior.
 
@@ -1183,7 +1202,7 @@ Each extension should document meaningful nil behavior where applicable.
 
 ---
 
-# 49. Error Behavior
+# 50. Error Behavior
 
 Extensions wrapping functions returning trailing `error` should preserve that signature.
 
@@ -1199,7 +1218,7 @@ Do not convert errors into sentinel zero values just to make an extension look s
 
 ---
 
-# 50. Performance
+# 51. Performance
 
 Prelude extensions should be thin wrappers.
 
@@ -1221,7 +1240,7 @@ after optimization/inlining.
 
 ---
 
-# 51. Initial Recommended Prelude Surface
+# 52. Initial Recommended Prelude Surface
 
 The initial standard ergonomic extension set should focus on:
 
@@ -1268,7 +1287,7 @@ string
 
 map[K]V
     Has
-    GetOr
+    Get
     Keys
     Values
     IsEmpty
@@ -1291,7 +1310,7 @@ Sorting, Min/Max, Unique, and UniqueBy may be added once the generic constraint 
 
 ---
 
-# 52. Example
+# 53. Example
 
 Without extensions:
 
@@ -1333,7 +1352,7 @@ The generated program still uses ordinary Go types and standard-library semantic
 
 ---
 
-# 53. Non-Goals
+# 54. Non-Goals
 
 The v1 extension set should not attempt to provide:
 
@@ -1351,7 +1370,7 @@ The v1 extension set should not attempt to provide:
 
 ---
 
-# 54. Design Summary
+# 55. Design Summary
 
 The feature follows this model:
 
@@ -1372,7 +1391,7 @@ name.TrimSpace()
 
 users.Any(u => u.Active)
 
-settings.GetOr("theme", "light")
+settings.Get("theme", "light")
 
 err.Is(sql.ErrNoRows)
 

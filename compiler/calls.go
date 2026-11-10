@@ -308,6 +308,7 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 		}
 		result[method.Name] = append(result[method.Name], callableSignature{
 			Name:       method.Name,
+			GoName:     methodOutputName(method),
 			Parameters: parameters,
 			ResultAST:  methodResultTypeNode(method),
 		})
@@ -1440,32 +1441,109 @@ func lowerOverloadCallNode(call *CallExpr, context constructorContext) (ExprNode
 	if !found || name == "" {
 		return nil, false, nil
 	}
-	switch callee := call.Callee.(type) {
-	case *NameExpr:
-		if callee.Name == name {
-			return call, false, nil
-		}
-		return &CallExpr{
-			Callee:    &NameExpr{Name: name, SpanValue: callee.SpanValue},
-			Arguments: append([]CallArg(nil), call.Arguments...),
-			SpanValue: call.SpanValue,
-		}, true, nil
-	case *SelectorExpr:
-		if callee.Name == name {
-			return call, false, nil
-		}
-		return &CallExpr{
-			Callee: &SelectorExpr{
-				Receiver:  callee.Receiver,
-				Name:      name,
-				SpanValue: callee.SpanValue,
-			},
-			Arguments: append([]CallArg(nil), call.Arguments...),
-			SpanValue: call.SpanValue,
-		}, true, nil
-	default:
+	callee, changed := renameOverloadedCallee(call.Callee, name)
+	if !changed {
 		return nil, false, nil
 	}
+	arguments, defaultsChanged, err := overloadDefaultArguments(call, name, context)
+	if err != nil {
+		return nil, true, err
+	}
+	if !defaultsChanged {
+		arguments = append([]CallArg(nil), call.Arguments...)
+	}
+	return &CallExpr{
+		Callee:    callee,
+		Arguments: arguments,
+		SpanValue: call.SpanValue,
+	}, true, nil
+}
+
+func overloadDefaultArguments(call *CallExpr, goName string, context constructorContext) ([]CallArg, bool, error) {
+	selector, _, ok := overloadGenericMethodSelector(call.Callee)
+	if !ok {
+		return nil, false, nil
+	}
+	className := ""
+	if receiver, ok := selector.Receiver.(*NameExpr); ok && receiver.Name == "this" {
+		className = context.Overloads.CurrentClass
+	} else {
+		className = strings.TrimPrefix(strings.TrimSpace(overloadReceiverTypeKey(selector.Receiver, context.CurrentParameterTypes, context.Overloads)), "*")
+	}
+	signatures := context.ClassMethodSignatures[className][selector.Name]
+	var signature *callableSignature
+	for index := range signatures {
+		candidate := &signatures[index]
+		if candidate.Name == selector.Name && candidate.GoName == goName {
+			signature = candidate
+			break
+		}
+	}
+	if signature == nil || len(call.Arguments) >= len(signature.Parameters) {
+		return nil, false, nil
+	}
+	for _, argument := range call.Arguments {
+		if argument.Name != "" {
+			return nil, false, nil
+		}
+	}
+	arguments := append([]CallArg(nil), call.Arguments...)
+	for index := len(arguments); index < len(signature.Parameters); index++ {
+		parameter := signature.Parameters[index]
+		if !parameter.HasDefault {
+			return nil, false, nil
+		}
+		value := parameter.DefaultAST
+		if len(parameter.DefaultTokens) > 0 {
+			parsed, err := ParseExpressionTokens(parameter.DefaultTokens)
+			if err != nil {
+				return nil, false, err
+			}
+			value = parsed
+		}
+		if value == nil {
+			return nil, false, fmt.Errorf("missing default value for overloaded method %s parameter %s", selector.Name, parameter.Name)
+		}
+		arguments = append(arguments, CallArg{Value: value})
+	}
+	return arguments, true, nil
+}
+
+func renameOverloadedCallee(expression ExprNode, name string) (ExprNode, bool) {
+	switch callee := expression.(type) {
+	case *NameExpr:
+		if callee.Name == name {
+			return expression, false
+		}
+		return &NameExpr{Name: name, SpanValue: callee.SpanValue}, true
+	case *SelectorExpr:
+		if callee.Name == name {
+			return expression, false
+		}
+		return &SelectorExpr{Receiver: callee.Receiver, Name: name, Safe: callee.Safe, SpanValue: callee.SpanValue}, true
+	case *IndexExpr:
+		receiver, changed := renameOverloadedSelector(callee.Receiver, name)
+		if !changed {
+			return expression, false
+		}
+		return &IndexExpr{Receiver: receiver, Index: callee.Index, SpanValue: callee.SpanValue}, true
+	case *IndexListExpr:
+		receiver, changed := renameOverloadedSelector(callee.Receiver, name)
+		if !changed {
+			return expression, false
+		}
+		return &IndexListExpr{Receiver: receiver, Indices: append([]ExprNode(nil), callee.Indices...), SpanValue: callee.SpanValue}, true
+	default:
+		return expression, false
+	}
+}
+
+func renameOverloadedSelector(expression ExprNode, name string) (ExprNode, bool) {
+	selector, ok := expression.(*SelectorExpr)
+	if !ok {
+		return expression, false
+	}
+	return renameOverloadedCallee(selector, name)
 }
 
 func callableName(call *CallExpr) string {
@@ -2106,6 +2184,9 @@ func promotedResultValueType(typeName string, context constructorContext) string
 func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueTypes map[string]string) string {
 	if call == nil || call.Callee == nil {
 		return ""
+	}
+	if isMapConstructorCallee(call.Callee) {
+		return inferMapConstructorType(call, valueTypes, context)
 	}
 	if callee, ok := call.Callee.(*NameExpr); ok && callee.Name == "__gppUnwrap" && len(call.Arguments) == 1 {
 		if inner, ok := call.Arguments[0].Value.(*CallExpr); ok {

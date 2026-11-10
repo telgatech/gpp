@@ -49,7 +49,7 @@ func RootValue() int { return 1 }
 
 func TestAvailableImportPackagesIncludesCurrentModuleGoPlusPackages(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/project\n\ngo 1.26\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/project\n\ngo 1.27\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	sourcePath := filepath.Join(root, "internal", "math", "math.gpp")

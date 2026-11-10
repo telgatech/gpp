@@ -8,6 +8,10 @@ Starting an HTTP server in Go is easy. Turning it into an application means maki
 
 The goal is to make the routine shape of a service easy to see and maintain. A route lives beside its handler, a class-level annotation configures the server, and built-in integrations such as OAuth/OIDC and Swagger do not need hand-written infrastructure routes. The result is less setup code between the application and Go's HTTP primitives.
 
+## HTTP client
+
+The experimental client is provided by [`gpp/exp/http`](./exp-http). The `gpp/http` package documented here provides the server API.
+
 ## Side by side: wire a service
 
 A conventional Go service composes its mux, handler middleware, server, and shutdown path explicitly:

@@ -699,6 +699,21 @@ extend bool {
 }
 
 extend map[K]V {
+	func Each(fn func(K, V)) {
+		for key, value := range this {
+			fn(key, value)
+		}
+	}
+
+	func Each(fn func(K, V) error) error {
+		for key, value := range this {
+			if err := fn(key, value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	func Keys() []K {
 		result := make([]K, 0, len(this))
 		for key := range this {
@@ -720,7 +735,20 @@ extend map[K]V {
 		return ok
 	}
 
-	func GetOr(key K, fallback V) V {
+	func Delete(key K) bool {
+		_, ok := this[key]
+		if ok {
+			delete(this, key)
+		}
+		return ok
+	}
+
+	func Get(key K) (V, bool) {
+		value, ok := this[key]
+		return value, ok
+	}
+
+	func Get(key K, fallback V) V {
 		value, ok := this[key]
 		if !ok {
 			return fallback

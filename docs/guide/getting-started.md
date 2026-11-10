@@ -6,7 +6,7 @@ resolution, building, and execution to the Go toolchain.
 
 ## Requirements
 
-- Go 1.26 or newer
+- Go 1.27 or newer
 - Node.js 20 or newer only when developing this documentation site
 
 <div class="install-options">
@@ -30,7 +30,7 @@ brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
       <img src="/go.svg" width="32" height="32" alt="Go icon">
       <h3>Go install</h3>
     </div>
-    <p>For Go developers who already have Go 1.26 or newer and want to try Go++ quickly:</p>
+    <p>For Go developers who already have Go 1.27 or newer and want to try Go++ quickly:</p>
     <pre><code>go install github.com/telgatech/gpp@main</code></pre>
     <p>Check the installation with <code>gpp version</code>.</p>
   </section>

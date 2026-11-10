@@ -1,0 +1,583 @@
+package gpp.exp.http
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	stdhttp "net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"time"
+	"golang.org/x/net/publicsuffix"
+)
+
+// UploadFile describes one file part in a multipart request.
+class UploadFile {
+	Field string
+	Path string
+	Filename string
+}
+
+// Client wraps Go's HTTP client with cookie persistence and typed helpers.
+class Client {
+	BaseURL string
+	Timeout time.Duration
+	client *stdhttp.Client
+	baseURL *url.URL
+
+	func init() error {
+		if this.BaseURL != "" {
+			baseURL, err := gppHTTPParseBaseURL(this.BaseURL)
+			if err != nil {
+				return err
+			}
+			this.baseURL = baseURL
+		}
+		if this.client == nil {
+			this.client = &stdhttp.Client{Timeout: this.Timeout}
+		}
+		if this.client.Jar == nil {
+			jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+			if err != nil {
+				return err
+			}
+			this.client.Jar = jar
+		}
+		return nil
+	}
+
+	// SetBaseURL changes the base used to resolve relative request URLs.
+	func SetBaseURL(baseURL string) error {
+		if baseURL == "" {
+			this.BaseURL = ""
+			this.baseURL = nil
+			return nil
+		}
+		parsed, err := gppHTTPParseBaseURL(baseURL)
+		if err != nil {
+			return err
+		}
+		this.BaseURL = parsed.String()
+		this.baseURL = parsed
+		return nil
+	}
+
+	// SetTransport configures the underlying transport. Set it before sending requests.
+	func SetTransport(transport stdhttp.RoundTripper) {
+		this.client.Transport = transport
+	}
+
+	// SetTimeout sets the total request timeout. Zero means no timeout.
+	func SetTimeout(timeout time.Duration) {
+		this.Timeout = timeout
+		this.client.Timeout = timeout
+	}
+
+	// SetCookieJar replaces the cookie jar. Passing nil disables cookie storage.
+	func SetCookieJar(jar stdhttp.CookieJar) {
+		this.client.Jar = jar
+	}
+
+	// Do sends request. The caller must close a successful response body.
+	func Do(request *stdhttp.Request) (*stdhttp.Response, error) {
+		if request == nil {
+			return nil, fmt.Errorf("http: request cannot be nil")
+		}
+		if this.baseURL != nil {
+			target, err := gppHTTPResolveBaseURL(this.baseURL, request.URL)
+			if err != nil {
+				return nil, err
+			}
+			request = request.Clone(request.Context())
+			request.URL = target
+		}
+		return this.client.Do(request)
+	}
+
+	// Get sends a GET request. The caller must close a successful response body.
+	func Get(target string, ctx context.Context = nil) (*stdhttp.Response, error) {
+		ctx = gppHTTPContext(ctx)
+		request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, target, nil)
+		if err != nil {
+			return nil, err
+		}
+		return this.Do(request)
+	}
+
+	// Post sends a request body and returns the raw response. The caller must
+	// close a successful response body.
+	func Post(target string, contentType string, body io.Reader, ctx context.Context = nil) (*stdhttp.Response, error) {
+		ctx = gppHTTPContext(ctx)
+		request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodPost, target, body)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Content-Type", contentType)
+		return this.Do(request)
+	}
+
+	// DoJSON sends request, decodes a successful JSON response into T (including
+	// anonymous struct results), and closes the response body.
+	func DoJSON[T](request *stdhttp.Request) (T, error) {
+		var result T
+		response, err := this.Do(request)
+		if err != nil {
+			return result, err
+		}
+		defer response.Body.Close()
+		if response.StatusCode < stdhttp.StatusOK || response.StatusCode >= stdhttp.StatusMultipleChoices {
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+			message := strings.TrimSpace(string(body))
+			if message == "" {
+				return result, fmt.Errorf("http: unexpected response status %s", response.Status)
+			}
+			return result, fmt.Errorf("http: unexpected response status %s: %s", response.Status, message)
+		}
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			return result, fmt.Errorf("http: read JSON response: %w", err)
+		}
+		if err := gppHTTPDecodeJSON(body, &result); err != nil {
+			return result, fmt.Errorf("http: decode JSON response: %w", err)
+		}
+		return result, nil
+	}
+
+	// Get[T] sends a GET request and decodes its JSON response into T, including
+	// anonymous struct types.
+	func Get[T](target string, ctx context.Context = nil) (T, error) {
+		ctx = gppHTTPContext(ctx)
+		request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, target, nil)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		request.Header.Set("Accept", "application/json")
+		return this.DoJSON[T](request)
+	}
+
+	// Post[T] sends value as a JSON request body and decodes a successful JSON
+	// response into T. Anonymous struct request and response values are supported.
+	func Post[T](target string, value any, ctx context.Context = nil) (T, error) {
+		ctx = gppHTTPContext(ctx)
+		jsonValue, err := gppHTTPJSONValue(value)
+		if err != nil {
+			var zero T
+			return zero, fmt.Errorf("http: encode JSON request: %w", err)
+		}
+		body, err := json.Marshal(jsonValue)
+		if err != nil {
+			var zero T
+			return zero, fmt.Errorf("http: encode JSON request: %w", err)
+		}
+		request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodPost, target, bytes.NewReader(body))
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		request.Header.Set("Accept", "application/json")
+		request.Header.Set("Content-Type", "application/json")
+		return this.DoJSON[T](request)
+	}
+
+	// PostForm sends URL-encoded form values from an anonymous struct or url.Values.
+	// The caller must close a successful response body.
+	func PostForm(target string, values any, ctx context.Context = nil) (*stdhttp.Response, error) {
+		formValue, err := gppHTTPFormValues(values)
+		if err != nil {
+			return nil, err
+		}
+		form := formValue.(url.Values)
+		ctx = gppHTTPContext(ctx)
+		request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodPost, target, strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return this.Do(request)
+	}
+
+	// UploadFiles sends form values and files as multipart form data. An empty
+	// Filename uses the file's base name. The caller must close a successful
+	// response body.
+	func UploadFiles(target string, values url.Values, files []*UploadFile, ctx context.Context = nil) (*stdhttp.Response, error) {
+		ctx = gppHTTPContext(ctx)
+		pipeReader, pipeWriter := io.Pipe()
+		writer := multipart.NewWriter(pipeWriter)
+		request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodPost, target, pipeReader)
+		if err != nil {
+			pipeReader.Close()
+			return nil, err
+		}
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		uploadDone := make(chan error, 1)
+		go func() {
+			uploadErr := gppHTTPWriteUpload(writer, values, files)
+			if uploadErr != nil {
+				pipeWriter.CloseWithError(uploadErr)
+			} else {
+				pipeWriter.Close()
+			}
+			uploadDone <- uploadErr
+		}()
+
+		response, err := this.Do(request)
+		if err != nil {
+			pipeReader.CloseWithError(err)
+			uploadErr := <-uploadDone
+			if uploadErr != nil {
+				return nil, uploadErr
+			}
+			return nil, err
+		}
+		if uploadErr := <-uploadDone; uploadErr != nil {
+			response.Body.Close()
+			return nil, uploadErr
+		}
+		return response, nil
+	}
+
+	// Upload accepts an anonymous struct of form fields and a map from file field
+	// names to paths. Use UploadFiles with url.Values and UploadFile values for
+	// repeated values or custom filenames.
+	func Upload(target string, values any, files map[string]string, ctx context.Context = nil) (*stdhttp.Response, error) {
+		formValue, err := gppHTTPFormValues(values)
+		if err != nil {
+			return nil, err
+		}
+		form := formValue.(url.Values)
+		uploads := []*UploadFile{}
+		for field, path := range files {
+			uploads = append(uploads, UploadFile(Field: field, Path: path))
+		}
+		return this.UploadFiles(target, form, uploads, ctx)
+	}
+}
+
+func gppHTTPRecordMethod(value reflect.Value) reflect.Value {
+	if !value.IsValid() {
+		return reflect.Value{}
+	}
+	if value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return reflect.Value{}
+		}
+		value = value.Elem()
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return reflect.Value{}
+		}
+		if method := value.MethodByName("GppRecordField"); method.IsValid() {
+			return method
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return reflect.Value{}
+	}
+	if value.CanAddr() {
+		if method := value.Addr().MethodByName("GppRecordField"); method.IsValid() {
+			return method
+		}
+	}
+	copy := reflect.New(value.Type())
+	copy.Elem().Set(value)
+	return copy.MethodByName("GppRecordField")
+}
+
+func gppHTTPRecordField(method reflect.Value, index int) reflect.Value {
+	result := method.Call([]reflect.Value{reflect.ValueOf(index)})
+	if len(result) == 0 || !result[0].IsValid() || result[0].IsNil() {
+		return reflect.Value{}
+	}
+	return reflect.ValueOf(result[0].Interface()).Elem()
+}
+
+func gppHTTPFormValues(values any) (any, error) {
+	form := url.Values{}
+	value := reflect.ValueOf(values)
+	if !value.IsValid() {
+		return nil, fmt.Errorf("http: form values cannot be nil")
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil, fmt.Errorf("http: form values cannot be nil")
+		}
+		value = value.Elem()
+	}
+	if value.Kind() == reflect.Map {
+		if value.Type().Key().Kind() != reflect.String {
+			return nil, fmt.Errorf("http: form map keys must be strings")
+		}
+		iterator := value.MapRange()
+		for iterator.Next() {
+			if err := gppHTTPAddFormValue(form, iterator.Key().String(), iterator.Value()); err != nil {
+				return nil, err
+			}
+		}
+		return form, nil
+	}
+	if value.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("http: form values must be a struct or string-keyed map")
+	}
+	method := gppHTTPRecordMethod(value)
+	for index := 0; index < value.NumField(); index++ {
+		name := value.Type().Field(index).Name
+		field := reflect.Value{}
+		if method.IsValid() {
+			field = gppHTTPRecordField(method, index)
+		} else {
+			field = value.Field(index)
+			if !field.CanInterface() {
+				continue
+			}
+		}
+		if !field.IsValid() || !field.CanInterface() {
+			return nil, fmt.Errorf("http: cannot read form field %q", name)
+		}
+		if err := gppHTTPAddFormValue(form, name, field); err != nil {
+			return nil, err
+		}
+	}
+	return form, nil
+}
+
+func gppHTTPAddFormValue(form url.Values, name string, value reflect.Value) error {
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+		if value.IsNil() {
+			form.Set(name, "")
+			return nil
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || !value.CanInterface() {
+		return fmt.Errorf("http: cannot read form field %q", name)
+	}
+	if value.Kind() == reflect.Slice || value.Kind() == reflect.Array {
+		for index := 0; index < value.Len(); index++ {
+			entry := value.Index(index)
+			if !entry.CanInterface() {
+				return fmt.Errorf("http: cannot read form field %q", name)
+			}
+			form.Add(name, fmt.Sprint(entry.Interface()))
+		}
+		return nil
+	}
+	form.Set(name, fmt.Sprint(value.Interface()))
+	return nil
+}
+
+func gppHTTPJSONValue(value any) (any, error) {
+	return gppHTTPJSONReflect(reflect.ValueOf(value))
+}
+
+func gppHTTPJSONReflect(value reflect.Value) (any, error) {
+	if !value.IsValid() {
+		return nil, nil
+	}
+	if value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return nil, nil
+		}
+		return gppHTTPJSONReflect(value.Elem())
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil, nil
+		}
+		method := gppHTTPRecordMethod(value)
+		if !method.IsValid() {
+			return value.Interface(), nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() == reflect.Struct {
+		method := gppHTTPRecordMethod(value)
+		if !method.IsValid() {
+			return value.Interface(), nil
+		}
+		fields := map[string]any{}
+		for index := 0; index < value.NumField(); index++ {
+			field := gppHTTPRecordField(method, index)
+			if !field.IsValid() || !field.CanInterface() {
+				return nil, fmt.Errorf("http: cannot read JSON field %q", value.Type().Field(index).Name)
+			}
+			converted, err := gppHTTPJSONReflect(field)
+			if err != nil {
+				return nil, err
+			}
+			fields[value.Type().Field(index).Name] = converted
+		}
+		return fields, nil
+	}
+	if value.Kind() == reflect.Slice || value.Kind() == reflect.Array {
+		items := make([]any, value.Len())
+		for index := 0; index < value.Len(); index++ {
+			item, err := gppHTTPJSONReflect(value.Index(index))
+			if err != nil {
+				return nil, err
+			}
+			items[index] = item
+		}
+		return items, nil
+	}
+	return value.Interface(), nil
+}
+
+func gppHTTPDecodeJSON(data []byte, output any) error {
+	return gppHTTPDecodeJSONReflect(data, reflect.ValueOf(output))
+}
+
+func gppHTTPDecodeJSONReflect(data []byte, target reflect.Value) error {
+	if !target.IsValid() {
+		return fmt.Errorf("http: JSON target is invalid")
+	}
+	if target.Kind() == reflect.Pointer {
+		if target.IsNil() {
+			target.Set(reflect.New(target.Type().Elem()))
+		}
+		return gppHTTPDecodeJSONReflect(data, target.Elem())
+	}
+	if target.Kind() == reflect.Interface {
+		return json.Unmarshal(data, target.Addr().Interface())
+	}
+	if target.Kind() == reflect.Struct {
+		method := reflect.Value{}
+		if target.CanAddr() {
+			method = target.Addr().MethodByName("GppRecordField")
+		}
+		if method.IsValid() {
+			fields := map[string]json.RawMessage{}
+			if err := json.Unmarshal(data, &fields); err != nil {
+				return err
+			}
+			for index := 0; index < target.NumField(); index++ {
+				name := target.Type().Field(index).Name
+				raw, ok := fields[name]
+				if !ok {
+					for candidate, candidateValue := range fields {
+						if strings.EqualFold(candidate, name) {
+							raw = candidateValue
+							ok = true
+							break
+						}
+					}
+				}
+				if !ok {
+					continue
+				}
+				field := gppHTTPRecordField(method, index)
+				if !field.IsValid() || !field.CanAddr() {
+					return fmt.Errorf("http: cannot set JSON field %q", name)
+				}
+				if err := gppHTTPDecodeJSONReflect(raw, field.Addr()); err != nil {
+					return fmt.Errorf("field %s: %w", name, err)
+				}
+			}
+			return nil
+		}
+	}
+	if target.Kind() == reflect.Slice {
+		var items []json.RawMessage
+		if err := json.Unmarshal(data, &items); err != nil {
+			return err
+		}
+		result := reflect.MakeSlice(target.Type(), len(items), len(items))
+		for index, item := range items {
+			if err := gppHTTPDecodeJSONReflect(item, result.Index(index)); err != nil {
+				return fmt.Errorf("item %d: %w", index, err)
+			}
+		}
+		target.Set(result)
+		return nil
+	}
+	if !target.CanAddr() || !target.Addr().CanInterface() {
+		return fmt.Errorf("http: JSON target cannot be addressed")
+	}
+	return json.Unmarshal(data, target.Addr().Interface())
+}
+
+func gppHTTPContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func gppHTTPParseBaseURL(value string) (*url.URL, error) {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return nil, fmt.Errorf("http: invalid base URL %q: %w", value, err)
+	}
+	if !parsed.IsAbs() || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, fmt.Errorf("http: base URL must be an absolute HTTP or HTTPS URL")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("http: base URL cannot include a query or fragment")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/"
+	return parsed, nil
+}
+
+func gppHTTPResolveBaseURL(baseURL *url.URL, target *url.URL) (*url.URL, error) {
+	if target == nil {
+		return nil, fmt.Errorf("http: request URL cannot be nil")
+	}
+	if target.IsAbs() || target.Host != "" {
+		return target, nil
+	}
+	relative := *target
+	relative.Path = strings.TrimLeft(relative.Path, "/")
+	relative.RawPath = strings.TrimLeft(relative.RawPath, "/")
+	return baseURL.ResolveReference(&relative), nil
+}
+
+func gppHTTPWriteUpload(writer *multipart.Writer, values url.Values, files []*UploadFile) error {
+	for name, entries := range values {
+		for _, value := range entries {
+			if err := writer.WriteField(name, value); err != nil {
+				return err
+			}
+		}
+	}
+	for _, upload := range files {
+		if upload == nil {
+			return fmt.Errorf("http: upload file cannot be nil")
+		}
+		if upload.Field == "" {
+			return fmt.Errorf("http: upload field cannot be empty")
+		}
+		if upload.Path == "" {
+			return fmt.Errorf("http: upload path cannot be empty")
+		}
+		file, err := os.Open(upload.Path)
+		if err != nil {
+			return fmt.Errorf("http: open upload %q: %w", upload.Path, err)
+		}
+		filename := upload.Filename
+		if filename == "" {
+			filename = filepath.Base(upload.Path)
+		}
+		part, err := writer.CreateFormFile(upload.Field, filename)
+		if err != nil {
+			file.Close()
+			return err
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			file.Close()
+			return fmt.Errorf("http: copy upload %q: %w", upload.Path, err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("http: close upload %q: %w", upload.Path, err)
+		}
+	}
+	return writer.Close()
+}

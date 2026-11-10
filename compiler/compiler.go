@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -29,6 +30,7 @@ type CompileOptions struct {
 }
 
 const generatedFilesManifestName = ".gpp-generated-files.json"
+const generatedGoVersion = "1.27"
 
 type generatedFilesManifest struct {
 	Files    []string                          `json:"files"`
@@ -197,7 +199,7 @@ func CompileProgramWithOptions(program *Program, outputDir string, options Compi
 		if err := ensureGoModule(outputDir, options.ModulePath, options.IncrementalOutput); err != nil {
 			return err
 		}
-		if programUsesModule(model, "golang.org/x/net/websocket") {
+		if programUsesModule(model, "golang.org/x/net/websocket") || programUsesModule(model, "golang.org/x/net/publicsuffix") {
 			if err := ensureGoModuleRequirement(outputDir, "golang.org/x/net", "v0.58.0"); err != nil {
 				return err
 			}
@@ -1070,7 +1072,7 @@ func ensureGoModule(outputDir, modulePath string, allowModuleChange bool) error 
 			if len(fields) == 2 && fields[0] == "module" {
 				if fields[1] != modulePath {
 					if allowModuleChange {
-						content := fmt.Sprintf("module %s\n\ngo 1.26\n", modulePath)
+						content := fmt.Sprintf("module %s\n\ngo %s\n", modulePath, generatedGoVersion)
 						return writeFileIfChanged(goModPath, []byte(content), 0644)
 					}
 					return fmt.Errorf(
@@ -1081,7 +1083,7 @@ func ensureGoModule(outputDir, modulePath string, allowModuleChange bool) error 
 					)
 				}
 
-				return nil
+				return upgradeGeneratedGoVersion(goModPath, existing)
 			}
 		}
 
@@ -1092,8 +1094,66 @@ func ensureGoModule(outputDir, modulePath string, allowModuleChange bool) error 
 		return err
 	}
 
-	content := fmt.Sprintf("module %s\n\ngo 1.26\n", modulePath)
+	content := fmt.Sprintf("module %s\n\ngo %s\n", modulePath, generatedGoVersion)
 	return os.WriteFile(goModPath, []byte(content), 0644)
+}
+
+func upgradeGeneratedGoVersion(path string, content []byte) error {
+	lines := strings.SplitAfter(string(content), "\n")
+	found := false
+	changed := false
+	for index, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "go" {
+			continue
+		}
+		found = true
+		if generatedGoVersionAtLeast(fields[1], generatedGoVersion) {
+			return nil
+		}
+		newline := "\n"
+		if strings.HasSuffix(line, "\r\n") {
+			newline = "\r\n"
+		} else if !strings.HasSuffix(line, "\n") {
+			newline = ""
+		}
+		lines[index] = "go " + generatedGoVersion + newline
+		changed = true
+		break
+	}
+	if !found {
+		updated := string(content)
+		if updated != "" && !strings.HasSuffix(updated, "\n") {
+			updated += "\n"
+		}
+		updated += "\ngo " + generatedGoVersion + "\n"
+		return writeFileIfChanged(path, []byte(updated), 0644)
+	}
+	if !changed {
+		return nil
+	}
+	return writeFileIfChanged(path, []byte(strings.Join(lines, "")), 0644)
+}
+
+func generatedGoVersionAtLeast(version, minimum string) bool {
+	parse := func(value string) (int, int, bool) {
+		parts := strings.Split(strings.TrimPrefix(value, "go"), ".")
+		if len(parts) < 2 {
+			return 0, 0, false
+		}
+		major, majorErr := strconv.Atoi(parts[0])
+		minor, minorErr := strconv.Atoi(parts[1])
+		return major, minor, majorErr == nil && minorErr == nil
+	}
+	major, minor, ok := parse(version)
+	if !ok {
+		return false
+	}
+	minimumMajor, minimumMinor, ok := parse(minimum)
+	if !ok {
+		return false
+	}
+	return major > minimumMajor || (major == minimumMajor && minor >= minimumMinor)
 }
 
 func programUsesModule(model *SemanticModel, importPath string) bool {

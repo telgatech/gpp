@@ -103,7 +103,20 @@ func main() {
 	numbers.SortDesc()
 	max, hasMax := numbers.Max()
 
-	config := map[string]string{"port": "8080"}
+	config := map(port: "8080", host: "localhost")
+	port, portFound := config.Get("port")
+	missingHost, hostFound := config.Get("missing")
+	fallbackHost := config.Get("missing", "localhost")
+	if !portFound || port != "8080" || hostFound || missingHost != "" || fallbackHost != "localhost" {
+		panic("map Get overloads returned the wrong value or presence flag")
+	}
+	config.Each((key, value) => println(key, value))
+	if len(config.Keys()) != 2 || len(config.Values()) != 2 {
+		panic("map Keys or Values returned the wrong number of entries")
+	}
+	if !config.Delete("host") || config.Delete("missing") || config.Has("host") {
+		panic("map Delete did not report or remove the expected key")
+	}
 	fmt.Println(
 		users.Any(user => user.Active),
 		users.All(user => user.Active),
@@ -111,7 +124,7 @@ func main() {
 		names.Contains("Ada"), names.Index("Bob"),
 		last, popped, sample, len(sample) == 1, len(uniqueNumbers),
 		min, hasMin, max, hasMax,
-		config.Has("port"), config.GetOr("host", "localhost"),
+		config.Has("port"), config.Get("host", "localhost"),
 		"   ".IsBlank(), " name ".IsBlank(), "name".Empty(),
 	)
 
@@ -128,6 +141,4 @@ func main() {
 	if len(emptySample) != 0 || len(empty.Sample(2)) != 0 {
 		panic("Sample should report an empty slice")
 	}
-	_ = config.Keys()
-	_ = config.Values()
 }

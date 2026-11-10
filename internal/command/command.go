@@ -31,7 +31,7 @@ func gppVersion() string {
 	return info.Main.Version
 }
 
-const minimumGoMinor = 26
+const minimumGoMinor = 27
 
 type compileFlags struct {
 	module      string

@@ -1874,7 +1874,9 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
 	out.WriteString("\tGppRuntimeClass() *GppClass\n")
 	for _, method := range methods {
-		if method.Name == "init" {
+		// Go interfaces cannot require generic methods. Keep the method on the
+		// concrete generated class, but omit it from the runtime class interface.
+		if method.Name == "init" || len(method.TypeParamsAST) > 0 {
 			continue
 		}
 		parameterSource := methodParametersSource(method)
@@ -2020,6 +2022,22 @@ func parameterSignatureKeyFromSource(params string) string {
 }
 
 func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentName string, method Method, context constructorContext) error {
+	typeParameters := append([]TypeParameterNode(nil), method.TypeParamsAST...)
+	for index := range typeParameters {
+		if typeParameters[index].Constraint == nil {
+			continue
+		}
+		constraint, err := typeNodeSource(typeParameters[index].Constraint)
+		if err != nil {
+			return err
+		}
+		constraint = qualifyInheritedMethodTypes(constraint, method, parentName, classesForClass(context, class), context)
+		typeParameters[index].Constraint = parseTypeText(constraint)
+	}
+	typeParameterSource, err := goTypeParameterNodesSource(typeParameters)
+	if err != nil {
+		return err
+	}
 	parameters, err := parameterInfosForMethod(method)
 	if err != nil {
 		return err
@@ -2044,13 +2062,21 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 	resultType := qualifyInheritedMethodTypes(methodResultSource(method), method, parentName, classesForClass(context, class), context)
 	result := transformPolymorphicResultType(strings.TrimSpace(resultType), context)
 	fieldName := classParentFieldName(parentName)
-	fmt.Fprintf(out, "func (this *%s%s) %s(%s)", class.Name, typeParameterNames(class.TypeParamsAST), methodName, strings.Join(parameterParts, ", "))
+	fmt.Fprintf(out, "func (this *%s%s) %s%s(%s)", class.Name, typeParameterNames(class.TypeParamsAST), methodName, typeParameterSource, strings.Join(parameterParts, ", "))
 	if result != "" {
 		fmt.Fprintf(out, " %s", result)
 	}
 	out.WriteString(" {\n")
 	fmt.Fprintf(out, "\tthis.%s.GppDynamicObject = this\n", fieldName)
-	call := fmt.Sprintf("this.%s.%s(%s)", fieldName, methodName, strings.Join(arguments, ", "))
+	methodTypeArguments := ""
+	if len(typeParameters) > 0 {
+		names := make([]string, 0, len(typeParameters))
+		for _, parameter := range typeParameters {
+			names = append(names, parameter.Name)
+		}
+		methodTypeArguments = "[" + strings.Join(names, ", ") + "]"
+	}
+	call := fmt.Sprintf("this.%s.%s%s(%s)", fieldName, methodName, methodTypeArguments, strings.Join(arguments, ", "))
 	if result != "" {
 		fmt.Fprintf(out, "\treturn %s\n", call)
 	} else {
@@ -2488,14 +2514,16 @@ func methodOverloadsForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 		if method.GoName == "" || method.IsStatic {
 			continue
 		}
-		arity, err := parameterCount(methodParametersSource(method))
+		minimumArity, maximumArity, err := methodCallArityRange(method)
 		if err != nil {
 			continue
 		}
-		if overloads[method.Name] == nil {
-			overloads[method.Name] = map[int]string{}
+		for arity := minimumArity; arity <= maximumArity; arity++ {
+			if overloads[method.Name] == nil {
+				overloads[method.Name] = map[int]string{}
+			}
+			overloads[method.Name][arity] = methodOutputName(method)
 		}
-		overloads[method.Name][arity] = methodOutputName(method)
 	}
 
 	for _, parentName := range classParentNames(class) {
@@ -2533,14 +2561,25 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 		if method.GoName == "" || method.IsStatic {
 			continue
 		}
-		parameters, err := parameterInfosForMethod(method)
+		minimumArity, maximumArity, err := methodCallArityRange(method)
 		if err != nil {
 			continue
 		}
-		if overloads[method.Name] == nil {
-			overloads[method.Name] = map[string]string{}
+		parameters := method.ParameterAST
+		if len(parameters) == 0 && maximumArity != 0 {
+			parameters = parseParameterNodes(methodParametersSource(method))
 		}
-		overloads[method.Name][parameterSignatureKey(parameters)] = methodOutputName(method)
+		for arity := minimumArity; arity <= maximumArity; arity++ {
+			typeKey, err := parameterSignatureKeyFromNodes(parameters[:arity])
+			if err != nil {
+				continue
+			}
+			if overloads[method.Name] == nil {
+				overloads[method.Name] = map[string]string{}
+			}
+			key := overloadMethodTypeKey(typeKey, len(method.TypeParamsAST))
+			overloads[method.Name][key] = methodOutputName(method)
+		}
 	}
 	for _, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
@@ -2562,6 +2601,20 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 		}
 	}
 	return overloads
+}
+
+func methodCallArityRange(method Method) (int, int, error) {
+	parameters := method.ParameterAST
+	if parameters == nil {
+		parameters = parseParameterNodes(methodParametersSource(method))
+	}
+	minimum := len(parameters)
+	for _, parameter := range parameters {
+		if parameter.HasDefault {
+			minimum--
+		}
+	}
+	return minimum, len(parameters), nil
 }
 
 func classFieldTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) map[string]string {
@@ -3644,6 +3697,31 @@ func overloadArgumentSignatureKey(call *CallExpr, types map[string]string) strin
 	return strings.Join(parts, ",")
 }
 
+func overloadMethodTypeKey(typeKey string, genericArity int) string {
+	return fmt.Sprintf("%s\x00gpp-generic-%d", typeKey, genericArity)
+}
+
+func overloadGenericMethodSelector(expression ExprNode) (*SelectorExpr, int, bool) {
+	switch callee := expression.(type) {
+	case *SelectorExpr:
+		return callee, 0, true
+	case *IndexExpr:
+		selector, ok := callee.Receiver.(*SelectorExpr)
+		if !ok {
+			return nil, 0, false
+		}
+		return selector, 1, true
+	case *IndexListExpr:
+		selector, ok := callee.Receiver.(*SelectorExpr)
+		if !ok {
+			return nil, 0, false
+		}
+		return selector, len(callee.Indices), true
+	default:
+		return nil, 0, false
+	}
+}
+
 func overloadCallName(call *CallExpr, types map[string]string, overloads overloadContext) (string, bool, error) {
 	if call == nil {
 		return "", false, nil
@@ -3662,31 +3740,99 @@ func overloadCallName(call *CallExpr, types map[string]string, overloads overloa
 		}
 		return name, name != "", nil
 	case *SelectorExpr:
-		methodSet := overloads.Methods
-		methodTypes := overloads.MethodTypes
-		if receiver, ok := function.Receiver.(*NameExpr); !ok || receiver.Name != "this" {
-			typeName := overloadReceiverTypeKey(function.Receiver, types, overloads)
-			if typeName == "" {
-				return "", false, nil
-			}
-			typeName = strings.TrimPrefix(strings.TrimSpace(typeName), "*")
-			methodSet = overloads.ClassMethods[typeName]
-			methodTypes = overloads.ClassMethodTypes[typeName]
-			if methodSet == nil && methodTypes == nil {
-				return "", false, nil
-			}
+		return overloadMethodCallName(function, 0, arity, typeKey, types, overloads)
+	case *IndexExpr, *IndexListExpr:
+		selector, genericArity, ok := overloadGenericMethodSelector(call.Callee)
+		if !ok {
+			return "", false, nil
 		}
-		set := methodTypes[function.Name]
-		name := set[typeKey]
-		if name == "" {
-			name = methodSet[function.Name][arity]
-		}
-		if name == "" && len(set) > 0 {
-			return "", false, fmt.Errorf("cannot resolve overloaded method %s with argument types %s", function.Name, typeKey)
-		}
-		return name, name != "", nil
+		return overloadMethodCallName(selector, genericArity, arity, typeKey, types, overloads)
 	}
 	return "", false, nil
+}
+
+func overloadMethodCallName(function *SelectorExpr, genericArity, arity int, typeKey string, types map[string]string, overloads overloadContext) (string, bool, error) {
+	methodSet := overloads.Methods
+	methodTypes := overloads.MethodTypes
+	if receiver, ok := function.Receiver.(*NameExpr); !ok || receiver.Name != "this" {
+		typeName := overloadReceiverTypeKey(function.Receiver, types, overloads)
+		if typeName == "" {
+			return "", false, nil
+		}
+		typeName = strings.TrimPrefix(strings.TrimSpace(typeName), "*")
+		methodSet = overloads.ClassMethods[typeName]
+		methodTypes = overloads.ClassMethodTypes[typeName]
+		if methodSet == nil && methodTypes == nil {
+			return "", false, nil
+		}
+	}
+	set := methodTypes[function.Name]
+	name := ""
+	if genericArity > 0 {
+		name = set[overloadMethodTypeKey(typeKey, genericArity)]
+		if name == "" {
+			suffix := fmt.Sprintf("\x00gpp-generic-%d", genericArity)
+			for candidate, candidateName := range set {
+				if !strings.HasSuffix(candidate, suffix) {
+					continue
+				}
+				candidateTypes := strings.TrimSuffix(candidate, suffix)
+				candidateArity := 0
+				if candidateTypes != "" {
+					candidateArity = strings.Count(candidateTypes, ",") + 1
+				}
+				if candidateArity != arity {
+					continue
+				}
+				if name != "" && name != candidateName {
+					return "", false, fmt.Errorf("cannot resolve overloaded generic method %s with argument types %s", function.Name, typeKey)
+				}
+				name = candidateName
+			}
+		}
+	} else {
+		name = set[overloadMethodTypeKey(typeKey, 0)]
+		if name == "" {
+			prefix := typeKey + "\x00gpp-generic-"
+			for candidate, candidateName := range set {
+				if !strings.HasPrefix(candidate, prefix) {
+					continue
+				}
+				if name != "" && name != candidateName {
+					return "", false, fmt.Errorf("cannot resolve overloaded method %s without explicit type arguments", function.Name)
+				}
+				name = candidateName
+			}
+		}
+		if name == "" {
+			suffix := "\x00gpp-generic-0"
+			for candidate, candidateName := range set {
+				if !strings.HasSuffix(candidate, suffix) {
+					continue
+				}
+				candidateTypes := strings.TrimSuffix(candidate, suffix)
+				candidateArity := 0
+				if candidateTypes != "" {
+					candidateArity = strings.Count(candidateTypes, ",") + 1
+				}
+				if candidateArity != arity {
+					continue
+				}
+				if name != "" && name != candidateName {
+					name = ""
+					break
+				}
+				name = candidateName
+			}
+		}
+	}
+	if name == "" {
+		name = methodSet[function.Name][arity]
+	}
+	if name == "" && len(set) > 0 {
+		return "", false, fmt.Errorf("cannot resolve overloaded method %s with argument types %s", function.Name, typeKey)
+	}
+	return name, name != "", nil
 }
 
 func overloadReceiverTypeKey(expression ExprNode, types map[string]string, overloads overloadContext) string {

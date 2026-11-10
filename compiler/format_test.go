@@ -282,6 +282,21 @@ func quux() struct { return struct(works: true, a: 1, b: 2) }
 	}
 }
 
+func TestFormatSourceFormatsInferredMapLiterals(t *testing.T) {
+	source := `func main(){
+values:=map(coffee:2.5, tea:1.75)
+headers:=map("X-Request-ID":"req-42")
+}`
+	want := `func main() {
+    values := map(coffee: 2.5, tea: 1.75)
+    headers := map("X-Request-ID": "req-42")
+}
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("inferred map literals were formatted incorrectly:\n%s", got)
+	}
+}
+
 func TestFormatSourceCollapsesExcessSpacingAroundExpressions(t *testing.T) {
 	source := `func Summary() string {
 

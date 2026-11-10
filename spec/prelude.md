@@ -119,6 +119,54 @@ name.Empty()
 
 The underlying values remain ordinary Go values.
 
+### Inferred map literals
+
+The prelude provides a built-in `map(...)` literal for concise string-keyed
+maps. It is compiler-recognized syntax exposed through the prelude, not a
+runtime map wrapper or an ordinary function with a fixed parameter list.
+
+Bare identifier labels are string keys. String literal keys may be used when a
+key is not a valid identifier:
+
+```gpp
+names := map(primary: "Ada", backup: "Grace")
+headers := map("X-Request-ID": requestID)
+```
+
+The result is an ordinary Go map. If all values have the same type and no
+expected map type is available, that type is used as the map value type. For
+example, a map whose values are all `int` has type `map[string]int`. The
+map value type falls back to `any` when entries have different types:
+
+```gpp
+form := map(name: "Ada", level: 3) // map[string]any
+level := form["level"]             // any; its dynamic type is still int
+```
+
+Falling back to `any` does not convert the stored values. It does mean that a
+lookup from the mixed map has static type `any` and needs a type assertion or
+conversion before using it as a specific type.
+
+Untyped constants use Go's default type when inferring the map value type:
+
+```gpp
+m := map(x: 1.23) // map[string]float64
+value := m["x"]   // float64
+```
+
+When the expression has an expected map type, that type supplies the key and
+value types, and each entry must be assignable to them. This allows an empty
+map when its type is known from context. For example, an expected
+`map[string]any` also accepts mixed values and stores each with its original
+concrete runtime type. An empty `map()` without an expected type is an error
+because its value type cannot be inferred.
+
+Keys must be unique within one `map(...)` literal. For non-string keys, or
+when an explicitly chosen map type is needed without a contextual type, use a
+native typed map literal such as `map[int]string{1: "one"}`. The `map(...)`
+form creates ordinary Go maps and follows Go map lookup, mutation, iteration,
+and ordering semantics.
+
 ## 6. Initial slice extension set
 
 Provide a useful baseline for slices.
@@ -473,10 +521,16 @@ Avoid adding dozens of Rails-style string methods initially.
 Useful map helpers may include:
 
 extend map[K]V {
+    func Each(fn func(K, V))
+    func Each(fn func(K, V) error) error
     func Keys() []K
     func Values() []V
     func Has(key K) bool
+    func Delete(key K) bool
 }
+
+`Each` receives both the key and value. Map iteration order is unspecified.
+The error-returning overload stops at the first callback error and returns it.
 
 Examples:
 
@@ -487,34 +541,31 @@ if users.Has(id) {
     ...
 }
 
+if users.Delete(id) {
+    ... // the key existed and was removed
+}
+
 `Has` is convenience over:
 
 _, ok := m[key]
 
 Keys/Values ordering remains unspecified, matching Go map iteration semantics.
+`Delete` removes the key in place and reports whether it existed.
 
-## 20. GetOr
+## 20. Map Get
 
-Potentially useful map helper:
+`Get` has two forms:
 
 extend map[K]V {
-    func GetOr(key K, fallback V) V
+    func Get(key K) (V, bool)
+    func Get(key K, fallback V) V
 }
 
-Example:
+The one-argument form matches Go's two-result map lookup. The fallback form
+returns the provided fallback only when the key is absent:
 
-port := config.GetOr("port", "8080")
-
-Must return fallback only if key is absent.
-
-Do not confuse absent with zero-valued stored values.
-
-Implementation:
-
-v, ok := this[key]
-if !ok {
-    return fallback
-}
+value, found := config.Get("port")
+port := config.Get("port", "8080")
 return v
 
 ## 21. Generic numeric helpers
@@ -827,7 +878,7 @@ Maps:
     Keys
     Values
     Has
-    GetOr
+    Get
 
 Keep v1 intentionally small.
 
@@ -909,7 +960,8 @@ Maps:
 m.Has(k)
 m.Keys()
 m.Values()
-m.GetOr(k, fallback)
+m.Get(k)
+m.Get(k, fallback)
 
 must behave according to normal Go map semantics.
 
@@ -935,6 +987,6 @@ users.Sort(...)
 users.Filter(...)
 users.Any(...)
 name.Blank()
-config.GetOr(...)
+config.Get(...)
 
 with zero imports and zero loss of Go interoperability.

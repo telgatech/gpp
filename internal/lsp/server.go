@@ -2473,7 +2473,7 @@ func (s *server) resolveSymbolsAt(uri string, position Position, name string) []
 			}
 			if className := s.classTypeExpression(state, receiver, offset); className != "" {
 				if classMembers := s.classMembersForType(state, className, name, true); len(classMembers) > 0 {
-					return classMembers
+					return selectCallArityOverloadAt(state, token.Span.Start, name, classMembers)
 				}
 			}
 			receiverType := s.receiverTypeForExpression(state, receiver, state.File.Tokens[index-1].Span.Start, offset)
@@ -2489,7 +2489,8 @@ func (s *server) resolveSymbolsAt(uri string, position Position, name string) []
 					baseType = baseType[:bracket]
 				}
 				if extensions := s.extensionMembersForType(state, receiverType, name); len(extensions) > 0 {
-					return selectGenericOverloadAt(state, token.Span.Start, name, extensions)
+					selected := selectGenericOverloadAt(state, token.Span.Start, name, extensions)
+					return selectCallArityOverloadAt(state, token.Span.Start, name, selected)
 				}
 				if packageName, packageDir, memberType, found := s.importedTypePackage(state, baseType); found {
 					var result []symbolInfo
@@ -2806,6 +2807,117 @@ func selectGenericOverloadAt(state *fileState, offset int, name string, choices 
 	return choices
 }
 
+func selectCallArityOverloadAt(state *fileState, offset int, name string, choices []symbolInfo) []symbolInfo {
+	if len(choices) < 2 {
+		return choices
+	}
+	argumentCount, ok := callArgumentCountAt(state, offset, name)
+	if !ok {
+		return choices
+	}
+	matched := make([]symbolInfo, 0, len(choices))
+	for _, choice := range choices {
+		parameters, _ := callableSignatureParts(choice.Symbol.Signature)
+		if len(parameters) == 0 && argumentCount != 0 {
+			continue
+		}
+		required := 0
+		for _, parameter := range parameters {
+			if !strings.Contains(parameter, "=") {
+				required++
+			}
+		}
+		if argumentCount >= required && argumentCount <= len(parameters) {
+			matched = append(matched, choice)
+		}
+	}
+	if len(matched) > 0 {
+		return matched
+	}
+	return choices
+}
+
+func callArgumentCountAt(state *fileState, offset int, name string) (int, bool) {
+	if state == nil || state.File == nil {
+		return 0, false
+	}
+	index := tokenIndexAt(state.File.Tokens, offset)
+	if index < 0 || index >= len(state.File.Tokens) || state.File.Tokens[index].Text != name {
+		return 0, false
+	}
+	index++
+	if index < len(state.File.Tokens) && state.File.Tokens[index].Text == "[" {
+		depth := 0
+		for ; index < len(state.File.Tokens); index++ {
+			switch state.File.Tokens[index].Text {
+			case "[":
+				depth++
+			case "]":
+				depth--
+				if depth == 0 {
+					index++
+					goto openingParen
+				}
+			}
+		}
+		return 0, false
+	}
+
+openingParen:
+	for index < len(state.File.Tokens) && (state.File.Tokens[index].Kind == compiler.TokenNewline || state.File.Tokens[index].Kind == compiler.TokenComment) {
+		index++
+	}
+	if index >= len(state.File.Tokens) || state.File.Tokens[index].Text != "(" {
+		return 0, false
+	}
+	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	argumentCount := 0
+	hasArgument := false
+	for cursor := index; cursor < len(state.File.Tokens); cursor++ {
+		token := state.File.Tokens[cursor]
+		if token.Kind == compiler.TokenNewline || token.Kind == compiler.TokenComment {
+			continue
+		}
+		switch token.Text {
+		case "(":
+			parenDepth++
+		case ")":
+			parenDepth--
+			if parenDepth == 0 {
+				if hasArgument {
+					argumentCount++
+				}
+				return argumentCount, true
+			}
+		case "[":
+			bracketDepth++
+		case "]":
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case "{":
+			braceDepth++
+		case "}":
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case ",":
+			if parenDepth == 1 && bracketDepth == 0 && braceDepth == 0 {
+				argumentCount++
+				hasArgument = false
+				continue
+			}
+		}
+		if parenDepth == 1 && bracketDepth == 0 && braceDepth == 0 && token.Kind != compiler.TokenEOF {
+			hasArgument = true
+		}
+	}
+	if hasArgument {
+		argumentCount++
+	}
+	return argumentCount, true
+}
+
 func (s *server) nativeGoMemberAt(state *fileState, name string, offset int) []symbolInfo {
 	object, fileSet, ok := s.nativeGoSelectionAt(state, name, offset)
 	if !ok || object == nil {
@@ -2984,6 +3096,12 @@ func (s *server) hover(params textDocumentPositionParams) *hover {
 		signature = info.Symbol.FullName
 	}
 	value := "**" + hoverSymbolKind(info.Symbol) + "**\n\n```gpp\n" + signature + "\n```"
+	if alternatives := s.otherOverloadSignatures(info); len(alternatives) > 0 {
+		value += "\n\n**Other overloads**\n"
+		for _, alternative := range alternatives {
+			value += "\n- `" + alternative + "`"
+		}
+	}
 	documentation := symbol.Doc
 	if documentation == "" && symbol.Kind == compiler.DocClass {
 		if inherited, parent := s.inheritedClassDocumentation(info); inherited != "" {
@@ -2997,6 +3115,27 @@ func (s *server) hover(params textDocumentPositionParams) *hover {
 		value += "\n\n**Deprecated.**"
 	}
 	return &hover{Contents: markupContent{Kind: "markdown", Value: value}, Range: &selection}
+}
+
+func (s *server) otherOverloadSignatures(info symbolInfo) []string {
+	if s.workspace == nil || info.Symbol.Kind != compiler.DocMethod && info.Symbol.Kind != compiler.DocExtension && info.Symbol.Kind != compiler.DocFunction {
+		return nil
+	}
+	seen := map[string]bool{info.Symbol.Signature: true}
+	var result []string
+	for _, candidate := range s.workspace.symbols {
+		if candidate.Path != info.Path || candidate.Symbol.Package != info.Symbol.Package || candidate.Symbol.Kind != info.Symbol.Kind ||
+			candidate.Symbol.Parent != info.Symbol.Parent || candidate.Symbol.Name != info.Symbol.Name {
+			continue
+		}
+		signature := strings.TrimSpace(candidate.Symbol.Signature)
+		if signature == "" || seen[signature] {
+			continue
+		}
+		seen[signature] = true
+		result = append(result, signature)
+	}
+	return result
 }
 
 func (s *server) inheritedClassDocumentation(info symbolInfo) (string, string) {
@@ -3897,6 +4036,24 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 			return field.Type
 		}
 	case *compiler.CallExpr:
+		if isMapConstructorCall(value.Callee) {
+			valueType := ""
+			for _, argument := range value.Arguments {
+				entryType := s.expressionType(state, method, argument.Value, depth+1)
+				if entryType == "" {
+					return "map[string]any"
+				}
+				if valueType == "" {
+					valueType = entryType
+				} else if normalizedTypeName(valueType) != normalizedTypeName(entryType) {
+					return "map[string]any"
+				}
+			}
+			if valueType != "" {
+				return "map[string]" + valueType
+			}
+			return ""
+		}
 		return s.callExpressionType(state, method, value, depth+1)
 	case *compiler.IndexExpr:
 		container := s.expressionType(state, method, value.Receiver, depth+1)
@@ -3920,6 +4077,27 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 		}
 	}
 	return ""
+}
+
+func isMapConstructorCall(expression compiler.ExprNode) bool {
+	switch value := expression.(type) {
+	case *compiler.NameExpr:
+		return value.Name == "map"
+	case *compiler.TypeExpr:
+		return sourceTypeName(value.Type) == "map"
+	}
+	return false
+}
+
+func sourceTypeName(typeNode compiler.TypeNode) string {
+	if named, ok := typeNode.(*compiler.NamedType); ok && len(named.Parts) == 1 {
+		return named.Parts[0]
+	}
+	return ""
+}
+
+func normalizedTypeName(name string) string {
+	return strings.Join(strings.Fields(name), "")
 }
 
 func inferredLiteralType(kind compiler.TokenKind, text string) string {

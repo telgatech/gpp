@@ -511,6 +511,22 @@ class Formatter {
 	}
 }
 
+func TestResolveProgramAllowsGenericAndNonGenericMethodOverloads(t *testing.T) {
+	program := parseProgram(t, `
+class Client {
+	func Get(url string) string { return "raw" }
+	func Get[T any](url string) T { var value T; return value }
+}
+`)
+	if _, err := ResolveProgram(program); err != nil {
+		t.Fatal(err)
+	}
+	methods := program.Files[0].Decls[0].(*ClassDecl).Methods
+	if methods[0].GoName == "" || methods[1].GoName == "" || methods[0].GoName == methods[1].GoName {
+		t.Fatalf("generic and non-generic overloads were not assigned distinct Go names: %#v", methods)
+	}
+}
+
 func TestResolveProgramRejectsDuplicateTypedMethodOverloads(t *testing.T) {
 	program := parseProgram(t, `
 class Formatter {

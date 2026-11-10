@@ -2,16 +2,15 @@
 
 ## Status
 
-The initial generic-class slice is implemented: Go++ classes can declare Go
-type parameters, instance methods can use them, and constructor calls can
-instantiate classes with explicit type arguments. The generated Go compiler
-checks the resulting constraints and uses. This spec also defines the follow-up
-work needed for full semantic integration; those items are not implemented by
-the initial slice.
+Generic classes and concrete generic instance methods are supported end to
+end. Go++ classes can declare Go type parameters, instance methods can use
+them, and methods may declare their own type parameters. Constructor calls can
+instantiate classes with explicit type arguments. Generated Go is checked by
+the Go compiler.
 
 ## Goals
 
-The complete feature must:
+The feature must:
 
 * declare type parameters and Go-compatible constraints;
 * use type parameters in fields, methods, constructors, and nested types;
@@ -23,10 +22,9 @@ The complete feature must:
   diagnostics, and the language server.
 
 Generic classes add no runtime type system. The compiler emits ordinary Go
-generic types and methods. The initial implementation supports generic class
-declarations, instance methods that use class parameters, and explicit generic
-constructor calls. Generic inheritance, compiler-side member substitution,
-and runtime introspection for generic classes remain follow-up work.
+generic types and methods. Generic inheritance, compiler-side member
+substitution, and runtime introspection for generic classes remain follow-up
+work.
 
 ## Declaration syntax
 
@@ -62,23 +60,36 @@ another declaration that declares that parameter.
 
 Instance methods on a generic class use the class's type parameters through
 their receiver. For example, `Stack[T].Push(value T)` and `Stack[T].Pop() T`
-are ordinary methods on `Stack[T]`. Generic free functions, generic static
-methods, and generic extension methods are already supported and lower to
-ordinary generic Go functions.
+are ordinary methods on `Stack[T]`. An instance method on any concrete class
+may also declare its own type parameters:
 
-Go 1.27 added type parameters declared directly on methods. The Go++ AST and
-emitter can represent and emit this syntax, but generated modules currently
-declare `go 1.26`, so the Go compiler rejects generic methods during a normal
-build. End-to-end support needs the generated module's Go language version to
-be raised to 1.27 when such methods are used, while retaining Go 1.26 for
-programs that do not use them. The project plans to make Go 1.27 the baseline
-soon so generic methods work by default in generated projects. Until that
-change, generic methods are not supported end to end; generic free functions,
-static methods, and extension methods remain available.
+```gpp
+class Client {
+    func Echo[T](value T) T {
+        return value
+    }
+}
+
+func main() {
+    client := Client()
+    name := client.Echo[string]("Ada")
+    count := client.Echo(42)
+}
+```
+
+The method's type parameters are separate from any parameters on its class.
+Go++ requires Go 1.27 or newer for this feature and generated modules declare
+`go 1.27`; Go 1.27 introduced generic methods in the Go language. Generic free
+functions, generic static methods, and generic extension methods remain
+supported as well. Generic methods cannot be declared by interface methods,
+following Go's method-set rules. For the same reason, Go++'s generated
+polymorphic class interfaces do not include generic methods: they are
+available through concrete class values, but cannot be called through an
+interface-dispatched base-class value.
 
 ## Instantiation and construction
 
-The first implementation requires explicit type arguments:
+Generic class constructor calls require explicit type arguments:
 
 ```gpp
 numbers := Box[int](Value: 42)
@@ -103,8 +114,8 @@ func First(box Box[int]) int {
 var empty Box[string]
 ```
 
-The initial implementation relies on generated-Go type checking for type
-argument arity, constraints, and assignments. Type-argument inference for
+The implementation relies on generated-Go type checking for type argument
+arity, constraints, and assignments. Type-argument inference for
 constructor-style calls is deferred; `Box(Value: 42)` is not inferred as
 `Box[int]` in this version.
 

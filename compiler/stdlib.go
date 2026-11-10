@@ -13,20 +13,24 @@ import (
 // officialStdlib contains the compiler-distributed Go++ standard packages.
 // They are embedded so official imports never require a network lookup.
 //
-//go:embed stdlib/gpp/*/*.gpp stdlib/gpp/http/assets/swagger/*
+//go:embed stdlib/gpp/*/*.gpp stdlib/gpp/exp/*/*.gpp stdlib/gpp/http/assets/swagger/*
 var officialStdlib embed.FS
 
 // EmbeddedStdlibAvailable reports whether the compiler was built with its
 // compiler-owned Go++ standard library resources.
 func EmbeddedStdlibAvailable() bool {
 	entries, err := fs.Glob(officialStdlib, "stdlib/gpp/*/*.gpp")
-	return err == nil && len(entries) > 0
+	if err != nil {
+		return false
+	}
+	nested, err := fs.Glob(officialStdlib, "stdlib/gpp/exp/*/*.gpp")
+	return err == nil && len(entries)+len(nested) > 0
 }
 
 // OfficialStdlibPackages returns the compiler-shipped Go++ package paths that
 // can be inspected by source-level tooling such as `gpp doc`.
 func OfficialStdlibPackages() []string {
-	return []string{"gpp/container", "gpp/cron", "gpp/encoding", "gpp/http", "gpp/orm", "gpp/sql", "gpp/std", "gpp/test", "gpp/tpl"}
+	return []string{"gpp/container", "gpp/cron", "gpp/encoding", "gpp/exp/http", "gpp/http", "gpp/orm", "gpp/sql", "gpp/std", "gpp/test", "gpp/tpl"}
 }
 
 // LoadOfficialPackage exposes the embedded source model to documentation and
@@ -79,7 +83,7 @@ func appendOfficialStdlib(program *Program) error {
 }
 
 func loadOfficialPackage(importPath string) ([]*File, error) {
-	if importPath != "gpp/container" && importPath != "gpp/cron" && importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/sql" && importPath != "gpp/encoding" && importPath != "gpp/std" && importPath != "gpp/test" && importPath != "gpp/tpl" {
+	if importPath != "gpp/container" && importPath != "gpp/cron" && importPath != "gpp/encoding" && importPath != "gpp/exp/http" && importPath != "gpp/http" && importPath != "gpp/orm" && importPath != "gpp/sql" && importPath != "gpp/std" && importPath != "gpp/test" && importPath != "gpp/tpl" {
 		return nil, fmt.Errorf("official package %q is not bundled with this compiler", importPath)
 	}
 

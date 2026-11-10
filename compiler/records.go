@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -120,7 +121,7 @@ func (context *recordContext) definitions() string {
 }
 
 func transformRecords(src string, context constructorContext) (string, error) {
-	if context.Records == nil || !strings.Contains(src, "record") && !strings.Contains(src, "struct") && !strings.Contains(src, "let") {
+	if context.Records == nil || !strings.Contains(src, "record") && !strings.Contains(src, "struct") && !strings.Contains(src, "let") && !strings.Contains(src, "map") {
 		return src, nil
 	}
 
@@ -131,6 +132,10 @@ func transformRecords(src string, context constructorContext) (string, error) {
 
 	env := collectRecordValueTypes(src, trialContext)
 	speculative, err := transformRecordLiterals(src, env, trialContext, false)
+	if err != nil {
+		return "", err
+	}
+	speculative, err = transformMapLiterals(speculative, collectRecordValueTypes(speculative, trialContext), trialContext, false)
 	if err != nil {
 		return "", err
 	}
@@ -163,6 +168,10 @@ func transformRecords(src string, context constructorContext) (string, error) {
 	finalContext.Records = finalRecords
 	finalEnv := collectRecordValueTypes(speculative, finalContext)
 	transformed, err := transformRecordLiterals(src, finalEnv, finalContext, true)
+	if err != nil {
+		return "", err
+	}
+	transformed, err = transformMapLiterals(transformed, collectRecordValueTypes(transformed, finalContext), finalContext, true)
 	if err != nil {
 		return "", err
 	}
@@ -1093,6 +1102,409 @@ func collectRecordCalls(expression ExprNode, result *[]recordCallNode) {
 	}
 }
 
+func transformMapLiterals(src string, valueTypes map[string]string, context constructorContext, strict bool) (string, error) {
+	return transformMapLiteralsWithExpected(src, valueTypes, context, "", strict)
+}
+
+func transformMapLiteralsWithExpected(src string, valueTypes map[string]string, context constructorContext, directExpectedType string, strict bool) (string, error) {
+	expectedTypes := collectMapExpectedTypes(src, valueTypes, context)
+	tokens, err := LexSource("map literal", src)
+	if err != nil {
+		return "", err
+	}
+	type mapCall struct {
+		start int
+		end   int
+		open  int
+		close int
+	}
+	calls := []mapCall{}
+	for index := 0; index+1 < len(tokens); index++ {
+		if tokens[index].Text != "map" || tokens[index+1].Text != "(" {
+			continue
+		}
+		depth := 0
+		close := -1
+		for cursor := index + 1; cursor < len(tokens); cursor++ {
+			switch tokens[cursor].Text {
+			case "(":
+				depth++
+			case ")":
+				depth--
+				if depth == 0 {
+					close = cursor
+					cursor = len(tokens)
+				}
+			}
+		}
+		if close < 0 {
+			return "", fmt.Errorf("map literal is missing closing )")
+		}
+		calls = append(calls, mapCall{
+			start: tokens[index].Span.Start,
+			end:   tokens[close].Span.End,
+			open:  tokens[index+1].Span.End,
+			close: tokens[close].Span.Start,
+		})
+	}
+	if len(calls) == 0 {
+		return src, nil
+	}
+	outermost := []mapCall{}
+	for index, candidate := range calls {
+		nested := false
+		for otherIndex, other := range calls {
+			if index != otherIndex && other.start <= candidate.start && other.end >= candidate.end &&
+				(other.start < candidate.start || other.end > candidate.end) {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			outermost = append(outermost, candidate)
+		}
+	}
+	type edit struct {
+		start int
+		end   int
+		text  string
+	}
+	edits := make([]edit, 0, len(outermost))
+	trimmedSource := strings.TrimSpace(src)
+	for _, candidate := range outermost {
+		expected := expectedTypes[candidate.start]
+		if expected == "" && directExpectedType != "" && trimmedSource == strings.TrimSpace(src[candidate.start:candidate.end]) {
+			expected = directExpectedType
+		}
+		literal, literalErr := lowerMapLiteral(src[candidate.open:candidate.close], valueTypes, context, expected, strict)
+		if literalErr != nil {
+			return "", literalErr
+		}
+		edits = append(edits, edit{start: candidate.start, end: candidate.end, text: literal})
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, edit := range edits {
+		src = src[:edit.start] + edit.text + src[edit.end:]
+	}
+	return src, nil
+}
+
+func lowerMapLiteral(argsSource string, valueTypes map[string]string, context constructorContext, expectedType string, strict bool) (string, error) {
+	keyType := "string"
+	valueType := ""
+	expectedValueType := ""
+	var err error
+	if expectedType != "" {
+		expectedTokens, tokenErr := LexSource("map expected type", expectedType)
+		if tokenErr != nil {
+			return "", tokenErr
+		}
+		typeNode, typeErr := ParseTypeTokens(expectedTokens)
+		mapType, ok := typeNode.(*MapType)
+		if typeErr != nil || !ok {
+			return "", fmt.Errorf("map literal expected type %q is not a map", expectedType)
+		}
+		keyType, err = typeNodeSource(mapType.Key)
+		if err != nil {
+			return "", err
+		}
+		keyType = strings.Join(strings.Fields(keyType), "")
+		if keyType != "string" {
+			return "", fmt.Errorf("map(...) literals require string keys, but expected type uses %s", keyType)
+		}
+		expectedValueType, err = typeNodeSource(mapType.Value)
+		if err != nil {
+			return "", err
+		}
+		valueType = expectedValueType
+	}
+	args, err := splitTopLevel(argsSource, ',')
+	if err != nil {
+		return "", fmt.Errorf("map literal: %w", err)
+	}
+	type entry struct {
+		key      string
+		value    string
+		typeName string
+	}
+	entries := []entry{}
+	seen := map[string]bool{}
+	for index, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		colon := topLevelColon(arg)
+		if colon < 0 {
+			return "", fmt.Errorf("map literal argument %d must have a key and value", index+1)
+		}
+		keySource := strings.TrimSpace(arg[:colon])
+		key, keyErr := mapLiteralKey(keySource)
+		if keyErr != nil {
+			return "", fmt.Errorf("map literal key %q: %w", keySource, keyErr)
+		}
+		if seen[key] {
+			return "", fmt.Errorf("map literal repeats key %q", key)
+		}
+		seen[key] = true
+		value := strings.TrimSpace(arg[colon+1:])
+		if value == "" {
+			return "", fmt.Errorf("map literal key %q is missing a value", key)
+		}
+		value, err = transformMapLiteralsWithExpected(value, valueTypes, context, expectedValueType, strict)
+		if err != nil {
+			return "", err
+		}
+		entries = append(entries, entry{key: key, value: value, typeName: inferRecordExpressionType(value, valueTypes, context)})
+	}
+	if expectedType == "" {
+		for _, entry := range entries {
+			if entry.typeName == "" {
+				if strict {
+					return "", fmt.Errorf("cannot infer type of map value for key %q from %s", entry.key, entry.value)
+				}
+				valueType = "any"
+				break
+			}
+			if valueType == "" {
+				valueType = entry.typeName
+			} else if strings.Join(strings.Fields(valueType), "") != strings.Join(strings.Fields(entry.typeName), "") {
+				valueType = "any"
+				break
+			}
+		}
+		if len(entries) == 0 {
+			if strict {
+				return "", fmt.Errorf("cannot infer the type of an empty map(); provide an expected map type")
+			}
+			valueType = "any"
+		}
+	}
+	if valueType == "" {
+		return "", fmt.Errorf("cannot infer the value type of map literal")
+	}
+	var output strings.Builder
+	fmt.Fprintf(&output, "map[%s]%s{", keyType, valueType)
+	for index, entry := range entries {
+		if index > 0 {
+			output.WriteString(", ")
+		}
+		fmt.Fprintf(&output, "%s: %s", strconv.Quote(entry.key), entry.value)
+	}
+	output.WriteByte('}')
+	return output.String(), nil
+}
+
+func mapLiteralKey(source string) (string, error) {
+	tokens, err := LexSource("map key", source)
+	if err != nil {
+		return "", err
+	}
+	significant := significantSyntaxTokens(tokens)
+	if len(significant) != 1 {
+		return "", fmt.Errorf("expected an identifier or string literal")
+	}
+	token := significant[0]
+	if token.Kind == TokenString || token.Kind == TokenRawString {
+		return strconv.Unquote(token.Text)
+	}
+	if token.Kind == TokenIdentifier || token.Kind == TokenKeyword {
+		return token.Text, nil
+	}
+	return "", fmt.Errorf("expected an identifier or string literal")
+}
+
+func collectMapExpectedTypes(src string, valueTypes map[string]string, context constructorContext) map[int]string {
+	result := map[int]string{}
+	tokens, err := LexSource("map expected types", src)
+	if err != nil {
+		return result
+	}
+	blocks := []*BlockStmt{}
+	functions := parseTopLevelFunctions("map expected types", "main", src, 0, src, "", 0)
+	if len(functions) > 0 {
+		for _, function := range functions {
+			if function != nil && function.Method.BodyAST != nil {
+				blocks = append(blocks, function.Method.BodyAST)
+			}
+		}
+	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil && block != nil {
+		blocks = append(blocks, block)
+	}
+	for _, block := range blocks {
+		collectMapExpectedTypesBlock(block, valueTypes, context, result)
+	}
+	return result
+}
+
+func collectMapExpectedTypesBlock(block *BlockStmt, valueTypes map[string]string, context constructorContext, result map[int]string) {
+	if block == nil {
+		return
+	}
+	for _, statement := range block.Statements {
+		collectMapExpectedTypesStatement(statement, valueTypes, context, result)
+	}
+}
+
+func collectMapExpectedTypesStatement(statement Stmt, valueTypes map[string]string, context constructorContext, result map[int]string) {
+	if statement == nil {
+		return
+	}
+	walkStmtExpressions(statement, func(expression ExprNode) {
+		collectMapExpectedTypesExpr(expression, "", valueTypes, context, result)
+	})
+	switch value := statement.(type) {
+	case *TokenStmt:
+		collectMapExpectedTypesBlock(value.Body, valueTypes, context, result)
+		for _, child := range value.Children {
+			collectMapExpectedTypesStatement(child, valueTypes, context, result)
+		}
+	case *DeclarationStmt:
+		if value.Type != nil {
+			typeName, err := typeNodeSource(value.Type)
+			if err == nil {
+				for _, expression := range value.Values {
+					collectMapExpectedTypesExpr(expression, typeName, valueTypes, context, result)
+				}
+			}
+		}
+	case *AssignmentStmt:
+		for index, left := range value.Left {
+			name, ok := left.(*NameExpr)
+			if !ok || index >= len(value.Right) {
+				continue
+			}
+			collectMapExpectedTypesExpr(value.Right[index], valueTypes[name.Name], valueTypes, context, result)
+		}
+	case *IfStmt:
+		if value == nil {
+			return
+		}
+		collectMapExpectedTypesBlock(value.Body, valueTypes, context, result)
+		if value.ElseIf != nil {
+			collectMapExpectedTypesStatement(value.ElseIf, valueTypes, context, result)
+		}
+		collectMapExpectedTypesBlock(value.Else, valueTypes, context, result)
+	case *ForStmt:
+		collectMapExpectedTypesBlock(value.Body, valueTypes, context, result)
+	case *SwitchStmt:
+		collectMapExpectedTypesBlock(value.Body, valueTypes, context, result)
+	case *CaseStmt:
+		collectMapExpectedTypesBlock(value.Clause.Body, valueTypes, context, result)
+	case *TryStmt:
+		collectMapExpectedTypesBlock(value.Body, valueTypes, context, result)
+		for _, clause := range value.Catches {
+			collectMapExpectedTypesBlock(clause.Body, valueTypes, context, result)
+		}
+		collectMapExpectedTypesBlock(value.Finally, valueTypes, context, result)
+	}
+}
+
+func collectMapExpectedTypesExpr(expression ExprNode, expectedType string, valueTypes map[string]string, context constructorContext, result map[int]string) {
+	if expression == nil {
+		return
+	}
+	switch value := expression.(type) {
+	case *CallExpr:
+		if isMapConstructorCallee(value.Callee) {
+			if expectedType != "" {
+				result[value.Span().Start] = expectedType
+			}
+			expectedValueType := ""
+			if expectedType != "" {
+				if tokens, err := LexSource("map expected value", expectedType); err == nil {
+					if typeNode, parseErr := ParseTypeTokens(tokens); parseErr == nil {
+						if mapType, ok := typeNode.(*MapType); ok {
+							expectedValueType, _ = typeNodeSource(mapType.Value)
+						}
+					}
+				}
+			}
+			for _, argument := range value.Arguments {
+				collectMapExpectedTypesExpr(argument.Value, expectedValueType, valueTypes, context, result)
+			}
+			return
+		}
+		for index, argument := range value.Arguments {
+			argumentType := callableArgumentTypeForMap(value, index, valueTypes, context)
+			collectMapExpectedTypesExpr(argument.Value, argumentType, valueTypes, context, result)
+		}
+	case *ParenthesizedExpr:
+		collectMapExpectedTypesExpr(value.Inner, expectedType, valueTypes, context, result)
+	}
+}
+
+func callableArgumentTypeForMap(call *CallExpr, argumentIndex int, valueTypes map[string]string, context constructorContext) string {
+	if call == nil || argumentIndex < 0 || argumentIndex >= len(call.Arguments) {
+		return ""
+	}
+	var signatures []callableSignature
+	switch callee := call.Callee.(type) {
+	case *NameExpr:
+		signatures = append(signatures, context.FunctionSignatures[callee.Name]...)
+		if len(signatures) == 0 && context.CurrentClass != "" {
+			signatures = append(signatures, context.MethodSignatures[callee.Name]...)
+			signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][callee.Name]...)
+		}
+	case *SelectorExpr:
+		if receiver, ok := callee.Receiver.(*NameExpr); ok {
+			if imported := context.ImportedFunctionSignatures[receiver.Name][callee.Name]; len(imported) > 0 {
+				signatures = append(signatures, imported...)
+			} else if receiver.Name == "this" {
+				signatures = append(signatures, context.MethodSignatures[callee.Name]...)
+				signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][callee.Name]...)
+			} else if _, isClass := context.Targets[receiver.Name]; isClass {
+				signatures = append(signatures, context.StaticMethodSignatures[receiver.Name][callee.Name]...)
+			} else {
+				typeName := strings.TrimPrefix(valueTypes[receiver.Name], "*")
+				signatures = append(signatures, context.ClassMethodSignatures[typeName][callee.Name]...)
+			}
+		}
+	}
+	if len(signatures) == 0 {
+		return ""
+	}
+	argument := call.Arguments[argumentIndex]
+	expected := ""
+	for _, signature := range signatures {
+		parameterIndex := argumentIndex
+		if argument.Name != "" {
+			parameterIndex = -1
+			for index, parameter := range signature.Parameters {
+				if parameter.Name == argument.Name {
+					parameterIndex = index
+					break
+				}
+			}
+		}
+		if parameterIndex < 0 || parameterIndex >= len(signature.Parameters) {
+			return ""
+		}
+		candidate := signature.Parameters[parameterIndex].typeText()
+		if candidate == "" {
+			return ""
+		}
+		if expected == "" {
+			expected = candidate
+		} else if strings.Join(strings.Fields(expected), "") != strings.Join(strings.Fields(candidate), "") {
+			return ""
+		}
+	}
+	return expected
+}
+
+func isMapConstructorCallee(expression ExprNode) bool {
+	switch value := expression.(type) {
+	case *NameExpr:
+		return value.Name == "map"
+	case *TypeExpr:
+		if named, ok := value.Type.(*NamedType); ok {
+			return len(named.Parts) == 1 && named.Parts[0] == "map"
+		}
+	}
+	return false
+}
+
 func transformRecordLiteral(argsSource string, valueTypes map[string]string, context constructorContext, strict bool) (string, error) {
 	args, err := splitTopLevel(argsSource, ',')
 	if err != nil {
@@ -1481,6 +1893,9 @@ func inferRecordExprType(expression ExprNode, valueTypes map[string]string, cont
 			}
 		}
 	case *CallExpr:
+		if isMapConstructorCallee(value.Callee) {
+			return inferMapConstructorType(value, valueTypes, context)
+		}
 		return inferRecordCallExprResult(value, valueTypes, context)
 	case *SelectorExpr:
 		if packageName, ok := value.Receiver.(*NameExpr); ok {
@@ -1514,6 +1929,25 @@ func inferRecordExprType(expression ExprNode, valueTypes map[string]string, cont
 		}
 	}
 	return ""
+}
+
+func inferMapConstructorType(call *CallExpr, valueTypes map[string]string, context constructorContext) string {
+	if call == nil || len(call.Arguments) == 0 {
+		return ""
+	}
+	valueType := ""
+	for _, argument := range call.Arguments {
+		entryType := inferRecordExprType(argument.Value, valueTypes, context)
+		if entryType == "" {
+			return "map[string]any"
+		}
+		if valueType == "" {
+			valueType = entryType
+		} else if strings.Join(strings.Fields(valueType), "") != strings.Join(strings.Fields(entryType), "") {
+			return "map[string]any"
+		}
+	}
+	return "map[string]" + valueType
 }
 
 func inferRecordCallExprResult(call *CallExpr, valueTypes map[string]string, context constructorContext) string {
