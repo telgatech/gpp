@@ -1,4 +1,4 @@
-# Go++ Standard Package
+# GPP Standard Package
 
 Import `gpp/std` for annotations shared across standard-library and user
 packages:

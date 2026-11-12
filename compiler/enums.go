@@ -401,7 +401,7 @@ func enumResultTypes(result string) []string {
 }
 
 // emitEnum lowers an enum to a named Go scalar type, exported constants, and
-// the small amount of metadata needed by the Go++ enum selectors.
+// the small amount of metadata needed by the GPP enum selectors.
 func emitEnum(out *strings.Builder, enum *EnumDecl, errorAlias, jsonAlias, driverAlias string) {
 	backingType := enumBackingType(enum)
 	fmt.Fprintf(out, "type %s %s\n\n", enum.Name, backingType)
@@ -965,7 +965,7 @@ func enumReferenceExpr(expression ExprNode, context constructorContext) (string,
 	return key, enum, exists
 }
 
-// lowerEnumSelectorNode lowers Go++ enum selectors into the generated Go
+// lowerEnumSelectorNode lowers GPP enum selectors into the generated Go
 // identifiers and helpers. The source-edit enum pass remains available for
 // compatibility fragments, but ordinary enum expressions no longer need a
 // source round-trip before Go AST emission.

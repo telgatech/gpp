@@ -5,11 +5,11 @@ short while allowing callers to override options explicitly.
 
 ## Compare positional and named calls
 
-Go functions normally require arguments in declaration order. Go++ can name
+Go functions normally require arguments in declaration order. GPP can name
 arguments, so a call with several similar values is easier to review:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 func Resize(width int, height int) {}
 
 Resize(height: 480, width: 640)

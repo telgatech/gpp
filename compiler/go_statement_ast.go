@@ -7,13 +7,13 @@ import (
 )
 
 // goStatementFromDraft is the ordinary-Go interoperability path for a
-// statement that the Go++ statement recognizer did not classify. It parses a
+// statement that the GPP statement recognizer did not classify. It parses a
 // synthetic one-statement function only as a frontend adapter, then converts
 // the Go AST into the compiler's typed statement tree. The resulting tree is
 // retained; the source text is never stored as a declaration fallback.
 //
-// Go++ constructs which Go cannot parse, or which do not yet have a matching
-// Go++ node, deliberately return nil and remain TokenStmt values.
+// GPP constructs which Go cannot parse, or which do not yet have a matching
+// GPP node, deliberately return nil and remain TokenStmt values.
 func goStatementFromDraft(draft *statementDraft) Stmt {
 	if draft == nil || len(significantSyntaxTokens(draft.Header)) == 0 {
 		return nil

@@ -1,20 +1,20 @@
-# Go++ Feature Spec: Official `gpp` Standard Module
+# GPP Feature Spec: Official `gpp` Standard Module
 
 ## Goal
 
-Create an official Go++ standard module namespace:
+Create an official GPP standard module namespace:
 
     gpp/...
 
-for higher-level reusable Go++ libraries that should ship with the compiler but should NOT be built into the language core or implicitly loaded everywhere.
+for higher-level reusable GPP libraries that should ship with the compiler but should NOT be built into the language core or implicitly loaded everywhere.
 
 The language/compiler remains small.
 
-The official `gpp` module contains reusable classes, extensions, annotations, and helpers implemented primarily in Go++.
+The official `gpp` module contains reusable classes, extensions, annotations, and helpers implemented primarily in GPP.
 
 ## 1. Architectural layers
 
-Go++ should have three distinct layers:
+GPP should have three distinct layers:
 
 1. Language/compiler
 
@@ -54,7 +54,7 @@ Existing Go packages remain directly usable:
 - maps
 - etc.
 
-The `gpp` standard module must build on ordinary Go and Go++ features rather than replacing the Go ecosystem.
+The `gpp` standard module must build on ordinary Go and GPP features rather than replacing the Go ecosystem.
 
 ## 2. Official namespace
 
@@ -62,7 +62,7 @@ Reserve:
 
     gpp/...
 
-for compiler-distributed official Go++ packages.
+for compiler-distributed official GPP packages.
 
 Examples:
 
@@ -75,11 +75,11 @@ Do not use this namespace for user packages.
 
 ## 3. Versioning
 
-The official `gpp` module is versioned together with the Go++ compiler/distribution.
+The official `gpp` module is versioned together with the GPP compiler/distribution.
 
 Example:
 
-Go++ compiler v0.4.0
+GPP compiler v0.4.0
 
 ships with a matching:
 
@@ -282,7 +282,7 @@ requested by the client; range responses and already encoded content are not
 compressed. `PublicCacheControl` overrides the default cache policy for both
 `PublicDir` and `http.Files` mounts.
 
-`Mount` accepts an instance of a Go++ class marked with the `Mountable`
+`Mount` accepts an instance of a GPP class marked with the `Mountable`
 annotation and one or more mount addresses. Its methods use the same HTTP
 method annotations as a `Server` subclass. `Mountable` is a marker; classes do
 not inherit from a router base type. An address may be a path prefix such as
@@ -344,7 +344,7 @@ error handler. The same Context is passed to the selected route, and
 For ordinary HTTP route methods, the first parameter is `*http.Context`.
 Additional parameters must each have exactly one request-binding annotation:
 `http.Path`, `http.Query`, or `http.Body`. Path and query annotations accept an
-optional source-name override and otherwise use the Go++ parameter name. Path
+optional source-name override and otherwise use the GPP parameter name. Path
 names must match wildcards in the route path. Path values are required; missing
 path values and conversion failures produce a 400
 response through the configured error handler. Missing query values remain the
@@ -374,8 +374,17 @@ class Context {
 
     func Text(value string) error
     func JSON(value any) error
+    func HTML(status int = 200, data any = nil, key string = "") error
+    func Respond(status int, data any) error
     func Redirect(url string, status int)
 }
+
+`Respond` negotiates between JSON and HTML using the request's `Accept` header.
+`text/html` selects HTML and renders the template keyed by the request path.
+JSON is the default when `Accept` is absent or when JSON and HTML have equal
+quality. A request that accepts neither supported representation receives
+`406 Not Acceptable`. `Respond` adds `Vary: Accept`; callers that require one
+specific representation should use `JSON` or `HTML` directly.
 
 Do not hide native request/response objects.
 
@@ -389,7 +398,7 @@ JSON request bodies, and form binding for URL-encoded and multipart form bodies.
 `BindQuery`, `BindJSON`, and `BindForm` select a source explicitly. Bind targets
 must be non-nil pointers to structs. Query and form values map to exported
 fields using the corresponding `query` or `form` struct tag; a `json` tag is
-the fallback, followed by the lower-camel field name. Go++ class fields use
+the fallback, followed by the lower-camel field name. GPP class fields use
 their lower-camel names; native Go struct targets may use tags. Repeated
 values populate slice fields. JSON and form request bodies are limited to 1
 MiB. Binding errors are returned to the handler; validation remains the
@@ -490,7 +499,7 @@ small test utilities
 
 ## 14. Standard-module source language
 
-Prefer implementing official packages in Go++ itself.
+Prefer implementing official packages in GPP itself.
 
 Example layout:
 
@@ -513,7 +522,7 @@ stdlib/
         test/
             test.gpp
 
-This dogfoods Go++ and acts as a practical regression suite for the language.
+This dogfoods GPP and acts as a practical regression suite for the language.
 
 ## 15. Native Go escape hatch
 
@@ -525,9 +534,9 @@ gpp/http/
     server.gpp
     websocket.go
 
-Mixed Go/Go++ implementation should be supported if the existing build architecture permits it.
+Mixed Go/GPP implementation should be supported if the existing build architecture permits it.
 
-Prefer Go++ where practical.
+Prefer GPP where practical.
 
 ## 16. Compiler lookup behavior
 
@@ -568,7 +577,7 @@ Compiler should rewrite official package paths during lowering if required.
 
 ## 18. Package identity
 
-Go++ semantic package identity for:
+GPP semantic package identity for:
 
 gpp/http
 
@@ -589,7 +598,7 @@ must resolve to the official annotation symbol from gpp/http.
 
 ## 19. Visibility
 
-Official packages use normal Go/Go++ capitalization rules.
+Official packages use normal Go/GPP capitalization rules.
 
 Example:
 
@@ -611,7 +620,7 @@ The compiler must not contain special cases such as:
 
 if package == "gpp/http" and annotation == "GET" ...
 
-Official libraries must operate through normal Go++ capabilities:
+Official libraries must operate through normal GPP capabilities:
 
 - inheritance
 - annotations
@@ -641,15 +650,15 @@ Treat official gpp packages as the recommended getting-started experience.
 
 Suggested docs structure:
 
-Go++ language
-Go++ prelude
+GPP language
+GPP prelude
 gpp/http
 gpp/validate
 gpp/collections
 gpp/test
 Go interoperability
 
-Official packages should serve as examples of idiomatic Go++.
+Official packages should serve as examples of idiomatic GPP.
 
 ## 23. Prelude boundary
 
@@ -783,14 +792,14 @@ func main() {
 Underneath:
 
 - HTTP uses net/http
-- classes/annotations/introspection come from Go++
+- classes/annotations/introspection come from GPP
 - higher-level behavior comes from gpp/http
 
 ## 30. Design principle
 
 The official `gpp` standard module should answer:
 
-"What useful things can we build once Go++ gives us better language primitives?"
+"What useful things can we build once GPP gives us better language primitives?"
 
 rather than:
 
@@ -806,10 +815,10 @@ Keep native Go packages directly accessible underneath.
 
 The desired architecture is:
 
-Go++ language primitives
+GPP language primitives
         ↓
 official gpp libraries
         ↓
 native Go standard library/ecosystem
 
-This keeps Go++ productive immediately without creating a closed ecosystem.
+This keeps GPP productive immediately without creating a closed ecosystem.

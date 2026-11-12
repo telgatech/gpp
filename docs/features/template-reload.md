@@ -1,7 +1,7 @@
 # External template reloads
 
 External template files let authors work in `.gpp.tpl` files with normal
-editor support. During development, the Go++ HTTP server can watch those files
+editor support. During development, the GPP HTTP server can watch those files
 and reload valid edits without restarting the application.
 
 ## Embedded source and external source

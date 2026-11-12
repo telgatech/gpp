@@ -1,8 +1,8 @@
-# Go++ Static Methods Specification
+# GPP Static Methods Specification
 
 ## Goal
 
-Add static methods to Go++ classes.
+Add static methods to GPP classes.
 
 Static methods belong to the class namespace rather than to an instance.
 
@@ -129,7 +129,7 @@ Static methods do not require a special implicit class receiver.
 
 A static method should lower to an ordinary package-level Go function.
 
-Go++:
+GPP:
 
 ```go
 class User {
@@ -321,7 +321,7 @@ If the compiler's current `super` implementation only supports instance methods,
 
 # Overloading
 
-If Go++ already supports method overloading, static methods should participate in the same overload-resolution rules.
+If GPP already supports method overloading, static methods should participate in the same overload-resolution rules.
 
 Example:
 
@@ -354,7 +354,7 @@ class User {
 }
 ```
 
-`Parse` is exported according to normal Go++ package rules.
+`Parse` is exported according to normal GPP package rules.
 
 `helper` remains package-private.
 

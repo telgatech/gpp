@@ -17,7 +17,7 @@ extend string, []byte, []rune {
 }
 
 func main() {
-    text := "go++"
+    text := "GPP"
     bytes := []byte{'g', 'o'}
     runes := []rune{'g', 'o', '+'}
 

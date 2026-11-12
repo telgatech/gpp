@@ -79,7 +79,7 @@ template TodoHome(todos []*Todo) @{tpl.Path("/")} {
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Go++ Todo</title>
+        <title>GPP Todo</title>
         <style>
             body { max-width: 42rem; margin: 3rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; color: #20242a; }
             h1 { margin-bottom: .25rem; }
@@ -94,7 +94,7 @@ template TodoHome(todos []*Todo) @{tpl.Path("/")} {
         </style>
     </head>
     <body>
-        <h1>Go++ Todo</h1>
+        <h1>GPP Todo</h1>
         <p>A server-rendered todo list backed by SQLite.</p>
         <form method="post" action="/todos">
             <input name="title" placeholder="What needs doing?" required>
@@ -283,7 +283,7 @@ class TodoApp : http.Server @{
         http.Summary("List completed todos"),
         http.Description("Returns todos that have been marked complete."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Completed todo list", "application/json", struct(Items: []*Todo{Todo(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
+        http.ResponseBody(200, "Completed todo list", "application/json", struct(Items: []*Todo{Todo(Id: 1, Title: "Write the next GPP example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
     } {
         todos := db.CompletedTodos()
         return ctx.JSON(TodoList{Items: todos})
@@ -294,8 +294,8 @@ class TodoApp : http.Server @{
         http.Summary("Create a todo"),
         http.Description("Creates a todo from a JSON title and returns the stored record."),
         http.Tags("Todos"),
-        http.RequestBody("application/json", "The todo title to create", struct(Title: "Write the next Go++ example")),
-        http.ResponseBody(201, "Todo created", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.RequestBody("application/json", "The todo title to create", struct(Title: "Write the next GPP example")),
+        http.ResponseBody(201, "Todo created", "application/json", struct(Id: 1, Title: "Write the next GPP example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
         http.ResponseBody(400, "The request body is invalid or the title is empty", "application/json", struct(Error: "todo title is required"))
     } {
         request := CreateTodoRequest()
@@ -317,7 +317,7 @@ class TodoApp : http.Server @{
         http.Summary("Get a todo"),
         http.Description("Returns one todo by its numeric ID."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo found", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(200, "Todo found", "application/json", struct(Id: 1, Title: "Write the next GPP example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
@@ -340,7 +340,7 @@ class TodoApp : http.Server @{
         http.Summary("Complete a todo"),
         http.Description("Marks a todo complete and records when it was completed."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo completed", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)),
+        http.ResponseBody(200, "Todo completed", "application/json", struct(Id: 1, Title: "Write the next GPP example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)),
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
@@ -366,7 +366,7 @@ class TodoApp : http.Server @{
         http.Summary("Reopen a todo"),
         http.Description("Clears a todo's completion state and completion timestamp."),
         http.Tags("Todos"),
-        http.ResponseBody(200, "Todo reopened", "application/json", struct(Id: 1, Title: "Write the next Go++ example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
+        http.ResponseBody(200, "Todo reopened", "application/json", struct(Id: 1, Title: "Write the next GPP example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {

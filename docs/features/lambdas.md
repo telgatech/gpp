@@ -9,7 +9,7 @@ direct while still compiling to ordinary Go function literals.
 For a one-use predicate, a lambda can keep the operation close to the call:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 activeUsers := users.Filter(user => user.Active)
 ```
 

@@ -1,4 +1,4 @@
-# Go++ HTTP Swagger UI Specification
+# GPP HTTP Swagger UI Specification
 
 ## 1. Overview
 
@@ -38,7 +38,7 @@ Swagger UI is an interactive browser for that contract.
 The relationship is:
 
 ```text
-typed Go++ HTTP routes
+typed GPP HTTP routes
         ↓
 HTTP semantic metadata
         ↓
@@ -185,7 +185,7 @@ The compiler should report:
 http.Swagger requires http.OpenAPI on the same server
 ```
 
-Go++ should not silently enable OpenAPI.
+GPP should not silently enable OpenAPI.
 
 The application explicitly controls whether the API description is exposed.
 
@@ -235,7 +235,7 @@ Where supported by the generated OpenAPI document, `/swagger` should provide:
 * request examples;
 * curl examples where provided by Swagger UI.
 
-Go++ should not reimplement these facilities.
+GPP should not reimplement these facilities.
 
 It should expose the standard Swagger UI behavior.
 
@@ -243,7 +243,7 @@ It should expose the standard Swagger UI behavior.
 
 # 10. Try It Out
 
-Swagger UI's interactive request execution must work against the currently running Go++ server.
+Swagger UI's interactive request execution must work against the currently running GPP server.
 
 For example:
 
@@ -301,13 +301,13 @@ supporting resources
 
 These should be distributed with `gpp/http`.
 
-They should be embedded into the application using Go++'s existing `embed` feature.
+They should be embedded into the application using GPP's existing `embed` feature.
 
 ---
 
-# 13. Go++ `embed` Integration
+# 13. GPP `embed` Integration
 
-Go++ already provides native resource embedding:
+GPP already provides native resource embedding:
 
 ```gpp
 embed (
@@ -317,7 +317,7 @@ embed (
 
 or the corresponding compiler-owned declaration in the `gpp/http` implementation.
 
-Swagger UI assets should use this Go++ feature.
+Swagger UI assets should use this GPP feature.
 
 The implementation should not require application developers to write raw Go:
 
@@ -325,7 +325,7 @@ The implementation should not require application developers to write raw Go:
 //go:embed
 ```
 
-Go++ source remains the canonical source.
+GPP source remains the canonical source.
 
 ---
 
@@ -355,9 +355,9 @@ The important semantic result is that the Swagger frontend is available as an em
 
 # 15. Lowering of `embed`
 
-Go++'s normal `embed` lowering rules apply.
+GPP's normal `embed` lowering rules apply.
 
-The Go++ source:
+The GPP source:
 
 ```gpp
 embed (
@@ -369,7 +369,7 @@ may ultimately lower to whatever ordinary Go implementation is necessary.
 
 That generated Go mechanism is an implementation detail.
 
-The `gpp/http` source and specification should use Go++'s `embed` declaration rather than exposing raw backend embedding syntax.
+The `gpp/http` source and specification should use GPP's `embed` declaration rather than exposing raw backend embedding syntax.
 
 ---
 
@@ -402,7 +402,7 @@ The Swagger resources are supplied by `gpp/http`.
 
 # 17. Single-Binary Deployment
 
-Swagger support must preserve Go++'s single-binary deployment model.
+Swagger support must preserve GPP's single-binary deployment model.
 
 A built application should contain everything necessary to serve:
 
@@ -485,7 +485,7 @@ examples include:
 /swagger/favicon-32x32.png
 ```
 
-The exact filenames depend on the bundled Swagger UI distribution and are not part of Go++'s stable API.
+The exact filenames depend on the bundled Swagger UI distribution and are not part of GPP's stable API.
 
 ---
 
@@ -758,12 +758,12 @@ No Swagger-specific compression mechanism is required.
 
 # 34. Embedded Resource Serving
 
-Swagger assets should use ordinary filesystem/resource abstractions provided by Go++ and Go.
+Swagger assets should use ordinary filesystem/resource abstractions provided by GPP and Go.
 
 Conceptually:
 
 ```text
-Go++ embed declaration
+GPP embed declaration
         ↓
 embedded fs.FS
         ↓
@@ -798,7 +798,7 @@ There should be no naming collision between compiler-owned Swagger resources and
 
 `gpp/http` should bundle a known Swagger UI version.
 
-The version should move with releases of Go++ rather than downloading "latest" at application runtime.
+The version should move with releases of GPP rather than downloading "latest" at application runtime.
 
 This provides reproducible application builds.
 
@@ -809,7 +809,7 @@ This provides reproducible application builds.
 Given the same:
 
 ```text
-Go++ compiler version
+GPP compiler version
 gpp/http version
 application source
 ```
@@ -822,7 +822,7 @@ Runtime internet state must not affect which Swagger UI code is served.
 
 # 38. Upgrading Swagger UI
 
-Swagger UI may be upgraded as part of normal Go++/`gpp/http` releases.
+Swagger UI may be upgraded as part of normal GPP/`gpp/http` releases.
 
 Applications should not need to change source merely because the bundled frontend version changes.
 
@@ -836,7 +836,7 @@ The stable application contract remains:
 
 # 39. Swagger UI Configuration
 
-Go++ may configure sensible Swagger UI defaults internally.
+GPP may configure sensible Swagger UI defaults internally.
 
 Examples include:
 
@@ -894,7 +894,7 @@ rather than maintaining two documentation models.
 
 # 42. Schemas
 
-Swagger UI should expose the schemas generated from Go++:
+Swagger UI should expose the schemas generated from GPP:
 
 ```text
 classes
@@ -916,7 +916,7 @@ It renders the OpenAPI schemas already produced by `http.OpenAPI`.
 Handler and type documentation comments flow:
 
 ```text
-Go++ source comments
+GPP source comments
         ↓
 OpenAPI descriptions
         ↓
@@ -938,7 +938,7 @@ should cause Swagger to display the route documentation automatically.
 
 # 44. Brace Path Syntax
 
-Swagger/OpenAPI paths use the canonical Go++ HTTP parameter syntax:
+Swagger/OpenAPI paths use the canonical GPP HTTP parameter syntax:
 
 ```gpp
 @{http.GET("/users/{id}")}
@@ -949,7 +949,7 @@ There is no `:id` route syntax in the current HTTP design.
 This gives direct alignment between:
 
 ```text
-Go++:
+GPP:
 /users/{id}
 
 OpenAPI:
@@ -1144,7 +1144,7 @@ inject configured OpenAPI URL
 
 The exact implementation may evolve.
 
-The public Go++ source model remains based on the Go++ `embed` declaration.
+The public GPP source model remains based on the GPP `embed` declaration.
 
 ---
 
@@ -1158,10 +1158,10 @@ V1 does not require:
 * runtime downloads;
 * CDN-hosted assets;
 * user-supplied JavaScript configuration;
-* a Go++ reimplementation of Swagger UI;
+* a GPP reimplementation of Swagger UI;
 * separate schema generation for Swagger;
 * separate API annotations for Swagger;
-* raw `//go:embed` declarations in Go++ source.
+* raw `//go:embed` declarations in GPP source.
 
 ---
 
@@ -1170,7 +1170,7 @@ V1 does not require:
 The complete model is:
 
 ```text
-Go++ HTTP handlers
+GPP HTTP handlers
         ↓
 typed HTTP metadata
         ↓
@@ -1183,7 +1183,7 @@ full embedded Swagger UI
 /swagger
 ```
 
-Swagger frontend resources are packaged through Go++:
+Swagger frontend resources are packaged through GPP:
 
 ```gpp
 embed (
@@ -1206,7 +1206,7 @@ The core principles are:
 
 > `http.Swagger` means a complete interactive Swagger UI, not a simplified API page.
 
-> Swagger assets are supplied by `gpp/http` and embedded through Go++'s existing `embed` feature.
+> Swagger assets are supplied by `gpp/http` and embedded through GPP's existing `embed` feature.
 
 > The resulting application remains a self-contained executable with no CDN, npm, or runtime asset dependency.
 

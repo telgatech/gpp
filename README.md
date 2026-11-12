@@ -1,23 +1,15 @@
-# Go++
+# GPP
 
-> **Notice:** Go++ is an independent open source project and is not affiliated
+> **Notice:** GPP is an independent open source project and is not affiliated
 > with or endorsed by Google or the Go project.
->
-> **Attribution:** The Go Gopher was created by Renee French and is licensed
-> under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Go++ campaign
-> images are AI-assisted adaptations.
-
-<p align="center">
-  <img src="docs/public/go-gopher-superman.webp" alt="Go++ flying gopher mascot" width="320">
-</p>
 
 A [superset of Go](spec/compat.md) that provides modern features while staying true to the spirit of Go language.
 
-Go++ is distributed under the [BSD 3-Clause license](LICENSE), the same license used by Go. Bundled third-party components may have separate licenses; see their notices.
+GPP is distributed under the [BSD 3-Clause license](LICENSE), the same license used by Go. Bundled third-party components may have separate licenses; see their notices.
 
 ## What's implemented?
 
-Go++ adds expressive language features while keeping Go packages, generated
+GPP adds expressive language features while keeping Go packages, generated
 code, and the familiar build toolchain in reach. The guides below explain each
 feature with comparisons and examples.
 
@@ -87,32 +79,32 @@ feature with comparisons and examples.
 ### Go compatibility and tooling
 
 - **[Go compatibility](docs/features/packages.md)** — Use ordinary Go imports
-  and dotted Go++ packages mapped to module paths; standalone programs can omit
+  and dotted GPP packages mapped to module paths; standalone programs can omit
   `package main`.
-- **[Mixed Go and Go++ builds](docs/features/mixed-go.md)** — Call Go from Go++
-  and Go++ from Go while compiling both languages in one project.
+- **[Mixed Go and GPP builds](docs/features/mixed-go.md)** — Call Go from GPP
+  and GPP from Go while compiling both languages in one project.
 - **[Project CLI](docs/features/project-cli.md)** — Initialize, build, run,
-  test, format, and inspect Go++ projects with the `gpp` command.
-- **[Formatter](docs/features/formatter.md)** — Format Go++ syntax consistently
+  test, format, and inspect GPP projects with the `gpp` command.
+- **[Formatter](docs/features/formatter.md)** — Format GPP syntax consistently
   and check formatting in CI.
 - **[Source documentation](docs/features/source-docs.md)** — Read declarations
-  and API documentation directly from Go++ source.
+  and API documentation directly from GPP source.
 - **[Language server](docs/features/language-server.md)** — Get editor
   diagnostics, completion, navigation, semantic highlighting, and quick fixes.
 
 ### Visual Studio Code
 
-The [Go++ VS Code extension](https://github.com/telgatech/gpp-vscode) provides
-Go++ syntax highlighting, snippets, formatting, and optional language-server
+The [GPP VS Code extension](https://github.com/telgatech/gpp-vscode) provides
+GPP syntax highlighting, snippets, formatting, and optional language-server
 support for diagnostics, completion, and navigation.
 
 The editor view below shows the [`Todo` model in the full example](examples/todo-app.gpp).
 
-![Go++ syntax highlighting in Visual Studio Code, showing the Todo model from the todo app example](docs/public/vscode-highlighting.svg)
+![GPP syntax highlighting in Visual Studio Code, showing the Todo model from the todo app example](docs/public/vscode-highlighting.svg)
 
 ## Install and build
 
-Go++ requires Go 1.27 or newer. This enables generic methods declared directly
+GPP requires Go 1.27 or newer. This enables generic methods declared directly
 on classes in generated projects, alongside generic free functions, static
 methods, and extension methods.
 
@@ -122,8 +114,8 @@ methods, and extension methods.
 <h3><img src="docs/public/homebrew.svg" width="28" height="28" alt="Homebrew icon"> Homebrew</h3>
 <ol>
 <li><a href="https://brew.sh/">Install Homebrew</a> if needed.</li>
-<li>Add the Go++ tap:<pre><code>brew tap telgatech/gpp</code></pre></li>
-<li>Install and verify Go++:<pre><code>brew install --HEAD telgatech/gpp/gpp
+<li>Add the GPP tap:<pre><code>brew tap telgatech/gpp</code></pre></li>
+<li>Install and verify GPP:<pre><code>brew install --HEAD telgatech/gpp/gpp
 gpp version</code></pre></li>
 <li>Update to the latest commit on <code>main</code>:<pre><code>brew update
 brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
@@ -134,7 +126,7 @@ brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
 <tr>
 <td valign="top">
 <h3><img src="docs/public/go.svg" width="28" height="28" alt="Go icon"> Go install</h3>
-<p>For Go developers who already have Go 1.27 or newer and want to try Go++ quickly:</p>
+<p>For Go developers who already have Go 1.27 or newer and want to try GPP quickly:</p>
 <pre><code>go install github.com/telgatech/gpp@main</code></pre>
 </td>
 </tr>
@@ -160,7 +152,7 @@ resolution happens when you build or run the project. The initial commit
 includes only the generated project files.
 
 Build a native executable. Intermediate Go source remains in the hidden
-compiler workspace rather than beside the Go++ source:
+compiler workspace rather than beside the GPP source:
 
 ```bash
 gpp build examples/hello.gpp -o ./hello
@@ -173,7 +165,7 @@ gpp build -warnings examples/hello.gpp
 ```
 
 `gpp build` reuses generated Go and the executable while its inputs remain
-unchanged. After a Go++ source edit, the compiler reuses generated output for
+unchanged. After a GPP source edit, the compiler reuses generated output for
 unaffected packages, and Go's build cache reuses unaffected Go packages. Native
 Go helper or embedded file changes are tracked as build inputs. `gpp clean`
 clears the generated workspace and its cache state.
@@ -181,7 +173,7 @@ clears the generated workspace and its cache state.
 Use `gpp doctor` to check the Go toolchain and embedded standard library, and
 `gpp clean` to remove generated build artifacts.
 
-Format Go++ source with the shared canonical formatter. It uses four-space
+Format GPP source with the shared canonical formatter. It uses four-space
 indentation, preserves comments and opaque literal/template content, and
 supports CI-friendly check mode:
 
@@ -192,14 +184,14 @@ gpp fmt --stdout examples/hello.gpp
 ```
 
 Use `gpp fiximports` to add imports when a unique available package matches
-qualified names in Go++ source. It prefers bundled Go++ packages and uses
+qualified names in GPP source. It prefers bundled GPP packages and uses
 `std`-prefixed aliases for colliding standard-library imports. It supports
 `--check` and `--stdout` modes.
 
 Pass `-emit-go` to `gpp build` when you want the generated Go workspace path
 reported for inspection.
 
-Go++ tests use the bundled `gpp/test` suite library and ordinary Go test
+GPP tests use the bundled `gpp/test` suite library and ordinary Go test
 execution underneath:
 
 ```bash
@@ -211,14 +203,14 @@ gpp test --priority high examples/testing.gpp
 The compiler's CI also runs `go test ./...` and
 [`scripts/smoke-examples.sh`](scripts/smoke-examples.sh). That smoke test creates
 a fresh project with `gpp init`, copies in the complete examples tree, then
-runs or builds every example (and executes the Go++ testing example). Run it
+runs or builds every example (and executes the GPP testing example). Run it
 locally before submitting compiler changes:
 
 ```bash
 ./scripts/smoke-examples.sh
 ```
 
-Inspect Go++ source-level documentation without exposing generated Go:
+Inspect GPP source-level documentation without exposing generated Go:
 
 ```bash
 gpp doc gpp/http.Server
@@ -277,7 +269,7 @@ gpp run examples/hello.gpp
 ```
 
 `gpp run` also accepts `.go` files and Go-only directories. Those files go
-through the Go++ compiler before the generated Go is built and run:
+through the GPP compiler before the generated Go is built and run:
 
 ```bash
 gpp run ./main.go -- program-argument
@@ -295,7 +287,7 @@ Use a separate output directory when switching between standalone examples:
 gpp run -output /tmp/gpp-orm examples/orm.gpp
 ```
 
-Multiple Go++ files can be passed to the same build. For example, the
+Multiple GPP files can be passed to the same build. For example, the
 cross-package example is built and run as one generated project:
 
 ```bash
@@ -304,7 +296,7 @@ gpp run \
   examples/packages/main.gpp
 ```
 
-Go++ and Go can also live in the same build. The mixed-compilation examples
+GPP and Go can also live in the same build. The mixed-compilation examples
 demonstrate both directions:
 
 ```bash
@@ -312,7 +304,7 @@ gpp run -output /tmp/gpp-go-from-gpp examples/mixed/go_from_gpp
 gpp run -output /tmp/gpp-go-imports-gpp examples/mixed/go_imports_gpp
 ```
 
-The first lets Go++ call functions from `native.go`; the second lets ordinary
+The first lets GPP call functions from `native.go`; the second lets ordinary
 Go import the generated `generated/mixed` package.
 
 The ORM example also resolves its SQLite dependency automatically:
@@ -342,7 +334,7 @@ Choose a different generated output directory with `-output`:
 gpp -output build/gpp examples/hello.gpp
 ```
 
-The standard Go++ prelude is available automatically. Disable it for minimal
+The standard GPP prelude is available automatically. Disable it for minimal
 or diagnostic builds with `-no-prelude`.
 
 The enum example demonstrates implicit and explicit values, grouped enum
@@ -364,13 +356,13 @@ preserving ordinary Go structs and stdlib interoperability.
 
 ## License
 
-Go++ is released under the BSD 3-Clause License.
+GPP is released under the BSD 3-Clause License.
 
 Copyright (c) 2026 Telga Technologies Pvt Ltd
-and Go++ contributors.
+and GPP contributors.
 
 See [LICENSE](LICENSE) for details.
 
-When redistributing source code from this Go++ compiler project, retain the
+When redistributing source code from this GPP compiler project, retain the
 copyright notice, all three license conditions, and the warranty disclaimer
 from [LICENSE](LICENSE).

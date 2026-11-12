@@ -7,7 +7,7 @@ implementation is bundled in `compiler/stdlib/gpp/container`.
 
 ## Goals
 
-`gpp/container` provides a small set of typed data structures for Go++ programs.
+`gpp/container` provides a small set of typed data structures for GPP programs.
 Its containers use their element types directly in storage and public APIs.
 They must not store elements as `any` or require callers to recover element
 types with assertions.
@@ -24,10 +24,10 @@ Import the package as:
 import "gpp/container"
 ```
 
-The compiler distributes the package with the Go++ standard packages and
+The compiler distributes the package with the GPP standard packages and
 recognizes it as an official package.
 
-The package source is ordinary Go++ and lowers to ordinary Go generic
+The package source is ordinary GPP and lowers to ordinary Go generic
 declarations. It must be loadable by the compiler, documentation tooling, and
 language tooling through the same official-package mechanism used by the
 other bundled packages.

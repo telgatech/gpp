@@ -1,8 +1,8 @@
 # Class member visibility
 
-Class fields and methods have one of three effective visibility levels. Go++
+Class fields and methods have one of three effective visibility levels. GPP
 follows Go's capitalization convention: an uppercase initial letter means the
-member is exported and a lowercase initial letter means it is unexported. Go++
+member is exported and a lowercase initial letter means it is unexported. GPP
 makes lowercase class members private to their declaring class, and a leading
 underscore adds a protected level for subclass access.
 
@@ -12,7 +12,7 @@ underscore adds a protected level for subclass access.
   the class that declares them. They are not inherited, promoted into a child's
   constructor, or offered as members on a child value.
 - **Protected** members begin with `_` and are available to the declaring
-  class and its subclasses. They are not part of the Go++ public API.
+  class and its subclasses. They are not part of the GPP public API.
 
 The convention applies to fields, instance methods, and static methods:
 
@@ -59,12 +59,12 @@ Protected members remain private to the class family. Use a public accessor or
 method when ordinary callers need the capability. Use private members for
 implementation details that subclasses should not depend on.
 
-These checks apply to Go++ source and Go declarations embedded in `.gpp` files.
+These checks apply to GPP source and Go declarations embedded in `.gpp` files.
 Generated Go uses exported `GppProtected...` bridge names so subclasses in
 other Go packages can reach protected members. Handwritten Go can call those
 generated names directly; they are compiler implementation details, not a
-supported Go++ API. Separate `.go` files also follow Go's package-level access
-rules and are outside Go++ member-access checking.
+supported GPP API. Separate `.go` files also follow Go's package-level access
+rules and are outside GPP member-access checking.
 
 The leading underscore is the protected marker. Uppercase names remain public,
 and lowercase names without a leading underscore remain private.

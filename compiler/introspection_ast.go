@@ -514,7 +514,7 @@ func transformIntrospectionClassAST(src string, context constructorContext) (str
 		})
 	}
 	if invalidClassAccess != "" {
-		return "", true, fmt.Errorf("%s.class is only available on Go++ class instances or class names", invalidClassAccess)
+		return "", true, fmt.Errorf("%s.class is only available on GPP class instances or class names", invalidClassAccess)
 	}
 	if len(edits) == 0 {
 		return src, true, nil
@@ -598,7 +598,7 @@ func introspectionStaticTargetNode(receiver ExprNode, source string, context con
 // introspectionStaticTargetExpr is the node-only counterpart to
 // introspectionStaticTargetNode. The source-based helper remains for the
 // compatibility rewriter, but direct emission must not stringify a receiver
-// merely to determine whether it names a Go++ class.
+// merely to determine whether it names a GPP class.
 func introspectionStaticTargetExpr(receiver ExprNode, context constructorContext) (constructorTarget, bool) {
 	path, ok := directSelectorPath(receiver)
 	if !ok {
@@ -626,7 +626,7 @@ func lowerIntrospectionClassExprNode(selector *SelectorExpr, context constructor
 	}
 	valueTypes := context.CurrentParameterTypes
 	if introspectionClassNameNode(receiver, context, valueTypes) == "" {
-		return nil, true, fmt.Errorf("%s.class is only available on Go++ class instances or class names", expressionDisplayName(selector.Receiver))
+		return nil, true, fmt.Errorf("%s.class is only available on GPP class instances or class names", expressionDisplayName(selector.Receiver))
 	}
 	return &CallExpr{
 		Callee:    &SelectorExpr{Receiver: receiver, Name: "GppRuntimeClass"},

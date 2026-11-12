@@ -1,8 +1,8 @@
-# Go++ Full Compiler AST
+# GPP Full Compiler AST
 
 ## Status
 
-This specification defines the end state of the Go++ frontend. String-valued
+This specification defines the end state of the GPP frontend. String-valued
 executable bodies such as `Method.Body` are migration artifacts and MUST NOT
 remain the compiler's long-term representation of program syntax. Mixed
 declarations retain tokens, spans, and parsed Go metadata; they do not carry a
@@ -10,7 +10,7 @@ duplicate executable source string.
 
 The compiler may preserve source text for comments, raw strings, template
 content, embedded files, and exact diagnostics. It MUST NOT preserve executable
-Go++ syntax only as an opaque string in order to bypass parsing or AST
+GPP syntax only as an opaque string in order to bypass parsing or AST
 transformation.
 
 Current migration invariants already enforced by the frontend are:
@@ -56,7 +56,7 @@ Current migration invariants already enforced by the frontend are:
 * ordinary Go declarations are emitted from their stored `go/ast` nodes; the
   owning source buffer is not used to recover executable declaration text at
   the emission boundary; and
-* Go++ value declarations are emitted from their keyword, names, type, and
+* GPP value declarations are emitted from their keyword, names, type, and
   initializer nodes; token-preserving expression fallbacks retain structural
   separators needed by multiline literals; and
 * unsupported top-level syntax is rejected with a source diagnostic instead of
@@ -88,9 +88,9 @@ The frontend MUST provide a lossless, source-oriented AST for:
 * annotations and annotation arguments;
 * embeds and templates, including layout metadata;
 * statements and expressions inside every function or method body;
-* Go++ operators, interpolation, safe access, lambdas, exceptions, and
+* GPP operators, interpolation, safe access, lambdas, exceptions, and
   multi-type catches;
-* ordinary Go syntax accepted by Go++.
+* ordinary Go syntax accepted by GPP.
 
 The AST MUST retain source spans and comment/trivia ownership sufficiently for
 diagnostics, formatting, LSP features, and source mapping.
@@ -102,7 +102,7 @@ semantic property. It does need to preserve it while reporting exact source
 locations and while retaining opaque payloads.
 
 The AST is not the generated Go AST. Lowering to Go is a separate phase and
-must not be used as a way to reconstruct Go++ source.
+must not be used as a way to reconstruct GPP source.
 
 ## 3. Source Model
 
@@ -271,7 +271,7 @@ Expressions include identifiers, literals, selectors, calls, indexing,
 composite construction, unary/binary operators, assignments, lambdas,
 interpolation, anonymous structs, safe access, coalescing, and named/default arguments.
 
-Go++-specific operators MUST have explicit nodes or an explicit operator enum;
+GPP-specific operators MUST have explicit nodes or an explicit operator enum;
 they MUST NOT be hidden in text substitutions. Examples include `?.`, `??`,
 `||`, and `||=`.
 
@@ -294,11 +294,11 @@ not inferred later by searching raw source text.
 
 Template declarations have structured headers, parameters, layout references,
 annotations, and a template-body node. The template body may contain an opaque
-HTML/template payload, but template actions and embedded Go++ expressions MUST
+HTML/template payload, but template actions and embedded GPP expressions MUST
 be parsed into template AST nodes.
 
 Raw strings, embedded bytes, and user template text remain opaque payloads by
-language definition. Their contents must not be treated as executable Go++
+language definition. Their contents must not be treated as executable GPP
 source by ordinary compiler transformations.
 
 ## 12. Parsing Pipeline
@@ -308,11 +308,11 @@ The compiler pipeline becomes:
 ```text
 source bytes
   -> lossless lexer
-  -> Go++ parser
+  -> GPP parser
   -> source AST
   -> name/type resolution
   -> typed AST
-  -> Go++ lowering IR
+  -> GPP lowering IR
   -> Go AST / generated Go
   -> go/format
 ```
@@ -322,7 +322,7 @@ passes must never need to reparse arbitrary source strings to discover nodes.
 
 ## 13. Lowering
 
-Lowering is explicit and one-way. Each Go++ node has a lowering operation that
+Lowering is explicit and one-way. Each GPP node has a lowering operation that
 produces Go AST or a small internal IR. Lowering owns:
 
 * overload selection;
@@ -330,17 +330,17 @@ produces Go AST or a small internal IR. Lowering owns:
 * extension dispatch;
 * inheritance and polymorphic dispatch;
 * exception propagation and catch dispatch;
-* interpolation and Go++ operators;
+* interpolation and GPP operators;
 * anonymous structs, enums, annotations, serialization, and templates.
 
 Lowering MUST preserve source spans so generated diagnostics can map back to
-Go++ nodes.
+GPP nodes.
 
 ## 14. Comments and Formatting
 
 The formatter consumes the source AST and token/trivia stream. It MUST be able
 to print any valid AST without consulting generated Go. Go-compatible fragments
-may be printed with `go/format` only after they have been isolated from Go++
+may be printed with `go/format` only after they have been isolated from GPP
 syntax and their comments have been retained.
 
 Formatting MUST be deterministic, idempotent, comment-preserving, and safe for
@@ -357,7 +357,7 @@ Go or raw executable strings.
 
 ## 16. Compatibility
 
-The migration must preserve valid existing Go++ and Go source behavior. The
+The migration must preserve valid existing GPP and Go source behavior. The
 public compiler APIs may remain source-compatible while internal declaration
 types gain structured fields.
 
@@ -365,7 +365,7 @@ During migration, a mixed compatibility field may exist only when accompanied
 by parsed tokens/nodes and only for lossless source reproduction. New compiler
 features MUST NOT add another raw-string transformation pass. `MixedDecl` is a
 last-resort container for source that still combines syntax families; it is
-not the normal representation for Go declarations, Go++ functions, value
+not the normal representation for Go declarations, GPP functions, value
 declarations, or annotated declarations.
 
 ## 17. Migration Plan
@@ -376,7 +376,7 @@ The implementation proceeds in dependency order:
 2. Populate tokens for every current declaration and method body.
 3. Parse Go-compatible types and expressions into AST nodes.
 4. Parse blocks and ordinary statements.
-5. Parse Go++ statements and expressions, including exceptions and lambdas.
+5. Parse GPP statements and expressions, including exceptions and lambdas.
 6. Replace raw method/function bodies with `BlockStmt`.
 7. Keep structured lambda spans and callable metadata in AST form through
    resolution; move remaining transformations from source rewriting to typed
@@ -392,7 +392,7 @@ The full AST migration is complete only when:
 
 * no executable declaration or body is represented solely as a string;
 * no compiler transformation reparses arbitrary executable source text;
-* every valid Go++ construct has a source AST node;
+* every valid GPP construct has a source AST node;
 * comments and source spans survive every compiler phase;
 * `gpp fmt` can format expressions and statements without generated Go;
 * `gpp lsp` and compiler diagnostics use the same AST;

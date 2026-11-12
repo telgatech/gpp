@@ -131,7 +131,7 @@ func main() {
 		t.Fatalf("ordinary Go declaration was not emitted from its AST:\n%s", generated)
 	}
 	if !strings.Contains(generated, `person := &Person{Name: "Bob", Age: 42}`) {
-		t.Fatalf("neighboring Go++ function was not lowered:\n%s", generated)
+		t.Fatalf("neighboring GPP function was not lowered:\n%s", generated)
 	}
 }
 
@@ -1485,13 +1485,13 @@ func main() {
 	}
 }
 
-func TestSafeValueTypesUsesBodyASTForGoPlusDeclarations(t *testing.T) {
+func TestSafeValueTypesUsesBodyASTForGPPDeclarations(t *testing.T) {
 	types, ok := safeValueTypesAST(`
 let person *Person
 alias := person
 `)
 	if !ok {
-		t.Fatal("expected Go++ body AST type collection to succeed")
+		t.Fatal("expected GPP body AST type collection to succeed")
 	}
 	if types["person"] != "*Person" || types["alias"] != "*Person" {
 		t.Fatalf("unexpected AST-inferred safe-access types: %#v", types)

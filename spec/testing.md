@@ -1,17 +1,17 @@
-# Go++ Testing and `gpp test` Specification
+# GPP Testing and `gpp test` Specification
 
 ## Goal
 
-Provide a first-class testing experience for Go++ that improves ergonomics over raw Go testing while preserving complete compatibility with existing Go tests.
+Provide a first-class testing experience for GPP that improves ergonomics over raw Go testing while preserving complete compatibility with existing Go tests.
 
 The design principle is:
 
-> Go++ testing should be a library and tooling improvement, not a separate testing language.
+> GPP testing should be a library and tooling improvement, not a separate testing language.
 
 Testing is built from:
 
 ```text
-Go++ classes
+GPP classes
     +
 gpp/test
     +
@@ -26,7 +26,7 @@ No special `test { ... }` syntax is required.
 
 # Core Model
 
-A Go++ test suite is an ordinary class inheriting from:
+A GPP test suite is an ordinary class inheriting from:
 
 ```go
 test.Suite
@@ -115,7 +115,7 @@ or:
 expect ...
 ```
 
-Testing should use ordinary Go++ features:
+Testing should use ordinary GPP features:
 
 * classes
 * inheritance
@@ -280,7 +280,7 @@ class UserTest : CRUDSuite {
 
 `UserTest` includes both inherited cases.
 
-Normal Go++ inheritance and override rules apply.
+Normal GPP inheritance and override rules apply.
 
 Do not introduce testing-specific method resolution.
 
@@ -328,7 +328,7 @@ class UserTest : DatabaseSuite {
 
 A suite base class containing no runnable test cases should not create an empty test execution entry.
 
-If Go++ later supports abstract classes, abstract suites must never be instantiated directly.
+If GPP later supports abstract classes, abstract suites must never be instantiated directly.
 
 ---
 
@@ -471,7 +471,7 @@ A suite or test case may declare:
 @test.Priority(test.High)
 ```
 
-using normal Go++ annotation syntax:
+using normal GPP annotation syntax:
 
 ```go
 class UserTest : test.Suite @{
@@ -489,7 +489,7 @@ func Login() @{
 }
 ```
 
-Exact annotation syntax follows the general Go++ annotation specification.
+Exact annotation syntax follows the general GPP annotation specification.
 
 ---
 
@@ -899,7 +899,7 @@ Same(expected, actual)
 NotSame(a, b)
 ```
 
-Identity semantics should follow ordinary Go++ reference/object behavior.
+Identity semantics should follow ordinary GPP reference/object behavior.
 
 ---
 
@@ -977,7 +977,7 @@ uses the underlying Go testing skip mechanism.
 
 # Unexpected Errors
 
-Because Go++ automatically promotes omitted trailing errors:
+Because GPP automatically promotes omitted trailing errors:
 
 ```go
 func Create() {
@@ -1004,7 +1004,7 @@ Throws(() => {
 })
 ```
 
-for any thrown Go++ error.
+for any thrown GPP error.
 
 Typed form:
 
@@ -1018,7 +1018,7 @@ Throws[ValidationError](() => {
 
 # Throws and Raw Panics
 
-`Throws` catches only Go++ thrown errors.
+`Throws` catches only GPP thrown errors.
 
 Raw Go:
 
@@ -1157,11 +1157,11 @@ gpp test
 runs both:
 
 ```text
-Go++ test.Suite tests
+GPP test.Suite tests
 ordinary Go *_test.go tests
 ```
 
-Go++ testing is additive.
+GPP testing is additive.
 
 It does not replace Go's testing system.
 
@@ -1195,7 +1195,7 @@ Initially this may be based on:
 go.mod
 ```
 
-and any Go++ module metadata if introduced later.
+and any GPP module metadata if introduced later.
 
 Running from a nested directory:
 
@@ -1336,7 +1336,7 @@ parser_test.go
 integration_test.go
 ```
 
-and `gpp test` must run all relevant Go++ and Go tests.
+and `gpp test` must run all relevant GPP and Go tests.
 
 ---
 
@@ -1423,7 +1423,7 @@ If names are ambiguous across packages, allow qualified names such as:
 gpp test --suite users.UserTest
 ```
 
-using normal Go++ package qualification rules.
+using normal GPP package qualification rules.
 
 ---
 
@@ -1580,7 +1580,7 @@ to display only that suite and its effective metadata.
 
 Ordinary `_test.go` tests continue to use Go's normal test naming/filter mechanisms.
 
-Metadata annotations apply only to Go++ suites unless a future explicit mechanism maps native Go tests into metadata.
+Metadata annotations apply only to GPP suites unless a future explicit mechanism maps native Go tests into metadata.
 
 Do not attempt to infer tags or priorities from ordinary Go test names.
 
@@ -1594,7 +1594,7 @@ When a `--suite` filter is supplied:
 gpp test --suite UserTest
 ```
 
-the intent is specifically to run selected Go++ suites.
+the intent is specifically to run selected GPP suites.
 
 Unrelated native Go tests need not run.
 
@@ -1616,9 +1616,9 @@ A tag filter:
 gpp test --tag auth
 ```
 
-selects Go++ cases carrying that metadata.
+selects GPP cases carrying that metadata.
 
-Native Go tests have no Go++ tags and therefore are not automatically selected by tag filtering.
+Native Go tests have no GPP tags and therefore are not automatically selected by tag filtering.
 
 This behavior should be documented clearly.
 
@@ -1626,16 +1626,16 @@ This behavior should be documented clearly.
 
 # Priority Filters and Native Go Tests
 
-Native Go tests have no Go++ priority metadata.
+Native Go tests have no GPP priority metadata.
 
 When no priority filter is supplied, they run normally.
 
-When an explicit Go++ priority filter is supplied, native test behavior should be predictable and documented.
+When an explicit GPP priority filter is supplied, native test behavior should be predictable and documented.
 
 Recommended v1 behavior:
 
 ```text
---priority applies to Go++ suite cases only
+--priority applies to GPP suite cases only
 ```
 
 while native Go tests continue only when broader `--run`/package execution includes them.
@@ -1784,7 +1784,7 @@ Exact generated structure is implementation-defined.
 
 ---
 
-# Failure From Uncaught Go++ Errors
+# Failure From Uncaught GPP Errors
 
 If a case throws:
 
@@ -1794,7 +1794,7 @@ func Create() {
 }
 ```
 
-the wrapper should convert that uncaught Go++ error into a normal test failure rather than crashing the complete test process.
+the wrapper should convert that uncaught GPP error into a normal test failure rather than crashing the complete test process.
 
 Report where practical:
 
@@ -1803,7 +1803,7 @@ suite
 case
 error type
 error message
-Go++ source location
+GPP source location
 ```
 
 Raw Go panics retain normal panic behavior.
@@ -1901,7 +1901,7 @@ after
 
 as core language keywords solely for testing.
 
-Existing Go++ features are sufficient.
+Existing GPP features are sufficient.
 
 ---
 
@@ -2073,7 +2073,7 @@ The model is:
 ```text
 module/package selection
         ↓
-Go++ test.Suite discovery
+GPP test.Suite discovery
         ↓
 suite/case metadata
         ↓
@@ -2092,4 +2092,4 @@ go test
 
 The intended experience is:
 
-> Go testing with less ceremony, reusable class-based fixtures, semantic grouping, priority scheduling, better assertions, native Go++ error handling, and full compatibility with ordinary Go tests.
+> Go testing with less ceremony, reusable class-based fixtures, semantic grouping, priority scheduling, better assertions, native GPP error handling, and full compatibility with ordinary Go tests.

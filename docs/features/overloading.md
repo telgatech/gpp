@@ -1,16 +1,16 @@
 # Function and method overloading
 
-Overloading lets related operations share a name. Go++ chooses the applicable
+Overloading lets related operations share a name. GPP chooses the applicable
 function or method during compilation, so a call remains an ordinary direct
 call in the generated Go code.
 
 ## Compare naming conventions
 
 In Go, related operations with different input types usually need separate
-names or a type switch. Go++ can keep one name and select from static types:
+names or a type switch. GPP can keep one name and select from static types:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 func Format(value int) string { return strconv.Itoa(value) }
 func Format(value string) string { return value }
 

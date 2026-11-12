@@ -197,7 +197,7 @@ func ExecuteIn(scope string, writer io.Writer, key string, args ...any) error {
 	return executeInlineIn(scope, writer, key, args...)
 }
 
-// Render is retained as a source-compatible alias for older Go++ programs.
+// Render is retained as a source-compatible alias for older GPP programs.
 func Render(writer io.Writer, key string, args ...any) error {
 	return Execute(writer, key, args...)
 }

@@ -120,7 +120,7 @@ func renderCurrentPackageDoc(options docOptions) int {
 		}
 		sort.Strings(keys)
 		if len(keys) == 0 {
-			return reportErrorWithCode(fmt.Errorf("no Go++ package documentation found"), 1)
+			return reportErrorWithCode(fmt.Errorf("no GPP package documentation found"), 1)
 		}
 		packageName = keys[0]
 	}
@@ -295,7 +295,7 @@ func renderDocSymbol(symbol compiler.DocSymbol, options docOptions) string {
 		}
 	}
 	if options.verbose && symbol.Generated {
-		out.WriteString("\nGenerated from Go++ source metadata.\n")
+		out.WriteString("\nGenerated from GPP source metadata.\n")
 	}
 	return strings.TrimRight(out.String(), "\n") + "\n"
 }
@@ -334,8 +334,8 @@ func nativeDoc(query string) bool {
 
 func languageDocTopic(query string) (string, bool) {
 	topics := map[string]string{
-		"try":        "try / catch / finally\n\nGo++ handles thrown errors with try, catch, and finally blocks.",
-		"catch":      "try / catch / finally\n\ncatch handles Go++ thrown errors.",
+		"try":        "try / catch / finally\n\nGPP handles thrown errors with try, catch, and finally blocks.",
+		"catch":      "try / catch / finally\n\ncatch handles GPP thrown errors.",
 		"class":      "class\n\nA class defines fields, methods, constructors, and optional parent classes.",
 		"extend":     "extend\n\nAn extend block adds methods to an existing type without changing its declaration.",
 		"struct":     "struct\n\nAnonymous structs create statically checked structural values; named structs declare reusable data types.",

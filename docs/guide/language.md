@@ -1,6 +1,6 @@
 # Language guide
 
-Go++ adds application-level constructs while preserving Go’s types, packages,
+GPP adds application-level constructs while preserving Go’s types, packages,
 imports, and generated-code model.
 
 ## Classes and construction
@@ -23,7 +23,7 @@ other := Person{
 
 These forms have deliberately different roles:
 
-- `Person("Bob", 42)` is Go++ constructor-style syntax. The compiler checks
+- `Person("Bob", 42)` is GPP constructor-style syntax. The compiler checks
   positional order, inherited fields, and arity, then lowers it to a Go
   composite literal.
 - `Person(Name: "Bob", Age: 42)` is the named form of the same syntax. Named
@@ -56,11 +56,11 @@ and interfaces, so classes can still interoperate with ordinary Go code.
 Multiple parents are allowed. If parents expose the same member, qualify the
 member through the parent name instead of relying on an implicit winner. A
 derived value passed through a base-typed parameter keeps the concrete method
-dispatch expected by Go++.
+dispatch expected by GPP.
 
 ## Functions and calls
 
-Go++ calls can use named arguments and defaults:
+GPP calls can use named arguments and defaults:
 
 ```go
 func Greet(name string, punctuation string = "!") string {
@@ -102,7 +102,7 @@ user := client.Get[User]("/users/1")
 
 ## Go-compatible assignment operators
 
-Go++ supports Go's compound assignment operators and increment/decrement
+GPP supports Go's compound assignment operators and increment/decrement
 statements:
 
 ```go
@@ -168,7 +168,7 @@ see in a code review.
 
 ## Exceptions
 
-Go++ keeps ordinary Go errors valid and adds structured exception flow for
+GPP keeps ordinary Go errors valid and adds structured exception flow for
 code where repeated propagation obscures the main path:
 
 ```go
@@ -185,7 +185,7 @@ try {
 ```
 
 Uncaptured trailing `error` results propagate automatically as exceptions.
-`try`/`catch` adds local recovery, `throw` raises a Go++ error value, catch
+`try`/`catch` adds local recovery, `throw` raises a GPP error value, catch
 clauses may name one type, several types, or a catch-all, and `finally` runs
 during normal completion and unwinding. At Go boundaries, the compiler still
 emits ordinary error values and Go-compatible code.
@@ -234,7 +234,7 @@ The compiler lowers extensions to ordinary package-level Go functions and
 resolves method-style calls at compile time.
 
 Extensions are general rather than a built-in list of special cases: they can
-target Go++ classes, named Go types, pointers, and multiple compatible types.
+target GPP classes, named Go types, pointers, and multiple compatible types.
 They do not modify the target type or require runtime registration.
 
 ## HTTP and templates
@@ -258,5 +258,5 @@ class App : http.Server @{http.GET("/hello/{name}")} {
 
 ## Compatibility by default
 
-Go++ deliberately keeps ordinary Go syntax valid. When a feature is not
+GPP deliberately keeps ordinary Go syntax valid. When a feature is not
 needed, use the Go you already know. See [the compatibility specification](/reference/specifications/compat) for the precise contract.

@@ -86,7 +86,7 @@ func gobSerializationFields(class *ClassDecl, context constructorContext) ([]gob
 	result := []gobSerializationField{}
 	used := map[string]bool{}
 	for _, field := range fields {
-		if !isExportedGoPlusName(field.Name) || hasSerializationIgnore(field.Annotations) {
+		if !isExportedGPPName(field.Name) || hasSerializationIgnore(field.Annotations) {
 			continue
 		}
 		name := gobFieldName(field)

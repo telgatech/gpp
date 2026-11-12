@@ -15,8 +15,8 @@ gpp fmt --stdout app.gpp
 ## Fixing imports
 
 `gpp fiximports` adds imports when a unique available package matches the
-qualified names used by a source file. It prefers bundled Go++ packages; if
-both Go++ and standard-library packages with the same package name are used,
+qualified names used by a source file. It prefers bundled GPP packages; if
+both GPP and standard-library packages with the same package name are used,
 the standard package gets a `std`-prefixed alias such as `stdhttp`. It does
 not change dependencies or guess when multiple packages at the same priority
 match.
@@ -32,7 +32,7 @@ server. `--check` is suitable for CI.
 
 ## Testing
 
-Go++ tests use the bundled `gpp/test` library and ordinary Go test execution:
+GPP tests use the bundled `gpp/test` library and ordinary Go test execution:
 
 ```bash
 gpp test examples/testing.gpp
@@ -67,8 +67,8 @@ change.
 
 ## Visual Studio Code syntax highlighting
 
-For Go++ syntax highlighting in Visual Studio Code, see the
-[Go++ VS Code extension](https://github.com/telgatech/gpp-vscode).
+For GPP syntax highlighting in Visual Studio Code, see the
+[GPP VS Code extension](https://github.com/telgatech/gpp-vscode).
 
 ## Diagnostics
 

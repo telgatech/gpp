@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520" role="img" aria-labelledby="title desc">
-  <title id="title">Go++ syntax highlighting in Visual Studio Code</title>
+  <title id="title">GPP syntax highlighting in Visual Studio Code</title>
   <desc id="desc">An editor-style illustration showing the complete Todo model from examples/todo-app.gpp, with syntax highlighting.</desc>
   <rect width="1100" height="520" rx="12" fill="#17191f"/>
   <path d="M12 0h1076a12 12 0 0 1 12 12v34H0V12A12 12 0 0 1 12 0Z" fill="#22252d"/>
   <circle cx="22" cy="23" r="6" fill="#ff5f57"/><circle cx="43" cy="23" r="6" fill="#febc2e"/><circle cx="64" cy="23" r="6" fill="#28c840"/>
-  <text x="550" y="28" text-anchor="middle" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">todo-app.gpp — Go++ Language Support</text>
+  <text x="550" y="28" text-anchor="middle" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13">todo-app.gpp — GPP Language Support</text>
   <rect x="0" y="46" width="52" height="474" fill="#20232a"/>
   <rect x="0" y="66" width="2" height="36" fill="#61afef"/>
   <g fill="none" stroke="#858b98" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -46,6 +46,6 @@
   </g>
   <rect x="276" y="497" width="824" height="23" fill="#20232a"/>
   <circle cx="292" cy="508" r="4" fill="#61afef"/>
-  <text x="304" y="512" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11">Go++</text>
-  <text x="1042" y="512" text-anchor="end" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11">UTF-8　 Go++</text>
+  <text x="304" y="512" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11">GPP</text>
+  <text x="1042" y="512" text-anchor="end" fill="#b9bdc8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11">UTF-8　 GPP</text>
 </svg>

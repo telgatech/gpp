@@ -10,7 +10,7 @@ not captured.
 Both forms use the same Go regexp implementation:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 re := "^[a-z]+$".CompileRegex()
 matched := re.MatchString(username)
 ```

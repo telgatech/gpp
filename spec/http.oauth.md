@@ -1,4 +1,4 @@
-# Go++ HTTP OAuth / OpenID Connect Client Specification
+# GPP HTTP OAuth / OpenID Connect Client Specification
 
 ## 1. Overview
 
@@ -808,7 +808,7 @@ EmailVerified
 
 Not every provider guarantees every value.
 
-Normal Go++ zero/nil semantics apply for unavailable fields.
+Normal GPP zero/nil semantics apply for unavailable fields.
 
 ---
 
@@ -1516,8 +1516,8 @@ Additional providers can be added later.
 This specification does not include:
 
 ```text
-Go++ acting as an OAuth authorization server
-Go++ acting as an OpenID Provider
+GPP acting as an OAuth authorization server
+GPP acting as an OpenID Provider
 dynamic client registration
 client credentials flow
 device authorization flow

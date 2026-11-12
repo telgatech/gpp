@@ -1,4 +1,4 @@
-# Go++ Annotation Inheritance Specification
+# GPP Annotation Inheritance Specification
 
 ## Goal
 
@@ -354,7 +354,7 @@ This rule is simple and predictable.
 
 # Overridden Fields
 
-If Go++ permits a subclass to redeclare/hide a field with the same name, the same rule applies.
+If GPP permits a subclass to redeclare/hide a field with the same name, the same rule applies.
 
 Example:
 
@@ -549,7 +549,7 @@ may naturally be interpreted by a library as inherited policy.
 
 Therefore:
 
-> Go++ preserves class ancestry and class annotation metadata, but consuming libraries decide whether parent class annotations affect subclasses.
+> GPP preserves class ancestry and class annotation metadata, but consuming libraries decide whether parent class annotations affect subclasses.
 
 ---
 
@@ -634,7 +634,7 @@ Bar
 
 into one synthetic method.
 
-Normal Go++ ambiguity rules apply first.
+Normal GPP ambiguity rules apply first.
 
 The programmer must resolve the member conflict.
 
@@ -750,7 +750,7 @@ Direct annotations retain source declaration order.
 
 For inherited member annotations, retain the order from the original declaration.
 
-For ancestry-aware class lookup, use deterministic ancestry traversal order consistent with Go++ class resolution.
+For ancestry-aware class lookup, use deterministic ancestry traversal order consistent with GPP class resolution.
 
 Recommended:
 
@@ -1150,4 +1150,4 @@ inherit class
     → do not copy class annotations
 ```
 
-This provides one general, predictable rule that can support HTTP, ORM, serialization, validation, and future annotation-driven libraries without embedding domain-specific behavior into the Go++ compiler.
+This provides one general, predictable rule that can support HTTP, ORM, serialization, validation, and future annotation-driven libraries without embedding domain-specific behavior into the GPP compiler.

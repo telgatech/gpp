@@ -1,16 +1,16 @@
-# Go++ `gpp doc` Specification
+# GPP `gpp doc` Specification
 
 ## 1. Overview
 
-`gpp doc` displays documentation for Go++ packages, types, classes, functions, methods, fields, extensions, annotations, templates, enums, and imported native Go symbols.
+`gpp doc` displays documentation for GPP packages, types, classes, functions, methods, fields, extensions, annotations, templates, enums, and imported native Go symbols.
 
-It is the Go++ equivalent of:
+It is the GPP equivalent of:
 
 ```bash
 go doc
 ```
 
-but understands the Go++ source model rather than exposing generated Go implementation details.
+but understands the GPP source model rather than exposing generated Go implementation details.
 
 Examples:
 
@@ -36,7 +36,7 @@ The central rule is:
 
 * make source APIs quickly discoverable;
 * preserve familiar `go doc` ergonomics;
-* understand Go++ language features;
+* understand GPP language features;
 * include native Go documentation where relevant;
 * hide compiler-generated implementation details;
 * work before a project is fully buildable where practical;
@@ -98,7 +98,7 @@ Without an explicit package:
 gpp doc User
 ```
 
-uses the current Go++ package.
+uses the current GPP package.
 
 If the current directory contains:
 
@@ -124,7 +124,7 @@ If there is no package declaration, the package is:
 main
 ```
 
-consistent with normal Go++ rules.
+consistent with normal GPP rules.
 
 ---
 
@@ -191,7 +191,7 @@ package shop
 Package shop contains the application's storefront domain.
 ```
 
-Go++ should follow ordinary Go documentation-comment conventions where practical.
+GPP should follow ordinary Go documentation-comment conventions where practical.
 
 ---
 
@@ -379,7 +379,7 @@ func (User) Save() error
 Save persists the user.
 ```
 
-Even if Go++ source does not explicitly spell the receiver that way, the output may use a concise familiar presentation.
+Even if GPP source does not explicitly spell the receiver that way, the output may use a concise familiar presentation.
 
 ---
 
@@ -499,7 +499,7 @@ Running:
 gpp doc string
 ```
 
-should include applicable Go++ extensions.
+should include applicable GPP extensions.
 
 Example:
 
@@ -573,7 +573,7 @@ The source may come from the installed Go package metadata/tooling.
 
 ---
 
-# 21. Go++ Extensions on Native Types
+# 21. GPP Extensions on Native Types
 
 For:
 
@@ -587,7 +587,7 @@ the output may distinguish:
 Built-in type:
     string
 
-Go++ Extensions:
+GPP Extensions:
     TrimSpace
     Contains
     Split
@@ -938,7 +938,7 @@ should provide something like:
 ```text
 package http
 
-HTTP server and request handling support for Go++.
+HTTP server and request handling support for GPP.
 
 Classes:
     Server
@@ -958,7 +958,7 @@ The exact surface should reflect actual exported declarations.
 
 ---
 
-# 37. Official Go++ Packages
+# 37. Official GPP Packages
 
 `gpp doc` should work particularly well for compiler-shipped packages:
 
@@ -1076,7 +1076,7 @@ Use:
 
 # 42. Case Sensitivity
 
-Symbol resolution should follow Go/Go++ identifier case semantics.
+Symbol resolution should follow Go/GPP identifier case semantics.
 
 However, `--search` may perform case-insensitive matching for usability.
 
@@ -1106,7 +1106,7 @@ includes lowercase/private members.
 
 # 44. Generated Members
 
-Generated source-level behaviors should be documented if they are part of the Go++ programming model.
+Generated source-level behaviors should be documented if they are part of the GPP programming model.
 
 For example:
 
@@ -1193,7 +1193,7 @@ Example:
 func LoadUser(id int) (User, error)
 ```
 
-Even though Go++ permits:
+Even though GPP permits:
 
 ```gpp
 user := LoadUser(id)
@@ -1210,7 +1210,7 @@ Documentation should describe the real semantic signature, not hide the `error`.
 Where useful, function documentation may add:
 
 ```text
-Trailing error participates in automatic Go++ error promotion.
+Trailing error participates in automatic GPP error promotion.
 ```
 
 But this need not be repeated on every function in concise output.
@@ -1221,7 +1221,7 @@ The actual `(T, error)` signature is sufficient for experienced users.
 
 # 50. Throws
 
-Go++ does not need a Java-style declared `throws` section.
+GPP does not need a Java-style declared `throws` section.
 
 Errors remain Go `error` values and trailing-error promotion is a language behavior.
 
@@ -1367,7 +1367,7 @@ query
     ↓
 package/module resolution
     ↓
-Go++ semantic symbol table
+GPP semantic symbol table
     ↓
 native Go package metadata if needed
     ↓
@@ -1422,7 +1422,7 @@ should be able to use Go package metadata if that dependency is available.
 
 # 61. Versioned Imports
 
-If a Go++ project uses:
+If a GPP project uses:
 
 ```gpp
 import "github.com/foo/bar@v1.2.3"
@@ -1498,7 +1498,7 @@ unless specifically requested.
 
 # 64. Root `Object`
 
-A Go++ class implicitly inherits from `Object`.
+A GPP class implicitly inherits from `Object`.
 
 Default documentation should not clutter every class with:
 
@@ -1622,7 +1622,7 @@ gpp doc Object
 gpp doc struct
 ```
 
-The output should explain their Go++ semantics concisely.
+The output should explain their GPP semantics concisely.
 
 ---
 
@@ -1686,7 +1686,7 @@ gpp doc ||
 gpp doc ||=
 ```
 
-This is particularly useful because Go++ adds semantics beyond Go.
+This is particularly useful because GPP adds semantics beyond Go.
 
 Example:
 
@@ -1725,11 +1725,11 @@ go doc
     documents Go source API
 
 gpp doc
-    documents Go++ source API
+    documents GPP source API
     and delegates to Go metadata where appropriate
 ```
 
-Go++ should reuse Go documentation data rather than duplicate standard-library documentation manually.
+GPP should reuse Go documentation data rather than duplicate standard-library documentation manually.
 
 ---
 
@@ -2127,7 +2127,7 @@ Expression-level error fallback.
     value := Load() ?? fallback
 
 The left expression is evaluated first. If it completes successfully,
-its value is returned. If it throws a Go++ error, the fallback
+its value is returned. If it throws a GPP error, the fallback
 expression is evaluated.
 
 Raw Go panics are not caught.
@@ -2158,7 +2158,7 @@ try / catch / finally
         ...
     }
 
-catch handles Go++ thrown errors.
+catch handles GPP thrown errors.
 
 Raw Go panics are not caught.
 ```
@@ -2206,7 +2206,7 @@ Recommended architecture:
 ```text
 source files
     ↓
-Go++ parser
+GPP parser
     ↓
 semantic package index
     ↓
@@ -2258,7 +2258,7 @@ Additional typed fields may be preferable to a single generic structure.
 `gpp doc` should use:
 
 ```text
-Go++ AST
+GPP AST
 semantic model
 Go package metadata
 ```
@@ -2267,7 +2267,7 @@ as sources of truth.
 
 It should not infer public APIs from generated `.go` files.
 
-Generated Go is an implementation artifact and may change without changing the Go++ API.
+Generated Go is an implementation artifact and may change without changing the GPP API.
 
 ---
 
@@ -2307,7 +2307,7 @@ or semantic errors encountered during indexing should point to `.gpp` source.
 The documentation flow is:
 
 ```text
-Go++ source
+GPP source
     ↓
 semantic symbol model
     ↓
@@ -2319,7 +2319,7 @@ gpp doc
 rather than:
 
 ```text
-Go++ source
+GPP source
     ↓
 generated Go
     ↓
@@ -2340,4 +2340,4 @@ gpp doc ??
 
 The core principle is:
 
-> `gpp doc` should make the effective Go++ application API discoverable while hiding the compiler machinery used to implement it.
+> `gpp doc` should make the effective GPP application API discoverable while hiding the compiler machinery used to implement it.

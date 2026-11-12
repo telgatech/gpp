@@ -1,7 +1,7 @@
-# Go++ Feature Spec: Versioned Imports + Automatic Go Module Resolution
+# GPP Feature Spec: Versioned Imports + Automatic Go Module Resolution
 
 ## Goal
-Allow Go++ source files to declare external Go dependencies directly in import paths, including optional versions.
+Allow GPP source files to declare external Go dependencies directly in import paths, including optional versions.
 
 The compiler should automatically resolve/fetch external dependencies during build while still using the normal Go module system underneath.
 
@@ -34,15 +34,15 @@ import (
 
 ## Semantics
 
-1. Go++ import syntax extends normal Go imports by allowing a final:
+1. GPP import syntax extends normal Go imports by allowing a final:
 
    @version
 
-2. The `@version` component is Go++-only dependency metadata.
+2. The `@version` component is GPP-only dependency metadata.
 
 3. Generated Go source must strip the version suffix.
 
-Example Go++:
+Example GPP:
 
 import "github.com/jmoiron/sqlx@v1.4.0"
 
@@ -52,7 +52,7 @@ import "github.com/jmoiron/sqlx"
 
 4. Dependency fetching/version resolution must use Go modules.
 
-Do NOT create a separate Go++ package registry or dependency manager.
+Do NOT create a separate GPP package registry or dependency manager.
 
 Underlying artifacts should remain normal:
 
@@ -97,7 +97,7 @@ Requested module version:
 v2.3.1
 
 The `/v2` is part of the normal Go module path.
-The final `@v2.3.1` is Go++ version metadata.
+The final `@v2.3.1` is GPP version metadata.
 
 9. Determine the version separator using the final `@` in the import string.
 
@@ -180,7 +180,7 @@ func main() {
 
 `gpp build` should conceptually perform:
 
-1. Parse all Go++ files.
+1. Parse all GPP files.
 2. Determine module name.
 3. Collect imports.
 4. Separate standard-library imports from external module imports.
@@ -206,7 +206,7 @@ dependency fetching should occur during explicit build/dependency commands, not 
 
 ## Version conflicts
 
-If the same module is explicitly requested at incompatible exact versions, produce a Go++ compile/build error.
+If the same module is explicitly requested at incompatible exact versions, produce a GPP compile/build error.
 
 Example:
 
@@ -257,7 +257,7 @@ The unversioned import simply means the source file does not impose an additiona
 
 Preserve ordinary Go aliases.
 
-Go++:
+GPP:
 
 import sqlx "github.com/jmoiron/sqlx@v1.4.0"
 
@@ -265,7 +265,7 @@ Generated Go:
 
 import sqlx "github.com/jmoiron/sqlx"
 
-Dot imports and blank imports should remain compatible if Go++ already supports normal Go syntax:
+Dot imports and blank imports should remain compatible if GPP already supports normal Go syntax:
 
 import . "github.com/foo/bar@v1.2.0"
 import _ "github.com/lib/pq@v1.10.9"
@@ -352,7 +352,7 @@ The compiler should use this table to:
 
 ## Go module source of truth
 
-The Go++ source specifies requested versions.
+The GPP source specifies requested versions.
 
 go.mod/go.sum are generated/managed compatibility artifacts for the Go toolchain.
 
@@ -360,7 +360,7 @@ Do not expose a separate dependency format unless a later feature requires one.
 
 ## Generated Go
 
-Example Go++:
+Example GPP:
 
 module github.com/telga/app
 
@@ -492,7 +492,7 @@ Must resolve to explicit v1.3.0.
 
 ## Design principle
 
-Go++ owns the convenient dependency syntax.
+GPP owns the convenient dependency syntax.
 
 Go owns dependency resolution, package compatibility, compilation, and the ecosystem.
 

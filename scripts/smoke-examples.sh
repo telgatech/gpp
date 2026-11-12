@@ -14,10 +14,10 @@ mkdir -p "$temp_root/bin"
 
 # gpp init makes an initial commit, so give this isolated project a temporary
 # identity without changing the user's Git configuration.
-git config --global user.name "Go++ example smoke test"
+git config --global user.name "GPP example smoke test"
 git config --global user.email "gpp-smoke@example.invalid"
 
-echo "Building Go++ compiler..."
+echo "Building GPP compiler..."
 (cd "$repo_root" && go build -o "$temp_root/bin/gpp" .)
 gpp="$temp_root/bin/gpp"
 
@@ -58,7 +58,7 @@ for source in examples/*.gpp; do
             build_example "$example" "$source"
             ;;
         testing)
-            echo "Running Go++ test example..."
+            echo "Running GPP test example..."
             "$gpp" test "$source" >"$temp_root/testing.log" 2>&1 || {
                 cat "$temp_root/testing.log"
                 echo "Example tests failed" >&2
@@ -75,4 +75,4 @@ run_example packages examples/packages/people.gpp examples/packages/main.gpp
 run_example mixed-go-from-gpp examples/mixed/go_from_gpp
 run_example mixed-go-imports-gpp -module generated examples/mixed/go_imports_gpp
 
-echo "All Go++ examples passed."
+echo "All GPP examples passed."

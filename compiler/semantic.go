@@ -79,7 +79,7 @@ func ResolveProgram(program *Program) (*SemanticModel, error) {
 	return ResolveProgramWithModulePath(program, "")
 }
 
-// ResolveProgramWithModulePath resolves Go++ package imports that point to
+// ResolveProgramWithModulePath resolves GPP package imports that point to
 // packages in the current module as well as bundled standard-library packages.
 func ResolveProgramWithModulePath(program *Program, modulePath string) (*SemanticModel, error) {
 	var importDiagnostics []error
@@ -582,9 +582,9 @@ func rawFunctionNamesTokens(tokens []Token) []string {
 }
 
 // rawTypeNamesTokens discovers type declarations without reparsing a mixed
-// Go++ declaration as Go. The token stream is lossless and already scoped to
+// GPP declaration as Go. The token stream is lossless and already scoped to
 // this MixedDecl, so a top-level type name is unambiguous even when a nearby
-// function has Go++ syntax such as defaults or lambdas.
+// function has GPP syntax such as defaults or lambdas.
 func rawTypeNamesTokens(tokens []Token) map[string]bool {
 	result := map[string]bool{}
 	braceDepth := 0
@@ -780,13 +780,13 @@ func normalizeExtensionTarget(target string) string {
 func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	for _, reserved := range []string{"GppClass", "GppField", "GppType"} {
 		if class.Name == reserved {
-			return classDiagnosticf(class, "class name %s is reserved for Go++ introspection metadata", class.Name)
+			return classDiagnosticf(class, "class name %s is reserved for GPP introspection metadata", class.Name)
 		}
 	}
 	fields := map[string]bool{}
 	for _, field := range class.Fields {
 		if field.Name == "GppDynamicClass" || field.Name == "GppDynamicObject" {
-			return fieldDiagnosticf(class, &field, "class %s field %s is reserved for Go++ runtime metadata", class.Name, field.Name)
+			return fieldDiagnosticf(class, &field, "class %s field %s is reserved for GPP runtime metadata", class.Name, field.Name)
 		}
 		if fields[field.Name] {
 			return fieldDiagnosticf(class, &field, "class %s declares field %s more than once", class.Name, field.Name)
@@ -822,7 +822,7 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			return methodDiagnosticf(class, &method, "static method %s has no this", method.Name)
 		}
 		if method.Name == "GppRuntimeClass" || method.Name == "GppInitialize" || method.Name == "__gppInit" {
-			return methodDiagnosticf(class, &method, "class %s method %s is reserved for Go++ generated methods", class.Name, method.Name)
+			return methodDiagnosticf(class, &method, "class %s method %s is reserved for GPP generated methods", class.Name, method.Name)
 		}
 		if fields[method.Name] {
 			return methodDiagnosticf(class, &method, "class %s declares field and method %s with the same name", class.Name, method.Name)
@@ -1507,7 +1507,7 @@ func goImports(file *File) ([]*ast.ImportSpec, error) {
 
 // importSpecsFromTokens extracts ordinary Go import declarations without
 // reparsing a compatibility declaration's executable source. A MixedDecl can
-// contain Go++ syntax (for example default parameters) that Go's parser must
+// contain GPP syntax (for example default parameters) that Go's parser must
 // reject, while its import tokens remain fully unambiguous.
 func importSpecsFromTokens(tokens []Token) ([]*ast.ImportSpec, error) {
 	imports := []*ast.ImportSpec{}
@@ -1632,7 +1632,7 @@ func tokenImportNode(name *ast.Ident, importPath string, logical bool, startToke
 	}}, nil
 }
 
-// sourceImportSpec accepts regular Go import specs and Go++ logical imports
+// sourceImportSpec accepts regular Go import specs and GPP logical imports
 // such as `import foo.bar`. Logical imports are normalized to a quoted path
 // for semantic analysis and later lowered to the module's generated path.
 func sourceImportSpec(tokens []Token, index int) (*ast.Ident, string, int, bool, bool) {

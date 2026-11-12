@@ -4,11 +4,11 @@ YAML is useful for configuration and other data that people need to read or edit
 
 ## Side by side: load configuration
 
-The Go YAML API decodes into a destination pointer and returns errors explicitly. Go++ can declare the configuration as a class and infer the decoded value from a generic type argument; unhandled errors propagate automatically:
+The Go YAML API decodes into a destination pointer and returns errors explicitly. GPP can declare the configuration as a class and infer the decoded value from a generic type argument; unhandled errors propagate automatically:
 
 ::: code-group
 
-```go [Go++]
+```go [GPP]
 class AppConfig @{encoding.Serializable} {
 	Host string `yaml:"host"`
 	Port int `yaml:"port"`
@@ -63,6 +63,6 @@ data := encoding.ToYAML(struct(service: "catalog", ready: true))
 fmt.Print(string(data))
 ```
 
-The encoder and decoder preserve errors from their underlying implementations; Go++ propagates uncaptured errors automatically. Use explicit handling when configuration failures need custom recovery or context. Use JSON instead when compatibility with web APIs and browser tooling is the primary concern.
+The encoder and decoder preserve errors from their underlying implementations; GPP propagates uncaptured errors automatically. Use explicit handling when configuration failures need custom recovery or context. Use JSON instead when compatibility with web APIs and browser tooling is the primary concern.
 
 See the [serialization specification](/reference/specifications/serialization) for shared serialization behavior.

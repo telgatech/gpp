@@ -12,7 +12,7 @@
 //	go get modernc.org/sqlite
 //	go run .
 //
-// Swagger UI is loaded from unpkg.com; the Go++ version serves vendored assets.
+// Swagger UI is loaded from unpkg.com; the GPP version serves vendored assets.
 package main
 
 import (
@@ -211,7 +211,7 @@ const todoHomeHTML = `<!doctype html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Go++ Todo</title>
+    <title>GPP Todo</title>
     <style>
         body {
             max-width: 42rem;
@@ -273,7 +273,7 @@ const todoHomeHTML = `<!doctype html>
     </style>
 </head>
 <body>
-    <h1>Go++ Todo</h1>
+    <h1>GPP Todo</h1>
     <p>A server-rendered todo list backed by SQLite.</p>
     <form method="post" action="/todos">
         <input name="title" placeholder="What needs doing?" required>

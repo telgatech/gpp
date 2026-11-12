@@ -14,7 +14,7 @@ func expressionTokens(t *testing.T, source string) []Token {
 	return tokens
 }
 
-func TestParseExpressionBuildsGoPlusNodes(t *testing.T) {
+func TestParseExpressionBuildsGPPNodes(t *testing.T) {
 	expression, err := ParseExpressionTokens(expressionTokens(t, `user?.Name.TrimSpace() ?? "unknown"`))
 	if err != nil {
 		t.Fatal(err)

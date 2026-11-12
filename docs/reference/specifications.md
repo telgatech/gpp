@@ -1,6 +1,6 @@
 # Specifications
 
-The specifications are the source of truth for Go++ language and standard
+The specifications are the source of truth for GPP language and standard
 library behavior. They are synchronized from the repository’s `spec/` folder
 before each docs development or production build.
 
@@ -15,7 +15,7 @@ before each docs development or production build.
 - [Formatting](./specifications/fmt)
 - [Import fixes](./specifications/fiximports)
 - [Type resolver](./specifications/type-resolver)
-- [Generic Go++ classes](./specifications/generic-classes)
+- [Generic GPP classes](./specifications/generic-classes)
 - [Generic containers](./specifications/std.container)
 
 ## Core features

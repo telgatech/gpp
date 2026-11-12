@@ -19,7 +19,7 @@ func main() {
 }
 ```
 
-```go [Go++]
+```go [GPP]
 func atExit() {
     stopWorker()
     closeDatabase()
@@ -33,7 +33,7 @@ func main() {
 ```
 :::
 
-The Go++ version puts process-wide cleanup in one function. `atExit` must be a
+The GPP version puts process-wide cleanup in one function. `atExit` must be a
 top-level function in package `main` with no parameters or return values. It
 runs once when `main` returns, including after a handled exception, and while
 a panic unwinds. The compiler registers it before `main` begins, so defers

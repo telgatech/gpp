@@ -1,22 +1,22 @@
-# Go++
+# GPP
 
-> Go++ is a Go-compatible language that adds application-level syntax and compiles to ordinary Go. Source files use the `.gpp` extension; the command-line tool is `gpp`.
+> GPP is a Go-compatible language that adds application-level syntax and compiles to ordinary Go. Source files use the `.gpp` extension; the command-line tool is `gpp`.
 
-Use the guides and examples below as the primary source for writing Go++ code. Go++ code can use Go packages and interoperate with Go code.
+Use the guides and examples below as the primary source for writing GPP code. GPP code can use Go packages and interoperate with Go code.
 
 ## Start here
 
 - [README](README.md): project overview, installation, and command reference.
-- [Getting started](docs/guide/getting-started.md): create and run a Go++ project.
+- [Getting started](docs/guide/getting-started.md): create and run a GPP project.
 - [Language guide](docs/guide/language.md): syntax and language behavior.
-- [Standard library guide](docs/guide/standard-library.md): Go++ library packages.
+- [Standard library guide](docs/guide/standard-library.md): GPP library packages.
 - [Tooling guide](docs/guide/tooling.md): formatting, import repair, tests, docs, and LSP.
 
 ## Features and examples
 
 - [Feature index](docs/features/index.md): supported language and runtime features.
 - [Examples index](examples/README.md): runnable examples.
-- [Mixed Go and Go++](docs/features/mixed-go.md): sharing a project with native Go files.
+- [Mixed Go and GPP](docs/features/mixed-go.md): sharing a project with native Go files.
 - [Modules and packages](spec/modules.md): package and module behavior.
 
 ## Common library guides
@@ -27,7 +27,7 @@ Use the guides and examples below as the primary source for writing Go++ code. G
 - [JSON](docs/guide/standard-library/encoding/json.md)
 - [Testing](docs/guide/standard-library/testing.md)
 
-## Working with a Go++ project
+## Working with a GPP project
 
 - Run `gpp doc --json <symbol>` to look up public API documentation.
 - Run `gpp lsp` to use compiler-backed editor diagnostics and language features.

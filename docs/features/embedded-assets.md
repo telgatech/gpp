@@ -1,16 +1,16 @@
 # Embedded assets
 
-Embedding places files inside the compiled program. Go++ provides a compact
+Embedding places files inside the compiled program. GPP provides a compact
 declaration for exposing a directory as `fs.FS` or a file as bytes, using Go's
 embed mechanism underneath.
 
-## Compare Go directives and Go++ declarations
+## Compare Go directives and GPP declarations
 
-Go directives remain available. Go++ groups related embedded values into one
+Go directives remain available. GPP groups related embedded values into one
 source declaration:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 embed (
     Assets "public/"
     Schema "schema.sql"

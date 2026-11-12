@@ -58,7 +58,7 @@ func TestFormatSourcePreservesUnderscoreVisibilityNames(t *testing.T) {
 
 func TestFormatSourceFileRejectsInvalidSource(t *testing.T) {
 	if _, err := FormatSourceFile("broken.gpp", []byte("class {\n")); err == nil {
-		t.Fatal("expected invalid Go++ source to be rejected")
+		t.Fatal("expected invalid GPP source to be rejected")
 	}
 }
 
@@ -171,7 +171,7 @@ wait()
 	}
 }
 
-func TestFormatSourceIsIdempotentAcrossGoPlusSources(t *testing.T) {
+func TestFormatSourceIsIdempotentAcrossGPPSources(t *testing.T) {
 	for _, root := range []string{filepath.Join("..", "compiler"), filepath.Join("..", "examples")} {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {

@@ -19,7 +19,7 @@ class Cron {
 		}
 		provider, ok := object.(interface { GppRuntimeClass() *GppClass })
 		if !ok {
-			return fmt.Errorf("cron.Cron requires a Go++ class instance")
+			return fmt.Errorf("cron.Cron requires a GPP class instance")
 		}
 		class := provider.GppRuntimeClass()
 		if class == nil {

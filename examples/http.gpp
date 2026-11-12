@@ -36,7 +36,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
     }
 
     func BeforeRequest(ctx *http.Context) error {
-        ctx.Set("request-source", "Go++")
+        ctx.Set("request-source", "GPP")
         return nil
     }
 
@@ -97,10 +97,10 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
     func Preview(ctx *http.Context) error @{
         http.GET("/preview"),
         http.Summary("Render the template preview"),
-        http.Description("Returns a small HTML page rendered from a Go++ template."),
+        http.Description("Returns a small HTML page rendered from a GPP template."),
         http.Tags("Templates")
     } {
-        return ctx.HTML(200, "Go++ HTTP", "Page")
+        return ctx.HTML(200, "GPP HTTP", "Page")
     }
 
     func AfterRequest(ctx *http.Context) error {

@@ -23,7 +23,7 @@ type importPackage struct {
 	Name       string
 	Symbols    map[string]bool
 	Module     bool
-	GoPlus     bool
+	GPP     bool
 	Standard   bool
 }
 
@@ -65,7 +65,7 @@ func runFixImports(args []string) int {
 		return reportError(err)
 	}
 	if stdout && len(sources) != 1 {
-		return reportError(fmt.Errorf("--stdout requires exactly one Go++ source file"))
+		return reportError(fmt.Errorf("--stdout requires exactly one GPP source file"))
 	}
 	packages, err := availableImportPackages(sources)
 	if err != nil {
@@ -181,7 +181,7 @@ func availableImportPackages(sources []string) (map[string][]importPackage, erro
 			continue
 		}
 		packageName := pathBase(importPath)
-		packageInfo := importPackage{ImportPath: importPath, Name: packageName, Symbols: map[string]bool{}, GoPlus: true}
+		packageInfo := importPackage{ImportPath: importPath, Name: packageName, Symbols: map[string]bool{}, GPP: true}
 		for _, file := range files {
 			for _, declaration := range file.Decls {
 				switch declaration := declaration.(type) {
@@ -212,7 +212,7 @@ func availableImportPackages(sources []string) (map[string][]importPackage, erro
 		addImportPackage(byName, packageInfo)
 	}
 	if moduleRoot != "" && modulePath != "" {
-		localPackages, err := moduleGoPlusImportPackages(moduleRoot, modulePath)
+		localPackages, err := moduleGPPImportPackages(moduleRoot, modulePath)
 		if err != nil {
 			return nil, err
 		}
@@ -225,7 +225,7 @@ func availableImportPackages(sources []string) (map[string][]importPackage, erro
 	return byName, nil
 }
 
-func moduleGoPlusImportPackages(root, modulePath string) (map[string][]importPackage, error) {
+func moduleGPPImportPackages(root, modulePath string) (map[string][]importPackage, error) {
 	packages := map[string][]importPackage{}
 	sources, err := discoverSources([]string{root})
 	if err != nil {
@@ -262,13 +262,13 @@ func moduleGoPlusImportPackages(root, modulePath string) (map[string][]importPac
 			Symbols:    map[string]bool{},
 			Module:     true,
 		}
-		addExportedGoPlusSymbols(packageInfo.Symbols, file)
+		addExportedGPPSymbols(packageInfo.Symbols, file)
 		addImportPackage(packages, packageInfo)
 	}
 	return packages, nil
 }
 
-func addExportedGoPlusSymbols(symbols map[string]bool, file *compiler.File) {
+func addExportedGPPSymbols(symbols map[string]bool, file *compiler.File) {
 	for _, declaration := range file.Decls {
 		switch declaration := declaration.(type) {
 		case *compiler.ClassDecl:
@@ -314,7 +314,7 @@ func addImportPackage(packages map[string][]importPackage, candidate importPacka
 			existing.Symbols[symbol] = true
 		}
 		existing.Module = existing.Module || candidate.Module
-		existing.GoPlus = existing.GoPlus || candidate.GoPlus
+		existing.GPP = existing.GPP || candidate.GPP
 		existing.Standard = existing.Standard || candidate.Standard
 		packages[candidate.Name][index] = existing
 		return
@@ -444,19 +444,19 @@ func fixImports(filename string, source []byte, packages map[string][]importPack
 	}
 
 	usedPackages := map[string]importPackage{}
-	goPlusNames, stdAliasNames := map[string]bool{}, map[string]bool{}
+	gppNames, stdAliasNames := map[string]bool{}, map[string]bool{}
 	for _, use := range uses {
 		usedPackages[use.packageInfo.ImportPath] = use.packageInfo
-		if use.packageInfo.GoPlus {
-			goPlusNames[use.packageInfo.Name] = true
+		if use.packageInfo.GPP {
+			gppNames[use.packageInfo.Name] = true
 		}
 		if use.packageInfo.Standard && use.receiver == "std"+use.packageInfo.Name {
 			stdAliasNames[use.packageInfo.Name] = true
 		}
 	}
 	for _, info := range importedAliases {
-		if info != nil && info.GoPlus {
-			goPlusNames[info.Name] = true
+		if info != nil && info.GPP {
+			gppNames[info.Name] = true
 		}
 	}
 	aliases := map[string]string{}
@@ -470,9 +470,9 @@ func fixImports(filename string, source []byte, packages map[string][]importPack
 			naturalNameOccupied = imported == nil || imported.ImportPath != importPath
 		}
 		switch {
-		case info.Standard && (goPlusNames[info.Name] || stdAliasNames[info.Name] || naturalNameOccupied):
+		case info.Standard && (gppNames[info.Name] || stdAliasNames[info.Name] || naturalNameOccupied):
 			aliases[importPath] = "std" + info.Name
-		case info.GoPlus:
+		case info.GPP:
 			aliases[importPath] = info.Name
 		default:
 			aliases[importPath] = info.Name
@@ -616,7 +616,7 @@ func groupedImportEdit(source []byte, tokens []compiler.Token, paths []string, a
 func chooseImportPackage(receiver, member string, packages map[string][]importPackage, imported map[string]*importPackage) (importPackage, bool) {
 	if info, exists := imported[receiver]; exists && info != nil {
 		// An explicitly chosen alias is authoritative. A default package name
-		// remains eligible for Go++-first resolution if its name collides.
+		// remains eligible for GPP-first resolution if its name collides.
 		if receiver != info.Name {
 			return *info, info.Symbols[member]
 		}
@@ -640,7 +640,7 @@ func chooseImportPackage(receiver, member string, packages map[string][]importPa
 		if candidate.Module {
 			return 0
 		}
-		if candidate.GoPlus {
+		if candidate.GPP {
 			return 1
 		}
 		if candidate.Standard {

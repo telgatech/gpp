@@ -237,7 +237,7 @@ func goTypeExpr(typeNode TypeNode) (ast.Expr, error) {
 }
 
 // typeNodeFromGoExpr adapts ordinary Go declarations that were already parsed
-// by go/parser into the Go++ type tree. This keeps signature discovery from
+// by go/parser into the GPP type tree. This keeps signature discovery from
 // formatting a Go AST node and reparsing the resulting text.
 func typeNodeFromGoExpr(expression ast.Expr) (TypeNode, bool) {
 	switch value := expression.(type) {
@@ -583,10 +583,10 @@ func exprNodeFromGoExpr(expression ast.Expr) (ExprNode, bool) {
 	}
 }
 
-// parseGoExpressionTokens is a narrow interoperability fallback. The Go++
-// expression parser remains authoritative for Go++ syntax; this is used only
+// parseGoExpressionTokens is a narrow interoperability fallback. The GPP
+// expression parser remains authoritative for GPP syntax; this is used only
 // after it has failed to consume a token sequence and only accepts syntax that
-// go/parser can represent as a typed Go++ expression node.
+// go/parser can represent as a typed GPP expression node.
 func parseGoExpressionTokens(tokens []Token) (ExprNode, bool) {
 	if len(tokens) == 0 {
 		return nil, false
@@ -821,11 +821,11 @@ func goExprNode(expression ExprNode) (ast.Expr, error) {
 		}
 		return &ast.FuncLit{Type: functionType, Body: body}, nil
 	default:
-		return nil, fmt.Errorf("unsupported Go++ expression %T", expression)
+		return nil, fmt.Errorf("unsupported GPP expression %T", expression)
 	}
 }
 
-// goBlockNode is intentionally strict. Unsupported Go++ constructs are
+// goBlockNode is intentionally strict. Unsupported GPP constructs are
 // rejected instead of being rendered and reparsed, allowing callers to keep a
 // compatibility fallback while the dedicated statement lowerers are added.
 func goBlockNode(block *BlockStmt, rethrowName string) (*ast.BlockStmt, error) {
@@ -1538,7 +1538,7 @@ func goStmtNode(statement Stmt, rethrowName string) ([]ast.Stmt, error) {
 		}
 		return []ast.Stmt{&ast.LabeledStmt{Label: ast.NewIdent(value.Name), Stmt: &ast.EmptyStmt{}}}, nil
 	default:
-		return nil, fmt.Errorf("unsupported Go++ statement %T", statement)
+		return nil, fmt.Errorf("unsupported GPP statement %T", statement)
 	}
 }
 

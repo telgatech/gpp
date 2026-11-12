@@ -45,7 +45,7 @@ user := client.Get[User]("/users/1", ctx)
 requested type, including anonymous struct types whose fields retain their
 declared types. Anonymous struct request values are encoded with their field
 names. A non-2xx response becomes an error that includes the
-status and up to 4 KiB of its body. As with other Go++ calls that return errors,
+status and up to 4 KiB of its body. As with other GPP calls that return errors,
 an unhandled error is raised automatically. `SetTimeout` accepts a
 `time.Duration`; zero leaves the request without a total timeout. Set the
 transport, timeout, and cookie jar before using the client concurrently. The

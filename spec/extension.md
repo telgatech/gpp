@@ -1,8 +1,8 @@
-# Go++ Feature Spec: Extension Methods
+# GPP Feature Spec: Extension Methods
 
 ## Goal
 
-Allow Go++ code to add methods to existing Go and Go++ types without modifying, wrapping, embedding, or subclassing those types.
+Allow GPP code to add methods to existing Go and GPP types without modifying, wrapping, embedding, or subclassing those types.
 
 Primary use case:
 
@@ -52,7 +52,7 @@ extend sql.DB {
     }
 }
 
-Extension methods use implicit `this`, consistent with Go++ class methods.
+Extension methods use implicit `this`, consistent with GPP class methods.
 
 ## Target types
 
@@ -60,7 +60,7 @@ Extensions must work with:
 
 1. native Go types
 2. imported Go types
-3. Go++ classes
+3. GPP classes
 4. instantiated generic types where practical
 
 Examples:
@@ -148,7 +148,7 @@ string:
 
 Extensions are compile-time symbols only.
 
-They do not alter Go runtime type metadata or Go++ vtables.
+They do not alter Go runtime type metadata or GPP vtables.
 
 ## Call resolution
 
@@ -159,7 +159,7 @@ x.Method(args...)
 resolve in this order:
 
 1. Real/native methods declared by the receiver type.
-2. Go++ inherited/polymorphic methods.
+2. GPP inherited/polymorphic methods.
 3. Visible extension methods.
 
 A real method always wins over an extension with the same applicable signature.
@@ -174,7 +174,7 @@ then:
 
 db.Find(...)
 
-must resolve to the real method, not the Go++ extension.
+must resolve to the real method, not the GPP extension.
 
 No silent override of actual methods.
 
@@ -201,7 +201,7 @@ Then type-check parameters and returns normally.
 
 Extension methods lower to ordinary package-level functions.
 
-Go++:
+GPP:
 
 extend sql.DB {
     func Find[T](id any) (T, error) {
@@ -299,7 +299,7 @@ If polymorphic behavior is required, define a real class method.
 
 Extension methods follow normal package/import visibility rules.
 
-An extension declared in package `foo` is available only when the package/module containing that extension is visible/imported according to normal Go++ rules.
+An extension declared in package `foo` is available only when the package/module containing that extension is visible/imported according to normal GPP rules.
 
 Do not globally modify a type merely because some unrelated package declared an extension for it.
 
@@ -337,7 +337,7 @@ Later we may add explicit qualification if needed.
 
 ## Overloading
 
-Extension methods participate in normal Go++ overload resolution.
+Extension methods participate in normal GPP overload resolution.
 
 Example:
 
@@ -382,7 +382,7 @@ The struct remains statically typed.
 
 ## Class introspection
 
-Extension methods must be compatible with planned Go++ class introspection.
+Extension methods must be compatible with planned GPP class introspection.
 
 Example:
 
@@ -418,13 +418,13 @@ Given:
 
 var db *sql.DB
 
-Go++ may call:
+GPP may call:
 
 db.Ping()
 
 normally.
 
-If a Go++ extension exists:
+If a GPP extension exists:
 
 `db.Find[Employee](42)`
 
@@ -484,7 +484,7 @@ extend Type {
     methods...
 }
 
-Target type parsing should reuse ordinary Go++/Go type parsing.
+Target type parsing should reuse ordinary GPP/Go type parsing.
 
 Examples:
 
@@ -599,7 +599,7 @@ if __gpp_ext_sql_DB_Healthy(db) {
 2. Extension on imported Go type.
 3. Pointer receiver extension.
 4. Generic extension method.
-5. Extension on Go++ class.
+5. Extension on GPP class.
 6. Real method takes precedence.
 7. Extension ambiguity produces error.
 8. Extension cannot access foreign private field.
@@ -614,7 +614,7 @@ Extension methods are purely compile-time method-call sugar.
 
 They must preserve the invariant:
 
-    Go++ convenience on the surface
+    GPP convenience on the surface
     ordinary Go underneath
 
 They should make code such as:

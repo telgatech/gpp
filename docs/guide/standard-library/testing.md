@@ -1,18 +1,18 @@
 # `gpp/test`
 
-`gpp/test` provides Go++ test suites based on classes, with test methods discovered and run by the `gpp test` command. Assertions, setup hooks, tags, and priority annotations organize the checks without changing the language's class model.
+`gpp/test` provides GPP test suites based on classes, with test methods discovered and run by the `gpp test` command. Assertions, setup hooks, tags, and priority annotations organize the checks without changing the language's class model.
 
 ## Why suites?
 
-Go++ tests can use Go's `testing` package directly. A suite is useful when related checks share setup or need suite-level metadata, filtering, and a consistent assertion API. The suite remains a concrete class; individual methods describe test cases.
+GPP tests can use Go's `testing` package directly. A suite is useful when related checks share setup or need suite-level metadata, filtering, and a consistent assertion API. The suite remains a concrete class; individual methods describe test cases.
 
 ## Side by side: a focused test
 
-A Go test function commonly looks like this, while a Go++ suite can put setup and related test cases together:
+A Go test function commonly looks like this, while a GPP suite can put setup and related test cases together:
 
 ::: code-group
 
-```go [Go++]
+```go [GPP]
 import "gpp/test"
 
 class UserTest : test.Suite @{test.Tag("users")} {

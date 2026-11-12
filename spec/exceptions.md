@@ -1,16 +1,16 @@
-# Go++ Exception and Automatic Error Promotion Specification
+# GPP Exception and Automatic Error Promotion Specification
 
 ## Goal
 
-Add exception-style error handling to Go++ while preserving direct compatibility with ordinary Go functions that return `error`.
+Add exception-style error handling to GPP while preserving direct compatibility with ordinary Go functions that return `error`.
 
 The central design rule is:
 
-> When a function returns a trailing `error`, Go++ automatically throws a non-nil error if that error result is omitted by the caller.
+> When a function returns a trailing `error`, GPP automatically throws a non-nil error if that error result is omitted by the caller.
 
 If the caller explicitly captures the error result, ordinary Go error-value semantics apply.
 
-Go++ does **not** introduce a separate `Exception` base class.
+GPP does **not** introduce a separate `Exception` base class.
 
 The existing Go `error` interface is the universal throwable contract.
 
@@ -24,7 +24,7 @@ Given:
 func Read(name string) ([]byte, error)
 ```
 
-Go++ allows:
+GPP allows:
 
 ```go
 data := Read(name)
@@ -223,7 +223,7 @@ The compiler should use ordinary Go assignability rules.
 
 # Universal Throwable Contract
 
-Go++ defines no separate exception hierarchy or mandatory exception base type.
+GPP defines no separate exception hierarchy or mandatory exception base type.
 
 Any value assignable to Go's:
 
@@ -241,7 +241,7 @@ throw sql.ErrNoRows
 throw validationErr
 ```
 
-A Go++ class may become throwable simply by implementing:
+A GPP class may become throwable simply by implementing:
 
 ```go
 func Error() string
@@ -269,13 +269,13 @@ throw ValidationError(
 )
 ```
 
-is valid if the generated Go++ class representation satisfies `error`.
+is valid if the generated GPP class representation satisfies `error`.
 
 ---
 
 # Throw
 
-Go++ supports:
+GPP supports:
 
 ```go
 throw err
@@ -346,7 +346,7 @@ Catch clauses are evaluated in source order.
 
 The first compatible catch handles the error.
 
-Typed catch matching should use normal Go/Go++ type assignability semantics.
+Typed catch matching should use normal Go/GPP type assignability semantics.
 
 ## Error-value catches
 
@@ -362,7 +362,7 @@ try {
 ```
 
 The expression must resolve to an imported package variable assignable to
-`error`. Import Go's `errors` package; Go++ matches the value with
+`error`. Import Go's `errors` package; GPP matches the value with
 `errors.Is`, so wrapped sentinel errors are also handled. A value catch does
 not catch other errors; unmatched errors continue to the next clause or
 propagate out of the `try`.
@@ -395,7 +395,7 @@ catch e {
 }
 ```
 
-catches any thrown Go++ error.
+catches any thrown GPP error.
 
 The variable `e` has type:
 
@@ -432,7 +432,7 @@ Using bare `throw` outside a catch block is a compile-time error.
 
 # Finally
 
-Go++ supports:
+GPP supports:
 
 ```go
 try {
@@ -477,7 +477,7 @@ func C() {
 
 `os.ReadFile` returns a non-nil error.
 
-Because that trailing error is omitted, Go++ throws it.
+Because that trailing error is omitted, GPP throws it.
 
 If neither `C`, `B`, nor `A` catches it, the error reaches the top-level goroutine and terminates execution.
 
@@ -503,7 +503,7 @@ Exact formatting is implementation-defined.
 
 # No Implicit Error Discard
 
-Go++ should not silently discard omitted errors.
+GPP should not silently discard omitted errors.
 
 Given:
 
@@ -636,7 +636,7 @@ LoadUser(id) -> (User, error)
 printName(User)
 ```
 
-The effective Go++ expression type is `User` after automatic error promotion.
+The effective GPP expression type is `User` after automatic error promotion.
 
 The compiler should model this during semantic analysis.
 
@@ -658,7 +658,7 @@ this is valid:
 x, y := Coordinates()
 ```
 
-but this remains invalid unless Go++ separately introduces tuple semantics:
+but this remains invalid unless GPP separately introduces tuple semantics:
 
 ```go
 point := Coordinates()
@@ -694,7 +694,7 @@ Each omitted trailing error automatically propagates to the enclosing `try`.
 
 # Go Panics Are Separate
 
-Go++ thrown errors must not turn arbitrary Go panics into catchable errors.
+GPP thrown errors must not turn arbitrary Go panics into catchable errors.
 
 Example:
 
@@ -709,13 +709,13 @@ catch e {
 }
 ```
 
-The exception mechanism catches only Go++-promoted/thrown errors.
+The exception mechanism catches only GPP-promoted/thrown errors.
 
 ---
 
 # Runtime Representation
 
-A thrown Go++ error may lower internally to a private panic wrapper:
+A thrown GPP error may lower internally to a private panic wrapper:
 
 ```go
 type __gppThrownError struct {
@@ -815,9 +815,9 @@ This is a core interoperability goal.
 
 ---
 
-# Go++ Functions
+# GPP Functions
 
-The same rule applies to Go++ functions.
+The same rule applies to GPP functions.
 
 Example:
 
@@ -839,7 +839,7 @@ The `User` result becomes the effective expression value.
 
 # Functions Declared With `error`
 
-Go++ functions may continue to declare ordinary Go-compatible signatures:
+GPP functions may continue to declare ordinary Go-compatible signatures:
 
 ```go
 func Save(user User) error
@@ -865,7 +865,7 @@ The exception feature does not remove `error` from signatures.
 
 # Functions That Throw Without Returning `error`
 
-A Go++ function may also omit an `error` return and throw directly:
+A GPP function may also omit an `error` return and throw directly:
 
 ```go
 func Load(id int64) User {
@@ -877,7 +877,7 @@ func Load(id int64) User {
 }
 ```
 
-This is valid Go++.
+This is valid GPP.
 
 However, ordinary Go callers cannot receive that thrown value through an `error` return because none exists in the function signature.
 
@@ -891,7 +891,7 @@ For APIs intended for direct Go consumption, declaring a trailing `error` remain
 
 # Go ABI Boundary
 
-When a Go++ function declares a trailing `error` and is exposed to ordinary Go code, its generated Go-facing implementation should preserve that Go signature.
+When a GPP function declares a trailing `error` and is exposed to ordinary Go code, its generated Go-facing implementation should preserve that Go signature.
 
 Example:
 
@@ -899,7 +899,7 @@ Example:
 func Load() (User, error)
 ```
 
-If internal Go++ code throws an error while executing `Load`, the generated Go-facing boundary should convert that escaping thrown error into:
+If internal GPP code throws an error while executing `Load`, the generated Go-facing boundary should convert that escaping thrown error into:
 
 ```text
 zero value for non-error results
@@ -912,7 +912,7 @@ rather than exposing the private panic wrapper.
 
 # ABI Boundary Example
 
-Go++:
+GPP:
 
 ```go
 func Load() (User, error) {
@@ -921,7 +921,7 @@ func Load() (User, error) {
 }
 ```
 
-If `ReadFile` fails, Go++ internally throws.
+If `ReadFile` fails, GPP internally throws.
 
 An ordinary Go caller:
 
@@ -935,13 +935,13 @@ should observe:
 err != nil
 ```
 
-rather than an internal Go++ panic wrapper.
+rather than an internal GPP panic wrapper.
 
 ---
 
 # Only Thrown Errors Are Converted
 
-Go-facing boundary adapters must catch only the private Go++ thrown-error wrapper.
+Go-facing boundary adapters must catch only the private GPP thrown-error wrapper.
 
 An ordinary Go panic must remain a panic.
 
@@ -951,7 +951,7 @@ Do not transform arbitrary bugs into returned errors.
 
 # Interfaces and Callbacks
 
-A Go++ method implementing a native Go interface with an `error` return must preserve that interface contract.
+A GPP method implementing a native Go interface with an `error` return must preserve that interface contract.
 
 Example:
 
@@ -961,7 +961,7 @@ type Worker interface {
 }
 ```
 
-A Go++ implementation may internally use automatic promotion, but the generated Go-facing method must convert escaping thrown errors back into its declared `error` result.
+A GPP implementation may internally use automatic promotion, but the generated Go-facing method must convert escaping thrown errors back into its declared `error` result.
 
 ---
 
@@ -1133,9 +1133,9 @@ If a `finally` block exists, it still executes before the return completes.
 
 ---
 
-# Custom Go++ Error Types
+# Custom GPP Error Types
 
-Go++ classes can define structured errors by implementing:
+GPP classes can define structured errors by implementing:
 
 ```go
 Error() string
@@ -1234,7 +1234,7 @@ return fmt.Errorf(
 
 continues to work.
 
-If that error result is later omitted by a Go++ caller, the wrapped error is thrown automatically.
+If that error result is later omitted by a GPP caller, the wrapped error is thrown automatically.
 
 ---
 
@@ -1372,7 +1372,7 @@ then:
 a, b := Foo()
 ```
 
-has effective Go++ result types:
+has effective GPP result types:
 
 ```text
 A
@@ -1413,7 +1413,7 @@ Generated temporary names must avoid collisions.
 
 # Statement Call Lowering
 
-Go++:
+GPP:
 
 ```go
 Save()
@@ -1437,7 +1437,7 @@ if __err := Save(); __err != nil {
 
 # Explicit Capture Lowering
 
-Go++:
+GPP:
 
 ```go
 value, err := Foo()
@@ -1521,7 +1521,7 @@ Functions do not declare exception sets.
 
 # No Separate Exception Hierarchy
 
-Go++ must not introduce a mandatory parallel hierarchy such as:
+GPP must not introduce a mandatory parallel hierarchy such as:
 
 ```text
 Exception
@@ -1543,7 +1543,7 @@ This is a core design principle.
 
 # Compatibility Principle
 
-Every ordinary Go API returning a trailing `error` should be immediately usable in Go++ without wrappers.
+Every ordinary Go API returning a trailing `error` should be immediately usable in GPP without wrappers.
 
 Example:
 
@@ -1559,7 +1559,7 @@ all receive exception-style behavior automatically when the trailing error is om
 
 # Design Principle
 
-Go++ should make Go's existing explicit error model usable in two styles without changing the underlying API.
+GPP should make Go's existing explicit error model usable in two styles without changing the underlying API.
 
 ## Exception Style
 
@@ -1590,10 +1590,10 @@ The intended mental model is:
 Go function:
     (value..., error)
 
-Go++ caller captures error:
+GPP caller captures error:
     normal Go semantics
 
-Go++ caller omits error:
+GPP caller omits error:
     automatic thrown-error semantics
 ```
 

@@ -3,19 +3,19 @@
 Error handling has been one of the most debated parts of Go throughout the
 language's life. Developers often land in different camps: some value Go's
 explicit error returns, while others prefer the familiar control flow of
-exceptions. Go++ aims to resolve that tension by keeping traditional Go error
+exceptions. GPP aims to resolve that tension by keeping traditional Go error
 handling intact and adding exceptions as a modern, well-understood way to
 handle errors in application code. Teams can use either style where it fits,
 including in the same codebase.
 
-Go++ adopts the path of least resistence by simply treating unhandled errors and turning them into propogating exceptions automatically using nothing more than Go's existing `error` values. There is no separate
+GPP adopts the path of least resistence by simply treating unhandled errors and turning them into propogating exceptions automatically using nothing more than Go's existing `error` values. There is no separate
 exception base type so to speak, and Go APIs do not need to change. Structured error flow
 is useful when repeated propagation makes the main path hard to read.
 
 ## How exception handling works: a guided example
 
 An exception is an error that interrupts the usual line-by-line flow and
-jumps to a matching handler. Go++ uses the same Go `error` values you already
+jumps to a matching handler. GPP uses the same Go `error` values you already
 know: when a call leaves its trailing error result uncaptured, a non-nil error
 propagates automatically. An enclosing `try` can catch it and recover.
 
@@ -53,17 +53,17 @@ Read it in order:
 
 1. If the file opens, `ReadGreeting` returns its text and `nil`; execution
    continues to `fmt.Println(greeting)`.
-2. If file reading fails, Go++ sees the omitted trailing `error` and transfers
+2. If file reading fails, GPP sees the omitted trailing `error` and transfers
    control out of the rest of the `try` block.
 3. The first compatible `catch` handles the failure. `catch os.PathError` matches
    the path error whether represented as `os.PathError` or `*os.PathError`; any
-   other Go++-thrown error reaches the catch-all `catch e`.
+   other GPP-thrown error reaches the catch-all `catch e`.
 4. `finally` runs after the `try` flow, whether it succeeded or an error was
    handled. It is a good place for cleanup that must happen either way.
 
 If you instead wrote `text, err := ReadGreeting(path)`, the error would remain
 an ordinary value and no exception transfer would happen. That is the same
-explicit error-handling style Go has always used; Go++ lets the caller choose
+explicit error-handling style Go has always used; GPP lets the caller choose
 which style makes the surrounding code clearer.
 
 ## Compare the two styles
@@ -77,11 +77,11 @@ func LoadProfile(path string) (Profile, error)
 
 Both versions below call that same function and handle file errors separately
 from other failures. The first checks the returned error explicitly. In the
-second, the call inside `try` omits the trailing error result, so Go++ sends a
+second, the call inside `try` omits the trailing error result, so GPP sends a
 non-nil error to the matching `catch` clause.
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 func ShowProfile(path string) {
     try {
         profile := LoadProfile(path)
@@ -118,9 +118,50 @@ exception form keeps the successful path together and moves recovery into
 handlers. Both styles use Go's `error` type and can call the same Go functions;
 the choice belongs to the code that handles the failure.
 
+## What if I discard the return values?
+
+Calling a function as a statement still promotes its trailing `error`. If the
+error is `nil`, execution continues; if it is non-nil, it is thrown. A `try`
+block is only needed when you want to catch that exception locally:
+
+```gpp [GPP]
+func foo() error {
+    return errors.New("foo unavailable")
+}
+
+func dimensions() (int, int, error) {
+    return 640, 480, errors.New("dimensions unavailable")
+}
+
+func main() {
+    try {
+        foo() // The only result is an error, so a non-nil value is thrown.
+    } catch e {
+        fmt.Println("foo failed:", e)
+    }
+
+    try {
+        dimensions() // Both ints are discarded; a non-nil trailing error is still thrown.
+    } catch e {
+        fmt.Println("dimensions failed:", e)
+    }
+}
+```
+
+This is the same rule as assigning only the non-error results:
+`width, height := dimensions()` also throws if the trailing error is non-nil.
+To handle the error as an ordinary value, capture it explicitly:
+
+```gpp [GPP]
+width, height, err := dimensions()
+if err != nil {
+    fmt.Println("dimensions failed:", err)
+}
+```
+
 ## Automatic trailing-error promotion
 
-Go++ automatically raises an uncaptured trailing `error` as an exception. If
+GPP automatically raises an uncaptured trailing `error` as an exception. If
 the current function does not handle it, the exception propagates to its caller.
 Add `try`/`catch` where you want to handle it.
 
@@ -189,7 +230,7 @@ try {
 }
 ```
 
-Go++ matches the value with `errors.Is`, so wrapped sentinel errors still
+GPP matches the value with `errors.Is`, so wrapped sentinel errors still
 match. Other errors remain unhandled and propagate normally.
 
 ## Throw, catch several types, and clean up

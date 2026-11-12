@@ -1,6 +1,6 @@
 package compiler
 
-// The documentation model deliberately describes Go++ declarations instead
+// The documentation model deliberately describes GPP declarations instead
 // of generated Go declarations. It is small enough for the CLI to render but
 // structured enough for future IDE and static-site consumers to reuse.
 

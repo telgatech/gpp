@@ -1,4 +1,4 @@
-# Go++ Cron Standard Library Specification
+# GPP Cron Standard Library Specification
 
 ## Status
 
@@ -79,11 +79,11 @@ Cron-specific registration calls. At startup, `gpp/cron` walks that metadata,
 selects `Cron` and `Every` annotations, and records matching jobs; it never
 starts a goroutine during package initialization. Go package initialization
 completes before `main`, so the registry includes annotations from imported
-Go++ packages when `cron.Start()` is called.
+GPP packages when `cron.Start()` is called.
 
 `cron.Start() error` validates every registered schedule before starting any
 job. If one expression is invalid, `Start` wraps `cron.ErrInvalidSchedule` and
-starts none of the jobs. Go++ callers can identify this specific error with
+starts none of the jobs. GPP callers can identify this specific error with
 `errors.Is` inside a catch block. It starts the scheduler in the background and
 returns immediately.
 Calling `Start` again while it is running is idempotent. After a completed
@@ -226,7 +226,7 @@ func Remove(handle JobHandle) error
 duration expressions. It validates the schedule and callback before returning.
 Jobs added before `Start` begin with the other registered jobs. Jobs added
 while the scheduler is running begin scheduling immediately.
-In Go++, an unhandled trailing error from `Add` or `Remove` is promoted to an
+In GPP, an unhandled trailing error from `Add` or `Remove` is promoted to an
 exception.
 
 `JobHandle` is an opaque identifier for one registration. `Remove` is

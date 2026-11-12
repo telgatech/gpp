@@ -313,7 +313,7 @@ func ParseFile(name, src string) (*File, error) {
 // parser historically kept such chunks in MixedDecl so source rewriters could
 // preserve ordering; that container is unnecessary when there are no
 // annotation placements or opaque remainder. Function bodies retain their
-// Go++ AST, while ordinary Go declarations retain their go/ast nodes.
+// GPP AST, while ordinary Go declarations retain their go/ast nodes.
 func appendStructuredMixedParts(file *File, functions []*FunctionDecl, goDeclarations []ast.Decl, fileSet *token.FileSet, chunkStart, chunkEnd int) bool {
 	if file == nil || fileSet == nil || chunkStart < 0 || chunkEnd < chunkStart || len(goDeclarations) == 0 {
 		return false
@@ -715,7 +715,7 @@ func parseGoDeclaration(filename, packageName, source string) (ast.Decl, *token.
 
 func parseGoDeclarations(filename, packageName, source string) ([]ast.Decl, *token.FileSet) {
 	fileSet := token.NewFileSet()
-	// Annotation syntax is Go++ metadata, not Go syntax. Preserve its byte
+	// Annotation syntax is GPP metadata, not Go syntax. Preserve its byte
 	// spans as whitespace while asking go/parser for the ordinary declaration
 	// AST, so annotated Go declarations can still use GoDecl instead of the
 	// compatibility MixedDecl path.
@@ -2296,7 +2296,7 @@ func skipSpace(src string, pos int) int {
 
 // leadingDocComments returns contiguous comments immediately before a source
 // declaration. The ordinary parser keeps comments inside raw Go declarations,
-// but Go++ declarations need their comments in the source-level AST so tools
+// but GPP declarations need their comments in the source-level AST so tools
 // such as `gpp doc` can render them without inspecting generated Go.
 func leadingDocComments(src string, pos int) (string, int) {
 	pos = skipSpace(src, pos)

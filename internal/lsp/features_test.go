@@ -42,7 +42,7 @@ class Todo : Base /* @{orm.Table("todos")} */ {
 	}
 }
 
-func TestSemanticTokensCoverGoPlusSyntaxWithStableRanges(t *testing.T) {
+func TestSemanticTokensCoverGPPSyntaxWithStableRanges(t *testing.T) {
 	source := `package main
 annotation Route(path string) on method
 annotation Table(name string) on class
@@ -168,7 +168,7 @@ func TestSemanticTokensClassifyFunctionsInMixedDecl(t *testing.T) {
 	file.Decls = []compiler.Decl{&compiler.MixedDecl{Functions: []*compiler.FunctionDecl{function}}}
 
 	classified := map[int]semanticToken{}
-	classifyGoPlusTokens(file, classified)
+	classifyGPPTokens(file, classified)
 	name := classified[function.Method.NameSpan.Start]
 	if name.tokenType != semanticFunction || name.modifiers&modifierDeclaration == 0 {
 		t.Errorf("MixedDecl function name token = %#v, want declared function", name)
@@ -489,7 +489,7 @@ func inspect(users []User, user User) {
 		start, end := offsetAt(mainSource, edit.Range.Start), offsetAt(mainSource, edit.Range.End)
 		withImport := mainSource[:start] + edit.NewText + mainSource[end:]
 		if _, parseErr := compiler.ParseFile("completion.gpp", withImport); parseErr != nil {
-			t.Errorf("completion import edit should leave valid Go++ source: %v\n%s", parseErr, withImport)
+			t.Errorf("completion import edit should leave valid GPP source: %v\n%s", parseErr, withImport)
 		}
 	}
 	for _, item := range server.contextualCompletions(state, importCompletionOffset) {
@@ -671,7 +671,7 @@ func TestGoSourceCompletionAddsQuotedModuleImport(t *testing.T) {
 	workspace.setRoots([]string{root})
 	workspace.refresh()
 	if workspace.files[mainPath] == nil || workspace.files[mainPath].File == nil {
-		t.Fatalf("Go++ completion source should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
+		t.Fatalf("GPP completion source should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
 	}
 	server := &server{workspace: workspace}
 	cursor := strings.Index(mainSource, "Wid") + len("Wid")
@@ -704,14 +704,14 @@ func TestGoSourceCompletionAddsQuotedModuleImport(t *testing.T) {
 	}
 	parsed, err := compiler.ParseFile("completed.gpp", updated)
 	if err != nil {
-		t.Fatalf("applying native Go completion edits should produce valid Go++ source: %v\n%s", err, updated)
+		t.Fatalf("applying native Go completion edits should produce valid GPP source: %v\n%s", err, updated)
 	}
 	if len(parsed.Imports) != 1 || parsed.Imports[0].Path != "example.com/app/models" || parsed.Imports[0].LogicalPackage {
 		t.Fatalf("completion should add a regular quoted Go import: %#v", parsed.Imports)
 	}
 }
 
-func TestGoPlusCompletionResolvesMembersOnImportedGoTypes(t *testing.T) {
+func TestGPPCompletionResolvesMembersOnImportedGoTypes(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.27\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -742,7 +742,7 @@ func (Widget) Save() error { return nil }
 	workspace.refresh()
 	state = workspace.files[mainPath]
 	if state == nil || state.File == nil {
-		t.Fatalf("Go++ selector source should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
+		t.Fatalf("GPP selector source should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
 	}
 	server := &server{workspace: workspace}
 	cursor := strings.Index(mainSource, "widget.") + len("widget.")
@@ -1307,7 +1307,7 @@ func TestGoSourceCompletionDisambiguatesConflictingPackageAliases(t *testing.T) 
 	}
 	parsed, err := compiler.ParseFile(mainPath, updated)
 	if err != nil {
-		t.Fatalf("applying colliding-package completion should produce valid Go++: %v\n%s", err, updated)
+		t.Fatalf("applying colliding-package completion should produce valid GPP: %v\n%s", err, updated)
 	}
 	found := false
 	for _, imported := range parsed.Imports {
@@ -1384,7 +1384,7 @@ func TestImportCompletionEditsPreserveBlankLinesAndLineEndings(t *testing.T) {
 				t.Fatalf("completion import edit produced:\n%q\nwant:\n%q", got, test.want)
 			}
 			if _, err := compiler.ParseFile("completion.gpp", got); err != nil {
-				t.Fatalf("completion import edit produced invalid Go++: %v", err)
+				t.Fatalf("completion import edit produced invalid GPP: %v", err)
 			}
 		})
 	}
@@ -1794,27 +1794,27 @@ func main() {
 	}
 	server := &server{workspace: workspace}
 	if packageName, packageDir, ok := server.workspacePackageForImport(state, "example.test/telga/academies"); !ok || packageName != "academies" || packageDir != root {
-		t.Fatalf("flat Go++ package imports should map by declared package name: got %q %q %v", packageName, packageDir, ok)
+		t.Fatalf("flat GPP package imports should map by declared package name: got %q %q %v", packageName, packageDir, ok)
 	}
 	classOffset := strings.Index(files["main.gpp"], "academies.Server") + len("academies.")
 	classParams := textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: state.URI}, Position: positionAtOffset(state.Source, classOffset)}
 	classHover := server.hover(classParams)
 	if classHover == nil || !strings.Contains(classHover.Contents.Value, "**class**") || !strings.Contains(classHover.Contents.Value, "Server serves the academies application") {
-		t.Fatalf("imported Go++ classes should show hover documentation: %#v", classHover)
+		t.Fatalf("imported GPP classes should show hover documentation: %#v", classHover)
 	}
 	classDefinitions := server.definitions(classParams)
 	if len(classDefinitions) != 1 || classDefinitions[0].URI != uriForPath(filepath.Join(root, "academies.gpp")) {
-		t.Fatalf("imported Go++ classes should navigate to their source declaration: %#v", classDefinitions)
+		t.Fatalf("imported GPP classes should navigate to their source declaration: %#v", classDefinitions)
 	}
 	methodOffset := strings.Index(files["main.gpp"], "Listen")
 	methodParams := textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: state.URI}, Position: positionAtOffset(state.Source, methodOffset)}
 	methodHover := server.hover(methodParams)
 	if methodHover == nil || !strings.Contains(methodHover.Contents.Value, "**method**") || !strings.Contains(methodHover.Contents.Value, "Listen") {
-		t.Fatalf("inherited Go++ methods should show hover documentation: hover=%#v receiver=%q matches=%#v", methodHover, server.receiverType(state, "server", methodOffset), server.resolveSymbolsAt(state.URI, methodParams.Position, "Listen"))
+		t.Fatalf("inherited GPP methods should show hover documentation: hover=%#v receiver=%q matches=%#v", methodHover, server.receiverType(state, "server", methodOffset), server.resolveSymbolsAt(state.URI, methodParams.Position, "Listen"))
 	}
 	methodDefinitions := server.definitions(methodParams)
 	if len(methodDefinitions) != 1 || !strings.HasSuffix(pathFromURI(methodDefinitions[0].URI), filepath.Join("gpp", "http", "server.gpp")) {
-		t.Fatalf("inherited Go++ methods should navigate to their base declaration: %#v", methodDefinitions)
+		t.Fatalf("inherited GPP methods should navigate to their base declaration: %#v", methodDefinitions)
 	}
 	chainedMethodOffset := strings.LastIndex(files["main.gpp"], "Listen")
 	chainedMethodParams := textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: state.URI}, Position: positionAtOffset(state.Source, chainedMethodOffset)}
@@ -1875,7 +1875,7 @@ func main() {
 	completionOffset := strings.LastIndex(files["main.gpp"], "server.Listen") + len("server.Li")
 	completions := completionLabels(server.contextualCompletions(state, completionOffset))
 	if !completions["Listen"] {
-		t.Fatalf("inherited Go++ methods should appear in member completion: %#v", completions)
+		t.Fatalf("inherited GPP methods should appear in member completion: %#v", completions)
 	}
 	chainedCompletionOffset := strings.LastIndex(files["main.gpp"], ").Listen") + len(").")
 	chainedCompletions := completionLabels(server.contextualCompletions(state, chainedCompletionOffset))
@@ -1916,7 +1916,7 @@ func TestNativeGoHoverResolvesStandardLibraryFunctionsAndDocumentation(t *testin
 	}
 }
 
-func TestGoPlusDefinitionsResolveStandardLibraryImportAliasAndFunction(t *testing.T) {
+func TestGPPDefinitionsResolveStandardLibraryImportAliasAndFunction(t *testing.T) {
 	source := "package main\nimport stdsql \"database/sql\"\nfunc use() { _, _ = stdsql.Open(\"driver\", \"source\") }\n"
 	file, err := compiler.ParseFile("main.gpp", source)
 	if err != nil {
@@ -1950,7 +1950,7 @@ func TestGoPlusDefinitionsResolveStandardLibraryImportAliasAndFunction(t *testin
 	}
 }
 
-func TestGoPlusHoverResolvesStandardLibraryImports(t *testing.T) {
+func TestGPPHoverResolvesStandardLibraryImports(t *testing.T) {
 	source := "package main\nimport \"fmt\"\nfunc use() { fmt.Println(\"hello\") }\n"
 	file, err := compiler.ParseFile("main.gpp", source)
 	if err != nil {
@@ -1966,7 +1966,7 @@ func TestGoPlusHoverResolvesStandardLibraryImports(t *testing.T) {
 	offset := strings.Index(source, "Println")
 	result := server.hover(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: state.URI}, Position: positionAtOffset(source, offset)})
 	if result == nil || !strings.Contains(result.Contents.Value, "**function**") || !strings.Contains(result.Contents.Value, "Println") || !strings.Contains(result.Contents.Value, "Println formats") {
-		t.Fatalf("Go++ source should resolve standard-library hover with docs, got %#v", result)
+		t.Fatalf("GPP source should resolve standard-library hover with docs, got %#v", result)
 	}
 }
 
@@ -2204,7 +2204,7 @@ func use(id UserID) {
 	workspace := &workspaceState{files: map[string]*fileState{path: state}, diagnostics: map[string][]Diagnostic{}}
 	workspace.analyze()
 	if state.File == nil {
-		t.Fatalf("Go declarations should parse in a Go++ file: %#v", workspace.diagnostics[state.URI])
+		t.Fatalf("Go declarations should parse in a GPP file: %#v", workspace.diagnostics[state.URI])
 	}
 	server := &server{workspace: workspace}
 	constantUse := strings.LastIndex(source, "MaxItems")
@@ -2495,7 +2495,7 @@ func TestCodeActionsExtractWholeInitializerSafely(t *testing.T) {
 		updated = updated[:startOffset] + edit.NewText + updated[endOffset:]
 	}
 	if _, err := compiler.ParseFile("main.gpp", updated); err != nil {
-		t.Fatalf("extract variable edit should preserve valid Go++ syntax: %v\n%s", err, updated)
+		t.Fatalf("extract variable edit should preserve valid GPP syntax: %v\n%s", err, updated)
 	}
 	if !strings.Contains(updated, "value := strings.TrimSpace(input)\n\tresult := value") {
 		t.Fatalf("extract variable edits have the wrong result:\n%s", updated)
@@ -2829,7 +2829,7 @@ func TestLookupStaysInDirectoryWhenCurrentFileHasSyntaxErrors(t *testing.T) {
 	workspace.refresh()
 	state := workspace.files[usePath]
 	if state.File != nil {
-		t.Fatal("fixture should leave the current Go++ file syntactically incomplete")
+		t.Fatal("fixture should leave the current GPP file syntactically incomplete")
 	}
 	offset := strings.Index(state.Source, "Local")
 	server := &server{workspace: workspace}
@@ -2988,7 +2988,7 @@ func TestDidChangeIgnoresStaleDocumentVersions(t *testing.T) {
 	}
 }
 
-func TestWorkspaceIndexesNativeGoFilesForGoPlusNavigation(t *testing.T) {
+func TestWorkspaceIndexesNativeGoFilesForGPPNavigation(t *testing.T) {
 	root := t.TempDir()
 	goPath := filepath.Join(root, "native.go")
 	gppPath := filepath.Join(root, "main.gpp")
@@ -3010,11 +3010,11 @@ func TestWorkspaceIndexesNativeGoFilesForGoPlusNavigation(t *testing.T) {
 	position := positionAtOffset(gppSource, use)
 	hoverResult := server.hover(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: gppState.URI}, Position: position})
 	if hoverResult == nil || !strings.Contains(hoverResult.Contents.Value, "type Native struct") || !strings.Contains(hoverResult.Contents.Value, "ordinary Go source file") {
-		t.Fatalf("Go++ hover should resolve a documented type from a .go file, got %#v (diagnostics: %#v)", hoverResult, workspace.diagnostics[gppState.URI])
+		t.Fatalf("GPP hover should resolve a documented type from a .go file, got %#v (diagnostics: %#v)", hoverResult, workspace.diagnostics[gppState.URI])
 	}
 	definitions := server.definitions(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: gppState.URI}, Position: position})
 	if len(definitions) != 1 || definitions[0].URI != uriForPath(goPath) {
-		t.Fatalf("Go++ definition should point to the native Go file, got %#v", definitions)
+		t.Fatalf("GPP definition should point to the native Go file, got %#v", definitions)
 	}
 	references := server.references(gppState.URI, position, true)
 	if len(references) != 2 {
@@ -3022,7 +3022,7 @@ func TestWorkspaceIndexesNativeGoFilesForGoPlusNavigation(t *testing.T) {
 	}
 	edit, err := server.rename(gppState.URI, position, "NativeRecord")
 	if err != nil || len(edit.Changes[uriForPath(goPath)]) != 1 || len(edit.Changes[gppState.URI]) != 1 {
-		t.Fatalf("cross-language rename should update the Go declaration and Go++ use, edits=%#v err=%v", edit.Changes, err)
+		t.Fatalf("cross-language rename should update the Go declaration and GPP use, edits=%#v err=%v", edit.Changes, err)
 	}
 	var found bool
 	for _, symbol := range server.workspaceSymbols("Native") {
@@ -3158,7 +3158,7 @@ func main() {
 	diagnostics := append([]Diagnostic(nil), workspace.diagnostics[uriForPath(path)]...)
 	diagnostics = append(diagnostics, server.backendDiagnostics[uriForPath(path)]...)
 	if len(diagnostics) == 0 {
-		t.Fatalf("workspace analysis should report Go backend errors from generated Go++ code; result=%#v compiler=%#v", server.backendDiagnostics, workspace.diagnostics[uriForPath(path)])
+		t.Fatalf("workspace analysis should report Go backend errors from generated GPP code; result=%#v compiler=%#v", server.backendDiagnostics, workspace.diagnostics[uriForPath(path)])
 	}
 	found := false
 	for _, diagnostic := range diagnostics {
@@ -3501,7 +3501,7 @@ extend string { func First() {} }
 			t.Errorf("diagnostic should have a source range: %#v", diagnostic)
 		}
 	}
-	if !messages["class name GppClass is reserved for Go++ introspection metadata"] || !messages["extension method First for string is declared more than once with parameter types "] {
+	if !messages["class name GppClass is reserved for GPP introspection metadata"] || !messages["extension method First for string is declared more than once with parameter types "] {
 		t.Fatalf("missing class or duplicate-extension diagnostic: %#v", messages)
 	}
 }
@@ -3579,7 +3579,7 @@ func TestImportLinksSelectionRangesAndInlayHints(t *testing.T) {
 	}
 	importOffset := strings.Index(mainSource, "foo.bar") + len("foo.")
 	importHover := server.hover(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: mainState.URI}, Position: positionAtOffset(mainSource, importOffset)})
-	if importHover == nil || !strings.Contains(importHover.Contents.Value, "Go++ package") || !strings.Contains(importHover.Contents.Value, "foo.bar") {
+	if importHover == nil || !strings.Contains(importHover.Contents.Value, "GPP package") || !strings.Contains(importHover.Contents.Value, "foo.bar") {
 		t.Fatalf("logical package import should provide package hover, got %#v", importHover)
 	}
 
@@ -3932,7 +3932,7 @@ func TestTypeDefinitionResolvesNativeGoTypesThroughImportAliases(t *testing.T) {
 	workspace.refresh()
 	state := workspace.files[mainPath]
 	if state == nil || state.File == nil {
-		t.Fatalf("Go++ importing file should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
+		t.Fatalf("GPP importing file should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
 	}
 	server := &server{workspace: workspace}
 	useOffset := strings.LastIndex(mainSource, "_ = person") + len("_ = ")
@@ -4054,7 +4054,7 @@ func TestCallHierarchyIncludesNativeGoFunctionsInMixedWorkspace(t *testing.T) {
 		callers[call.Item.Name] = len(call.FromRanges) == 1
 	}
 	if len(incoming) != 2 || !callers["nativeCaller"] || !callers["gppCaller"] {
-		t.Fatalf("incoming calls should include native Go and Go++ callers: %#v", incoming)
+		t.Fatalf("incoming calls should include native Go and GPP callers: %#v", incoming)
 	}
 
 	nativeCallerOffset := strings.Index(goSource, "nativeCaller")
@@ -4102,24 +4102,24 @@ func TestNativeGoMethodsSupportHoverNavigationAndCallHierarchy(t *testing.T) {
 	}
 	definitions := server.definitions(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: gppState.URI}, Position: callPosition})
 	if len(definitions) != 1 || definitions[0].URI != goState.URI {
-		t.Fatalf("Go++ method definition should point to the Go method declaration: %#v", definitions)
+		t.Fatalf("GPP method definition should point to the Go method declaration: %#v", definitions)
 	}
 	references := server.references(gppState.URI, callPosition, true)
 	if len(references) != 2 {
-		t.Fatalf("native method references should include declaration and Go++ call: %#v", references)
+		t.Fatalf("native method references should include declaration and GPP call: %#v", references)
 	}
 	edit, err := server.rename(gppState.URI, callPosition, "Execute")
 	if err != nil || len(edit.Changes[goState.URI]) != 1 || len(edit.Changes[gppState.URI]) != 1 {
-		t.Fatalf("native method rename should update its Go declaration and Go++ call, edits=%#v err=%v", edit.Changes, err)
+		t.Fatalf("native method rename should update its Go declaration and GPP call, edits=%#v err=%v", edit.Changes, err)
 	}
 	callerOffset := strings.Index(gppSource, "use(worker")
 	callerItems := server.prepareCallHierarchy(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: gppState.URI}, Position: positionAtOffset(gppSource, callerOffset)})
 	if len(callerItems) != 1 {
-		t.Fatalf("Go++ caller should prepare as a call hierarchy item: %#v", callerItems)
+		t.Fatalf("GPP caller should prepare as a call hierarchy item: %#v", callerItems)
 	}
 	outgoing := server.outgoingCalls(callerItems[0])
 	if len(outgoing) != 1 || outgoing[0].Item.Name != "Run" {
-		t.Fatalf("Go++ call hierarchy should find the native Go method: %#v", outgoing)
+		t.Fatalf("GPP call hierarchy should find the native Go method: %#v", outgoing)
 	}
 	goMethodOffset := strings.LastIndex(goSource, "Run")
 	methodItems := server.prepareCallHierarchy(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: goState.URI}, Position: positionAtOffset(goSource, goMethodOffset)})
@@ -4128,11 +4128,11 @@ func TestNativeGoMethodsSupportHoverNavigationAndCallHierarchy(t *testing.T) {
 	}
 	incoming := server.incomingCalls(methodItems[0])
 	if len(incoming) != 1 || incoming[0].Item.Name != "use" {
-		t.Fatalf("native Go method hierarchy should find Go++ callers: %#v", incoming)
+		t.Fatalf("native Go method hierarchy should find GPP callers: %#v", incoming)
 	}
 }
 
-func TestGoPlusNavigationResolvesMethodsOnImportedNativeGoTypes(t *testing.T) {
+func TestGPPNavigationResolvesMethodsOnImportedNativeGoTypes(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/mixed\n\ngo 1.27\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -4156,18 +4156,18 @@ func TestGoPlusNavigationResolvesMethodsOnImportedNativeGoTypes(t *testing.T) {
 	workspace.refresh()
 	state := workspace.files[mainPath]
 	if state == nil || state.File == nil {
-		t.Fatalf("Go++ source should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
+		t.Fatalf("GPP source should parse: %#v", workspace.diagnostics[uriForPath(mainPath)])
 	}
 	server := &server{workspace: workspace}
 	callOffset := strings.Index(mainSource, "person.Save") + len("person.")
 	params := textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: state.URI}, Position: positionAtOffset(mainSource, callOffset)}
 	definitions := server.definitions(params)
 	if len(definitions) != 1 || definitions[0].URI != uriForPath(modelPath) {
-		t.Fatalf("Go++ member definition should resolve through the imported Go type: %#v", definitions)
+		t.Fatalf("GPP member definition should resolve through the imported Go type: %#v", definitions)
 	}
 	hoverResult := server.hover(params)
 	if hoverResult == nil || !strings.Contains(hoverResult.Contents.Value, "Save stores the person") {
-		t.Fatalf("Go++ member hover should include imported Go method documentation: %#v", hoverResult)
+		t.Fatalf("GPP member hover should include imported Go method documentation: %#v", hoverResult)
 	}
 	dotOffset := strings.Index(mainSource, "person.Save") + len("person.")
 	var saveCompletion *CompletionItem
@@ -4183,7 +4183,7 @@ func TestGoPlusNavigationResolvesMethodsOnImportedNativeGoTypes(t *testing.T) {
 	}
 	references := server.references(state.URI, params.Position, true)
 	if len(references) != 2 {
-		t.Fatalf("Go++ imported Go method references should include declaration and call: %#v", references)
+		t.Fatalf("GPP imported Go method references should include declaration and call: %#v", references)
 	}
 	edit, err := server.rename(state.URI, params.Position, "Persist")
 	if err != nil || len(edit.Changes[uriForPath(modelPath)]) != 1 || len(edit.Changes[state.URI]) != 1 || len(edit.Changes[uriForPath(otherPath)]) != 0 {
@@ -4203,7 +4203,7 @@ func TestGoPlusNavigationResolvesMethodsOnImportedNativeGoTypes(t *testing.T) {
 	}
 	incoming := server.incomingCalls(methodItems[0])
 	if len(incoming) != 1 || incoming[0].Item.Name != "use" {
-		t.Fatalf("incoming calls should resolve the Go++ call to the imported Go method: %#v", incoming)
+		t.Fatalf("incoming calls should resolve the GPP call to the imported Go method: %#v", incoming)
 	}
 	callerOffset := strings.Index(mainSource, "func use") + len("func ")
 	callerItems := server.prepareCallHierarchy(textDocumentPositionParams{
@@ -4211,7 +4211,7 @@ func TestGoPlusNavigationResolvesMethodsOnImportedNativeGoTypes(t *testing.T) {
 		Position:     positionAtOffset(mainSource, callerOffset),
 	})
 	if len(callerItems) != 1 {
-		t.Fatalf("Go++ caller should prepare for call hierarchy: %#v", callerItems)
+		t.Fatalf("GPP caller should prepare for call hierarchy: %#v", callerItems)
 	}
 	outgoing := server.outgoingCalls(callerItems[0])
 	if len(outgoing) != 2 {
@@ -4267,14 +4267,14 @@ class GoDisk {
 	interfacePosition := positionAtOffset(goSource, strings.Index(goSource, "Writer"))
 	implementations := server.implementations(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: goState.URI}, Position: interfacePosition})
 	if len(implementations) != 2 {
-		t.Fatalf("interface implementations should match Go and Go++ method signatures and exclude near matches: %#v", implementations)
+		t.Fatalf("interface implementations should match Go and GPP method signatures and exclude near matches: %#v", implementations)
 	}
 	implementationPaths := map[string]bool{}
 	for _, implementation := range implementations {
 		implementationPaths[implementation.URI] = true
 	}
 	if !implementationPaths[uriForPath(goPath)] || !implementationPaths[uriForPath(gppPath)] {
-		t.Fatalf("interface implementations should include both Go and Go++ types: %#v", implementations)
+		t.Fatalf("interface implementations should include both Go and GPP types: %#v", implementations)
 	}
 
 	methodPosition := positionAtOffset(goSource, strings.Index(goSource, "Write(p"))
@@ -4284,7 +4284,7 @@ class GoDisk {
 	}
 	methodImplementations := server.implementations(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: goState.URI}, Position: methodPosition})
 	if len(methodImplementations) != 2 {
-		t.Fatalf("interface method implementations should point to matching Go and Go++ methods: %#v", methodImplementations)
+		t.Fatalf("interface method implementations should point to matching Go and GPP methods: %#v", methodImplementations)
 	}
 
 	composedPosition := positionAtOffset(goSource, strings.Index(goSource, "ReadWriteCloser"))
@@ -4530,7 +4530,7 @@ func TestTypeHierarchyResolvesOrdinaryModuleImportParentsByDirectory(t *testing.
 	childPath := filepath.Join(appDir, "child.gpp")
 	childState := workspace.files[childPath]
 	if childState == nil || childState.File == nil {
-		t.Fatalf("module Go++ source should be indexed: %#v", workspace.diagnostics[uriForPath(childPath)])
+		t.Fatalf("module GPP source should be indexed: %#v", workspace.diagnostics[uriForPath(childPath)])
 	}
 	childPosition := positionAtOffset(childState.Source, strings.Index(childState.Source, "Child"))
 	items := server.prepareTypeHierarchy(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: childState.URI}, Position: childPosition})
@@ -4815,7 +4815,7 @@ func TestEditorFeaturesExposeLinkedSymbolsInlineValuesAndColors(t *testing.T) {
 	}
 	monikers := server.monikers(textDocumentPositionParams{TextDocument: textDocumentIdentifier{URI: uri}, Position: valuePosition})
 	if len(monikers) != 1 || monikers[0]["scheme"] != "gpp" || monikers[0]["kind"] != "local" {
-		t.Fatalf("local symbols should have a document-unique Go++ moniker: %#v", monikers)
+		t.Fatalf("local symbols should have a document-unique GPP moniker: %#v", monikers)
 	}
 	inline := server.inlineValues(uri, fullDocumentRange(source))
 	if len(inline) == 0 {

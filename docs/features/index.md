@@ -1,6 +1,6 @@
-# Go++ features
+# GPP features
 
-Go++ adds language features for application code and builds on familiar Go
+GPP adds language features for application code and builds on familiar Go
 packages, libraries, and tools. Each guide below introduces one feature,
 compares it with the Go approach where useful, and then shows how to apply it.
 
@@ -41,7 +41,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 
 - [Go compatibility](./packages)
 - [Go assignment operators](/guide/language#go-compatible-assignment-operators)
-- [Mixed Go and Go++ builds](./mixed-go)
+- [Mixed Go and GPP builds](./mixed-go)
 - [Project CLI](./project-cli)
 - [Formatter](./formatter)
 - [Source documentation](./source-docs)

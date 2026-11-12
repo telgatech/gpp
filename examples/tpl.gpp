@@ -29,9 +29,9 @@ template PostCard(post *Post) @{tpl.Path("/posts/{id}")} {
 template Layout() {
     <!doctype html>
     <html>
-    <head><title>Go++ templates</title></head>
+    <head><title>GPP templates</title></head>
     <body>
-        <header><a href="/">Go++ templates</a></header>
+        <header><a href="/">GPP templates</a></header>
         <main>{{body}}</main>
     </body>
     </html>
@@ -47,7 +47,7 @@ func main() {
         ID: 42,
         Title: "Embedded templates",
         Author: Author(Name: "Ada"),
-        Tags: []string{"Go++", "templates"},
+        Tags: []string{"GPP", "templates"},
     )
 
     var output bytes.Buffer

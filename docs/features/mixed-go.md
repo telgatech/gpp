@@ -1,16 +1,16 @@
-# Mixed Go and Go++ builds
+# Mixed Go and GPP builds
 
-Go++ supports gradual adoption. A Go++ package can call handwritten Go, and a
-Go package can import a generated Go++ package. Teams can keep trusted Go code
-in place and introduce Go++ where its language features help.
+GPP supports gradual adoption. A GPP package can call handwritten Go, and a
+Go package can import a generated GPP package. Teams can keep trusted Go code
+in place and introduce GPP where its language features help.
 
-## Call Go from Go++
+## Call Go from GPP
 
 Keep native code in an ordinary `.go` file and call its functions from `.gpp`
 source:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 import "fmt"
 
 func main() {
@@ -27,15 +27,15 @@ func greeting(name string) string {
 ```
 :::
 
-Run both through the Go++ project command:
+Run both through the GPP project command:
 
 ```sh
 gpp run
 ```
 
-## Call generated Go++ from Go
+## Call generated GPP from Go
 
-Go++ compiles source into Go packages. A normal Go consumer can import the
+GPP compiles source into Go packages. A normal Go consumer can import the
 generated package through the configured module path and use its exported
 surface. The repository examples show both interoperability directions in
 `examples/mixed/`.

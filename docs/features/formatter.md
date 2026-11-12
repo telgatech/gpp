@@ -1,6 +1,6 @@
-# The Go++ formatter
+# The GPP formatter
 
-`gpp fmt` formats Go++ source according to one canonical style. It preserves
+`gpp fmt` formats GPP source according to one canonical style. It preserves
 comments and can check formatting in CI, keeping diffs consistent as new
 syntax is introduced.
 
@@ -9,7 +9,7 @@ syntax is introduced.
 `gofmt` remains the formatter for Go files. Use `gpp fmt` for `.gpp` files:
 
 ::: code-group
-```sh [Go++]
+```sh [GPP]
 gpp fmt ./...
 ```
 
@@ -31,5 +31,5 @@ gpp fmt --stdout main.gpp
 Formatting behavior is shared with the language server. See [formatting in the tooling guide](/guide/tooling#formatting) and the [formatter specification](/reference/specifications/fmt).
 
 Use [`gpp fiximports`](/guide/tooling#fixing-imports) to add resolvable missing
-imports separately from formatting. Go++ packages take priority; colliding
+imports separately from formatting. GPP packages take priority; colliding
 standard-library packages use aliases such as `stdhttp`.

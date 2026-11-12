@@ -1,8 +1,8 @@
-# Go++ Template System Specification
+# GPP Template System Specification
 
 ## 1. Overview
 
-Go++ provides a first-class template system built around the official package:
+GPP provides a first-class template system built around the official package:
 
 ```gpp
 import "gpp/tpl"
@@ -11,7 +11,7 @@ import "gpp/tpl"
 The design goals are:
 
 * preserve standard Go `html/template` behavior and syntax;
-* make templates first-class Go++ declarations;
+* make templates first-class GPP declarations;
 * provide typed template parameters;
 * render directly to `io.Writer`;
 * support templates declared inside normal `.gpp` source;
@@ -32,7 +32,7 @@ The underlying template parser and execution model should remain Go's standard `
 
 ## Package Scope
 
-Each Go++ package has an independent template namespace and path registry.
+Each GPP package has an independent template namespace and path registry.
 Template package identity is the compiler's package identity (the canonical
 import path in a module build), not merely a template name or source filename.
 Declarations in different source files of the same package share one
@@ -42,7 +42,7 @@ Template names and `tpl.Path(...)` patterns may be reused in different
 packages. In particular, independent HTTP servers in different packages may
 each have a template for `/` without conflicting.
 
-Resolution must use the package scope of the Go++ call site. The compiler must
+Resolution must use the package scope of the GPP call site. The compiler must
 preserve that scope for generated typed template calls and dynamic calls such
 as `tpl.Execute`. HTTP route dispatch must carry the scope of the package that
 declared the matched handler into `Context.HTML` and other framework
@@ -59,12 +59,12 @@ specified alongside those APIs.
 
 # 2. Core Design Principle
 
-Go++ does **not** implement a new templating language.
+GPP does **not** implement a new templating language.
 
 The boundary is:
 
 ```text
-Go++ owns:
+GPP owns:
     template declarations
     typed parameters
     annotations
@@ -94,9 +94,9 @@ Go html/template owns:
 
 Guiding rule:
 
-> If standard `html/template` already expresses something well, Go++ should not replace it.
+> If standard `html/template` already expresses something well, GPP should not replace it.
 
-Go++ primarily fixes the stringly, boilerplate-heavy parts around declaration, typing, registration, composition, loading, lookup, and deployment.
+GPP primarily fixes the stringly, boilerplate-heavy parts around declaration, typing, registration, composition, loading, lookup, and deployment.
 
 ---
 
@@ -140,7 +140,7 @@ template BlogPost(post Post) {
 }
 ```
 
-A `template` declaration is a normal package-level Go++ declaration.
+A `template` declaration is a normal package-level GPP declaration.
 
 ---
 
@@ -161,16 +161,16 @@ blog/
     admin.gpp.tpl
 ```
 
-A `.gpp.tpl` file belongs to the Go++ source system and is not merely an arbitrary asset.
+A `.gpp.tpl` file belongs to the GPP source system and is not merely an arbitrary asset.
 
 This distinction is important:
 
 ```text
 .gpp
-    ordinary Go++ source, optionally containing templates
+    ordinary GPP source, optionally containing templates
 
 .gpp.tpl
-    Go++ template-oriented source
+    GPP template-oriented source
 
 .go
     native Go source
@@ -201,7 +201,7 @@ The intended pipeline is:
 ```text
 .gpp / .gpp.tpl
         ↓
-Go++ outer parser
+GPP outer parser
         ↓
 template declaration metadata + raw template body
         ↓
@@ -209,12 +209,12 @@ Go html/template parser
         ↓
 Go template AST
         ↓
-Go++ semantic validation / registration
+GPP semantic validation / registration
         ↓
 html/template execution
 ```
 
-The Go++ parser is responsible for the outer declaration:
+The GPP parser is responsible for the outer declaration:
 
 ```gpp
 template BlogPost(post Post) @{
@@ -242,7 +242,7 @@ The body itself is then parsed using the standard Go template parser.
 
 # 6. Raw Template Body Mode
 
-Inside a `.gpp` file, the contents of a template body are not parsed as ordinary Go++ statements.
+Inside a `.gpp` file, the contents of a template body are not parsed as ordinary GPP statements.
 
 Once the compiler encounters:
 
@@ -264,9 +264,9 @@ template Welcome(user User) {
 }
 ```
 
-The HTML and `{{...}}` actions are captured as template source rather than being lexed as ordinary Go++ code.
+The HTML and `{{...}}` actions are captured as template source rather than being lexed as ordinary GPP code.
 
-The compiler must reliably detect the end of the template declaration and then return to normal Go++ parsing.
+The compiler must reliably detect the end of the template declaration and then return to normal GPP parsing.
 
 The exact internal scanner implementation is compiler-defined.
 
@@ -274,7 +274,7 @@ The exact internal scanner implementation is compiler-defined.
 
 # 7. Template Body Language
 
-The body of a Go++ template follows standard Go `html/template` semantics as closely as possible.
+The body of a GPP template follows standard Go `html/template` semantics as closely as possible.
 
 Literal text remains literal:
 
@@ -319,13 +319,13 @@ whitespace trimming
 HTML escaping
 ```
 
-Go++ does not introduce replacement syntax for control flow.
+GPP does not introduce replacement syntax for control flow.
 
 ---
 
 # 8. Template Calls Inside Templates
 
-Calls to other Go++ templates use standard Go-template command syntax.
+Calls to other GPP templates use standard Go-template command syntax.
 
 No parentheses are required.
 
@@ -374,7 +374,7 @@ A multiple-argument call is:
 {{Card .User true}}
 ```
 
-Go++ should not invent function-style template syntax such as:
+GPP should not invent function-style template syntax such as:
 
 ```text
 {{Post(.)}}
@@ -394,7 +394,7 @@ Standard Go template syntax already treats:
 
 as a call to a template function named `Post`.
 
-Go++ should take advantage of this rather than inventing a new parser rule.
+GPP should take advantage of this rather than inventing a new parser rule.
 
 For compile-time-known templates, the compiler/runtime may register generated callable adapters in the template function map.
 
@@ -422,13 +422,13 @@ Therefore:
 
 can remain valid standard Go-template command syntax.
 
-Go++ validates known template calls over the parsed template AST against their declared signatures.
+GPP validates known template calls over the parsed template AST against their declared signatures.
 
 ---
 
 # 10. Compile-Time Template Call Validation
 
-Where enough type information is statically available, Go++ validates calls between compile-time-known templates.
+Where enough type information is statically available, GPP validates calls between compile-time-known templates.
 
 For example:
 
@@ -454,11 +454,11 @@ template Post expects Post
 current value has type User
 ```
 
-This validation is an additional Go++ layer over the standard template AST. The compiler also checks known field and method accesses against the current dot type. It tracks dot through `with` and `range`, and tracks declared template variables. A missing member on a statically known type is a compile-time diagnostic.
+This validation is an additional GPP layer over the standard template AST. The compiler also checks known field and method accesses against the current dot type. It tracks dot through `with` and `range`, and tracks declared template variables. A missing member on a statically known type is a compile-time diagnostic.
 
-The checker follows Go++ class fields and methods, inherited class members, and imported Go types whose definitions are available through Go's type importer. Multiple template parameters are exposed to the checker as named fields, matching the template data map generated for execution.
+The checker follows GPP class fields and methods, inherited class members, and imported Go types whose definitions are available through Go's type importer. Multiple template parameters are exposed to the checker as named fields, matching the template data map generated for execution.
 
-The check is limited by dynamic values. Accesses through `any`, interfaces, unresolved local Go types, and results from runtime-registered template functions are not statically verified. Standard `html/template` parsing and runtime checks still apply to those expressions; Go++ does not claim that every possible runtime template failure is eliminated.
+The check is limited by dynamic values. Accesses through `any`, interfaces, unresolved local Go types, and results from runtime-registered template functions are not statically verified. Standard `html/template` parsing and runtime checks still apply to those expressions; GPP does not claim that every possible runtime template failure is eliminated.
 
 It should not require replacing Go's parser.
 
@@ -476,7 +476,7 @@ template BlogPost(post Post) {
 
 The declared parameters form the compile-time contract of the template.
 
-For compile-time-known templates, Go++ validates arguments passed from Go++ code.
+For compile-time-known templates, GPP validates arguments passed from GPP code.
 
 For example:
 
@@ -601,7 +601,7 @@ func ShowPost(w http.ResponseWriter, id int64) {
 }
 ```
 
-Because the template renderer returns `error`, normal Go++ automatic error promotion applies.
+Because the template renderer returns `error`, normal GPP automatic error promotion applies.
 
 Thus:
 
@@ -744,7 +744,7 @@ template BlogPost(post Post) @{
 
 # 17. Template Names
 
-Template declaration names must be valid Go++ identifiers.
+Template declaration names must be valid GPP identifiers.
 
 For example:
 
@@ -902,7 +902,7 @@ Wildcard matching is not part of v1.
 # 21. Ambiguous Paths
 
 Ambiguous patterns must be rejected during compilation whenever both template
-declarations are known to the compiler in the same Go++ package. The compiler
+declarations are known to the compiler in the same GPP package. The compiler
 must compare declarations across all source files that contribute templates
 to the package, not only declarations in one `.gpp.tpl` file.
 
@@ -1076,7 +1076,7 @@ All forms register discovered templates into the same runtime registry used by `
 
 The operation is conceptually the same regardless of where the template source comes from.
 
-Therefore Go++ overloading should express the distinction rather than encoding source type into function names.
+Therefore GPP overloading should express the distinction rather than encoding source type into function names.
 
 Preferred:
 
@@ -1099,7 +1099,7 @@ tpl.LoadFile("theme.gpp.tpl")
 tpl.LoadFile(themeFS, "theme.gpp.tpl")
 ```
 
-This follows the general Go++ principle:
+This follows the general GPP principle:
 
 > same semantic operation + different argument types = overload where appropriate.
 
@@ -1234,9 +1234,9 @@ template CustomerPost(post Post) {
 
 is valid if `Post` is available to the template environment.
 
-A runtime template may not introduce arbitrary new Go++ application types or native code requiring compilation.
+A runtime template may not introduce arbitrary new GPP application types or native code requiring compilation.
 
-Runtime template loading is template parsing and registration, not runtime Go++ compilation or dynamic linking.
+Runtime template loading is template parsing and registration, not runtime GPP compilation or dynamic linking.
 
 ---
 
@@ -1272,7 +1272,7 @@ rather than reading compiler-generated embedded files directly.
 
 # 32. Relationship to `embed (...)`
 
-The Go++ resource declaration:
+The GPP resource declaration:
 
 ```gpp
 embed (
@@ -1289,7 +1289,7 @@ is separate from template source handling.
 
 `.gpp.tpl` handling means:
 
-> compile, validate, register, and package Go++ templates.
+> compile, validate, register, and package GPP templates.
 
 Therefore users do not need:
 
@@ -1395,7 +1395,7 @@ A malformed or invalid updated template must not crash the development server.
 Instead:
 
 1. the updated body is parsed;
-2. Go++ validation runs;
+2. GPP validation runs;
 3. the new version is rejected if invalid;
 4. the previous valid version remains registered;
 5. a useful development diagnostic is returned.
@@ -1474,13 +1474,13 @@ Argument-bearing calls use whitespace-separated Go-template syntax:
 {{Card .User true}}
 ```
 
-Parentheses are not part of Go++ template invocation syntax.
+Parentheses are not part of GPP template invocation syntax.
 
 ---
 
 # 40. Layouts
 
-Go++ supports template composition through a layout relationship.
+GPP supports template composition through a layout relationship.
 
 Canonical syntax:
 
@@ -1537,7 +1537,7 @@ Interpolated values are contextually HTML-escaped.
 
 Raw HTML requires an explicit opt-in representation compatible with standard Go template safety types.
 
-Go++ must not silently disable standard escaping.
+GPP must not silently disable standard escaping.
 
 ---
 
@@ -1589,7 +1589,7 @@ A template does not become an HTTP endpoint merely because it has a `Path`.
 
 # 44. Annotation Target
 
-The general Go++ annotation system must support:
+The general GPP annotation system must support:
 
 ```text
 template
@@ -1623,7 +1623,7 @@ Development hot reload is a special case for compiler-known templates and is not
 
 # 46. Package Scope
 
-Template declarations belong to their Go++ package.
+Template declarations belong to their GPP package.
 
 Templates within a package share that package's generated `tpl` namespace.
 
@@ -1664,7 +1664,7 @@ plus:
 * path metadata;
 * embedded source registration.
 
-The public Go++ surface remains:
+The public GPP surface remains:
 
 ```gpp
 tpl.BlogPost(w, post)
@@ -1690,7 +1690,7 @@ tpl.LoadDir("themes/")
 tpl.LoadDir(themeFS)
 ```
 
-Because of Go++ automatic trailing-error promotion, ordinary usage requires no explicit error boilerplate.
+Because of GPP automatic trailing-error promotion, ordinary usage requires no explicit error boilerplate.
 
 Explicit capture remains valid:
 
@@ -1808,7 +1808,7 @@ Version 1 does not need:
 * a custom replacement for Go's template parser;
 * a second template expression language;
 * function-call parentheses inside templates;
-* arbitrary Go++ compilation at runtime;
+* arbitrary GPP compilation at runtime;
 * dynamic generation of typed template methods;
 * automatic HTTP route registration;
 * template-level cache policy;
@@ -1903,11 +1903,11 @@ Development:
       ↓
 gpp run
       ↓
-Go++ parses declaration envelope
+GPP parses declaration envelope
       ↓
 html/template parses body
       ↓
-Go++ validates/registers metadata
+GPP validates/registers metadata
       ↓
 watch/reload body changes
       ↓
@@ -1957,7 +1957,7 @@ template declaration
     +
 standard Go html/template body
     +
-typed Go++ parameters
+typed GPP parameters
     +
 io.Writer rendering
     +

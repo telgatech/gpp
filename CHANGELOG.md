@@ -1,11 +1,16 @@
 # Changelog
 
+## 2026-11-12
+
+- Corrected generated source mappings for exception runtime and boundary frames so panic stack traces no longer point to unrelated GPP lines.
+
 ## 2026-11-10
 
 - Raised the minimum Go version to 1.27 and enabled generic methods declared directly on classes; generated workspaces now use Go 1.27 and invalidate older cached output.
 - Extended method overload resolution to distinguish generic and non-generic overloads through explicit type arguments, including methods with trailing defaults.
 - Added inferred `map(...)` literals to the prelude, with strongly typed homogeneous maps, `any` fallback for mixed values, and generic `Each`, `Get`, `Keys`, `Values`, and `Delete` helpers. `Get(key)` returns `(value, found)`; `Get(key, fallback)` returns the fallback when absent.
 - Added the experimental `gpp/exp/http.Client` with base URL and timeout constructor arguments, cookie persistence, overloaded raw and generic JSON `Get`/`Post` methods, optional request contexts, typed anonymous-struct form and upload fields, and streamed multipart file uploads.
+- Added `http.Context.Respond(status, data)` to negotiate HTML or JSON from `Accept`, with JSON as the fallback and `406 Not Acceptable` for unsupported formats.
 - Added per-instance `gpp/cron.Cron` schedulers that discover annotated class methods through generic runtime metadata and bind typed invokers to each instance.
 
 ## 2026-11-09
@@ -29,38 +34,38 @@
 ## 2026-11-08
 
 - Expanded LSP editor support with semantic token range and delta updates, inlay hints, selection ranges, code lenses, signature help, inline completions, and range/on-type formatting.
-- Added workspace-aware Go++ and native Go hover, completion, navigation, references, rename, type/call hierarchy, and implementation support across files and packages.
+- Added workspace-aware GPP and native Go hover, completion, navigation, references, rename, type/call hierarchy, and implementation support across files and packages.
 - Fixed member completions for class constructor call results, including inherited methods when completion is triggered immediately after the selector dot.
 - Enforced lowercase class-member privacy across inheritance and completions; made HTTP shutdown/watcher state private, limited imported-package completions to exported symbols, and matched generic slice/map extensions.
 - Limited constructor-field completions to open constructor argument lists, preserving member completions after a completed constructor call.
 - Added completion for exported fields and methods on native Go values returned by imported Go functions, such as `sql.Open`.
 - Added the `std.Hook` method annotation to hide framework callback methods from completion lists while keeping them callable and overridable.
-- Restricted direct Go++ calls to annotated hooks to the class that first declares each hook; framework dispatch and overrides remain supported.
+- Restricted direct GPP calls to annotated hooks to the class that first declares each hook; framework dispatch and overrides remain supported.
 - Moved ORM lifecycle hook ordering into `Model.Insert`, `Update`, and `Destroy`; a required interface dispatch preserves child overrides, and SQL helpers now only perform persistence.
 - Refactored the ORM/SQL boundary so `gpp/orm` depends on the shared executor in `gpp/sql`; full-SQL model queries use `orm.Get`/`orm.Select`.
 - Improved LSP code actions and diagnostics, including generated-Go type errors, pull diagnostics, watched-file and workspace-folder updates, and request cancellation.
 - Fixed formatter spacing around inheritance colons in class declarations and collapsed repeated blank lines to match gofmt.
 - Enforced class member visibility across selectors, composite literals, templates, extensions, constructors, and Go declarations embedded in `.gpp`: uppercase is public, lowercase is private, and a leading underscore marks protected members visible to subclasses. Updated generated Go names and LSP completions.
-- Improved LSP navigation and completion for imported Go methods and types, chained call results, callback lambdas, and inferred return bindings that preserve Go++ error promotion.
+- Improved LSP navigation and completion for imported Go methods and types, chained call results, callback lambdas, and inferred return bindings that preserve GPP error promotion.
 
 ## 2026-11-07
 
 - Fixed resolution of module-local package references during inheritance analysis, including transitive parents and method types from their declaring packages. This works across same-directory packages, conventional directory layouts, and multi-file dotted packages.
-- `gpp fiximports` now checks current-module Go++ packages before bundled and standard packages, matches candidates by exported symbol, and adds imports to an existing grouped import block.
+- `gpp fiximports` now checks current-module GPP packages before bundled and standard packages, matches candidates by exported symbol, and adds imports to an existing grouped import block.
 - Go-compatible source formatting now follows Go tab indentation and trims blank lines at block edges; `gpp init` starters use the same formatting.
-- `gpp build`, `gpp run`, and `gpp test` now use the current project's `go.mod` module path by default, improving resolution of local Go++ packages.
+- `gpp build`, `gpp run`, and `gpp test` now use the current project's `go.mod` module path by default, improving resolution of local GPP packages.
 - Fixed constructor lowering across package boundaries, including inherited fields and method calls with default arguments directly after construction.
 - Simplified ORM model declarations: fields map to snake_case columns and classes map to snake_case table names by default. Use `orm.Column` and `orm.Table` to override names, and `orm.Ignore` to omit non-database fields. Schema-qualified table names such as `sales.employees` are supported.
 - ORM models now infer the primary key from a persisted `Id` or `ID` field when no `orm.PK` is specified. Keep `orm.PK` for custom key names or to select among multiple candidates.
 - Updated the ORM and todo examples to demonstrate inferred mappings, with explicit annotations shown as comments in the todo model.
 - Added support for block comments between class header tokens, including between a parent class and the opening brace; compiler and LSP diagnostics now accept this syntax.
-- Updated todo validation and normalization to use the Go++ string methods `IsBlank()` and `TrimSpace()`.
+- Updated todo validation and normalization to use the GPP string methods `IsBlank()` and `TrimSpace()`.
 
 ## 2026-11-06
 
 - Added `ctx.HTML` for HTML responses from named, path-matched, or inline templates; `ctx.Template` remains as an obsolete alias.
 - Added class `init()` hooks that run after constructor fields are populated, in base-to-derived order; initializer errors participate in normal error promotion.
-- Added the generic return-value form `ctx.Bind[T]()` alongside the existing destination-based binding. It supports Go++ classes, Go structs, and structural records, including pointer result types; query, JSON, and form input are selected from the request method and content type.
+- Added the generic return-value form `ctx.Bind[T]()` alongside the existing destination-based binding. It supports GPP classes, Go structs, and structural records, including pointer result types; query, JSON, and form input are selected from the request method and content type.
 - Added `http.Server.Handle(ctx) error` as a procedural handler; a response skips route dispatch, while an unwritten response falls through to annotated routes (if any).
 - Added `http.Server.PublicDir` for root static files and made `http.Files` mounts run before procedural handlers and routes. Both prefer `index.html` then `index.htm`, disable directory listings by default, and use a five-minute cache policy with gzip for compressible responses.
 - Simplified `http.Context.Template` to one call with optional status, data, and key arguments; an omitted key uses the request path.
@@ -84,8 +89,8 @@
 
 - Improved record type inference and source mapping for errors from imported functions.
 - Added compiler warnings, including an opt-in flag for warnings during `gpp build`; unused Go variables are removed from generated code where possible.
-- `gpp run` accepts `.go` files and still processes them through Go++ before running.
-- Added incremental build caching and a gradual-adoption FAQ explaining how Go++ builds on Go.
+- `gpp run` accepts `.go` files and still processes them through GPP before running.
+- Added incremental build caching and a gradual-adoption FAQ explaining how GPP builds on Go.
 
 ## 2026-10-23
 
@@ -153,7 +158,7 @@
 
 ## 2026-09-18
 
-- Added the Go++ language server, mixed Go/Go++ compilation, OAuth support for `http.Server`, and Go++ documentation/OpenAPI tooling.
+- Added the GPP language server, mixed Go/GPP compilation, OAuth support for `http.Server`, and GPP documentation/OpenAPI tooling.
 - Expanded exception handling to catch multiple exception types.
 
 ## 2026-09-17
@@ -171,8 +176,8 @@
 - Added annotations and runtime metadata, including annotation inheritance, plus static methods and serialization support.
 - Added the prelude and lambda expressions, and introduced the bundled `gpp/http` and `gpp/orm` libraries.
 - Improved ORM query and transaction support, including portable placeholders and lifecycle hooks.
-- Renamed the project from GoPP to Go++ (`gpp`).
+- Renamed the project to GPP (`gpp`).
 
 ## 2026-09-14
 
-- Public repository history begins with the initial Go++ source commit.
+- Public repository history begins with the initial GPP source commit.

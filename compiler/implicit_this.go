@@ -11,7 +11,7 @@ import (
 )
 
 // qualifyImplicitClassFields adds the receiver to unqualified field references
-// in an instance method. Method bodies are parsed after Go++ lowering so this
+// in an instance method. Method bodies are parsed after GPP lowering so this
 // works for both the structured and compatibility emission paths.
 func qualifyImplicitClassFields(body string, class *ClassDecl, classes map[string]*ClassDecl, method Method) string {
 	if class == nil || strings.TrimSpace(body) == "" {

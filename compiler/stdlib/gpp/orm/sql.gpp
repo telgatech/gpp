@@ -166,7 +166,7 @@ func gppORMFieldAnnotations(field any) any {
 
 func gppORMColumns(descriptor any) ([]gppORMColumn, error) {
 	if descriptor == nil {
-		return nil, fmt.Errorf("orm: target has no Go++ runtime class")
+		return nil, fmt.Errorf("orm: target has no GPP runtime class")
 	}
 	value := reflect.ValueOf(descriptor)
 	if value.Kind() == reflect.Pointer {
@@ -200,14 +200,14 @@ func gppORMTable(descriptor any) (string, error) {
 		return fmt.Sprint(args[0]), nil
 	}
 	if descriptor == nil {
-		return "", fmt.Errorf("orm: target has no Go++ runtime class")
+		return "", fmt.Errorf("orm: target has no GPP runtime class")
 	}
 	value := reflect.ValueOf(descriptor)
 	if value.Kind() == reflect.Pointer {
 		value = value.Elem()
 	}
 	if !value.IsValid() || !value.FieldByName("Name").IsValid() {
-		return "", fmt.Errorf("orm: target has no Go++ runtime class name")
+		return "", fmt.Errorf("orm: target has no GPP runtime class name")
 	}
 	return gppORMSnakeCase(fmt.Sprint(value.FieldByName("Name").Interface())), nil
 }

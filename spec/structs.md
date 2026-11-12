@@ -1,7 +1,7 @@
-# Go++ Feature Spec: Anonymous and Named Structs
+# GPP Feature Spec: Anonymous and Named Structs
 
 ## Goal
-Provide one struct model for anonymous structural values and named struct declarations. Preserve anonymous-shape metadata and type inference while using `struct` consistently in Go++ source.
+Provide one struct model for anonymous structural values and named struct declarations. Preserve anonymous-shape metadata and type inference while using `struct` consistently in GPP source.
 
 ## Primary use case
 Database/query helpers where creating hundreds of one-off result structs is undesirable.
@@ -69,7 +69,7 @@ user := User{Name: "Ada", Active: true}
 `struct(...)` is not a separate type or runtime feature. Structural shape
 metadata remains necessary to preserve anonymous struct identity, infer field
 types across calls and returns, and emit deterministic Go structs. The metadata
-is compiler-internal; Go++ source uses `struct`.
+is compiler-internal; GPP source uses `struct`.
 
 ## Required semantics
 
@@ -146,7 +146,7 @@ No map[string]any, reflection, interface{}, or dynamic field lookup.
 
 8. Anonymous struct types are structural, not nominal.
 
-These two functions return the same Go++ type:
+These two functions return the same GPP type:
 
 func a() struct {
     return struct(name: "A", age: 1)
@@ -175,7 +175,7 @@ struct(
     name: "B",
 )
 
-10. Struct field names follow normal Go++ identifier rules.
+10. Struct field names follow normal GPP identifier rules.
 
 11. Struct values are ordinary value types unless a field itself contains a reference/pointer.
 
@@ -191,7 +191,7 @@ struct(
     count: 10,
 )
 
-13. Structs may be used inside ordinary Go++ types:
+13. Structs may be used inside ordinary GPP types:
 
 []struct
 map[string]struct
@@ -231,7 +231,7 @@ a = b
 
 Anonymous struct shape information remains compiler-internal metadata. The
 compiler uses it to infer and compare types, then lowers each shape to an
-ordinary Go struct. The internal names are not part of Go++ source syntax.
+ordinary Go struct. The internal names are not part of GPP source syntax.
 
 The metadata is conceptually equivalent to:
 
@@ -272,7 +272,7 @@ After inference, replace the unresolved `struct` return type internally with the
 
 Every distinct struct shape must lower to a generated Go struct.
 
-Example Go++:
+Example GPP:
 
 func getUser() struct {
     return struct(
@@ -310,7 +310,7 @@ This improves deterministic builds.
 
 ## Cross-package behavior
 
-Exported Go++ functions returning structs must generate a Go-visible concrete return type.
+Exported GPP functions returning structs must generate a Go-visible concrete return type.
 
 Example:
 
@@ -337,7 +337,7 @@ The generated type itself may have an implementation-specific name, but it must 
 Important:
 exported struct fields should preserve Go capitalization/export semantics.
 
-A Go++ package caller should be able to write:
+A GPP package caller should be able to write:
 
 let u = users.GetUser()
 println(u.Name)

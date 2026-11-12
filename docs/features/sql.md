@@ -12,7 +12,7 @@ import (
 )
 ```
 
-Use a named import so Go++ can resolve the extension methods; a blank import
+Use a named import so GPP can resolve the extension methods; a blank import
 does not expose them at call sites.
 
 ## Return a scalar or inline struct
@@ -34,7 +34,7 @@ user := db.Get[struct(ID: int64, Name: string)](
 )
 ```
 
-`T` is one result type, so `Select[T]` returns `[]T`. Go++ does not currently
+`T` is one result type, so `Select[T]` returns `[]T`. GPP does not currently
 have tuple types for storing each row; `[int64, string]` or `[[int64, string]]`
 cannot describe a pair of columns. Use an anonymous struct to give each
 selected column a name and type.

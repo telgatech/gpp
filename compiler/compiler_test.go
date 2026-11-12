@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestBuildDocIndexUsesGoPlusSourceDeclarations(t *testing.T) {
+func TestBuildDocIndexUsesGPPSourceDeclarations(t *testing.T) {
 	source := `// Package docs describes the documentation fixture.
 package docs
 
@@ -145,7 +145,7 @@ func main() {
 	}
 }
 
-func TestCompileFilesMapsBackendDiagnosticsToGoPlusSource(t *testing.T) {
+func TestCompileFilesMapsBackendDiagnosticsToGPPSource(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
@@ -177,7 +177,7 @@ func main() {
 	location := filepath.ToSlash(relative) + ":5:"
 	absoluteLocation := filepath.ToSlash(sourcePath) + ":5:"
 	if !strings.Contains(string(output), location) && !strings.Contains(string(output), absoluteLocation) {
-		t.Fatalf("backend diagnostic did not use the Go++ source location %q:\n%s", location, output)
+		t.Fatalf("backend diagnostic did not use the GPP source location %q:\n%s", location, output)
 	}
 	if strings.Contains(string(output), "main.go:") {
 		t.Fatalf("backend diagnostic leaked the generated file:\n%s", output)
@@ -742,7 +742,7 @@ func main() {
 		t.Skipf("loopback sockets unavailable: %s", output)
 	}
 	result := string(output)
-	if !strings.Contains(result, "gpp/http: listening on 127.0.0.1:") {
+	if !strings.Contains(result, "gpp/http: listening on http://127.0.0.1:") {
 		t.Fatalf("server did not report its actual listener address:\n%s", output)
 	}
 	if !strings.Contains(result, "200 shared shared Go\n200 handled\n500 500\nbefore-listen,after-listen,before-request,handle,route,after-request,before-request,handle,after-request,before-request,handle,after-request,error,before-shutdown,after-shutdown\n") {
@@ -4134,7 +4134,7 @@ func main() {
 		command.Dir = outputDir
 		command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
 		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("accepted Map lambda did not generate buildable Go: %v\n%s\nGo++ source:\n%s", err, output, source)
+			t.Fatalf("accepted Map lambda did not generate buildable Go: %v\n%s\nGPP source:\n%s", err, output, source)
 		}
 	})
 }
@@ -4210,12 +4210,12 @@ func main() {
 		command.Dir = outputDir
 		command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
 		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("accepted inherited method call did not generate buildable Go: %v\n%s\nGo++ call: %s", err, output, call)
+			t.Fatalf("accepted inherited method call did not generate buildable Go: %v\n%s\nGPP call: %s", err, output, call)
 		}
 	})
 }
 
-func TestCompileFilesSupportsImportedGoPlusExtensions(t *testing.T) {
+func TestCompileFilesSupportsImportedGPPExtensions(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	people := filepath.Join(inputDir, "people.gpp")
@@ -4258,7 +4258,7 @@ func main() {
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("imported Go++ extension did not run: %v\n%s", err, output)
+		t.Fatalf("imported GPP extension did not run: %v\n%s", err, output)
 	}
 	if string(output) != "Hello, Ada\n" {
 		t.Fatalf("unexpected imported extension output: %s", output)

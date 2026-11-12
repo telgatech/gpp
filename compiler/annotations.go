@@ -248,9 +248,9 @@ func annotationArgumentTexts(use AnnotationUse) []string {
 	return use.ArgumentTexts()
 }
 
-// annotationArgumentNodes keeps annotation validation on the Go++ expression
+// annotationArgumentNodes keeps annotation validation on the GPP expression
 // AST. The legacy validator used go/parser.ParseExpr here, which meant that a
-// valid Go++ argument could be rejected or silently interpreted using Go's
+// valid GPP argument could be rejected or silently interpreted using Go's
 // syntax instead of the language frontend's syntax.
 func annotationArgumentNodes(use AnnotationUse, args []string) ([]ExprNode, error) {
 	if len(use.ArgumentsAST) == len(args) && !annotationArgumentsHaveNames(args) {

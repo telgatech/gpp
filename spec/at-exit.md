@@ -1,6 +1,6 @@
 # Program Exit Hook
 
-Go++ supports an optional package-level `atExit` function in the `main` package. When present, the compiler arranges for it to run automatically as the program's generated `main` function exits.
+GPP supports an optional package-level `atExit` function in the `main` package. When present, the compiler arranges for it to run automatically as the program's generated `main` function exits.
 
 ## Declaration
 

@@ -4,14 +4,14 @@ import { onMounted, ref } from 'vue'
 const sections = [
   {
     title: 'The changes that matter most',
-    description: 'Go++ adds a practical object model and stronger ways to structure application code, while still compiling to ordinary Go.',
+    description: 'GPP adds a practical object model and stronger ways to structure application code, while still compiling to ordinary Go.',
     features: [
       { title: 'Classes', description: 'Keep related state and behavior together, with familiar fields, methods, and concise construction.', code: `class Person {\n    Name string\n\n    func Greet() string {\n        return "Hello " + this.Name\n    }\n}\n\nperson := Person(Name: "Ada")`, link: '/features/classes', linkText: 'Explore classes' },
       { title: 'Generic classes and methods', description: 'Reuse class types and instance methods across value types, using Go’s generic type system.', code: `class Box[T] {\n    Value T\n\n    func Get() T { return this.Value }\n}\n\nclass Echo {\n    func Identity[T](value T) T { return value }\n}\n\nbox := Box[int](Value: 42)\necho := Echo()\nfmt.Println(box.Get(), echo.Identity[string]("hello"))`, link: '/features/classes#generics', linkText: 'Explore generics' },
       { title: 'Multiple inheritance', description: 'Inherit fields and methods from multiple base classes to compose reusable state and behavior into one type.', code: `class Auditable {\n    func Record(event string) string { return event }\n}\nclass Account: Auditable {\n    Balance int\n    func Deposit(amount int) { this.Balance += amount }\n}\nclass InterestBearing { RatePercent int }\nclass SavingsAccount: Account, InterestBearing {\n    func AccrueInterest() {\n        this.Balance += this.Balance * this.RatePercent / 100\n    }\n}\n\nsavings.Deposit(100)\nsavings.AccrueInterest()\nsavings.Record("interest applied")`, link: '/features/multiple-inheritance', linkText: 'Explore multiple inheritance' },
       { title: 'Polymorphism', description: 'Call behavior through a base type and let the concrete class provide the implementation.', code: `class Animal {\n    func Speak() string { return "unknown" }\n}\n\nclass Cat: Animal {\n    func Speak() string { return "meow" }\n}\n\nvar animal Animal = Cat()\nfmt.Println(animal.Speak()) // meow`, link: '/features/polymorphism', linkText: 'Explore polymorphism' },
       { title: 'Compile-time overloading', description: 'Give related operations one clear name; the compiler selects by argument count and static types.', code: `func Format(value int) string { return "number" }\nfunc Format(value string) string { return "text" }\n\nFormat(42)\nFormat("42")`, link: '/features/overloading', linkText: 'Explore overloading' },
-      { title: 'Exception handling', description: 'Go++ turns unhandled errors into exceptions automatically so you can keep the success path readable.', code: `try {\n    data := os.ReadFile(path)\n    doSomething(data)\n} catch *os.PathError e {\n    log(e.Path)\n}`, link: '/features/exceptions', linkText: 'Explore exceptions' },
+      { title: 'Exception handling', description: 'GPP turns unhandled errors into exceptions automatically so you can keep the success path readable.', code: `try {\n    data := os.ReadFile(path)\n    doSomething(data)\n} catch *os.PathError e {\n    log(e.Path)\n}`, link: '/features/exceptions', linkText: 'Explore exceptions' },
       { title: 'Extension methods', description: 'Add methods to any type without cluttering your code with free floating functions!', code: `extend string, []byte {\n    func IsEmpty() bool {\n        return len(this) == 0\n    }\n}\n\nif name.IsEmpty() { ... }`, link: '/features/extensions', linkText: 'Explore extension methods' },
       { title: 'Serialization', description: 'One annotation gives your classes typed JSON, YAML, and GOB encoders and decoders.', code: `class User @{encoding.Serializable} {\n    Id int\n    Name string\n}\n\njson := user.ToJSON()\nfromJSON := User.FromJSON(json)\nyaml := user.ToYAML()\nfromYAML := User.FromYAML(yaml)\ngob := user.ToGOB()\nfromGOB := User.FromGOB(gob)`, link: '/features/serialization', linkText: 'Explore serialization' },
     ]
@@ -33,12 +33,12 @@ const sections = [
       { title: 'Regular expressions', description: 'Compile patterns explicitly and use Go regexp methods, with ordinary Go error handling for invalid patterns.', code: `pattern := "^[a-z]+$"\nre := pattern.CompileRegex()\nmatched := re.MatchString(username)`, link: '/features/regular-expressions', linkText: 'Explore regular expressions' },
       { title: 'Explicit safe access', description: 'Opt in to zero-valued results when a nullable class pointer is nil.', code: `var user *Person\n\nname := user?.Name\ngreeting := user?.Greet()`, link: '/features/safe-access', linkText: 'Explore safe access' },
       { title: 'Lazy error fallback', description: 'Use ?? with error-returning calls or nullable values; evaluate the fallback only when needed.', code: `port := strconv.Atoi(rawPort) ?? 8080\nuser := FindUser(id) ?? GuestUser()`, link: '/features/error-fallback', linkText: 'Explore lazy fallback' },
-      { title: 'Go assignment operators', description: 'Keep familiar compound assignments and atomic increment/decrement statements in Go++ code.', code: `count := 0\ncount += 2\ncount++\ncount--`, link: '/guide/language#go-compatible-assignment-operators', linkText: 'See language syntax' }
+      { title: 'Go assignment operators', description: 'Keep familiar compound assignments and atomic increment/decrement statements in GPP code.', code: `count := 0\ncount += 2\ncount++\ncount--`, link: '/guide/language#go-compatible-assignment-operators', linkText: 'See language syntax' }
     ]
   },
   {
     title: 'Build complete applications',
-    description: 'Bundled Go++ packages connect language features to familiar Go libraries.',
+    description: 'Bundled GPP packages connect language features to familiar Go libraries.',
     features: [
       { title: 'Typed templates', description: 'Compile html/template declarations into typed execution functions, with layouts and dynamic execution.', code: `template Page(title string) {\n    <h1>{{.}}</h1>\n}\n\ntpl.Page(&output, "Hello, Ada")`, link: '/features/templates', linkText: 'Explore templates' },
       { title: 'Embedded assets', description: 'Embed directories as rooted fs.FS values or files as []byte using Go embed directives.', code: `embed (\n    Assets "public/"\n    Schema "schema.sql"\n)\n\nindex, err := fs.ReadFile(Assets, "index.html")`, link: '/features/embedded-assets', linkText: 'Explore embedding' },
@@ -53,12 +53,12 @@ const sections = [
   },
   {
     title: 'Stay in the Go toolchain',
-    description: 'Go++ compiles to Go and brings project, editor, and source-level tools in one CLI.',
+    description: 'GPP compiles to Go and brings project, editor, and source-level tools in one CLI.',
     features: [
-      { title: 'Mixed Go and Go++ builds', description: 'Go++ can call handwritten Go, and Go packages can import generated Go++ packages.', code: `// Go++ calls a native.go function\ngpp run ./app\n\n// Go imports the generated package\ngo run ./consumer`, link: '/features/mixed-go', linkText: 'Explore Go interoperability' },
+      { title: 'Mixed Go and GPP builds', description: 'GPP can call handwritten Go, and Go packages can import generated GPP packages.', code: `// GPP calls a native.go function\ngpp run ./app\n\n// Go imports the generated package\ngo run ./consumer`, link: '/features/mixed-go', linkText: 'Explore Go interoperability' },
       { title: 'One project CLI', description: 'Create, build, run, test, and clean projects while generated Go stays in a hidden workspace.', code: `gpp init hello\ncd hello\ngpp run .\ngpp build -o ./hello .`, link: '/features/project-cli', linkText: 'Explore the CLI' },
       { title: 'Canonical formatter', description: 'Format source consistently, preserve comments, or use check mode in CI.', code: `gpp fmt ./...\ngpp fmt --check ./...\ngpp fmt --stdout main.gpp`, link: '/features/formatter', linkText: 'Explore formatting' },
-      { title: 'Source documentation', description: 'Search Go++ declarations and inspect source-level docs without opening generated Go.', code: `gpp doc gpp/http.Server\ngpp doc string.TrimSpace\ngpp doc --search template`, link: '/features/source-docs', linkText: 'Explore source docs' },
+      { title: 'Source documentation', description: 'Search GPP declarations and inspect source-level docs without opening generated Go.', code: `gpp doc gpp/http.Server\ngpp doc string.TrimSpace\ngpp doc --search template`, link: '/features/source-docs', linkText: 'Explore source docs' },
       { title: 'Language server and diagnostics', description: 'Get diagnostics, completion, hover, navigation, rename, symbols, formatting, and signature help in your editor.', code: `gpp lsp\n\n// feedback uses open .gpp source;\n// no Go backend build on every edit`, link: '/features/language-server', linkText: 'Explore editor support' }
     ]
   }

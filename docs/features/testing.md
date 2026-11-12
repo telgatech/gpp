@@ -1,8 +1,8 @@
 # Suite-based tests
 
-Go++ testing adds discoverable suites, shared setup, tags, priorities, and
+GPP testing adds discoverable suites, shared setup, tags, priorities, and
 assertion helpers while running on Go's testing infrastructure. Existing Go
-tests can remain alongside Go++ suites.
+tests can remain alongside GPP suites.
 
 ## Compare a test function with a suite
 
@@ -10,7 +10,7 @@ A Go test function is a good fit for one focused case. A suite groups related
 checks and common setup:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 class UserTest : test.Suite {
     func NameIsPreserved() {
         user := User(Name: "Ada")

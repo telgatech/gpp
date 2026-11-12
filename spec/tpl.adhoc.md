@@ -1,4 +1,4 @@
-# Go++ `tpl.Execute` Unified Resolution Specification
+# GPP `tpl.Execute` Unified Resolution Specification
 
 ## 1. Purpose
 
@@ -363,7 +363,7 @@ Inline fallback uses:
 html/template
 ```
 
-not a custom Go++ template parser.
+not a custom GPP template parser.
 
 Therefore standard syntax works:
 
@@ -385,7 +385,7 @@ Therefore standard syntax works:
 
 The same rule applies as elsewhere:
 
-> Go++ does not reinvent the template body language.
+> GPP does not reinvent the template body language.
 
 ---
 
@@ -618,7 +618,7 @@ wrong dynamic argument shape
 writer error
 ```
 
-Normal Go++ automatic error promotion applies:
+Normal GPP automatic error promotion applies:
 
 ```gpp id="gdrp2w"
 tpl.Execute(w, key, data)
@@ -1159,4 +1159,4 @@ helpers
 
 The underlying body language remains Go's `html/template`.
 
-Go++ adds typed declarations, lookup, registration, loading, reload, and ergonomic execution around it.
+GPP adds typed declarations, lookup, registration, loading, reload, and ergonomic execution around it.

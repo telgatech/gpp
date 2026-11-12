@@ -1,16 +1,16 @@
 # Source documentation lookup
 
-`gpp doc` searches Go++ declarations and displays their documentation without
+`gpp doc` searches GPP declarations and displays their documentation without
 requiring you to open generated Go. It helps keep API discovery close to the
 source language, including for bundled packages.
 
 ## Compare source lookup commands
 
-Go developers commonly use `go doc` for exported APIs. Go++ provides a
+Go developers commonly use `go doc` for exported APIs. GPP provides a
 parallel command that understands `.gpp` declarations:
 
 ::: code-group
-```sh [Go++]
+```sh [GPP]
 gpp doc gpp/http.Server
 ```
 
@@ -27,5 +27,5 @@ gpp doc --search template
 gpp doc --json gpp/http.Server
 ```
 
-Lookup uses Go++ source documentation, so generated implementation names
+Lookup uses GPP source documentation, so generated implementation names
 remain an internal compiler detail. See [source documentation in the tooling guide](/guide/tooling#source-documentation).

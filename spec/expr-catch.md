@@ -1,4 +1,4 @@
-# Go++ Expression-Level Catch Operator (`??`) Specification
+# GPP Expression-Level Catch Operator (`??`) Specification
 
 ## Goal
 
@@ -12,7 +12,7 @@ expression ?? fallback
 
 Meaning:
 
-> Evaluate the left expression. If it completes successfully, use its value. If evaluating it throws a Go++ error, evaluate and use the right expression instead.
+> Evaluate the left expression. If it completes successfully, use its value. If evaluating it throws a GPP error, evaluate and use the right expression instead.
 
 This is equivalent to a small `try/catch` expression.
 
@@ -84,7 +84,7 @@ evaluate A
 if A completes normally:
     result = A
 
-if A throws a Go++ error:
+if A throws a GPP error:
     evaluate B
     result = B
 ```
@@ -95,7 +95,7 @@ if A throws a Go++ error:
 
 # Catch Scope
 
-`??` catches any Go++ thrown error produced while evaluating the complete left operand.
+`??` catches any GPP thrown error produced while evaluating the complete left operand.
 
 Example:
 
@@ -121,7 +121,7 @@ throws while evaluating the left expression, evaluation stops and `fallback` is 
 
 # Ordinary Go Panics
 
-`??` catches Go++ thrown errors and handles nil from an explicit safe access
+`??` catches GPP thrown errors and handles nil from an explicit safe access
 when the complete left operand is a safe member-access chain.
 
 It must not catch arbitrary Go panics.
@@ -142,7 +142,7 @@ the panic continues normally.
 
 It is not converted into the fallback.
 
-This follows the same distinction as normal Go++ `catch`.
+This follows the same distinction as normal GPP `catch`.
 
 ---
 
@@ -217,7 +217,7 @@ Invalid:
 user := LoadUser(id) ?? 42
 ```
 
-unless ordinary Go++ type rules make the two expressions compatible.
+unless ordinary GPP type rules make the two expressions compatible.
 
 ---
 
@@ -229,7 +229,7 @@ The type of:
 A ?? B
 ```
 
-is determined using ordinary Go++ expression compatibility rules.
+is determined using ordinary GPP expression compatibility rules.
 
 Typically both sides have the same type.
 
@@ -526,7 +526,7 @@ label := person?.Manager?.Name ?? "No manager"
 ```
 
 For any left operand that is not an explicit safe access, `??` retains its
-Go++ thrown-error fallback behavior. Ordinary Go panics, including nil-pointer
+GPP thrown-error fallback behavior. Ordinary Go panics, including nil-pointer
 panics from `person.Name`, continue normally.
 
 ---
@@ -567,7 +567,7 @@ comparison
 
 but more strongly than assignment.
 
-Exact precedence should be chosen consistently with the rest of the Go++ grammar.
+Exact precedence should be chosen consistently with the rest of the GPP grammar.
 
 ---
 
@@ -623,7 +623,7 @@ The exact lowering is implementation-defined.
 
 The important semantics are:
 
-* catch only Go++ thrown-error wrappers
+* catch only GPP thrown-error wrappers
 * re-panic ordinary Go panics
 * evaluate fallback only after a thrown error
 * return the fallback result as the expression value
@@ -769,7 +769,7 @@ panic("index out of range")
 
 or other ordinary Go panics.
 
-Only the internal Go++ thrown-error representation is caught.
+Only the internal GPP thrown-error representation is caught.
 
 ---
 
@@ -805,6 +805,6 @@ A ?? B
 
 =
 evaluate A
-catch any Go++ thrown error from A
+catch any GPP thrown error from A
 use B instead
 ```

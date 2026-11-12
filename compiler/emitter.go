@@ -140,6 +140,7 @@ type constructorContext struct {
 	Templates                  map[string]*TemplateDecl
 	IntrospectionRuntimeImport string
 	Exceptions                 *exceptionContext
+	GeneratedFilePath          string
 	ImportedTypes              map[string]map[string]bool
 	ImportedPackageNames       map[string]string
 	ImportedPackageTypes       map[string]map[string]bool
@@ -357,7 +358,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 
 	declarationsPrefix := localRuntimeImports + embedDefinitions + templateDefinitions
 	if context.Exceptions != nil && !context.Exceptions.RuntimeEmitted {
-		declarationsPrefix += exceptionRuntimeDefinitions()
+		declarationsPrefix += exceptionRuntimeSourceMarker + "\n" + exceptionRuntimeDefinitions()
 		context.Exceptions.RuntimeEmitted = true
 	}
 	if needsFmtImport {
@@ -400,8 +401,40 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 			err,
 		)
 	}
+	result = mapGeneratedSourceLocations(result, context.GeneratedFilePath)
 
 	return result, nil
+}
+
+func mapGeneratedSourceLocations(source []byte, generatedPath string) []byte {
+	lines := bytes.Split(source, []byte("\n"))
+	needsMapping := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(string(line))
+		if trimmed == exceptionRuntimeSourceMarker || strings.HasPrefix(trimmed, exceptionGeneratedLineMarkerPrefix) {
+			needsMapping = true
+			break
+		}
+	}
+	if !needsMapping {
+		return source
+	}
+	if generatedPath == "" {
+		generatedPath = "gpp-generated-exceptions.go"
+	}
+	if absolute, err := filepath.Abs(generatedPath); err == nil {
+		generatedPath = absolute
+	}
+	generatedPath = filepath.ToSlash(generatedPath)
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(string(line))
+		generatedMarker := strings.HasPrefix(trimmed, exceptionGeneratedLineMarkerPrefix) &&
+			(strings.HasSuffix(trimmed, "()") || strings.HasSuffix(trimmed, "();"))
+		if trimmed == exceptionRuntimeSourceMarker || generatedMarker {
+			lines[index] = []byte(fmt.Sprintf("//line %s:%d", generatedPath, index+2))
+		}
+	}
+	return bytes.Join(lines, []byte("\n"))
 }
 
 func emitEmbedDeclarations(embeds []compiledEmbed, body string) (string, string) {
@@ -1018,7 +1051,7 @@ func containsPackageSelector(body, alias string) bool {
 	return false
 }
 
-// emitSourceDirective attaches a generated declaration to its Go++ source
+// emitSourceDirective attaches a generated declaration to its GPP source
 // location. Go's compiler understands these directives and will report
 // backend errors against the original source file instead of the generated
 // workspace.
@@ -1230,7 +1263,7 @@ func emitStructuredMixedGoDecls(file *File, declaration *MixedDecl, context cons
 
 // goDeclNeedsLowering keeps ordinary Go declarations on their existing Go AST
 // all the way to the formatting boundary. A GoDecl can still contain
-// Go++-compatible syntax that Go's parser accepts as ordinary identifiers or
+// GPP-compatible syntax that Go's parser accepts as ordinary identifiers or
 // calls, so only those concrete markers opt it into the compatibility passes.
 func goDeclNeedsLowering(declaration *GoDecl, node ast.Decl, context constructorContext) bool {
 	if declaration != nil && len(declaration.AnnotationPlacements) > 0 {
@@ -1268,7 +1301,7 @@ func goDeclNeedsLowering(declaration *GoDecl, node ast.Decl, context constructor
 
 // goASTNodeNeedsLowering applies the narrow feature check directly to a single
 // Go AST declaration inside a MixedDecl. MixedDecl.Tokens cover the whole
-// chunk and may include Go++ syntax from a neighboring function; using them
+// chunk and may include GPP syntax from a neighboring function; using them
 // here would needlessly route otherwise ordinary Go declarations through every
 // source compatibility pass. Walking the AST also avoids formatting the node
 // merely to lex it again.
@@ -1313,7 +1346,7 @@ func emitStructuredMixedFunctions(file *File, declaration *MixedDecl, context co
 	// parseGoDeclarations succeeds only when the complete mixed chunk is valid
 	// ordinary Go after annotation syntax is masked. In that case every
 	// non-function declaration already has a real go/ast node, so do not recover
-	// it from File.Source. This is especially important for a Go++ function next
+	// it from File.Source. This is especially important for a GPP function next
 	// to Go variables/imports: the function body is lowered structurally while
 	// the surrounding Go declarations stay structurally owned by go/ast.
 	if len(declaration.GoASTDecls) > 0 && declaration.GoASTFileSet != nil {
@@ -1625,7 +1658,7 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 		return "", err
 	}
 	// Overload resolution in a top-level function needs the function's
-	// parameter types to distinguish Go++ class receivers from unrelated Go
+	// parameter types to distinguish GPP class receivers from unrelated Go
 	// selectors (for example, ctx.Text versus ResponseWriter.Write).
 	overloadContext := context.Overloads
 	overloadContext.LocalTypes = parameterTypeMapFromNodes(function.Method.ParameterAST)
@@ -2067,7 +2100,10 @@ func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentN
 		fmt.Fprintf(out, " %s", result)
 	}
 	out.WriteString(" {\n")
-	fmt.Fprintf(out, "\tthis.%s.GppDynamicObject = this\n", fieldName)
+	out.WriteString("\tif this.GppDynamicObject == nil {\n")
+	out.WriteString("\t\tthis.GppDynamicObject = this\n")
+	out.WriteString("\t}\n")
+	fmt.Fprintf(out, "\tthis.%s.GppDynamicObject = this.GppDynamicObject\n", fieldName)
 	methodTypeArguments := ""
 	if len(typeParameters) > 0 {
 		names := make([]string, 0, len(typeParameters))
@@ -2329,7 +2365,7 @@ func staticMethodGoName(class *ClassDecl, method Method) string {
 	return prefix + class.Name + "_" + methodOutputName(method)
 }
 
-func isExportedGoPlusName(name string) bool {
+func isExportedGPPName(name string) bool {
 	return name != "" && name[0] >= 'A' && name[0] <= 'Z'
 }
 
@@ -4139,7 +4175,7 @@ func classesInFile(file *File) map[string]*ClassDecl {
 	return classes
 }
 
-// transformConstructors lowers Go++ class calls into Go struct literals.
+// transformConstructors lowers GPP class calls into Go struct literals.
 // Positional arguments use the class field order; named arguments use the
 // field names written by the caller.
 func transformConstructors(src string, context constructorContext) (string, error) {
@@ -4369,7 +4405,7 @@ func collectConstructorCalls(expression ExprNode, context constructorContext, re
 
 // collectConstructorCallsFromTokens handles a syntax-preserving expression
 // fallback without converting it back into source text. This is needed for a
-// small class of mixed Go/Go++ statements whose header contains more than one
+// small class of mixed Go/GPP statements whose header contains more than one
 // expression; the token stream still gives us exact call boundaries.
 func collectConstructorCallsFromTokens(tokens []Token, context constructorContext, result *[]constructorCallNode) {
 	clean := significantSyntaxTokens(tokens)
@@ -4946,7 +4982,7 @@ func transformInterpolationInFunctionSource(source string, function *FunctionDec
 }
 
 // transformEscapedInterpolationChecked handles escaped template braces that
-// contain no Go++ expression. A body may already have had ordinary
+// contain no GPP expression. A body may already have had ordinary
 // interpolations lowered by the AST pass; this narrow follow-up is safe because
 // it only rewrites tokens that still contain doubled braces.
 func transformEscapedInterpolationChecked(src string) (string, error) {
@@ -5300,7 +5336,7 @@ func expressionTokensNeedSpace(previous, current Token) bool {
 	if fused == "//" || fused == "/*" {
 		return true
 	}
-	for _, operator := range goPlusOperators {
+	for _, operator := range gppOperators {
 		if fused == operator {
 			return true
 		}

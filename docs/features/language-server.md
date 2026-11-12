@@ -1,12 +1,12 @@
 # Language server and diagnostics
 
-The Go++ language server gives editors source-aware feedback while you work in
+The GPP language server gives editors source-aware feedback while you work in
 `.gpp` files. It reports errors at their source location and offers completion,
 hover, navigation, references, rename, formatting, symbols, and signature help.
 
-## Get feedback on Go++ source
+## Get feedback on GPP source
 
-The server analyzes open Go++ documents directly. It keeps unsaved buffers in
+The server analyzes open GPP documents directly. It keeps unsaved buffers in
 memory, so editor feedback does not require a backend Go build on every edit:
 
 ::: code-group
@@ -14,7 +14,7 @@ memory, so editor feedback does not require a backend Go build on every edit:
 ```text [Editor workflow]
 Open app.gpp
 Edit a declaration
-See Go++ diagnostics and completion in that file
+See GPP diagnostics and completion in that file
 ```
 
 ```sh [Start the server]
@@ -24,7 +24,7 @@ gpp lsp
 :::
 
 When an error comes from generated Go, the compiler maps it back to the closest
-available Go++ location.
+available GPP location.
 
 ## Connect an editor
 

@@ -1,4 +1,4 @@
-# The Go++ project CLI
+# The GPP project CLI
 
 The `gpp` command handles common source workflows and delegates dependency
 resolution and final builds to the Go toolchain. Generated Go stays in a
@@ -9,11 +9,11 @@ per-project system-cache workspace so a project can remain organized around
 
 Go projects usually use Go commands directly. `gpp init` creates a starter
 source file and module, and creates an initial Git commit for a new repository.
-Go resolves dependencies when the project is built or run. A Go++ project then
+Go resolves dependencies when the project is built or run. A GPP project then
 uses `gpp` for steps that understand `.gpp` files:
 
 ::: code-group
-```sh [Go++]
+```sh [GPP]
 gpp init hello
 cd hello
 gpp run

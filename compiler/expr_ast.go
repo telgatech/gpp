@@ -240,7 +240,7 @@ func (*LambdaExpr) expr()                 {}
 func (expression *LambdaExpr) Span() Span { return expression.SpanValue }
 
 // TokenExpr is a lossless syntax fallback for an expression that has not yet
-// been given a dedicated Go++ node. It is still structured token data, never
+// been given a dedicated GPP node. It is still structured token data, never
 // executable source text, and is intended to disappear as expression coverage
 // expands.
 type TokenExpr struct {
@@ -698,7 +698,7 @@ func conversionCallOpen(tokens []Token) int {
 	if len(tokens) < 3 {
 		return -1
 	}
-	// `struct(field: value, ...)` is Go++'s inferred anonymous-struct
+	// `struct(field: value, ...)` is GPP's inferred anonymous-struct
 	// constructor. Keep it as an ordinary named CallExpr instead of parsing
 	// `struct` as the start of a Go type conversion.
 	if tokens[0].Text == "struct" && tokens[1].Text == "(" {

@@ -10,7 +10,7 @@ When a nil receiver should produce the member's zero value, `?.` says that
 directly:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 var user *User
 name := user?.Name
 ```

@@ -69,7 +69,7 @@ type MixedDecl struct {
 	GoASTDecls   []ast.Decl
 	GoASTFileSet *token.FileSet
 	Doc          string
-	// Functions are structured metadata for top-level Go++ functions contained
+	// Functions are structured metadata for top-level GPP functions contained
 	// by this source declaration. MixedDecl remains the compatibility container
 	// while transformations still need to see adjacent top-level declarations
 	// together (for example record inference and overload lowering).
@@ -117,8 +117,8 @@ func (declaration *GoDecl) Span() Span {
 	return declaration.SourceSpan
 }
 
-// ValueDecl is a Go++ value declaration whose initializer expressions require
-// Go++ lowering (for example `let user = record(...)` or a `??` expression).
+// ValueDecl is a GPP value declaration whose initializer expressions require
+// GPP lowering (for example `let user = record(...)` or a `??` expression).
 // Its names, type, and values are structured nodes; the token slice is kept
 // only for exact source spans and comments.
 type ValueDecl struct {
@@ -202,7 +202,7 @@ type TemplateDecl struct {
 	Doc          string
 	Annotations  []AnnotationUse
 	// Body remains the opaque template payload; template actions are parsed in
-	// later migration stages. It is not executable Go++ declaration syntax.
+	// later migration stages. It is not executable GPP declaration syntax.
 	Body       string
 	BodyTokens []Token
 	BodySpan   Span

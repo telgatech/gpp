@@ -17,7 +17,7 @@ import (
 func TestInitCreatesFormattedStarter(t *testing.T) {
 	directory := t.TempDir()
 	gitConfig := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(gitConfig, []byte("[user]\n\tname = Go++ Test\n\temail = gpp-test@example.com\n"), 0644); err != nil {
+	if err := os.WriteFile(gitConfig, []byte("[user]\n\tname = GPP Test\n\temail = gpp-test@example.com\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", gitConfig)
@@ -122,7 +122,7 @@ func TestCopyNativeGoFilesRefreshesPriorCopies(t *testing.T) {
 func TestInitDoesNotCreateNestedGitRepository(t *testing.T) {
 	root := t.TempDir()
 	gitConfig := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(gitConfig, []byte("[user]\n\tname = Go++ Test\n\temail = gpp-test@example.com\n"), 0644); err != nil {
+	if err := os.WriteFile(gitConfig, []byte("[user]\n\tname = GPP Test\n\temail = gpp-test@example.com\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", gitConfig)
@@ -224,7 +224,7 @@ func main() { fmt.Println(os.Args[1]) }
 	}
 }
 
-func TestRunAcceptsGoDirectoryWithoutGoPlusSources(t *testing.T) {
+func TestRunAcceptsGoDirectoryWithoutGPPSources(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("GPP_CACHE", t.TempDir())
 	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte("module godirectorytest\n\ngo 1.23\n"), 0644); err != nil {

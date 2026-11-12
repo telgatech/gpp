@@ -1,17 +1,17 @@
 # Classes
 
-Go++ classes bring fields and methods into one declaration. They are useful
+GPP classes bring fields and methods into one declaration. They are useful
 when a value has behavior that belongs with its state, such as a domain model,
 service, or application component. A class compiles to Go data structures and
 methods, so it stays connected to the Go packages and runtime around it.
 
 ## Compare a struct with a class
 
-Go uses separate declarations for a struct and its methods. Go++ puts those
+Go uses separate declarations for a struct and its methods. GPP puts those
 methods in the class declaration and makes the receiver available as `this`:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 class User {
     Name string
 
@@ -98,7 +98,7 @@ class type arguments supply the types used by its fields and ordinary instance
 methods.
 
 An instance method may also declare its own type parameters, separate from
-those on its class. Go++ infers method type arguments from arguments when
+those on its class. GPP infers method type arguments from arguments when
 possible, or you can write them explicitly:
 
 ```go
@@ -142,10 +142,10 @@ class User {
 
 ## Access: public, private, and protected
 
-Go++ uses member names to express access; these are conventions enforced by
+GPP uses member names to express access; these are conventions enforced by
 the compiler, not declaration keywords. It follows Go's familiar
 capitalization convention: names beginning with an uppercase letter are
-exported, while lowercase names are unexported. Go++ makes lowercase class
+exported, while lowercase names are unexported. GPP makes lowercase class
 members private to their declaring class, and uses `_` as an additional
 marker for subclass-only protected members.
 
@@ -203,7 +203,7 @@ for the complete rules.
 
 ## Construct values
 
-Go++ offers positional and named class construction. These constructor calls
+GPP offers positional and named class construction. These constructor calls
 return pointers to mutable class instances. Positional construction follows
 declared field order; named construction can list fields in any order and makes
 call sites easier to scan when a class has several fields:
@@ -219,7 +219,7 @@ fmt.Println(second.Greeting())
 This pointer result is specific to classes. Constructor-style calls for named
 structs return struct values; see [named struct construction](./structs#declare-and-construct-named-structs).
 
-Go++ checks the class fields and constructor argument count while compiling.
+GPP checks the class fields and constructor argument count while compiling.
 Named fields can appear in any order; positional construction follows field
 order. A call cannot mix positional and named arguments. Ordinary Go composite
 literals remain available for interoperability and produce ordinary Go
@@ -278,7 +278,7 @@ person := Person(" Ada ") // init runs after Name has been assigned
 
 An `init()` method may return an `error` when the values are invalid.
 Construction then returns `(*Person, error)`. If the caller omits the trailing
-error, Go++ promotes it to an exception:
+error, GPP promotes it to an exception:
 
 ```go
 class Person {
@@ -295,7 +295,7 @@ class Person {
 person := Person(inputName) // a non-nil init error is promoted
 ```
 
-The hook applies to Go++ constructor-style calls such as `Person(...)`.
+The hook applies to GPP constructor-style calls such as `Person(...)`.
 Ordinary Go composite literals such as `Person{Name: inputName}` remain
 unchanged and bypass it. An initializer takes no parameters and returns either
 nothing or one error-compatible result. A class may declare only one `init()`.
@@ -312,7 +312,7 @@ An initializer fits work every instance should share. A builder solves a
 different problem: it lets callers assemble a more complicated value in
 stages, particularly when it has many optional fields or dependent options.
 
-A Go++ builder API might look like this:
+A GPP builder API might look like this:
 
 ```go
 request := NewRequestBuilder().
@@ -325,7 +325,7 @@ request := NewRequestBuilder().
 `Build()` can validate combinations of options and return an error. An
 `init()` hook could still protect class invariants across construction paths;
 a builder is useful on its own when incremental setup is the main need. This
-example shows the familiar builder pattern, not a built-in Go++ API. It can
+example shows the familiar builder pattern, not a built-in GPP API. It can
 already be implemented using ordinary classes and methods.
 
 ## Put creation rules beside the type
@@ -349,7 +349,7 @@ guest := User.Guest()
 
 Use a class when behavior and state form one concept or when you want to extend
 that concept through inheritance and polymorphism. For simple data transfer,
-Go++ also supports anonymous [structs](/features/structs), and ordinary Go
+GPP also supports anonymous [structs](/features/structs), and ordinary Go
 structs remain fully usable.
 
 Continue with [polymorphism](/features/polymorphism),

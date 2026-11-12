@@ -1,7 +1,7 @@
 # Compiler architecture
 
-Go++ uses a dedicated frontend because its syntax extends Go. The compiler
-parses Go++ constructs into typed AST nodes, transforms those nodes into Go
+GPP uses a dedicated frontend because its syntax extends Go. The compiler
+parses GPP constructs into typed AST nodes, transforms those nodes into Go
 AST where possible, and emits ordinary Go for the final toolchain.
 
 ## The pipeline
@@ -9,9 +9,9 @@ AST where possible, and emits ordinary Go for the final toolchain.
 ```text
 source .gpp
     ↓
-lossless lexer and Go++ parser
+lossless lexer and GPP parser
     ↓
-typed Go++ AST with source spans
+typed GPP AST with source spans
     ↓
 semantic analysis and feature lowering
     ↓
@@ -27,8 +27,8 @@ documentation.
 ## Why not patch the Go compiler?
 
 Go’s compiler internals are not a stable extension API, and its parser rejects
-Go++ syntax before an extension could transform it. A dedicated frontend lets
-Go++ evolve its syntax while preserving the important interoperability point:
+GPP syntax before an extension could transform it. A dedicated frontend lets
+GPP evolve its syntax while preserving the important interoperability point:
 the output is ordinary Go.
 
 ## Source fidelity
@@ -36,7 +36,7 @@ the output is ordinary Go.
 Executable syntax is represented structurally. Source text is retained only
 where exact text is meaningful, such as comments, raw strings, templates,
 embedded files, and diagnostics. This keeps transformations composable and
-lets tooling report locations in the original Go++ source.
+lets tooling report locations in the original GPP source.
 
 Read the [full AST specification](./specifications/compiler.ast) for the
 invariants that guide the implementation.

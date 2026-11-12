@@ -1,9 +1,9 @@
-# Generic Go++ Classes and Shared Type Analysis
+# Generic GPP Classes and Shared Type Analysis
 
 ## Status
 
 Generic classes and concrete generic instance methods are supported end to
-end. Go++ classes can declare Go type parameters, instance methods can use
+end. GPP classes can declare Go type parameters, instance methods can use
 them, and methods may declare their own type parameters. Constructor calls can
 instantiate classes with explicit type arguments. Generated Go is checked by
 the Go compiler.
@@ -16,7 +16,7 @@ The feature must:
 * use type parameters in fields, methods, constructors, and nested types;
 * instantiate as ordinary Go generic types;
 * preserve Go's type identity, constraint, and assignability rules;
-* work with native Go generic types and Go++ generic classes in the same
+* work with native Go generic types and GPP generic classes in the same
   expressions; and
 * expose one compiler type model to semantic validation, lowering, templates,
   diagnostics, and the language server.
@@ -50,7 +50,7 @@ class Entry[K comparable, V] {
 }
 ```
 
-Go++ lowers an omitted constraint to `any` in generated Go, where Go syntax
+GPP lowers an omitted constraint to `any` in generated Go, where Go syntax
 requires a constraint for every type parameter. Explicit constraints are
 checked using Go's type rules. A type parameter may appear in
 field types, method parameters and results, nested pointer/slice/map/array
@@ -78,11 +78,11 @@ func main() {
 ```
 
 The method's type parameters are separate from any parameters on its class.
-Go++ requires Go 1.27 or newer for this feature and generated modules declare
+GPP requires Go 1.27 or newer for this feature and generated modules declare
 `go 1.27`; Go 1.27 introduced generic methods in the Go language. Generic free
 functions, generic static methods, and generic extension methods remain
 supported as well. Generic methods cannot be declared by interface methods,
-following Go's method-set rules. For the same reason, Go++'s generated
+following Go's method-set rules. For the same reason, GPP's generated
 polymorphic class interfaces do not include generic methods: they are
 available through concrete class values, but cannot be called through an
 interface-dispatched base-class value.
@@ -150,14 +150,14 @@ conflict and qualification rules continue to apply after substitution.
 
 ## Shared type analysis
 
-The compiler must maintain a canonical semantic type representation for Go++
+The compiler must maintain a canonical semantic type representation for GPP
 and Go expressions. Compiler passes must query this shared representation
 rather than independently guessing types from source strings.
 
 The type model must support:
 
 * Go built-in, imported, aliased, and instantiated generic types;
-* Go++ classes, including generic declarations and instantiated classes;
+* GPP classes, including generic declarations and instantiated classes;
 * type-parameter scopes and substitution through nested type expressions;
 * fields, methods, inherited members, pointer/value method sets, and generic
   function signatures;
@@ -166,7 +166,7 @@ The type model must support:
 * unknown types as an explicit result, without guessing a concrete type.
 
 Native Go package and instantiated-type information should use `go/types`.
-Go++ declarations must contribute equivalent semantic information before code
+GPP declarations must contribute equivalent semantic information before code
 generation. The model must be available to constructor lowering, overload and
 extension resolution, lambda inference, safe access, template checking, and
 LSP diagnostics. Consumers may add feature-specific rules but must not create
@@ -191,16 +191,16 @@ func (this *Box[T]) Get() T {
 }
 ```
 
-Go code must be able to import and use instantiated Go++ generic classes. Go++
+Go code must be able to import and use instantiated GPP generic classes. GPP
 code must be able to use imported Go generic types and functions. Generic class
-types must not require reflection or a Go++ runtime representation.
+types must not require reflection or a GPP runtime representation.
 
 ## Diagnostics
 
 Diagnostics for malformed declarations, unknown type parameters, invalid type
 arguments, constraint failures, and incompatible constructor fields must:
 
-* identify the relevant Go++ source file and line;
+* identify the relevant GPP source file and line;
 * name the generic declaration or instantiation involved; and
 * preserve the underlying Go type-checking detail when it adds useful context.
 
@@ -242,7 +242,7 @@ The implementation is ready when:
 5. Generic parent fields and methods resolve after substitution.
 6. Invalid type arguments, constraints, constructors, and members produce
    source-located diagnostics in both CLI and LSP analysis.
-7. Imported native Go generics and Go++ generic classes interoperate in the
+7. Imported native Go generics and GPP generic classes interoperate in the
    same program.
 8. Fine-grained compiler tests cover declarations, substitutions, constraints,
    constructors, inheritance, overloads, extensions, lambdas, and templates.

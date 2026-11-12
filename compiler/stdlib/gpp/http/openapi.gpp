@@ -316,7 +316,7 @@ func gppBuildOpenAPIDocument(app any, descriptor any, prefix string) ([]byte, er
 
 	name := gppOpenAPIDescriptorName(descriptor)
 	if name == "" {
-		name = "Go++"
+		name = "GPP"
 	}
 	document := map[string]any{
 		"openapi": "3.0.3",
