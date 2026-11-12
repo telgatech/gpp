@@ -15,7 +15,7 @@ import (
 
 // directFunctionSource emits a structured function without recovering its
 // executable body from File.Source. It is deliberately conservative: a body
-// that needs a Go++ semantic pass returns handled=false and remains on the
+// that needs a GPP semantic pass returns handled=false and remains on the
 // established lowering pipeline.
 func directFunctionSource(function *FunctionDecl, context constructorContext) (string, bool, error) {
 	if function == nil || function.Method.BodyAST == nil || !directSignatureSafe(function.Method) {
@@ -142,7 +142,7 @@ func directExtensionMethodSource(extension extensionMethod, context constructorC
 // compatibility rewriters is an unnecessary AST-to-source boundary.
 //
 // Keep this path conservative. Record-shaped declarations and declarations
-// whose type still needs a Go++-specific rewrite continue through the source
+// whose type still needs a GPP-specific rewrite continue through the source
 // fallback until their type lowering is structural too.
 func directValueDeclSource(declaration *ValueDecl, context constructorContext) (string, bool, error) {
 	if declaration == nil || len(declaration.Names) == 0 || len(declaration.Values) == 0 {
@@ -276,7 +276,7 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 	// Normalize expression-level constructs before exception promotion. A
 	// selector such as Enum.From(...) can become a generated Go call during
 	// this pass; promotion must inspect that lowered call rather than the
-	// original Go++ selector and miss its multi-result error ABI. Keep class
+	// original GPP selector and miss its multi-result error ABI. Keep class
 	// constructor calls intact until promotion has seen their initializer ABI.
 	bodyContext.DeferConstructorLowering = true
 	if err := lowerExceptionBlockNodes(bodyAST, bodyContext); err != nil {
@@ -317,7 +317,7 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		return body, true, nil
 	}
 
-	// Lower expression-level Go++ constructs structurally even when the body
+	// Lower expression-level GPP constructs structurally even when the body
 	// has no try/throw statements. This covers coalescing, class construction,
 	// and simple extension calls without first rendering the body to source.
 	if err := lowerExceptionBlockNodes(bodyAST, bodyContext); err != nil {
@@ -1118,7 +1118,7 @@ func directExtensionParameterTypeNode(typeNode TypeNode, context constructorCont
 	return &NamedType{Parts: []string{"Gpp" + target.Class.Name}}
 }
 
-// directBlockSafe rejects syntax whose meaning depends on a Go++ lowering
+// directBlockSafe rejects syntax whose meaning depends on a GPP lowering
 // pass. Token fallbacks and comments are rejected rather than silently lost.
 func directBlockSafe(block *BlockStmt, context constructorContext) bool {
 	if block == nil {
@@ -1271,7 +1271,7 @@ func directExpressionSafe(expression ExprNode, context constructorContext) bool 
 			}
 		}
 		if name, ok := value.Callee.(*NameExpr); ok && isAnonymousStructCall(name.Name) {
-			// Record calls are Go++ syntax and must be lowered to a generated
+			// Record calls are GPP syntax and must be lowered to a generated
 			// structural type before direct Go AST emission.
 			return false
 		}

@@ -49,7 +49,7 @@ type Token struct {
 	Span Span
 }
 
-var goPlusKeywords = map[string]bool{
+var gppKeywords = map[string]bool{
 	"break": true, "case": true, "catch": true, "class": true,
 	"const": true, "continue": true, "defer": true, "default": true,
 	"else": true, "enum": true, "extend": true, "fallthrough": true,
@@ -62,12 +62,12 @@ var goPlusKeywords = map[string]bool{
 	"this": true, "true": true, "false": true, "nil": true,
 }
 
-// IsKeyword reports whether word is reserved by Go++ and cannot be used as an
+// IsKeyword reports whether word is reserved by GPP and cannot be used as an
 // identifier in source code. Tooling uses this to validate rename targets with
 // the same keyword set as the lexer.
-func IsKeyword(word string) bool { return goPlusKeywords[word] }
+func IsKeyword(word string) bool { return gppKeywords[word] }
 
-var goPlusOperators = []string{
+var gppOperators = []string{
 	"<<=", ">>=", "&^=", "...", "||=", "??=", "===", "!==",
 	":=", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.",
 	"++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
@@ -174,7 +174,7 @@ func LexSource(filename, source string) ([]Token, error) {
 				index += width
 			}
 			kind := TokenIdentifier
-			if goPlusKeywords[source[start:index]] {
+			if gppKeywords[source[start:index]] {
 				kind = TokenKeyword
 			}
 			add(kind, start, index)
@@ -191,7 +191,7 @@ func LexSource(filename, source string) ([]Token, error) {
 		}
 
 		matchedOperator := ""
-		for _, operator := range goPlusOperators {
+		for _, operator := range gppOperators {
 			if len(operator) > len(matchedOperator) && index+len(operator) <= len(source) && source[index:index+len(operator)] == operator {
 				matchedOperator = operator
 			}
@@ -267,7 +267,7 @@ func valueDeclTokens(declaration *ValueDecl) []Token {
 	return declaration.Tokens
 }
 
-// valueDeclASTSource renders a Go++ value declaration from its structured
+// valueDeclASTSource renders a GPP value declaration from its structured
 // fields. The declaration's source span remains available for diagnostics,
 // but emission does not need to recover executable syntax from it.
 func valueDeclASTSource(declaration *ValueDecl) (string, error) {

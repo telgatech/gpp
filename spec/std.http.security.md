@@ -1,8 +1,8 @@
-# Go++ Standard Library — Secure-by-Default HTTP Server
+# GPP Standard Library — Secure-by-Default HTTP Server
 
 ## Objective
 
-Improve the existing `http.Server` class in the Go++ standard library so that applications automatically benefit from modern HTTP and browser security protections without requiring developers to understand, configure, or explicitly enable each protection.
+Improve the existing `http.Server` class in the GPP standard library so that applications automatically benefit from modern HTTP and browser security protections without requiring developers to understand, configure, or explicitly enable each protection.
 
 **The guiding principle: application developers should write application logic, not HTTP security infrastructure.**
 
@@ -121,7 +121,7 @@ server.start()
 
 Do not introduce mandatory security annotations, middleware registration, configuration files, or new initialization steps.
 
-Provide a small, coherent opt-out or customization interface for exceptional cases, following existing Go++ standard-library conventions.
+Provide a small, coherent opt-out or customization interface for exceptional cases, following existing GPP standard-library conventions.
 
 Avoid exposing dozens of independent configuration options unless genuinely necessary.
 
@@ -177,4 +177,4 @@ Then implement the agreed design in the existing codebase.
 
 Prefer substantive, well-tested improvements over an extensive but fragile collection of security features.
 
-**Success criterion: a developer using Go++ `http.Server` receives a strong, maintainable baseline of HTTP security protections without writing a single line of security configuration.**
+**Success criterion: a developer using GPP `http.Server` receives a strong, maintainable baseline of HTTP security protections without writing a single line of security configuration.**

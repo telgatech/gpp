@@ -56,7 +56,7 @@ func (s *server) nativeGoExternalHover(state *fileState, name string, offset int
 	} else {
 		object = s.nativeGoImportedObjectAt(state, name, offset)
 		if object == nil {
-			object = s.nativeGoGoPlusObjectAt(state, name, offset)
+			object = s.nativeGoGPPObjectAt(state, name, offset)
 		}
 	}
 	if object == nil || object.Pkg() == nil {
@@ -188,7 +188,7 @@ func (s *server) nativeGoImportedDefinition(state *fileState, name string, offse
 	}
 	object := s.nativeGoImportedObjectAt(state, name, offset)
 	if object == nil {
-		object = s.nativeGoGoPlusObjectAt(state, name, offset)
+		object = s.nativeGoGPPObjectAt(state, name, offset)
 	}
 	return s.nativeGoDefinitionForObject(object)
 }
@@ -302,7 +302,7 @@ func (s *server) nativeGoDefinitionForObject(object types.Object) *Location {
 	return nil
 }
 
-func (s *server) nativeGoGoPlusObjectAt(state *fileState, name string, offset int) types.Object {
+func (s *server) nativeGoGPPObjectAt(state *fileState, name string, offset int) types.Object {
 	if state == nil || state.File == nil || name == "" {
 		return nil
 	}
@@ -323,12 +323,12 @@ func (s *server) nativeGoGoPlusObjectAt(state *fileState, name string, offset in
 	var receiverType types.Type
 	if found && binding.Method != nil {
 		_, initializer := bindingInitializer(binding.Method.BodyAST, binding.Declaration)
-		receiverType = s.nativeGoTypeForGoPlusExpression(state, binding.Method, initializer, 0)
+		receiverType = s.nativeGoTypeForGPPExpression(state, binding.Method, initializer, 0)
 		if receiverType == nil {
-			receiverType = s.nativeGoTypeFromGoPlusTypeName(state, binding.Type)
+			receiverType = s.nativeGoTypeFromGPPTypeName(state, binding.Type)
 		}
 	} else {
-		receiverType = s.nativeGoTypeForGoPlusPackageValue(state, receiver, dot.Span.Start)
+		receiverType = s.nativeGoTypeForGPPPackageValue(state, receiver, dot.Span.Start)
 	}
 	if receiverType == nil {
 		return nil
@@ -337,7 +337,7 @@ func (s *server) nativeGoGoPlusObjectAt(state *fileState, name string, offset in
 	return selected
 }
 
-func (s *server) nativeGoTypeForGoPlusPackageValue(state *fileState, name string, offset int) types.Type {
+func (s *server) nativeGoTypeForGPPPackageValue(state *fileState, name string, offset int) types.Type {
 	if state == nil || state.File == nil || name == "" {
 		return nil
 	}
@@ -354,13 +354,13 @@ func (s *server) nativeGoTypeForGoPlusPackageValue(state *fileState, name string
 			if value.Type != nil {
 				span := value.Type.Span()
 				if span.Start >= 0 && span.End <= len(state.Source) && span.End > span.Start {
-					if receiverType := s.nativeGoTypeFromGoPlusTypeName(state, state.Source[span.Start:span.End]); receiverType != nil {
+					if receiverType := s.nativeGoTypeFromGPPTypeName(state, state.Source[span.Start:span.End]); receiverType != nil {
 						return receiverType
 					}
 				}
 			}
 			if method != nil && index < len(value.Values) {
-				if receiverType := s.nativeGoTypeForGoPlusExpression(state, method, value.Values[index], 0); receiverType != nil {
+				if receiverType := s.nativeGoTypeForGPPExpression(state, method, value.Values[index], 0); receiverType != nil {
 					return receiverType
 				}
 			}
@@ -1095,7 +1095,7 @@ func (s *server) nativeGoMembersForExpression(state *fileState, receiver string,
 	return result
 }
 
-func (s *server) nativeGoMembersForGoPlusExpression(state *fileState, receiver string, dotOffset int) []symbolInfo {
+func (s *server) nativeGoMembersForGPPExpression(state *fileState, receiver string, dotOffset int) []symbolInfo {
 	if state == nil || state.File == nil || receiver == "" || dotOffset <= 0 {
 		return nil
 	}
@@ -1103,12 +1103,12 @@ func (s *server) nativeGoMembersForGoPlusExpression(state *fileState, receiver s
 	var typeOfReceiver types.Type
 	if found && binding.Method != nil {
 		_, initializer := bindingInitializer(binding.Method.BodyAST, binding.Declaration)
-		typeOfReceiver = s.nativeGoTypeForGoPlusExpression(state, binding.Method, initializer, 0)
+		typeOfReceiver = s.nativeGoTypeForGPPExpression(state, binding.Method, initializer, 0)
 		if typeOfReceiver == nil {
-			typeOfReceiver = s.nativeGoTypeFromGoPlusTypeName(state, binding.Type)
+			typeOfReceiver = s.nativeGoTypeFromGPPTypeName(state, binding.Type)
 		}
 	} else {
-		typeOfReceiver = s.nativeGoTypeForGoPlusPackageValue(state, receiver, dotOffset)
+		typeOfReceiver = s.nativeGoTypeForGPPPackageValue(state, receiver, dotOffset)
 	}
 	if typeOfReceiver == nil {
 		return nil
@@ -1169,7 +1169,7 @@ func (s *server) nativeGoMembersForGoPlusExpression(state *fileState, receiver s
 	return result
 }
 
-func (s *server) nativeGoTypeForGoPlusExpression(state *fileState, method *compiler.Method, expression compiler.ExprNode, depth int) types.Type {
+func (s *server) nativeGoTypeForGPPExpression(state *fileState, method *compiler.Method, expression compiler.ExprNode, depth int) types.Type {
 	if expression == nil || depth > 64 {
 		return nil
 	}
@@ -1182,7 +1182,7 @@ func (s *server) nativeGoTypeForGoPlusExpression(state *fileState, method *compi
 		memberOffset := selector.SpanValue.End - len(selector.Name)
 		function, ok := s.nativeGoImportedObjectAt(state, selector.Name, memberOffset).(*types.Func)
 		if !ok {
-			receiverType := s.nativeGoTypeForGoPlusExpression(state, method, selector.Receiver, depth+1)
+			receiverType := s.nativeGoTypeForGPPExpression(state, method, selector.Receiver, depth+1)
 			if receiverType == nil {
 				return nil
 			}
@@ -1203,12 +1203,12 @@ func (s *server) nativeGoTypeForGoPlusExpression(state *fileState, method *compi
 			return nil
 		}
 		_, initializer := bindingInitializer(binding.Method.BodyAST, binding.Declaration)
-		if result := s.nativeGoTypeForGoPlusExpression(state, binding.Method, initializer, depth+1); result != nil {
+		if result := s.nativeGoTypeForGPPExpression(state, binding.Method, initializer, depth+1); result != nil {
 			return result
 		}
-		return s.nativeGoTypeFromGoPlusTypeName(state, binding.Type)
+		return s.nativeGoTypeFromGPPTypeName(state, binding.Type)
 	case *compiler.SelectorExpr:
-		receiverType := s.nativeGoTypeForGoPlusExpression(state, method, value.Receiver, depth+1)
+		receiverType := s.nativeGoTypeForGPPExpression(state, method, value.Receiver, depth+1)
 		if receiverType == nil {
 			return nil
 		}
@@ -1225,12 +1225,12 @@ func (s *server) nativeGoTypeForGoPlusExpression(state *fileState, method *compi
 			}
 		}
 	case *compiler.ParenthesizedExpr:
-		return s.nativeGoTypeForGoPlusExpression(state, method, value.Inner, depth+1)
+		return s.nativeGoTypeForGPPExpression(state, method, value.Inner, depth+1)
 	}
 	return nil
 }
 
-func (s *server) nativeGoTypeFromGoPlusTypeName(state *fileState, typeName string) types.Type {
+func (s *server) nativeGoTypeFromGPPTypeName(state *fileState, typeName string) types.Type {
 	typeName = strings.TrimSpace(typeName)
 	pointer := strings.HasPrefix(typeName, "*")
 	typeName = strings.TrimPrefix(typeName, "*")

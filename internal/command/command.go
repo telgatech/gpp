@@ -111,7 +111,7 @@ func Run(args []string) int {
 
 	// Preserve the original transpiler invocation while the subcommand CLI is
 	// adopted: `gpp file.gpp` and `gpp -module example.com/app file.gpp`.
-	if isGoPlusSource(commandName) || strings.HasPrefix(commandName, "-") {
+	if isGPPSource(commandName) || strings.HasPrefix(commandName, "-") {
 		return runCompile(args)
 	}
 
@@ -120,21 +120,21 @@ func Run(args []string) int {
 }
 
 func printHelp() {
-	fmt.Println("Go++ compiler and toolchain")
+	fmt.Println("GPP compiler and toolchain")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("    gpp <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("    init       create a Go++ project")
-	fmt.Println("    compile    compile Go++ source to Go")
-	fmt.Println("    build      build a Go++ program")
-	fmt.Println("    run        build and run a Go++ program")
+	fmt.Println("    init       create a GPP project")
+	fmt.Println("    compile    compile GPP source to Go")
+	fmt.Println("    build      build a GPP program")
+	fmt.Println("    run        build and run a GPP program")
 	fmt.Println("    clean      remove generated build artifacts")
-	fmt.Println("    fmt        format Go++ source")
+	fmt.Println("    fmt        format GPP source")
 	fmt.Println("    fiximports add imports and resolve package-name clashes")
-	fmt.Println("    test       run Go++ tests")
-	fmt.Println("    doc        show Go++ source documentation")
+	fmt.Println("    test       run GPP tests")
+	fmt.Println("    doc        show GPP source documentation")
 	fmt.Println("    env        show environment information")
 	fmt.Println("    doctor     diagnose the toolchain")
 	fmt.Println("    version    show version information")
@@ -199,8 +199,8 @@ func printCompileFlags() {
 	fmt.Println("  -module path      module path for generated Go code")
 	fmt.Println("  -output directory generated workspace (default: system cache)")
 	fmt.Println("  GPP_CACHE         environment variable for the cache root")
-	fmt.Println("  -no-prelude       disable the implicit Go++ prelude")
-	fmt.Println("  -no-stdlib        disable bundled official Go++ packages")
+	fmt.Println("  -no-prelude       disable the implicit GPP prelude")
+	fmt.Println("  -no-stdlib        disable bundled official GPP packages")
 	fmt.Println("  -warnings         show compiler warnings")
 }
 
@@ -211,18 +211,18 @@ func parseCompileFlags(name string, args []string, allowOutputBinary bool) (comp
 	result := compileFlags{}
 	flags.StringVar(&result.module, "module", "generated", "module path for generated Go code")
 	flags.StringVar(&result.output, "output", "", "directory for generated Go code (defaults to the system cache)")
-	flags.BoolVar(&result.noPrelude, "no-prelude", false, "disable the implicit Go++ prelude")
-	flags.BoolVar(&result.noStdlib, "no-stdlib", false, "disable bundled official Go++ packages")
+	flags.BoolVar(&result.noPrelude, "no-prelude", false, "disable the implicit GPP prelude")
+	flags.BoolVar(&result.noStdlib, "no-stdlib", false, "disable bundled official GPP packages")
 	flags.BoolVar(&result.warnings, "warnings", false, "show compiler warnings")
 	if allowOutputBinary {
 		flags.StringVar(&result.binaryPath, "o", "", "output executable path")
 		flags.BoolVar(&result.emitGo, "emit-go", false, "retain and report generated Go source")
 	}
 	if name == "test" {
-		flags.Var(&result.test.suites, "suite", "select a Go++ test suite (repeatable)")
-		flags.Var(&result.test.tags, "tag", "select a Go++ test tag (repeatable)")
-		flags.StringVar(&result.test.tagsAll, "tags-all", "", "require all comma-separated Go++ tags")
-		flags.StringVar(&result.test.priority, "priority", "", "select Go++ priorities: high,medium,low")
+		flags.Var(&result.test.suites, "suite", "select a GPP test suite (repeatable)")
+		flags.Var(&result.test.tags, "tag", "select a GPP test tag (repeatable)")
+		flags.StringVar(&result.test.tagsAll, "tags-all", "", "require all comma-separated GPP tags")
+		flags.StringVar(&result.test.priority, "priority", "", "select GPP priorities: high,medium,low")
 		flags.StringVar(&result.test.run, "run", "", "select test cases by name")
 		flags.BoolVar(&result.test.list, "list", false, "list discovered tests without running them")
 		flags.BoolVar(&result.test.failFast, "fail-fast", false, "stop after the first failed test phase")
@@ -289,7 +289,7 @@ func runCompile(args []string) int {
 		return code
 	}
 	if len(positional) == 0 {
-		fatalf("no Go++ source files supplied; run `gpp --help` for usage")
+		fatalf("no GPP source files supplied; run `gpp --help` for usage")
 		return 1
 	}
 	sources, err := discoverSources(positional)
@@ -519,7 +519,7 @@ func runTest(args []string) int {
 		goArgs = append(goArgs, "-failfast")
 	}
 	if selection.hasMetadataFilter() {
-		goArgs = append(goArgs, "-run", "^TestGoPP_")
+		goArgs = append(goArgs, "-run", "^TestGPP_")
 	} else if options.test.run != "" {
 		goArgs = append(goArgs, "-run", goRunPattern(options.test.run))
 	}
@@ -582,7 +582,7 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	}
 	if includeTests {
 		if len(selections) != 1 {
-			return state, errors.New("internal error: missing Go++ test selection")
+			return state, errors.New("internal error: missing GPP test selection")
 		}
 		if err := emitTestWrappers(selections[0], options.output); err != nil {
 			return state, err
@@ -598,7 +598,7 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 
 // copyNativeGoFiles keeps uncompiled Go helpers usable beside compiled inputs.
 // The compiler owns the generated workspace, so native files are copied from
-// each source directory unless that file was already compiled by Go++.
+// each source directory unless that file was already compiled by GPP.
 func copyNativeGoFiles(sources []string, output string) error {
 	directories := map[string]bool{}
 	compiledSources := map[string]bool{}
@@ -887,7 +887,7 @@ func discoverTestSelection(sources []string, filters testSelection) (testSelecti
 		}
 	}
 	if (len(filters.tags) > 0 || filters.tagsAll != "" || filters.priority != "" || filters.run != "") && len(result.Cases) == 0 {
-		return testSelectionResult{}, errors.New("no Go++ test cases matched the requested filters")
+		return testSelectionResult{}, errors.New("no GPP test cases matched the requested filters")
 	}
 	result.Suites = suites
 	return result, nil
@@ -921,14 +921,14 @@ func emitTestWrappers(selection testSelectionResult, output string) error {
 		source.WriteString("\t\tprimary := recover()\n")
 		source.WriteString("\t\tvar cleanup any\n")
 		source.WriteString("\t\tfunc() { defer func() { cleanup = recover() }(); teardown() }()\n")
-		source.WriteString("\t\tif primary != nil { if thrown, ok := primary.(interface{ GppThrownError() error }); ok { t.Errorf(\"Go++ test failed: %v\", thrown.GppThrownError()) } else { panic(primary) } }\n")
-		source.WriteString("\t\tif cleanup != nil { if thrown, ok := cleanup.(interface{ GppThrownError() error }); ok { t.Errorf(\"Go++ teardown failed: %v\", thrown.GppThrownError()) } else { panic(cleanup) } }\n")
+		source.WriteString("\t\tif primary != nil { if thrown, ok := primary.(interface{ GppThrownError() error }); ok { t.Errorf(\"GPP test failed: %v\", thrown.GppThrownError()) } else { panic(primary) } }\n")
+		source.WriteString("\t\tif cleanup != nil { if thrown, ok := cleanup.(interface{ GppThrownError() error }); ok { t.Errorf(\"GPP teardown failed: %v\", thrown.GppThrownError()) } else { panic(cleanup) } }\n")
 		source.WriteString("\t}()\n\tsetup()\n\tbody()\n}\n\n")
 		for _, testCase := range cases {
-			// The numeric prefix makes Go's test discovery preserve Go++'s
+			// The numeric prefix makes Go's test discovery preserve GPP's
 			// priority phases even though the underlying runner only sees Go
 			// test functions. High, medium, and low therefore sort as 0, 1, 2.
-			functionName := fmt.Sprintf("TestGoPP_%d_%s_%s_%s", priorityRank(testCase.Priority), testCase.Priority, testCase.Suite, testCase.Method)
+			functionName := fmt.Sprintf("TestGPP_%d_%s_%s_%s", priorityRank(testCase.Priority), testCase.Priority, testCase.Suite, testCase.Method)
 			fmt.Fprintf(&source, "func %s(t *testing.T) {\n", functionName)
 			fmt.Fprintf(&source, "\tsuite := &%s{}\n", testCase.Suite)
 			source.WriteString("\tsuite.Attach(t)\n")
@@ -999,7 +999,7 @@ func listNativeGoTests(directory, packagePattern, run string) ([]string, error) 
 	var tests []string
 	for _, line := range strings.Split(string(output), "\n") {
 		name := strings.TrimSpace(line)
-		if name == "" || strings.HasPrefix(name, "TestGoPP_") {
+		if name == "" || strings.HasPrefix(name, "TestGPP_") {
 			continue
 		}
 		if strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Fuzz") {
@@ -1307,7 +1307,7 @@ func defaultOutputForRoot(root string) (string, error) {
 	}
 	cache, err := gppCacheDirectory()
 	if err != nil {
-		return "", fmt.Errorf("resolve Go++ cache directory: %w", err)
+		return "", fmt.Errorf("resolve GPP cache directory: %w", err)
 	}
 	digest := sha256.Sum256([]byte(filepath.Clean(absoluteRoot)))
 	return filepath.Join(cache, "workspaces", hex.EncodeToString(digest[:12])), nil
@@ -1412,7 +1412,7 @@ func discoverSources(args []string) ([]string, error) {
 			return nil, fmt.Errorf("source path %q: %w", arg, err)
 		}
 		if !info.IsDir() {
-			if !isGoPlusSource(arg) {
+			if !isGPPSource(arg) {
 				return nil, fmt.Errorf("source file %q is not a .gpp or .gpp.tpl file", arg)
 			}
 			absolute, err := filepath.Abs(arg)
@@ -1435,7 +1435,7 @@ func discoverSources(args []string) ([]string, error) {
 				}
 				return nil
 			}
-			if !isGoPlusSource(path) {
+			if !isGPPSource(path) {
 				return nil
 			}
 			absolute, err := filepath.Abs(path)
@@ -1459,12 +1459,12 @@ func discoverSources(args []string) ([]string, error) {
 	return sources, nil
 }
 
-// discoverRunSources accepts Go++ inputs and Go files. For directories that
-// contain Go++ sources, ordinary Go files remain native helpers as in the
+// discoverRunSources accepts GPP inputs and Go files. For directories that
+// contain GPP sources, ordinary Go files remain native helpers as in the
 // mixed-project workflow. A Go-only directory is compiled from its Go files.
 func discoverRunSources(args []string) ([]string, error) {
-	var goPlusSources, goSources, explicitGoSources []string
-	seenGoPlus := map[string]bool{}
+	var gppSources, goSources, explicitGoSources []string
+	seenGPP := map[string]bool{}
 	seenGo := map[string]bool{}
 	add := func(path string, target *[]string, seen map[string]bool) error {
 		absolute, err := filepath.Abs(path)
@@ -1484,8 +1484,8 @@ func discoverRunSources(args []string) ([]string, error) {
 		}
 		if !info.IsDir() {
 			switch {
-			case isGoPlusSource(arg):
-				if err := add(arg, &goPlusSources, seenGoPlus); err != nil {
+			case isGPPSource(arg):
+				if err := add(arg, &gppSources, seenGPP); err != nil {
 					return nil, err
 				}
 			case filepath.Ext(arg) == ".go":
@@ -1512,8 +1512,8 @@ func discoverRunSources(args []string) ([]string, error) {
 				}
 				return nil
 			}
-			if isGoPlusSource(path) {
-				return add(path, &goPlusSources, seenGoPlus)
+			if isGPPSource(path) {
+				return add(path, &gppSources, seenGPP)
 			}
 			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 				return nil
@@ -1528,8 +1528,8 @@ func discoverRunSources(args []string) ([]string, error) {
 			return nil, err
 		}
 	}
-	sources := goPlusSources
-	if len(goPlusSources) == 0 {
+	sources := gppSources
+	if len(gppSources) == 0 {
 		sources = goSources
 	} else if len(explicitGoSources) > 0 {
 		sources = append(sources, explicitGoSources...)
@@ -1551,14 +1551,14 @@ func discoverRunSources(args []string) ([]string, error) {
 }
 
 func isSourcePath(path string) bool {
-	if isGoPlusSource(path) {
+	if isGPPSource(path) {
 		return true
 	}
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-func isGoPlusSource(path string) bool {
+func isGPPSource(path string) bool {
 	return strings.HasSuffix(path, ".gpp") || strings.HasSuffix(path, ".gpp.tpl")
 }
 
@@ -1937,7 +1937,7 @@ func runInit(args []string) int {
 	if err := runGoCommand(absoluteTarget, "mod", "init", modulePath); err != nil {
 		return reportError(err)
 	}
-	const starter = "import \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello from Go++\")\n}\n"
+	const starter = "import \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello from GPP\")\n}\n"
 	if err := os.WriteFile(mainPath, []byte(starter), 0644); err != nil {
 		return reportError(err)
 	}
@@ -2076,7 +2076,7 @@ func runClean(args []string) int {
 					fmt.Printf("cleaned %s\n", output)
 					return 0
 				}
-				return reportError(fmt.Errorf("refusing to clean %q: it is not marked as Go++ compiler output", output))
+				return reportError(fmt.Errorf("refusing to clean %q: it is not marked as GPP compiler output", output))
 			}
 			return reportError(err)
 		}
@@ -2121,7 +2121,7 @@ func runFmt(args []string) int {
 		return reportError(err)
 	}
 	if stdout && len(sources) != 1 {
-		return reportError(fmt.Errorf("--stdout requires exactly one Go++ source file"))
+		return reportError(fmt.Errorf("--stdout requires exactly one GPP source file"))
 	}
 	needsFormatting := []string{}
 	for _, source := range sources {
@@ -2230,7 +2230,7 @@ func runDoctor(args []string) int {
 		}
 		return reportError(errors.New("doctor does not accept arguments"))
 	}
-	fmt.Printf("Go++ %s\n", gppVersion())
+	fmt.Printf("GPP %s\n", gppVersion())
 	failed := false
 	goPath, err := findGo()
 	if err != nil {

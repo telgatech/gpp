@@ -41,7 +41,7 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 
 	if strings.HasPrefix(trimmedLine, "import ") {
 		for _, label := range s.logicalPackageCompletions(strings.TrimSpace(strings.TrimPrefix(trimmedLine, "import "))) {
-			add(CompletionItem{Label: label, Kind: 9, Detail: "Go++ logical package"})
+			add(CompletionItem{Label: label, Kind: 9, Detail: "GPP logical package"})
 		}
 		return sortedCompletionItems(items)
 	}
@@ -119,7 +119,7 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 		for _, info := range s.nativeGoMembersForExpression(state, receiver, offset) {
 			add(completionForSymbol(info.Symbol))
 		}
-		for _, info := range s.nativeGoMembersForGoPlusExpression(state, receiver, offset) {
+		for _, info := range s.nativeGoMembersForGPPExpression(state, receiver, offset) {
 			add(completionForSymbol(info.Symbol))
 		}
 		typeName := s.receiverTypeForExpression(state, receiver, len(selectorPrefix)-1, offset)
@@ -1244,7 +1244,7 @@ func (s *server) receiverTypeForExpression(state *fileState, receiver string, do
 	if typeName := s.expressionType(state, method, expression, 0); typeName != "" {
 		return typeName
 	}
-	if nativeType := s.nativeGoTypeForGoPlusExpression(state, method, expression, 0); nativeType != nil {
+	if nativeType := s.nativeGoTypeForGPPExpression(state, method, expression, 0); nativeType != nil {
 		return types.TypeString(nativeType, func(pkg *types.Package) string {
 			if pkg == nil {
 				return ""
@@ -1379,7 +1379,7 @@ func (s *server) logicalPackageForQualifier(state *fileState, qualifier string) 
 }
 
 // importedPackageForQualifier resolves a selector's package qualifier to the
-// package declaration and directory that its import names. Logical Go++
+// package declaration and directory that its import names. Logical GPP
 // imports use their package name directly; ordinary Go imports are mapped
 // through the workspace module path so same-named declarations in other
 // packages cannot leak into lookup results.
@@ -1452,10 +1452,10 @@ func (s *server) workspacePackageForImport(from *fileState, importPath string) (
 		if relativeDir != "." {
 			candidateImport += "/" + filepath.ToSlash(relativeDir)
 		}
-		// Go++ supports flat source layouts where each .gpp file declares a
+		// GPP supports flat source layouts where each .gpp file declares a
 		// package and imports use the module path plus that package name, even
 		// though the files all live in the module root directory.
-		if relativeDir == "." && isGoPlusFile(candidate.Path) && importPath == modulePath+"/"+candidate.File.Package {
+		if relativeDir == "." && isGPPFile(candidate.Path) && importPath == modulePath+"/"+candidate.File.Package {
 			candidateDir := filepath.Clean(filepath.Dir(candidate.Path))
 			if filepath.Clean(moduleRoot) == filepath.Clean(currentModuleRoot) {
 				return candidate.File.Package, candidateDir, true

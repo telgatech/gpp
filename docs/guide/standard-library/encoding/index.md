@@ -12,7 +12,7 @@ The `Serializable` annotation generates an instance encoder and a typed class de
 
 ::: code-group
 
-```go [Go++]
+```go [GPP]
 class User @{encoding.Serializable} {
 	ID int `json:"id"`
 	Name string `json:"name"`

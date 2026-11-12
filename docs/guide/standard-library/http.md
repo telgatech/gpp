@@ -2,7 +2,7 @@
 
 Starting an HTTP server in Go is easy. Turning it into an application means making a series of connected decisions: route registration, shared request behavior, authentication, static assets and templates, API documentation, TLS, error responses, and graceful termination. Those concerns tend to spread across handlers, middleware stacks, setup functions, and signal code.
 
-`gpp/http` brings much of that application shape into one Go++ server class. Annotations declare routes and server options; lifecycle hooks provide places for app-wide behavior; the package wires the declarations into Go's `net/http` server. You can keep using ordinary Go handlers, middleware, listeners, and libraries when a deployment needs something more specific.
+`gpp/http` brings much of that application shape into one GPP server class. Annotations declare routes and server options; lifecycle hooks provide places for app-wide behavior; the package wires the declarations into Go's `net/http` server. You can keep using ordinary Go handlers, middleware, listeners, and libraries when a deployment needs something more specific.
 
 ## Why use it
 
@@ -17,7 +17,7 @@ The experimental client is provided by [`gpp/exp/http`](./exp-http). The `gpp/ht
 A conventional Go service composes its mux, handler middleware, server, and shutdown path explicitly:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 import http "gpp/http"
 
 class App : http.Server @{
@@ -185,7 +185,7 @@ to choose or inspect binding behavior manually.
 
 ## Routing and request context
 
-Go++ builds on `http.ServeMux` and uses standard method-and-path behavior. Path parameters are declared in the route and read by name. The context also exposes query values and the underlying Go request and response writer:
+GPP builds on `http.ServeMux` and uses standard method-and-path behavior. Path parameters are declared in the route and read by name. The context also exposes query values and the underlying Go request and response writer:
 
 ## Server-Sent Events
 
@@ -285,7 +285,15 @@ class App : http.Server @{http.Prefix("/api")} {
 }
 ```
 
-The context provides `Text`, `JSON`, `Template`, and `Redirect` response helpers. It retains `Request` and `Response` for code that needs the full `net/http` API. `PublicDir` serves matching files from `/`; `Files(path, directory)` mounts a directory under a specific URL prefix. Both are checked before app handlers, while `Prefix(path)` applies a common path prefix to application routes.
+The context provides `Text`, `JSON`, `HTML`, `Respond`, and `Redirect` response helpers. `Respond(status, data)` negotiates HTML or JSON from the request's `Accept` header, so one route can serve a template to browsers and JSON to API clients:
+
+```gpp
+func Profile(ctx *http.Context) error @{http.GET("/profile")} {
+    return ctx.Respond(200, struct(Name: "Ada", Active: true))
+}
+```
+
+`text/html` or `text/*` selects `HTML` using the request path as its template key. JSON is selected when the header is missing, accepts `application/json`, `application/*`, or `*/*`, or gives JSON the higher quality value. JSON wins ties. If neither format is acceptable, `Respond` sends `406 Not Acceptable`. It adds `Vary: Accept` so caches keep the negotiated responses separate. Use `JSON` or `HTML` directly when the route should always return one format. `Context` retains `Request` and `Response` for code that needs the full `net/http` API. `PublicDir` serves matching files from `/`; `Files(path, directory)` mounts a directory under a specific URL prefix. Both are checked before app handlers, while `Prefix(path)` applies a common path prefix to application routes.
 
 ## Mount route modules
 
@@ -309,7 +317,7 @@ The server's `BeforeRequest`, `AfterRequest`, and `Error` hooks also apply to mo
 
 ## Bind a request body into a class
 
-Use a Go++ class as the typed shape for a JSON request. `Context.Bind` decodes the request into an instance:
+Use a GPP class as the typed shape for a JSON request. `Context.Bind` decodes the request into an instance:
 
 ```gpp
 import (
@@ -336,7 +344,7 @@ class App : http.Server {
 }
 ```
 
-`Context.Bind` chooses query binding for `GET` and `HEAD`, JSON binding for JSON request bodies, and form binding for URL encoded or multipart form bodies. JSON and form bodies are limited to 1 MiB. Use `BindQuery`, `BindJSON`, or `BindForm` when a handler should select the source explicitly. Native Go struct targets can use `query:"..."` and `form:"..."` tags; both also honor `json:"..."` as a fallback. Go++ class fields use the lower-camel field name. Repeated values bind to slice fields. Binding errors are returned to the handler, and application validation remains explicit.
+`Context.Bind` chooses query binding for `GET` and `HEAD`, JSON binding for JSON request bodies, and form binding for URL encoded or multipart form bodies. JSON and form bodies are limited to 1 MiB. Use `BindQuery`, `BindJSON`, or `BindForm` when a handler should select the source explicitly. Native Go struct targets can use `query:"..."` and `form:"..."` tags; both also honor `json:"..."` as a fallback. GPP class fields use the lower-camel field name. Repeated values bind to slice fields. Binding errors are returned to the handler, and application validation remains explicit.
 
 For a query endpoint, bind directly into a request class:
 
@@ -448,7 +456,7 @@ The `OAuthLogin` hook receives the normalized identity (and has a token-aware ov
 
 ## Templates and error pages
 
-Templates can be declared in Go++ or loaded from template files. A handler can render one with typed application data:
+Templates can be declared in GPP or loaded from template files. A handler can render one with typed application data:
 
 ```go
 template ProfilePage(user User) {
@@ -468,7 +476,7 @@ class App : http.Server {
 
 ## HTTPS and deployment boundaries
 
-The `IP` annotation configures the TCP bind address, while `Listen(port)` selects the port. `gpp/http` does not currently provide a certificate or TLS annotation. Deployments commonly terminate TLS at a reverse proxy or load balancer. If the Go++ process must serve TLS itself, pass a TLS listener to `Serve`:
+The `IP` annotation configures the TCP bind address, while `Listen(port)` selects the port. `gpp/http` does not currently provide a certificate or TLS annotation. Deployments commonly terminate TLS at a reverse proxy or load balancer. If the GPP process must serve TLS itself, pass a TLS listener to `Serve`:
 
 ```go
 cert := tls.LoadX509KeyPair("server.crt", "server.key")
@@ -480,7 +488,7 @@ secureListener := tls.NewListener(listener, &tls.Config{
 App().Serve(secureListener)
 ```
 
-This keeps certificate provisioning and rotation explicit while still letting the Go++ server assemble routes, middleware, templates, and lifecycle behavior on that listener.
+This keeps certificate provisioning and rotation explicit while still letting the GPP server assemble routes, middleware, templates, and lifecycle behavior on that listener.
 
 ## Graceful termination
 
@@ -540,7 +548,7 @@ Starting this app automatically exposes:
 
 Operation annotations such as `http.Summary`, `http.Description`, `http.Tags`, `http.RequestBody`, and `http.ResponseBody` give Swagger UI useful guidance about each JSON route, its inputs, and its responses. Request and response examples give the UI concrete payloads to display. `http.RequestBody` documents the shape of a body decoded by the handler; it does not bind or decode the request at runtime. Swagger UI turns the generated contract into an interactive **Try it out** page: select an operation, fill in its documented inputs, submit it to the running service, and inspect the response. There is no handwritten JSON/YAML contract to keep synchronized, no manually registered documentation route, and no Swagger client code or assets to install. Custom paths are available through `http.OpenAPI("/spec.json")` and `http.Swagger("/docs")`; Swagger requires OpenAPI to be enabled.
 
-The UI is served locally from the Go++ package, so a service does not need to download its Swagger assets from a CDN at runtime. `Try it out` sends real requests to the running service; it does not mock handler behavior or validate that application logic matches every declared schema. Add the annotations once, and the route inventory, API description, and interactive explorer stay connected without handwritten spec endpoints, browser setup, or bundled UI code that could otherwise grow into hundreds or thousands of lines.
+The UI is served locally from the GPP package, so a service does not need to download its Swagger assets from a CDN at runtime. `Try it out` sends real requests to the running service; it does not mock handler behavior or validate that application logic matches every declared schema. Add the annotations once, and the route inventory, API description, and interactive explorer stay connected without handwritten spec endpoints, browser setup, or bundled UI code that could otherwise grow into hundreds or thousands of lines.
 
 ## Further reading
 

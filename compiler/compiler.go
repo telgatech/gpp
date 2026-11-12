@@ -105,7 +105,7 @@ func CompileFilesWithOptions(files []string, outputDir string, options CompileOp
 }
 
 // CompileProgramWithOptions emits an already parsed program. The program must
-// contain only the Go++ source files supplied by the caller; compiler-owned
+// contain only the GPP source files supplied by the caller; compiler-owned
 // standard library sources are added here just as they are for CompileFiles.
 // This entry point lets editor integrations compile unsaved buffers without
 // writing those buffers over the user's files.
@@ -437,7 +437,7 @@ func generatedOutputNames(files []*File) map[*File]string {
 		result[file] = name
 	}
 
-	// Prefer the conventional basename for Go++ source files. This makes a
+	// Prefer the conventional basename for GPP source files. This makes a
 	// same-basename external template consistently become <base>_tpl.go even
 	// if file discovery happens to return the template first.
 	for _, file := range files {
@@ -476,6 +476,7 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 		if err != nil {
 			return generatedPackageOutput{}, diagnosticAt(file.Name, Span{}, err)
 		}
+		context.GeneratedFilePath = outputPaths[file]
 		context.Records = records
 		context.Introspection = introspection
 		context.Exceptions = exceptions
@@ -1222,7 +1223,7 @@ func ensureGoModuleSums(outputDir, modulePath, version string) error {
 }
 
 func ensureGeneratedMarker(outputDir string) error {
-	return writeFileIfChanged(filepath.Join(outputDir, ".gpp-generated"), []byte("Go++ compiler output\n"), 0644)
+	return writeFileIfChanged(filepath.Join(outputDir, ".gpp-generated"), []byte("GPP compiler output\n"), 0644)
 }
 
 func ensureSharedIntrospectionRuntime(outputDir string) error {

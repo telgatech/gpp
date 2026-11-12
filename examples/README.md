@@ -1,4 +1,4 @@
-# Go++ examples
+# GPP examples
 
 Most standalone `.gpp` files can be compiled with:
 
@@ -19,7 +19,7 @@ The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
 - `assignments.gpp` — arithmetic, bitwise, and shift compound assignments.
-- `foo.gpp` — import and call the companion `foo.bar.gpp` package by its Go++
+- `foo.gpp` — import and call the companion `foo.bar.gpp` package by its GPP
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.
 - `generics.gpp` — generic `Stack[T]`, constrained `Index[K comparable, V]`,
@@ -41,7 +41,7 @@ The examples cover:
   parameters and return values.
 - `introspection.gpp` — runtime class names, parent classes, inherited field
   ownership and access, method and parameter metadata, and annotation lookup.
-- `extension_methods.gpp` — extensions on strings and Go++ classes.
+- `extension_methods.gpp` — extensions on strings and GPP classes.
 - `multi_extension.gpp` — one extension block shared by strings and slices,
   including a generic extension method.
 - `enums.gpp` — typed enums, enum blocks, explicit values, lookup, iteration,
@@ -63,11 +63,11 @@ The examples cover:
 - `sql.gpp` — direct full-SQL access through `gpp/sql`, with typed scalar and
   struct results, the shared `Executor` interface, and queries through both a
   database handle and an active transaction.
-- `prelude.gpp` — implicit slice, string, and map helpers from the Go++ prelude.
+- `prelude.gpp` — implicit slice, string, and map helpers from the GPP prelude.
 - `lambdas.gpp` — expression and block lambdas, contextual typing, explicit
   parameter types, ordinary function arguments, and closure capture.
 - `exceptions.gpp` — automatic trailing-error promotion, `throw`, typed,
-  multi-type, and catch-all handlers, `finally`, custom Go++ errors, and
+  multi-type, and catch-all handlers, `finally`, custom GPP errors, and
   explicit error capture.
 - `cron.gpp` — related annotated jobs grouped on a `cron.Cron` instance,
   explicit startup, context-aware callbacks, and graceful shutdown.
@@ -88,7 +88,7 @@ The examples cover:
   static `tpl.Name` execution, dynamic `tpl.Execute`, path metadata, ad-hoc
   source execution, and registered template functions.
 - `tpl_external.gpp.tpl` — an external template source compiled alongside the
-  Go++ application template example.
+  GPP application template example.
 - `serialization.gpp` — opt-in JSON/YAML/GOB serialization, generated class
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
@@ -97,8 +97,8 @@ The examples cover:
   multiline strings, and escaped delimiters for generated template source.
 - `regex.gpp` — explicit string-to-regex compilation, native regexp methods,
   direct chaining, and ordinary invalid-pattern error handling.
-- `mixed/` — side-by-side compilation in both directions: Go++ calling
-  handwritten Go functions and handwritten Go importing generated Go++ code.
+- `mixed/` — side-by-side compilation in both directions: GPP calling
+  handwritten Go functions and handwritten Go importing generated GPP code.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
   annotated HTTP and WebSocket handlers, path parameters, status-aware JSON/text/template responses,
   custom error templates, request context values, lifecycle hooks, graceful

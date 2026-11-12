@@ -12,7 +12,7 @@ add a WebSocket class hierarchy or a separate connection lifecycle framework.
 - Keep ordinary HTTP handler signatures and server or mountable route classes.
 - Give each connection handler its own invocation and local state.
 - Delegate the WebSocket handshake and framing to `golang.org/x/net/websocket`.
-- Keep the initial Go++ connection API small.
+- Keep the initial GPP connection API small.
 
 ## Non-goals
 

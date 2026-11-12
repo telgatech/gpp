@@ -3,17 +3,17 @@
 Application classes often combine several independent concerns. An invoice
 may need an identity, audit timestamps, and soft deletion; a user account may
 need identity, permissions, and audit history. Copying each concern's fields
-and methods into every class duplicates logic. Go++ lets a class inherit from
+and methods into every class duplicates logic. GPP lets a class inherit from
 several parents so those capabilities can be defined once and reused.
 
-## Compare Go embedding with Go++ multiple inheritance
+## Compare Go embedding with GPP multiple inheritance
 
-Go commonly combines data and behavior by embedding structs. Go++ keeps that
+Go commonly combines data and behavior by embedding structs. GPP keeps that
 familiar model and adds class inheritance, including class-level
 polymorphism:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 class Identified {
     ID int
 }
@@ -46,7 +46,7 @@ type Invoice struct {
 ```
 :::
 
-The Go form is concise for composing data. Go++ lets the child class reuse
+The Go form is concise for composing data. GPP lets the child class reuse
 parent methods as well as fields and participate in its class inheritance and
 polymorphic dispatch model. Choose interfaces when a type only needs to satisfy
 a behavior contract and does not need the parent's implementation or state.
@@ -136,7 +136,7 @@ A child inherits its parents' instance methods. Declare a method with the
 same name and parameter signature in the child to override the inherited
 implementation. Calls through a parent-typed value still dispatch to the
 child's override; parent-qualified calls select the parent implementation.
-Go++ has no separate `override` keyword.
+GPP has no separate `override` keyword.
 
 Lowercase fields and methods are private to the class that declares them.
 Children do not inherit them, and the compiler rejects direct access from a
@@ -194,7 +194,7 @@ class User : Model {}
 Annotations belong to declarations. If a child overrides a hook and the
 override should also stay out of completions, annotate that child method too.
 An override does not let the child call an inherited hook directly: only the
-class that first declares a hook may call it from ordinary Go++ code. Framework
+class that first declares a hook may call it from ordinary GPP code. Framework
 dispatch remains allowed, and normal method dispatch still selects a child's
 override.
 See the [`gpp/std` guide](/guide/standard-library/std#hook) for details.
@@ -203,7 +203,7 @@ See the [`gpp/std` guide](/guide/standard-library/std#hook) for details.
 
 Independent capabilities can use the same field name for different values.
 For example, a payment may have an internal database ID and a provider's
-external ID. Go++ does not silently choose one parent or depend on declaration
+external ID. GPP does not silently choose one parent or depend on declaration
 order; qualify the field at construction and access:
 
 ```go

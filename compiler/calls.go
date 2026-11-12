@@ -1055,7 +1055,7 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 					signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][function.Name]...)
 				}
 			} else if _, isClass := context.Targets[receiver.Name]; isClass {
-				// Static Go++ methods are emitted as package functions. A class
+				// Static GPP methods are emitted as package functions. A class
 				// receiver must therefore be lowered to that function instead of
 				// being emitted as a Go method selector (Class.Method).
 				staticCall = true
@@ -1925,7 +1925,7 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 			}
 		} else {
 			// Calls on constructed values and other chained expressions can have
-			// Go++ class methods too. Resolve their static receiver type so method
+			// GPP class methods too. Resolve their static receiver type so method
 			// defaults are applied just as they are for named variables.
 			receiverType := strings.TrimPrefix(strings.TrimSpace(staticExpressionTypeNode(function.Receiver, context, context.CurrentParameterTypes)), "*")
 			signatures := context.ClassMethodSignatures[receiverType][function.Name]

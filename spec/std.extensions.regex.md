@@ -1,8 +1,8 @@
-# Go++ String Regex Compilation Add-on Specification
+# GPP String Regex Compilation Add-on Specification
 
 ## 1. Overview
 
-Go++ adds one small regex-oriented extension to `string`:
+GPP adds one small regex-oriented extension to `string`:
 
 ```gpp id="i0qg4x"
 extend string {
@@ -16,7 +16,7 @@ Its purpose is to turn regex source text into Go's native:
 *regexp.Regexp
 ```
 
-while preserving Go++'s normal automatic error propagation.
+while preserving GPP's normal automatic error propagation.
 
 Example:
 
@@ -51,7 +51,7 @@ pattern.FindAllString(value, -1)
 pattern.ReplaceAllString(value, "#")
 ```
 
-Go++ provides one conversion-oriented operation:
+GPP provides one conversion-oriented operation:
 
 ```gpp id="5dythg"
 pattern.CompileRegex()
@@ -109,7 +109,7 @@ matched := "^[0-9]+$".CompileRegex().MatchString(value)
 
 This is intentionally valid.
 
-Automatic trailing-error promotion means an invalid pattern propagates according to ordinary Go++ error behavior.
+Automatic trailing-error promotion means an invalid pattern propagates according to ordinary GPP error behavior.
 
 ---
 
@@ -123,7 +123,7 @@ Therefore:
 re := pattern.CompileRegex()
 ```
 
-uses Go++'s normal automatic error promotion.
+uses GPP's normal automatic error promotion.
 
 Conceptually this replaces:
 
@@ -136,7 +136,7 @@ if err != nil {
 
 without changing the underlying error semantics.
 
-This follows the existing standard-extension rule that wrappers returning trailing errors retain those signatures so Go++ error promotion can apply naturally.
+This follows the existing standard-extension rule that wrappers returning trailing errors retain those signatures so GPP error promotion can apply naturally.
 
 ---
 
@@ -164,7 +164,7 @@ The return type is exactly:
 *regexp.Regexp
 ```
 
-There is no Go++ regex wrapper type.
+There is no GPP regex wrapper type.
 
 This preserves the standard-type extension principle that conveniences do not introduce replacement runtime types.
 
@@ -187,7 +187,7 @@ re.Split(value, -1)
 re.FindStringSubmatch(value)
 ```
 
-Go++ does not duplicate these methods onto `string`.
+GPP does not duplicate these methods onto `string`.
 
 ---
 
@@ -207,7 +207,7 @@ not:
 pattern.CompileRegex().Match(value)
 ```
 
-Go++ should not rename native regex operations merely to create a different style.
+GPP should not rename native regex operations merely to create a different style.
 
 This follows the standard-extension rule to preserve Go terminology where an equivalent standard-library concept already exists.
 
@@ -289,7 +289,7 @@ for value in values {
 
 because the latter recompiles the expression repeatedly unless the compiler/runtime can prove and optimize otherwise.
 
-Go++ should not silently introduce hidden regex caching in v1.
+GPP should not silently introduce hidden regex caching in v1.
 
 ---
 
@@ -340,7 +340,7 @@ V1 should not add:
 pattern.MustCompileRegex()
 ```
 
-Go++ already makes the safe form concise:
+GPP already makes the safe form concise:
 
 ```gpp id="lsmhep"
 re := pattern.CompileRegex()
@@ -362,7 +362,7 @@ re := "[abc".CompileRegex()
 
 `regexp.Compile` returns an error.
 
-That error follows ordinary Go++ propagation rules.
+That error follows ordinary GPP propagation rules.
 
 The extension must not:
 
@@ -378,7 +378,7 @@ panic
 
 # 18. `??` Compatibility
 
-Because compilation participates in Go++'s normal error model, expression fallback may be used where appropriate:
+Because compilation participates in GPP's normal error model, expression fallback may be used where appropriate:
 
 ```gpp id="y8fr7d"
 re := userPattern.CompileRegex() ?? defaultPattern.CompileRegex()
@@ -392,7 +392,7 @@ The regex extension introduces no special error behavior.
 
 # 19. `try/catch` Compatibility
 
-Regex compilation errors are ordinary Go errors and therefore participate in normal Go++ error handling:
+Regex compilation errors are ordinary Go errors and therefore participate in normal GPP error handling:
 
 ```gpp id="76wo91"
 try {
@@ -419,7 +419,7 @@ extend string {
 }
 ```
 
-This should remain ordinary Go++ source where practical.
+This should remain ordinary GPP source where practical.
 
 ---
 
@@ -447,9 +447,9 @@ The standard extension specification already establishes ordinary extension decl
 
 # 22. Prelude Availability
 
-`CompileRegex()` belongs in the standard Go++ ergonomic prelude.
+`CompileRegex()` belongs in the standard GPP ergonomic prelude.
 
-Users should not need a special Go++ package import merely to write:
+Users should not need a special GPP package import merely to write:
 
 ```gpp id="ok2c9m"
 pattern.CompileRegex()
@@ -469,7 +469,7 @@ If a future receiver type has a real native method called:
 CompileRegex
 ```
 
-the native method takes precedence according to ordinary Go++ extension resolution.
+the native method takes precedence according to ordinary GPP extension resolution.
 
 The feature does not alter normal dispatch rules.
 
@@ -679,7 +679,7 @@ clean := re.ReplaceAllString(
 )
 ```
 
-No Go++-specific replacement syntax is introduced.
+No GPP-specific replacement syntax is introduced.
 
 ---
 
@@ -728,7 +728,7 @@ The standard-type ergonomic extensions specification should revise its previous 
 
 Instead of broadly excluding regex-related string ergonomics, the rule becomes:
 
-> Go++ does not mirror the regex API onto `string`. It provides `string.CompileRegex()` as an explicit bridge from regex source text to Go's native `*regexp.Regexp`.
+> GPP does not mirror the regex API onto `string`. It provides `string.CompileRegex()` as an explicit bridge from regex source text to Go's native `*regexp.Regexp`.
 
 This preserves the original concern about turning `string` into a domain-heavy mega type while still removing repeated `regexp.Compile(...)` ceremony.
 
@@ -744,7 +744,7 @@ implicit URL/regex parsing
 
 should be interpreted more narrowly.
 
-Go++ still avoids implicit regex interpretation.
+GPP still avoids implicit regex interpretation.
 
 This remains invalid conceptually:
 
@@ -831,16 +831,16 @@ The core rules are:
 
 > It is a thin ergonomic projection over `regexp.Compile`.
 
-> It returns the native `*regexp.Regexp`, not a Go++ wrapper.
+> It returns the native `*regexp.Regexp`, not a GPP wrapper.
 
 > Invalid patterns preserve the ordinary trailing `error`.
 
-> Go++ automatic error promotion makes the safe compile path concise.
+> GPP automatic error promotion makes the safe compile path concise.
 
 > Native Go regexp method names and semantics remain unchanged.
 
 > Repeated regex use should compile once and reuse the returned regex.
 
-> Go++ does not silently interpret ordinary strings or string methods as regular expressions.
+> GPP does not silently interpret ordinary strings or string methods as regular expressions.
 
 > The feature improves ergonomics while preserving Go's regexp package as the underlying abstraction.

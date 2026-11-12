@@ -4,11 +4,11 @@ GOB is Go's binary encoding format for exchanging Go values. It is a good fit fo
 
 ## Side by side: encode and decode
 
-Using Go's `encoding/gob` directly requires creating an encoder or decoder around an I/O stream. Go++ can declare the message as a serializable class and infer the decoded type; unhandled errors propagate automatically:
+Using Go's `encoding/gob` directly requires creating an encoder or decoder around an I/O stream. GPP can declare the message as a serializable class and infer the decoded type; unhandled errors propagate automatically:
 
 ::: code-group
 
-```go [Go++]
+```go [GPP]
 class Message @{encoding.Serializable} {
 	ID int
 	Text string
@@ -55,6 +55,6 @@ fmt.Println("restored", len(restored), "messages")
 
 For a stream or an existing destination, use the standard `encoding/gob` package directly or call `DecodeGOB` with the destination pointer. The helper API is aimed at convenient in-memory byte slices.
 
-The GOB helpers preserve encoder and decoder errors, which Go++ propagates automatically unless you capture them. Prefer JSON or YAML when data needs to be inspected manually or consumed by non-Go systems.
+The GOB helpers preserve encoder and decoder errors, which GPP propagates automatically unless you capture them. Prefer JSON or YAML when data needs to be inspected manually or consumed by non-Go systems.
 
 See the [GOB specification](/reference/specifications/serialization.gob) for supported values and details.

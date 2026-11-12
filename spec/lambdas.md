@@ -1,4 +1,4 @@
-# Go++ Feature Spec: Lambda Expressions
+# GPP Feature Spec: Lambda Expressions
 
 ## Goal
 
@@ -103,7 +103,7 @@ user => {
     return user.Active
 }
 
-Block-body lambdas use ordinary Go++ statement and return rules.
+Block-body lambdas use ordinary GPP statement and return rules.
 
 No implicit return from the final statement in block form.
 
@@ -270,7 +270,7 @@ users.Any(user => {
     return user.Active
 })
 
-Whatever semantics Go++ already defines for `count++` continue to apply.
+Whatever semantics GPP already defines for `count++` continue to apply.
 
 ## 14. Return inference for expression lambdas
 
@@ -306,7 +306,7 @@ func(user User) {
     println(user.Name)
 }
 
-If Go++ does not yet have ForEach, this still applies to any API expecting:
+If GPP does not yet have ForEach, this still applies to any API expecting:
 
 func(T)
 
@@ -324,7 +324,7 @@ user => {
 
 because no bool is returned on all required paths.
 
-Reuse ordinary Go++ function return-path checking.
+Reuse ordinary GPP function return-path checking.
 
 ## 17. Overload resolution
 
@@ -435,7 +435,7 @@ x => {
     return x.Id, nil
 }
 
-For expression-body lambdas, a single expression may naturally produce multiple Go values only if current Go++ expression semantics already support that.
+For expression-body lambdas, a single expression may naturally produce multiple Go values only if current GPP expression semantics already support that.
 
 Do not special-case unless necessary.
 
@@ -497,7 +497,7 @@ No special behavior.
 
 ## 26. Exceptions
 
-If Go++ exceptions are implemented later, throwing from a lambda follows normal exception semantics.
+If GPP exceptions are implemented later, throwing from a lambda follows normal exception semantics.
 
 Do not add lambda-specific exception handling.
 
@@ -772,7 +772,7 @@ http.HandleFunc("/", (w http.ResponseWriter, r *http.Request) => {
 
 ## 38. Design principle
 
-Go++ lambdas are only concise syntax for Go function literals.
+GPP lambdas are only concise syntax for Go function literals.
 
 They should remove:
 

@@ -1,18 +1,18 @@
 ---
-name: Go++
+name: GPP
 filename: learngpp.gpp
 contributors:
-  - ["Go++ contributors", "https://github.com/telgatech/gpp"]
+  - ["GPP contributors", "https://github.com/telgatech/gpp"]
 ---
 
-Go++ builds on Go and assumes you already know Go. It adds language and
-application features while keeping Go packages, libraries, and tools. Go++
+GPP builds on Go and assumes you already know Go. It adds language and
+application features while keeping Go packages, libraries, and tools. GPP
 source compiles to Go, so teams can adopt the features gradually.
 
-Install Go++ with `go install github.com/telgatech/gpp@main`. Save this example
+Install GPP with `go install github.com/telgatech/gpp@main`. Save this example
 as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
 
-    // Go++ source looks like Go. Packages, imports, functions, control flow,
+    // GPP source looks like Go. Packages, imports, functions, control flow,
     // and Go libraries work as you already know them.
     package main
 
@@ -24,7 +24,7 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
         "gpp/encoding"
     )
 
-    // Go++ classes group fields and methods. `this` is the current instance.
+    // GPP classes group fields and methods. `this` is the current instance.
     class Person {
         Name string
         Age int
@@ -154,7 +154,7 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
         return strconv.Atoi(raw) ?? 8080
     }
 
-    // Go++ keeps Go's error values and function signatures. An uncaptured,
+    // GPP keeps Go's error values and function signatures. An uncaptured,
     // non-nil trailing error is raised and propagates to a matching catch.
     func ReadGreeting(path string) string {
         // This call raises *os.PathError if reading fails.
@@ -194,7 +194,7 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
 
     func main() {
         // Double braces interpolate values in strings.
-        name := "Go++"
+        name := "GPP"
         fmt.Println("Welcome to {{name}}")
         fmt.Println("Total: {{42.5:.2f}}")
 
@@ -270,8 +270,8 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
         fmt.Println("shutting down")
     }
 
-    // A Go++ project can mix `.go` and `.gpp` files. Functions in native Go
-    // files are available to Go++ source in the same package:
+    // A GPP project can mix `.go` and `.gpp` files. Functions in native Go
+    // files are available to GPP source in the same package:
     //
     // // native.go
     // func greeting(name string) string { return "Hello, " + name }
@@ -322,7 +322,7 @@ as `learngpp.gpp` and run it with `gpp run learngpp.gpp`.
 
 ## Further Reading
 
-Go++ includes application libraries for HTTP servers, routing, WebSockets,
+GPP includes application libraries for HTTP servers, routing, WebSockets,
 OpenAPI, OAuth, ORM and typed SQL, templates, embedded assets, cron jobs,
 serialization, and suite-based testing. Its tools include project build and
 run commands, dependency and import management, a formatter, source

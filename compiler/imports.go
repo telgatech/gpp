@@ -11,7 +11,7 @@ import (
 )
 
 // pruneUnusedImports removes imports that were needed only while compiling
-// Go++ syntax, such as an annotation qualifier, but have no reference in the
+// GPP syntax, such as an annotation qualifier, but have no reference in the
 // emitted Go program. Blank and dot imports retain their Go semantics.
 func pruneUnusedImports(source string) (string, error) {
 	fileSet := token.NewFileSet()

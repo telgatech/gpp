@@ -1,8 +1,8 @@
-# Go++ Feature Spec: Class Introspection
+# GPP Feature Spec: Class Introspection
 
 ## Goal
 
-Provide lightweight compile-time-generated runtime metadata for every Go++ class so generic library code can inspect the concrete class name and fields.
+Provide lightweight compile-time-generated runtime metadata for every GPP class so generic library code can inspect the concrete class name and fields.
 
 This is a language primitive, not an ORM feature.
 
@@ -29,7 +29,7 @@ Static type introspection:
 
 Employee.class
 
-Generic type introspection, when T is known to be a Go++ class:
+Generic type introspection, when T is known to be a GPP class:
 
 T.class
 
@@ -52,7 +52,7 @@ for f := range e.class.fields {
 
 ## Required semantics
 
-1. Every Go++ class has an associated class descriptor.
+1. Every GPP class has an associated class descriptor.
 
 2. `.class` returns that descriptor.
 
@@ -82,7 +82,7 @@ Employee.class
 
 This refers directly to Employee's class descriptor.
 
-5. Native Go structs/types do not automatically gain Go++ class metadata.
+5. Native Go structs/types do not automatically gain GPP class metadata.
 
 Example:
 
@@ -110,7 +110,7 @@ c.fields
 
 `name`
 
-`class.name` returns the Go++ class name as a string.
+`class.name` returns the GPP class name as a string.
 
 Example:
 
@@ -317,7 +317,7 @@ must expose all effective fields.
 
 ## Multiple inheritance conflicts
 
-If inherited field names clash and Go++ requires qualification for normal access, introspection must retain enough ownership information to distinguish them.
+If inherited field names clash and GPP requires qualification for normal access, introspection must retain enough ownership information to distinguish them.
 
 Recommended additional metadata:
 
@@ -380,7 +380,7 @@ This ordering should be stable across builds.
 
 ## Generated implementation
 
-The compiler should generate metadata for every Go++ class.
+The compiler should generate metadata for every GPP class.
 
 Conceptually:
 
@@ -436,7 +436,7 @@ Exact representation may differ.
 
 ## Object metadata
 
-Every Go++ class instance already needs hidden runtime metadata for polymorphism.
+Every GPP class instance already needs hidden runtime metadata for polymorphism.
 
 Extend that metadata so the runtime object can reach its most-derived Class descriptor.
 
@@ -461,7 +461,7 @@ Compiler-generated static metadata is preferred.
 
 Do not change native Go types.
 
-Go++ class metadata exists only for Go++ classes.
+GPP class metadata exists only for GPP classes.
 
 Generated Go fields remain ordinary Go fields.
 
@@ -473,7 +473,7 @@ other Go libraries accepting pointers/interfaces
 
 ## Visibility
 
-All fields may initially appear in `.fields`, including lowercase/private Go++ fields.
+All fields may initially appear in `.fields`, including lowercase/private GPP fields.
 
 Visibility affects source-code access, not necessarily metadata access.
 
@@ -513,7 +513,7 @@ m.class != Employee.class
 
 `Class`, `Field`, and optionally `Type` are compiler/runtime built-ins.
 
-They do not need to be ordinary user-defined Go++ classes.
+They do not need to be ordinary user-defined GPP classes.
 
 Minimum v1 API:
 
@@ -536,7 +536,7 @@ Additional metadata can be added later without changing the basic model.
 
 ## Example: generic CRUD library
 
-This feature should make ordinary Go++ code like this possible:
+This feature should make ordinary GPP code like this possible:
 
 class Model {
     func Create(db *sql.DB) error {
@@ -579,7 +579,7 @@ Invalid:
 
 x.class
 
-when x is not a Go++ class instance.
+when x is not a GPP class instance.
 
 Invalid:
 
@@ -599,7 +599,7 @@ Diagnostics should identify the mismatched class/type.
 
 1. Add Class descriptor representation.
 2. Add Field descriptor representation.
-3. Generate one Class descriptor per Go++ class.
+3. Generate one Class descriptor per GPP class.
 4. Add hidden class pointer to runtime object metadata.
 5. Implement instance `.class`.
 6. Implement `Class.name`.
@@ -684,10 +684,10 @@ metadata must preserve both fields and their owners.
 
 ## Design principle
 
-Go++ classes should know what they are.
+GPP classes should know what they are.
 
 `this.class` exposes the most-derived runtime class.
 
 `Class.fields` exposes compiler-generated structural metadata.
 
-This metadata should be sufficient for ordinary Go++ libraries to implement generic persistence and other repetitive structural operations without baking those features into the language itself.
+This metadata should be sufficient for ordinary GPP libraries to implement generic persistence and other repetitive structural operations without baking those features into the language itself.

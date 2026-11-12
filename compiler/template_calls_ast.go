@@ -111,7 +111,7 @@ func transformStaticTemplateCallsAST(src string, context constructorContext) (st
 		})
 	}
 	// Some otherwise valid Go expressions remain opaque TokenExpr nodes in the
-	// Go++ body AST. Rewrite scoped facade calls from the lossless token stream
+	// GPP body AST. Rewrite scoped facade calls from the lossless token stream
 	// as well, so calls such as tpl.Execute(&buffer, ...) still carry the source
 	// package scope through the compatibility lowering path.
 	tokens, err := LexSource("template calls", src)

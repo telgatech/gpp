@@ -1,8 +1,8 @@
 # Prelude
 
-The prelude is Go++'s implicit standard library: its common helpers are available without an import. It adds useful operations to familiar Go values through extension methods, keeping call sites readable while leaving the underlying slices, strings, maps, errors, and readers as ordinary Go values.
+The prelude is GPP's implicit standard library: its common helpers are available without an import. It adds useful operations to familiar Go values through extension methods, keeping call sites readable while leaving the underlying slices, strings, maps, errors, and readers as ordinary Go values.
 
-Many helpers retain their Go error results. At a Go++ call site, an uncaptured
+Many helpers retain their Go error results. At a GPP call site, an uncaptured
 error propagates automatically; capture it explicitly only when the code needs
 to inspect it or recover locally.
 
@@ -15,7 +15,7 @@ Small everyday operations often become repeated loops or helper functions. A pre
 In Go, filtering is usually written as a loop:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 adultSummaries := people
 	.Filter(person => person.Age >= 18)
 	.Map(person => struct(name: person.Name, age: person.Age))
@@ -614,7 +614,7 @@ methods return a byte offset or `-1` when no match is found.
 Counts non-overlapping occurrences of `substr`. An empty `substr` has one match at each UTF-8 boundary.
 
 ```go
-mentions := text.Count("Go++")
+mentions := text.Count("GPP")
 ```
 
 #### `Repeat(count int) string`

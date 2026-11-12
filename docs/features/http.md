@@ -1,16 +1,16 @@
 # HTTP servers and routes
 
-The Go++ HTTP package puts route declarations beside handler methods and
+The GPP HTTP package puts route declarations beside handler methods and
 provides a server lifecycle around Go's HTTP foundation. It keeps routing,
 request handling, and response construction in one readable place.
 
 ## Compare route setup
 
-A Go HTTP server registers handlers with a mux. Go++ lets a method declare its
+A Go HTTP server registers handlers with a mux. GPP lets a method declare its
 route with an annotation:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 class App : http.Server {
     func Health(ctx *http.Context) error
         @{http.GET("/health")} {
@@ -81,7 +81,7 @@ hooks run once around the whole request.
 ## Bind into a typed value
 
 `ctx.Bind[T]()` returns the request data as the type you ask for. `T` can be a
-Go++ class, a Go struct, or an anonymous struct. The request method and content
+GPP class, a Go struct, or an anonymous struct. The request method and content
 type select query, JSON, or form binding:
 
 ::: info

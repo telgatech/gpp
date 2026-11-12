@@ -9,8 +9,8 @@ that arrive from outside a program. See the [typed enum proposal](https://github
 and a [later enum proposal](https://github.com/golang/go/issues/28438) for
 examples of that discussion.
 
-Go++ takes a focused position: when a value must be one of a declared set,
-give that set its own enum type. Go++ enums are scalar enums with no payloads;
+GPP takes a focused position: when a value must be one of a declared set,
+give that set its own enum type. GPP enums are scalar enums with no payloads;
 they solve the “which one of these named choices?” problem without trying to
 define a general-purpose tagged union. The goal is to make the common choice
 explicit and type-safe, using predictable defaults and ordinary Go
@@ -25,7 +25,7 @@ validation, and the compiler cannot infer the intended list from the
 constants:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 enum Status string {
     Draft
     Published
@@ -133,7 +133,7 @@ expected, even if two enums use the same backing type.
 
 The member name identifies the choice in source code and metadata; the backing
 value is the normal representation for JSON, SQL, and other boundaries. That
-keeps a readable Go++ name separate from a wire value that may need to remain
+keeps a readable GPP name separate from a wire value that may need to remain
 stable.
 
 ## Validate values at boundaries
@@ -145,7 +145,7 @@ External input must be checked before it becomes an enum. Each enum provides
 role := Role.From("admin") // Role.Admin
 ```
 
-An unknown value returns an error, which Go++ propagates automatically unless
+An unknown value returns an error, which GPP propagates automatically unless
 the caller explicitly captures it:
 
 ```go
@@ -170,7 +170,7 @@ these alternatives”: it groups the choices, prevents accidental mixing of
 different domains, and gives conversion and metadata a single declared source
 of truth.
 
-That is Go++'s proposed resolution to the enum argument: preserve the
+That is GPP's proposed resolution to the enum argument: preserve the
 straightforward scalar representation and interoperation Go programmers
 expect, while making the finite set explicit and validated. The [enum
 specification](/reference/specifications/enums) documents the precise rules,

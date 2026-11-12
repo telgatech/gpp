@@ -1711,7 +1711,7 @@ func emitExtensionMethod(out *strings.Builder, extension extensionMethod, contex
 	return nil
 }
 
-// Extension parameters that name a Go++ class are exposed through the
+// Extension parameters that name a GPP class are exposed through the
 // generated class interface. This lets an extension package accept derived
 // classes without knowing which packages will define those derived classes.
 func transformExtensionParameterList(params string, context constructorContext) (string, error) {

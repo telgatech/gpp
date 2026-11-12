@@ -59,16 +59,55 @@
 }
 
 .VPHomeHero .text {
-  max-width: 42rem;
+  max-width: min(100%, 1000px);
+  font-size: clamp(2.75rem, 7vw, 5rem);
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.VPHomeHero .tagline {
+  font-size: clamp(1rem, 1.6vw, 1.25rem);
+  line-height: 1.5;
+}
+
+.VPHomeHero:not(.has-image) .container {
+  justify-content: center;
+}
+
+.VPHomeHero:not(.has-image) .main {
+  width: 100%;
+  max-width: 100%;
+  text-align: center;
+}
+
+.VPHomeHero:not(.has-image) .heading {
+  align-items: center;
+}
+
+.VPHomeHero:not(.has-image) .text,
+.VPHomeHero:not(.has-image) .tagline {
+  max-width: 800px;
+  margin-inline: auto;
+}
+
+.VPHomeHero:not(.has-image) .actions {
+  justify-content: center;
+}
+
+.VPHomeHero .actions .VPButton {
+  border-radius: 24px;
+  padding: 0 26px;
+  line-height: 48px;
+  font-size: 16px;
 }
 
 .VPHome .home-brand-notice {
   max-width: 620px;
-  margin: 30px 0 0;
+  margin: 30px auto 0;
   color: var(--vp-c-text-2);
   font-size: 0.76rem;
   line-height: 1.55;
-  text-align: left;
+  text-align: center;
 }
 
 .VPHomeHero .container .image-container {
@@ -439,6 +478,11 @@ html.dark .VPHomeHero .container .image-container::after {
   flex-direction: column;
   align-items: center;
   gap: 10px;
+}
+
+.VPHome .latest-change-actions > a:first-child {
+  padding: 10px 16px;
+  font-size: 0.88rem;
 }
 
 .VPHome .latest-change-actions .latest-change-changelog {

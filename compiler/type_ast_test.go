@@ -230,7 +230,7 @@ func list() {}
 	}
 }
 
-func TestAnnotationValidationUsesGoPlusExpressionAST(t *testing.T) {
+func TestAnnotationValidationUsesGPPExpressionAST(t *testing.T) {
 	program := parseProgram(t, `
 annotation Label(value string) on field
 class User {
@@ -238,7 +238,7 @@ class User {
 }
 `)
 	if _, err := ResolveProgram(program); err != nil {
-		t.Fatalf("interpolated annotation argument should validate through the Go++ AST: %v", err)
+		t.Fatalf("interpolated annotation argument should validate through the GPP AST: %v", err)
 	}
 }
 

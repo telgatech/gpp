@@ -1,7 +1,7 @@
 # Extension methods
 
 Extension methods let a package add method-style operations to an existing Go
-or Go++ type. They are useful when a type is owned by another package or when
+or GPP type. They are useful when a type is owned by another package or when
 you want a local, domain-focused helper without wrapping or subclassing the
 original type.
 
@@ -11,7 +11,7 @@ A package-level helper works in Go and remains a good choice. An extension
 lets the same operation read like a method on the value:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 extend string {
     func IsBlank() bool {
         return this.TrimSpace() == ""
@@ -47,7 +47,7 @@ if userInput.IsBlank() {
 }
 ```
 
-The same approach works with imported Go types and Go++ classes. An extension
+The same approach works with imported Go types and GPP classes. An extension
 can also target several compatible types when the same operation applies to
 each:
 

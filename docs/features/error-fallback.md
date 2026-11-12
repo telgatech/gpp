@@ -10,7 +10,7 @@ to the operation that needs them. It does not recover arbitrary Go panics.
 For a simple default, `??` can replace a small error branch:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 port := strconv.Atoi(rawPort) ?? 8080
 ```
 

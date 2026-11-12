@@ -2,9 +2,9 @@
 
 ## Goal
 
-Provide a lightweight ORM-style convenience layer for Go++ built directly on top of Go's `database/sql`.
+Provide a lightweight ORM-style convenience layer for GPP built directly on top of Go's `database/sql`.
 
-The package should use existing Go++ features such as:
+The package should use existing GPP features such as:
 
 * classes
 * inheritance
@@ -45,7 +45,7 @@ gpp/orm/
     sql.gpp
 ```
 
-The implementation should preferably remain ordinary Go++ source.
+The implementation should preferably remain ordinary GPP source.
 
 ---
 
@@ -66,7 +66,7 @@ import (
 `reflect` is currently required to inspect model metadata and materialize model
 query results.
 
-The implementation may later remove reflection if Go++ generics and static class introspection make that possible.
+The implementation may later remove reflection if GPP generics and static class introspection make that possible.
 
 ---
 
@@ -82,7 +82,7 @@ annotation (
 )
 ```
 
-These annotations are ordinary Go++ annotations.
+These annotations are ordinary GPP annotations.
 
 The compiler must not attach special ORM semantics to them.
 
@@ -228,7 +228,7 @@ The base implementation returns `nil`.
 
 Derived models override whichever hooks they require.
 
-Because Go++ methods are polymorphic, calling a hook through a `Model` parameter must dispatch to the concrete model implementation.
+Because GPP methods are polymorphic, calling a hook through a `Model` parameter must dispatch to the concrete model implementation.
 
 `All` selects every model row, ordered ascending by the primary key by default.
 `Find` selects one row by the model's annotated primary key and requires exactly
@@ -581,7 +581,7 @@ return entity.AfterDelete(this)
 
 # Runtime Class Introspection Requirement
 
-The ORM depends heavily on Go++ runtime class metadata.
+The ORM depends heavily on GPP runtime class metadata.
 
 For a derived class:
 
@@ -893,7 +893,7 @@ to dispatch lifecycle hooks. Full-SQL model result scanning remains inside
 `gpp/orm`; generic SQL result scanning is documented in
 [the SQL package specification](./std.sql.md).
 
-If Go++ later supports sufficient static class introspection, a future
+If GPP later supports sufficient static class introspection, a future
 implementation may remove some reflection from both packages. This is a later
 optimization, not part of the package split.
 
@@ -1088,12 +1088,12 @@ metadata, not `Model.class`.
 
 # Design Principle
 
-`gpp/orm` should demonstrate what can be achieved from ordinary Go++ language features rather than compiler magic.
+`gpp/orm` should demonstrate what can be achieved from ordinary GPP language features rather than compiler magic.
 
 Its architecture is:
 
 ```text
-Go++ annotations + introspection + polymorphism
+GPP annotations + introspection + polymorphism
                 ↓
           gpp/orm helpers
                 ↓

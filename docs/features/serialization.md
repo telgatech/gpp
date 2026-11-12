@@ -1,6 +1,6 @@
 # Serialization
 
-Go++ can generate serialization helpers for classes that opt in. This makes
+GPP can generate serialization helpers for classes that opt in. This makes
 common encoding and decoding calls convenient while keeping Go's familiar
 JSON, YAML, and GOB formats underneath.
 
@@ -10,7 +10,7 @@ Go's encoders remain available for any value. The annotation adds convenient,
 typed methods to the classes that opt in:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 data := user.ToJSON()
 restored := User.FromJSON(data)
 ```
@@ -62,7 +62,7 @@ binary format.
 ## Control the encoded shape
 
 Use field annotations to rename or omit fields according to the format's
-supported options. This lets a Go++ model keep domain-oriented field names
+supported options. This lets a GPP model keep domain-oriented field names
 while presenting a stable wire shape. Keep secrets and internal-only state
 out of serialized data explicitly, and treat changes to public field names as
 API changes for consumers of the encoded form.
@@ -70,7 +70,7 @@ API changes for consumers of the encoded form.
 ## Interoperate with Go encoders
 
 The generated methods use Go's established encoder packages. Their underlying
-Go methods return the usual `([]byte, error)` results; Go++ propagates an
+Go methods return the usual `([]byte, error)` results; GPP propagates an
 uncaptured error automatically. You can continue to use standard Go encoding
 functions directly when you need lower-level control. Serialization is opt-in;
 classes without the annotation do not gain generated methods.

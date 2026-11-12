@@ -2,7 +2,7 @@
 import DonationButton from './.vitepress/theme/DonationButton.vue'
 </script>
 
-# About Go++
+# About GPP
 
 <div class="about-profile-card">
   <img
@@ -15,7 +15,7 @@ import DonationButton from './.vitepress/theme/DonationButton.vue'
   />
   <div class="about-profile-copy">
     <h2>Sunder Rajan</h2>
-    <p>Creator of Go++ · Telga Technologies</p>
+    <p>Creator of GPP · Telga Technologies</p>
     <div class="about-profile-socials">
       <a class="about-profile-social-button" href="https://x.com/@sunderrajan_" target="_blank" rel="noreferrer" aria-label="Sunder Rajan on X" title="X · @sundersw">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 1.15h3.68l-8.04 9.19L24 22.85h-7.41l-5.8-7.58-6.64 7.58H.47l8.6-9.83L0 1.15h7.6l5.24 6.93zm-1.29 19.49h2.04L6.49 3.24H4.3z" /></svg>
@@ -39,24 +39,24 @@ Go's conservative approach to language features has helped keep the language
 small, stable, and consistent. At the same time, years of application
 development have left me (and countless others like me going by the feedback online)
 wishing for less ceremony and more expressive ways to
-handle some common patterns. That tension is where Go++ began: an experiment
+handle some common patterns. That tension is where GPP began: an experiment
 to see how far we could stretch the language while still keeping its character,
 toolchain, and interoperability intact.
 
 ## Experimental status
 
-The toolchain is functional and Go++ is taking shape, but this still remains an
+The toolchain is functional and GPP is taking shape, but this still remains an
 experiment. I’m not a compiler researcher nor an expert, and the project has not yet received
 broad review from the Go community. Evaluate it carefully before relying on it
 in production.
 
 ## Consulting and project support
 
-I’m open to consulting engagements. If you’re exploring Go++ or need help with
+I’m open to consulting engagements. If you’re exploring GPP or need help with
 a software project, get in touch through [Telga](https://telga.in) or
 [LinkedIn](https://in.linkedin.com/in/sunder-rajan-1a4154171).
 
-I’m also open to donations to help keep Go++ moving. If you’d like to support
+I’m also open to donations to help keep GPP moving. If you’d like to support
 the project, you can contribute here:
 
 <DonationButton />

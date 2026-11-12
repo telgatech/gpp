@@ -1,12 +1,12 @@
 # Typed templates
 
-Go++ template declarations keep HTML templates near the application code that
+GPP template declarations keep HTML templates near the application code that
 uses them. They compile into typed execution functions and use Go's
 `html/template` behavior for escaping and rendering.
 
 ## Declare intent with the `template` keyword
 
-`template` is a recognized Go++ keyword for a package-level declaration. The
+`template` is a recognized GPP keyword for a package-level declaration. The
 function-like signature states which values the page expects, and a generated
 renderer makes that template available through `tpl`:
 
@@ -19,13 +19,13 @@ tpl.Welcome(&output, "Ada")
 ```
 
 This makes the boundary between application data and presentation visible in
-the source. Go++ checks direct calls to the generated renderer against the
+the source. GPP checks direct calls to the generated renderer against the
 declared argument count and types. It also checks template field and method
 accesses when their types are known, including accesses inside `if`, `with`,
 and `range` blocks. For example, if `post` has type `Post`, an access to
 `.MissingField` is reported while compiling.
 
-The checker follows known Go++ classes and imported Go types. Values typed as
+The checker follows known GPP classes and imported Go types. Values typed as
 `any` or an interface, and values returned by dynamically typed template
 functions, remain runtime checks because their concrete types are not known at
 compile time. Template parsing and rendering still use `html/template`.
@@ -36,7 +36,7 @@ Templates separate presentation from concatenation and escape dynamic HTML
 values:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 template Page(title string) {
     <h1>{{.}}</h1>
 }

@@ -7,18 +7,18 @@ needs to work from a model definition instead of a second handwritten
 description: an ORM can find table and column names, a validator can discover
 required fields, and a serializer can apply field rules.
 
-Go++ keeps the two parts separate. An annotation declares information and a
+GPP keeps the two parts separate. An annotation declares information and a
 target; a library or compiler feature decides what that information means.
 Introspection provides the descriptors that let such tools inspect and act
 on it.
 
 ## Compare struct tags with annotations
 
-Go commonly stores metadata in string tags. Go++ annotations are named,
+Go commonly stores metadata in string tags. GPP annotations are named,
 parameterized declarations whose arguments and permitted targets are checked:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 annotation Column(name string) on field
 
 class Employee {
@@ -36,12 +36,12 @@ type Employee struct {
 The target rule prevents applying `Column` to a class, and the string argument
 is checked against the declared parameter type. Annotations can be declared
 once in a package and reused from other packages with qualification.
-Go++ provides shared annotations such as `std.Deprecated` from `gpp/std`.
+GPP provides shared annotations such as `std.Deprecated` from `gpp/std`.
 See the [`gpp/std` guide](/guide/standard-library/std).
 
 ## Keep annotations beside their declaration
 
-Go++ writes annotations on the declaration they describe, rather than on a
+GPP writes annotations on the declaration they describe, rather than on a
 separate preceding line. For example, `@{Table("employees")}` stays with the
 class header, and `@{Column("email")}` stays with its field. This makes the
 relationship clear when reading code and keeps an annotation from being left
@@ -89,7 +89,7 @@ Annotation declarations can be grouped with `annotation (...)` or written
 individually. If `on` is omitted, the annotation can be applied to any
 annotation-capable declaration. Targets include classes, fields, methods,
 functions, parameters, types, packages, and template declarations. Annotation
-arguments use normal Go++ values and types. A no-argument annotation is written
+arguments use normal GPP values and types. A no-argument annotation is written
 without empty parentheses, such as `@{Required}`.
 
 Declaring an annotation does not itself run code or change the target. It
@@ -98,7 +98,7 @@ annotations they know about.
 
 ## Bundled annotations
 
-The Go++ standard packages provide annotations for serialization, ORM models,
+The GPP standard packages provide annotations for serialization, ORM models,
 HTTP servers, tests, and templates. Import the package that owns an annotation
 and qualify it at the use site.
 
@@ -222,7 +222,7 @@ own libraries.
 
 ## Introspect class metadata
 
-The `.class` selector returns metadata for a class or a Go++ class instance.
+The `.class` selector returns metadata for a class or a GPP class instance.
 Inside an inherited method, `this.class` identifies the most-derived runtime
 class, which makes reusable base-class tooling useful for child classes too:
 

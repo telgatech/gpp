@@ -4,11 +4,11 @@ JSON is the usual choice for APIs, browser clients, and data exchanged across la
 
 ## Side by side: marshal and unmarshal
 
-In Go, decoding requires declaring a destination and passing its address. Go++ can use a serializable class as the schema and infer the result from the generic type argument. Encoding errors propagate automatically when left uncaptured:
+In Go, decoding requires declaring a destination and passing its address. GPP can use a serializable class as the schema and infer the result from the generic type argument. Encoding errors propagate automatically when left uncaptured:
 
 ::: code-group
 
-```go [Go++]
+```go [GPP]
 class User @{encoding.Serializable} {
 	ID int `json:"id"`
 	Name string `json:"name"`
@@ -65,6 +65,6 @@ request := CreateUserRequest.FromJSON(body)
 if request.Name == "" { return errors.New("name is required") }
 ```
 
-The helpers return errors from the underlying JSON implementation, and Go++ propagates uncaptured errors automatically. Use explicit handling when a malformed payload needs a custom response. For custom JSON behavior, use Go's standard `encoding/json` interfaces as you normally would.
+The helpers return errors from the underlying JSON implementation, and GPP propagates uncaptured errors automatically. Use explicit handling when a malformed payload needs a custom response. For custom JSON behavior, use Go's standard `encoding/json` interfaces as you normally would.
 
 See the [serialization specification](/reference/specifications/serialization) for supported types and behavior.

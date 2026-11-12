@@ -71,5 +71,5 @@ uploaded filename.
 
 `Get[T]` and `Post[T]` also accept generated anonymous structs as their JSON
 response type. Their fields are decoded by name while retaining each field's
-declared Go++ type. Anonymous struct request values passed to `Post[T]` are
+declared GPP type. Anonymous struct request values passed to `Post[T]` are
 encoded with their field names and values.

@@ -49,7 +49,7 @@ func main() {
 }
 ```
 
-```go [Go++]
+```go [GPP]
 import (
 	cron "gpp/cron"
 )
@@ -153,7 +153,7 @@ that do not need an owning instance.
 
 Call `Start` after configuration and dependencies are ready. It validates all
 registered schedules before starting any of them, then returns immediately.
-An invalid schedule makes `Start` wrap `cron.ErrInvalidSchedule`, so Go++
+An invalid schedule makes `Start` wrap `cron.ErrInvalidSchedule`, so GPP
 applications can identify that specific startup failure in the existing catch
 with `errors.Is`:
 
@@ -214,7 +214,7 @@ Jobs added before `Start` will start with the scheduler; jobs added after
 `Start` will begin scheduling immediately. `Remove` will stop future runs and
 cancel an in-progress run's context, then return without waiting for the handler
 to exit. Unhandled trailing errors from `Add` and `Remove` become exceptions in
-Go++. `Stop()` uses a background context; use `StopWithContext(ctx)` when
+GPP. `Stop()` uses a background context; use `StopWithContext(ctx)` when
 shutdown needs a deadline.
 
 ::: warning Dynamic job registration is planned
@@ -232,7 +232,7 @@ The package supports annotated top-level functions, annotated methods on
   scheduled time, that run is skipped and logged.
 - Returned errors and panics are logged with the function name. They do not
   stop other jobs, and the package does not retry them.
-- Imported Go++ packages can contribute top-level registered jobs, but
+- Imported GPP packages can contribute top-level registered jobs, but
   importing them alone never starts the package scheduler. Calling
   `cron.Start` starts every registered top-level function; calling an instance's
   `Start` starts only that class instance's annotated methods.

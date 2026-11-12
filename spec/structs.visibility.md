@@ -1,8 +1,8 @@
-# Go++ Struct Field Visibility Specification
+# GPP Struct Field Visibility Specification
 
 ## Struct field visibility
 
-Struct fields follow normal Go++ / Go capitalization-based visibility rules.
+Struct fields follow normal GPP / Go capitalization-based visibility rules.
 
 ```gpp
 struct(

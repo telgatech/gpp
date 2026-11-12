@@ -1,8 +1,8 @@
-# Go++ `gpp fmt` Command Specification
+# GPP `gpp fmt` Command Specification
 
 ## 1. Overview
 
-`gpp fmt` formats Go++ source into the canonical Go++ style.
+`gpp fmt` formats GPP source into the canonical GPP style.
 
 ```bash
 gpp fmt
@@ -26,7 +26,7 @@ The formatter MUST NOT discard, rewrite, or accidentally relocate user comments.
 
 # 2. Core Principle
 
-Go++ should have one canonical formatting style.
+GPP should have one canonical formatting style.
 
 The goal follows the same general philosophy as `gofmt`:
 
@@ -57,7 +57,7 @@ gpp fmt --check
 gpp fmt --stdout app.gpp
 ```
 
-`gpp fmt` with no explicit path formats the current Go++ project.
+`gpp fmt` with no explicit path formats the current GPP project.
 
 ---
 
@@ -378,11 +378,11 @@ source
   ↓
 lexer/parser
   ↓
-Go++ syntax tree + comments + source positions
+GPP syntax tree + comments + source positions
   ↓
 formatter/printer
   ↓
-canonical Go++ source
+canonical GPP source
 ```
 
 This should not be implemented as regex replacement over source text.
@@ -391,7 +391,7 @@ This should not be implemented as regex replacement over source text.
 
 # 18. Reusing Go Formatting
 
-Go++ should reuse Go's formatter infrastructure wherever it genuinely applies.
+GPP should reuse Go's formatter infrastructure wherever it genuinely applies.
 
 Useful Go packages include:
 
@@ -403,7 +403,7 @@ go/printer
 go/format
 ```
 
-However, `gofmt` cannot directly parse Go++ syntax such as:
+However, `gofmt` cannot directly parse GPP syntax such as:
 
 ```gpp
 class User {
@@ -435,18 +435,18 @@ Therefore `gpp fmt` cannot simply invoke `gofmt` on a `.gpp` file.
 Recommended architecture:
 
 ```text
-                 Go++ parser
+                 GPP parser
                      ↓
-                 Go++ AST
+                 GPP AST
                 ↙          ↘
-      Go++ constructs      Go-compatible constructs
+      GPP constructs      Go-compatible constructs
              ↓                     ↓
-      Go++ printer          go/format / go/printer
+      GPP printer          go/format / go/printer
                 ↘          ↙
              canonical .gpp
 ```
 
-Go++ owns formatting for syntax that Go does not understand.
+GPP owns formatting for syntax that Go does not understand.
 
 Go's formatter machinery may handle ordinary Go-shaped syntax.
 
@@ -490,9 +490,9 @@ The goal is not to duplicate `gofmt`'s decisions unnecessarily.
 
 ---
 
-# 21. Go++-Owned Syntax
+# 21. GPP-Owned Syntax
 
-The Go++ printer must handle constructs such as:
+The GPP printer must handle constructs such as:
 
 ```text
 class
@@ -508,9 +508,9 @@ try/catch/finally
 ??
 ||
 ||=
-Go++ interpolation
+GPP interpolation
 embed
-other Go++-specific declarations
+other GPP-specific declarations
 ```
 
 These cannot simply be handed to `go/format`.
@@ -528,7 +528,7 @@ lower to generated Go
  ↓
 gofmt
  ↓
-attempt to reconstruct Go++
+attempt to reconstruct GPP
 ```
 
 Lowering loses source-level distinctions and cannot reliably reconstruct:
@@ -538,7 +538,7 @@ classes
 annotations
 anonymous structs
 extension methods
-Go++ error syntax
+GPP error syntax
 comments
 source-level layout intent
 ```
@@ -549,9 +549,9 @@ Generated Go is not the formatting IR.
 
 # 23. Go AST Fragments
 
-A useful implementation technique is to represent Go-compatible Go++ expressions using `go/ast` nodes.
+A useful implementation technique is to represent Go-compatible GPP expressions using `go/ast` nodes.
 
-For example, a Go++ binary expression may internally be printable through:
+For example, a GPP binary expression may internally be printable through:
 
 ```go
 format.Node(...)
@@ -563,7 +563,7 @@ or:
 printer.Fprint(...)
 ```
 
-Then the surrounding Go++ printer emits the language-specific syntax.
+Then the surrounding GPP printer emits the language-specific syntax.
 
 ---
 
@@ -571,7 +571,7 @@ Then the surrounding Go++ printer emits the language-specific syntax.
 
 Where Go-compatible fragments are represented using Go ASTs, comments may also use Go's comment infrastructure where practical.
 
-However, Go++ remains responsible for preserving comments around Go++-specific syntax.
+However, GPP remains responsible for preserving comments around GPP-specific syntax.
 
 The architecture must never depend on `go/printer` magically preserving comments it was never given.
 
@@ -602,7 +602,7 @@ Canonical indentation is:
 4 spaces
 ```
 
-Go++ source formatting does not use emitted tab indentation merely because generated Go may use tabs.
+GPP source formatting does not use emitted tab indentation merely because generated Go may use tabs.
 
 Example:
 
@@ -736,7 +736,7 @@ The exact line-breaking policy remains formatter-controlled.
 
 # 32. Inline/Postfix Annotations
 
-Go++ annotation placement MUST remain postfix/inlined.
+GPP annotation placement MUST remain postfix/inlined.
 
 Correct:
 
@@ -923,7 +923,7 @@ err.As[*MyError]()
 
 # 41. String Interpolation
 
-The formatter may format Go++ expressions inside interpolation.
+The formatter may format GPP expressions inside interpolation.
 
 Example:
 
@@ -1015,7 +1015,7 @@ template UserPage(user User) {
 }
 ```
 
-the formatter canonicalizes the Go++ declaration syntax.
+the formatter canonicalizes the GPP declaration syntax.
 
 The template body should remain largely preserved in v0.1.
 
@@ -1025,7 +1025,7 @@ HTML/template pretty-printing is not required.
 
 # 47. Parse Errors
 
-`gpp fmt` normally requires syntactically valid Go++.
+`gpp fmt` normally requires syntactically valid GPP.
 
 If parsing fails:
 
@@ -1224,7 +1224,7 @@ must represent equivalent programs.
 
 # 58. Real-World Corpus Test
 
-As Go++ dogfooding grows, the formatter should be continuously run across the real Go++ source corpus.
+As GPP dogfooding grows, the formatter should be continuously run across the real GPP source corpus.
 
 A useful release check is:
 
@@ -1260,11 +1260,11 @@ parentheses
 precedence-sensitive printing
 ```
 
-Go++ should not recreate those decisions unnecessarily.
+GPP should not recreate those decisions unnecessarily.
 
 ---
 
-# 60. Why We Still Need a Go++ Printer
+# 60. Why We Still Need a GPP Printer
 
 Go formatting infrastructure has no grammar or AST representation for:
 
@@ -1276,13 +1276,13 @@ struct
 enum
 try/catch
 template
-Go++ interpolation semantics
-Go++ error operators
+GPP interpolation semantics
+GPP error operators
 ```
 
 So the correct goal is:
 
-> reuse Go formatting machinery beneath the Go++ formatter, not replace the Go++ formatter with `gofmt`.
+> reuse Go formatting machinery beneath the GPP formatter, not replace the GPP formatter with `gofmt`.
 
 ---
 
@@ -1293,11 +1293,11 @@ The recommended order is:
 ```text
 1. Preserve all comments/tokens/source spans in frontend.
 
-2. Build a Go++ syntax printer.
+2. Build a GPP syntax printer.
 
 3. Delegate Go-compatible expression/type/statement formatting to Go printer machinery where clean.
 
-4. Print Go++-specific constructs around those formatted fragments.
+4. Print GPP-specific constructs around those formatted fragments.
 
 5. Add golden tests.
 
@@ -1353,17 +1353,17 @@ Generated Go continues to use Go's own formatter.
 Architecture:
 
 ```text
-                       Go++ source
+                       GPP source
                            ↓
                    lexer / parser
                            ↓
            AST + tokens + comments + spans
                            ↓
-                    Go++ formatter
+                    GPP formatter
                     ↙           ↘
-          Go++ syntax       Go-like fragments
+          GPP syntax       Go-like fragments
                 ↓                 ↓
-        Go++ printer       go/printer / go/format
+        GPP printer       go/printer / go/format
                     ↘           ↙
                      canonical .gpp
                            ↓
@@ -1378,13 +1378,13 @@ The fundamental rules are:
 
 > Comment loss is a formatter correctness failure.
 
-> Go++ should reuse Go's formatter/printer for Go-compatible syntax where doing so is clean and semantics-preserving.
+> GPP should reuse Go's formatter/printer for Go-compatible syntax where doing so is clean and semantics-preserving.
 
-> `gofmt` itself cannot parse Go++ and therefore cannot be the top-level formatter.
+> `gofmt` itself cannot parse GPP and therefore cannot be the top-level formatter.
 
-> Generated Go must never be used as an intermediate representation from which formatted Go++ is reconstructed.
+> Generated Go must never be used as an intermediate representation from which formatted GPP is reconstructed.
 
-> Go++ owns its extended syntax while delegating ordinary Go-shaped syntax to proven Go formatting machinery where practical.
+> GPP owns its extended syntax while delegating ordinary Go-shaped syntax to proven Go formatting machinery where practical.
 
 > Formatting is deterministic, idempotent, semantics-preserving, and shared by the CLI and LSP.
 

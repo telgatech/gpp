@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestModuleGoPlusImportPackagesCollectPackageSymbols(t *testing.T) {
+func TestModuleGPPImportPackagesCollectPackageSymbols(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
 		"math.gpp": `package math
@@ -30,7 +30,7 @@ func RootValue() int { return 1 }
 		}
 	}
 
-	packages, err := moduleGoPlusImportPackages(root, "example.com/project")
+	packages, err := moduleGPPImportPackages(root, "example.com/project")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func RootValue() int { return 1 }
 	}
 }
 
-func TestAvailableImportPackagesIncludesCurrentModuleGoPlusPackages(t *testing.T) {
+func TestAvailableImportPackagesIncludesCurrentModuleGPPPackages(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/project\n\ngo 1.27\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -80,14 +80,14 @@ func Sqrt(value int) int { return value }
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
-	modulePackages, err := moduleGoPlusImportPackages(root, "example.com/project")
+	modulePackages, err := moduleGPPImportPackages(root, "example.com/project")
 	if err != nil {
 		t.Fatal(err)
 	}
 	packages := map[string][]importPackage{
 		"math": {
 			{ImportPath: "math", Name: "math", Symbols: map[string]bool{"Sqrt": true}, Standard: true},
-			{ImportPath: "gpp/math", Name: "math", Symbols: map[string]bool{"Sqrt": true}, GoPlus: true},
+			{ImportPath: "gpp/math", Name: "math", Symbols: map[string]bool{"Sqrt": true}, GPP: true},
 		},
 	}
 	for _, candidates := range modulePackages {

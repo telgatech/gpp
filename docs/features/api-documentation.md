@@ -1,6 +1,6 @@
 # OpenAPI, Swagger, and OAuth
 
-Go++ can generate API documentation from the routes that serve requests and
+GPP can generate API documentation from the routes that serve requests and
 host Swagger UI for interactive exploration. OAuth and OIDC providers can be
 configured on the same server, reducing drift between a running API and its
 published description.
@@ -8,10 +8,10 @@ published description.
 ## Compare separate API docs with route-driven docs
 
 Without generated docs, route behavior and API schemas need parallel updates.
-Go++ can enable OpenAPI and Swagger on the server class:
+GPP can enable OpenAPI and Swagger on the server class:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 class App : http.Server @{
     http.Prefix("/api"),
     http.OpenAPI,

@@ -1,8 +1,8 @@
-# Go++ String Interpolation and Formatting Specification
+# GPP String Interpolation and Formatting Specification
 
 ## 1. Overview
 
-Go++ supports string interpolation in both:
+GPP supports string interpolation in both:
 
 ```text
 "double-quoted strings"
@@ -40,7 +40,7 @@ The goals are:
 
 * remove common `fmt.Sprintf` boilerplate;
 * preserve Go formatting conventions;
-* support arbitrary Go++ expressions;
+* support arbitrary GPP expressions;
 * work consistently in interpreted and raw strings;
 * support multiline strings and multiline expressions;
 * avoid introducing a new formatting mini-language.
@@ -73,7 +73,7 @@ contains an interpreted newline escape.
 `Hello {{name}}`
 ```
 
-Raw strings preserve normal Go raw-string behavior while still recognizing Go++ interpolation delimiters.
+Raw strings preserve normal Go raw-string behavior while still recognizing GPP interpolation delimiters.
 
 Example:
 
@@ -122,9 +122,9 @@ Interpolation is not restricted to identifiers.
 
 ---
 
-# 4. Full Go++ Expressions
+# 4. Full GPP Expressions
 
-The interpolation body may contain any valid Go++ expression that produces a value.
+The interpolation body may contain any valid GPP expression that produces a value.
 
 Examples:
 
@@ -142,7 +142,7 @@ Examples:
 "{{LoadPort() ?? 8080}}"
 ```
 
-Normal Go++ expression semantics apply.
+Normal GPP expression semantics apply.
 
 Interpolation does not introduce a separate expression grammar.
 
@@ -190,7 +190,7 @@ Not:
 {{price:.2f}}
 ```
 
-Go++ must not invent a second format syntax.
+GPP must not invent a second format syntax.
 
 This allows developers already familiar with `fmt.Printf` and `fmt.Sprintf` to use the same formatting knowledge.
 
@@ -306,7 +306,7 @@ If no explicit format is supplied:
 "Hello {{value}}"
 ```
 
-the value is converted using normal Go++ string interpolation semantics.
+the value is converted using normal GPP string interpolation semantics.
 
 The default behavior should correspond closely to:
 
@@ -342,7 +342,7 @@ If a value implements:
 fmt.Stringer
 ```
 
-or a Go++ class provides an appropriate:
+or a GPP class provides an appropriate:
 
 ```gpp
 func String() string
@@ -370,7 +370,7 @@ Then:
 
 may render the user's `String()` value.
 
-This naturally integrates with the Go++ root `Object.String()` model.
+This naturally integrates with the GPP root `Object.String()` model.
 
 ---
 
@@ -386,7 +386,7 @@ For example:
 
 requests `%#v` formatting rather than relying on the ordinary default interpolation representation.
 
-Go++ should not invent special precedence rules beyond standard Go formatting behavior.
+GPP should not invent special precedence rules beyond standard Go formatting behavior.
 
 ---
 
@@ -402,7 +402,7 @@ message := "Hello\n{{name}}\n"
 
 The `\n` sequences are interpreted normally.
 
-Interpolation occurs as part of the Go++ compilation process.
+Interpolation occurs as part of the GPP compilation process.
 
 ---
 
@@ -429,7 +429,7 @@ Interpolation still recognizes:
 
 inside the raw string.
 
-Therefore raw strings are raw with respect to Go escaping, but not with respect to Go++ interpolation.
+Therefore raw strings are raw with respect to Go escaping, but not with respect to GPP interpolation.
 
 ---
 
@@ -463,7 +463,7 @@ Result: {{
 `
 ```
 
-Whitespace inside the interpolation expression is governed by normal Go++ expression parsing.
+Whitespace inside the interpolation expression is governed by normal GPP expression parsing.
 
 ---
 
@@ -477,7 +477,7 @@ Example:
 "{{condition ? a : b:%d}}"
 ```
 
-must not incorrectly interpret the inner expression colon as the formatting separator if Go++ later supports syntax containing colons.
+must not incorrectly interpret the inner expression colon as the formatting separator if GPP later supports syntax containing colons.
 
 Likewise colons inside:
 
@@ -506,7 +506,7 @@ where:
 
 ```text
 Expression
-    normal Go++ expression
+    normal GPP expression
 
 FormatSpecifier
     Go fmt-compatible format string beginning with %
@@ -518,7 +518,7 @@ The exact parser implementation is compiler-defined.
 
 # 17. Literal `{{` and `}}`
 
-Go++ must provide a deterministic way to emit interpolation delimiters literally.
+GPP must provide a deterministic way to emit interpolation delimiters literally.
 
 Recommended syntax:
 
@@ -624,7 +624,7 @@ Likewise:
 
 should be diagnosed where practical.
 
-Go++ need not fully reimplement all `fmt` validation if normal Go compilation can provide the final diagnostic, but source mapping must refer back to the original `.gpp` source.
+GPP need not fully reimplement all `fmt` validation if normal Go compilation can provide the final diagnostic, but source mapping must refer back to the original `.gpp` source.
 
 ---
 
@@ -642,7 +642,7 @@ name := "Bob"
 
 may produce a compile-time warning or error if the type is statically known.
 
-However, Go++ should not build an entirely separate `fmt` type system merely for interpolation.
+However, GPP should not build an entirely separate `fmt` type system merely for interpolation.
 
 The implementation may rely on Go formatting semantics where necessary.
 
@@ -769,7 +769,7 @@ Examples:
 
 # 27. Nil Coalescing
 
-Normal Go++ nil coalescing is valid:
+Normal GPP nil coalescing is valid:
 
 ```gpp
 "Name: {{user.Name || "Unknown"}}"
@@ -781,7 +781,7 @@ The interpolation system does not need a separate fallback syntax.
 
 # 28. Error Fallback
 
-Normal Go++ expression-level error fallback is valid:
+Normal GPP expression-level error fallback is valid:
 
 ```gpp
 "Port: {{ParsePort(value) ?? 8080}}"
@@ -793,7 +793,7 @@ Again, interpolation reuses the existing expression language.
 
 # 29. Error Promotion
 
-If an interpolation expression invokes a function returning a trailing `error` and the error is omitted, normal Go++ automatic error promotion applies.
+If an interpolation expression invokes a function returning a trailing `error` and the error is omitted, normal GPP automatic error promotion applies.
 
 Example:
 
@@ -821,7 +821,7 @@ Interpolation must not silently swallow errors.
 
 # 30. Function Context
 
-Because interpolation may throw through automatic error promotion, it participates in the enclosing function's normal Go++ error behavior.
+Because interpolation may throw through automatic error promotion, it participates in the enclosing function's normal GPP error behavior.
 
 For example:
 
@@ -976,7 +976,7 @@ Interpolation does not imply SQL escaping or safety.
 
 # 37. Relationship to Templates
 
-Go++ interpolation syntax and Go `html/template` syntax both use:
+GPP interpolation syntax and Go `html/template` syntax both use:
 
 ```text
 {{ ... }}
@@ -984,13 +984,13 @@ Go++ interpolation syntax and Go `html/template` syntax both use:
 
 but they operate in different contexts.
 
-Inside a Go++ string literal:
+Inside a GPP string literal:
 
 ```gpp
 "Hello {{name}}"
 ```
 
-Go++ interpolation applies.
+GPP interpolation applies.
 
 Inside a template declaration:
 
@@ -1002,7 +1002,7 @@ template Page(user User) {
 
 Go `html/template` syntax applies.
 
-The parser already knows whether it is currently parsing a Go++ string or a raw template body, so these uses are unambiguous.
+The parser already knows whether it is currently parsing a GPP string or a raw template body, so these uses are unambiguous.
 
 ---
 
@@ -1016,7 +1016,7 @@ source := `
 `
 ```
 
-is a Go++ interpolated raw string.
+is a GPP interpolated raw string.
 
 Therefore `user.Name` is evaluated immediately when the string is constructed.
 
@@ -1026,7 +1026,7 @@ If literal Go template source is desired:
 <h1>{{.Name}}</h1>
 ```
 
-the interpolation delimiters must be escaped inside the Go++ string:
+the interpolation delimiters must be escaped inside the GPP string:
 
 ```gpp
 source := `
@@ -1064,7 +1064,7 @@ then:
 tpl.Execute(w, source, post)
 ```
 
-The Go++ interpolation layer produces:
+The GPP interpolation layer produces:
 
 ```gotemplate
 <h1>{{.Title}}</h1>
@@ -1076,7 +1076,7 @@ which is then parsed by `html/template`.
 
 # 40. Example: Mixed Construction
 
-Go++ interpolation may still be used to construct part of a dynamic template source deliberately.
+GPP interpolation may still be used to construct part of a dynamic template source deliberately.
 
 Example:
 
@@ -1166,7 +1166,7 @@ log.Printf(
 )
 ```
 
-Go++ may write:
+GPP may write:
 
 ```gpp
 log.Println(
@@ -1197,7 +1197,7 @@ text := fmt.Sprintf(
 )
 ```
 
-Go++:
+GPP:
 
 ```gpp
 text := "subtotal {{subtotal:%.2f}}, tax {{tax:%.2f}}, total {{total:%.2f}}"
@@ -1297,7 +1297,7 @@ should produce an interpolation-specific parse diagnostic rather than an unrelat
 
 # 51. Nested Braces
 
-The interpolation parser must correctly handle braces belonging to Go++ expressions.
+The interpolation parser must correctly handle braces belonging to GPP expressions.
 
 For example, if future expression forms contain nested literals or structures, matching `}}` must respect nested syntax rather than relying on naive text search.
 
@@ -1331,7 +1331,7 @@ Value: {{name}}
 
 not the value of `name`.
 
-Interpolation occurs only during parsing of the original Go++ string literal.
+Interpolation occurs only during parsing of the original GPP string literal.
 
 ---
 
@@ -1415,9 +1415,9 @@ double-quoted string literals
 raw backtick string literals
 ```
 
-It must not apply Go++ string interpolation while parsing a `template` declaration's raw body.
+It must not apply GPP string interpolation while parsing a `template` declaration's raw body.
 
-Template bodies belong to `html/template`, not the Go++ string lexer.
+Template bodies belong to `html/template`, not the GPP string lexer.
 
 ---
 
@@ -1426,7 +1426,7 @@ Template bodies belong to `html/template`, not the Go++ string lexer.
 For raw backtick strings, literal source content should be preserved exactly except for:
 
 ```text
-Go++ interpolation substitution
+GPP interpolation substitution
 interpolation delimiter escaping
 ```
 
@@ -1533,7 +1533,7 @@ literal segments + {{ expressions }}
         ↓
 optional :%fmt specifier
         ↓
-normal Go++ expression semantics
+normal GPP expression semantics
         ↓
 normal Go fmt formatting semantics
         ↓
@@ -1557,4 +1557,4 @@ Balance: {{user.Balance:%10.2f}}
 
 The core rule is:
 
-> Go++ interpolation adds ergonomic expression insertion and Go-native formatting to both ordinary and raw strings without introducing a second expression language or a second formatting language.
+> GPP interpolation adds ergonomic expression insertion and Go-native formatting to both ordinary and raw strings without introducing a second expression language or a second formatting language.

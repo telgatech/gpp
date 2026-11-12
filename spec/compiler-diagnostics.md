@@ -1,8 +1,8 @@
-# Go++ Source-Mapped Diagnostics Specification
+# GPP Source-Mapped Diagnostics Specification
 
 ## 1. Overview
 
-Go++ compiler and backend diagnostics should point to original `.gpp` source locations rather than generated `.go` files wherever possible.
+GPP compiler and backend diagnostics should point to original `.gpp` source locations rather than generated `.go` files wherever possible.
 
 Current undesirable behavior:
 
@@ -24,7 +24,7 @@ mismatched types string and int
                ^^^^^^^^
 ```
 
-Generated Go source should remain available for compiler debugging, but ordinary Go++ users should see diagnostics in terms of their `.gpp` source.
+Generated Go source should remain available for compiler debugging, but ordinary GPP users should see diagnostics in terms of their `.gpp` source.
 
 ---
 
@@ -32,7 +32,7 @@ Generated Go source should remain available for compiler debugging, but ordinary
 
 The compiler should maintain this invariant:
 
-> Every generated Go construct originating from Go++ source should retain a mapping to the narrowest meaningful original `.gpp` source span.
+> Every generated Go construct originating from GPP source should retain a mapping to the narrowest meaningful original `.gpp` source span.
 
 This mapping should survive:
 
@@ -51,9 +51,9 @@ and be usable to rewrite backend Go diagnostics.
 
 # 3. Diagnostic Sources
 
-Go++ diagnostics come from two broad sources.
+GPP diagnostics come from two broad sources.
 
-## Go++ compiler diagnostics
+## GPP compiler diagnostics
 
 These are produced directly by:
 
@@ -110,7 +110,7 @@ These require source remapping.
 
 # 4. Source Span Model
 
-Every relevant Go++ AST node should carry a source span.
+Every relevant GPP AST node should carry a source span.
 
 Conceptually:
 
@@ -153,7 +153,7 @@ Source spans should be preserved through semantic and lowering phases.
 Conceptually:
 
 ```text
-Go++ AST node
+GPP AST node
     ↓
 semantic node
     ↓
@@ -289,7 +289,7 @@ Example:
 ```text
 internal compiler-generated code failed to compile
 
-this likely indicates a Go++ compiler bug
+this likely indicates a GPP compiler bug
 ```
 
 The compiler may also display the associated nearest source declaration if useful.
@@ -298,7 +298,7 @@ The compiler may also display the associated nearest source declaration if usefu
 
 # 10. Go `//line` Directives
 
-Go++ should use Go's standard `//line` directives where practical.
+GPP should use Go's standard `//line` directives where practical.
 
 Example generated Go:
 
@@ -336,7 +336,7 @@ multi-origin constructs
 rich diagnostic context
 ```
 
-Therefore they should be combined with a Go++ source map.
+Therefore they should be combined with a GPP source map.
 
 ---
 
@@ -349,7 +349,7 @@ generated Go
     +
 Go //line directives
     +
-Go++ generated-range → source-span map
+GPP generated-range → source-span map
 ```
 
 The responsibilities are:
@@ -373,7 +373,7 @@ This allows incremental implementation.
 
 A minimal first version may:
 
-1. preserve source spans in the Go++ AST;
+1. preserve source spans in the GPP AST;
 2. emit `//line` directives before generated constructs;
 3. run the Go backend normally;
 4. suppress generated-source framing;
@@ -631,7 +631,7 @@ Example backend:
 invalid operation: name * 2 (mismatched types string and untyped int)
 ```
 
-Go++ may reformat this as:
+GPP may reformat this as:
 
 ```text
 invalid operation: name * 2
@@ -644,7 +644,7 @@ but should preserve the important semantic information.
 
 # 26. Cleanup of Go-Specific Noise
 
-Go++ may simplify backend wording where the Go representation leaks implementation details.
+GPP may simplify backend wording where the Go representation leaks implementation details.
 
 Examples:
 
@@ -655,7 +655,7 @@ internal anonymous-struct names
 lowered class implementation names
 ```
 
-Where safe, rewrite them into Go++ terminology.
+Where safe, rewrite them into GPP terminology.
 
 ---
 
@@ -802,7 +802,7 @@ This should be a priority case because interpolation lowering often introduces s
 Errors originating from compile-time `.gpp.tpl` parsing or validation should point directly to the `.gpp.tpl` source.
 
 The compiler must also reject duplicate effective `tpl.Path(...)` patterns
-among template declarations in the same Go++ package, including declarations
+among template declarations in the same GPP package, including declarations
 in different source files. Templates in different packages have independent
 registries, so equal paths across packages are valid. Report the later path
 annotation's source location and identify the first conflicting template and
@@ -949,7 +949,7 @@ Prefer only the actual diagnostic.
 
 # 40. Process Failure Message
 
-If the backend process fails without a useful compiler diagnostic, Go++ may report:
+If the backend process fails without a useful compiler diagnostic, GPP may report:
 
 ```text
 Go backend failed: exit status 1
@@ -1295,7 +1295,7 @@ If `//line` causes Go to report:
 example.gpp:18:...
 ```
 
-the Go++ compiler should still process the diagnostic.
+the GPP compiler should still process the diagnostic.
 
 It may:
 
@@ -1306,7 +1306,7 @@ rewrite generated type names
 clean message formatting
 ```
 
-`//line` output should not bypass the Go++ diagnostic formatter.
+`//line` output should not bypass the GPP diagnostic formatter.
 
 ---
 
@@ -1359,7 +1359,7 @@ should point to that call expression even though the signature comes from native
 If backend compilation fails in synthetic generated code and no meaningful source mapping exists, report:
 
 ```text
-Go++ compiler generated invalid Go code.
+GPP compiler generated invalid Go code.
 
 internal location:
     <generated path>:line:column
@@ -1459,7 +1459,7 @@ got:
         ^
 ```
 
-The exact wording may come from Go++ semantic analysis rather than the backend.
+The exact wording may come from GPP semantic analysis rather than the backend.
 
 ---
 
@@ -1468,9 +1468,9 @@ The exact wording may come from Go++ semantic analysis rather than the backend.
 If generated runtime code fails:
 
 ```text
-Go++ compiler generated invalid Go code.
+GPP compiler generated invalid Go code.
 
-nearest Go++ source:
+nearest GPP source:
     app.gpp:18:1
 
 run with:
@@ -1507,7 +1507,7 @@ A future debug-artifact format may persist mappings, but this is not required fo
 compile
 capture backend diagnostics
 remap
-print Go++ diagnostics
+print GPP diagnostics
 ```
 
 It should not invoke `go run` in a way that bypasses diagnostic processing.
@@ -1520,7 +1520,7 @@ The compiler should own the child process output.
 
 `gpp build` should apply the same diagnostic remapping behavior.
 
-Backend errors should always be presented as Go++ source diagnostics where possible.
+Backend errors should always be presented as GPP source diagnostics where possible.
 
 ---
 
@@ -1561,7 +1561,7 @@ Avoid building separate location systems for each subsystem.
 
 # 70. Recommended Implementation Order
 
-1. Add/standardize source spans on all Go++ AST nodes.
+1. Add/standardize source spans on all GPP AST nodes.
 2. Introduce a central source manager.
 3. Preserve origin spans during lowering.
 4. Emit `//line` directives.
@@ -1623,7 +1623,7 @@ The diagnostic architecture is:
     ↓
 source manager + spans
     ↓
-Go++ AST
+GPP AST
     ↓
 lowering with origin metadata
     ↓
@@ -1635,11 +1635,11 @@ generated-range/source-span mapping
     ↓
 Go backend diagnostic
     ↓
-Go++ diagnostic formatter
+GPP diagnostic formatter
     ↓
 original .gpp location + source excerpt
 ```
 
 The central rule is:
 
-> Generated Go is an implementation detail. Normal diagnostics should speak in terms of the Go++ source the programmer actually wrote.
+> Generated Go is an implementation detail. Normal diagnostics should speak in terms of the GPP source the programmer actually wrote.

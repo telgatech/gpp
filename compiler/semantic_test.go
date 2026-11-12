@@ -376,7 +376,7 @@ func TestResolveProgramRejectsPrivateAccessFromNativeGoMethod(t *testing.T) {
 	program := parseProgram(t, `class Account { pin string }
 func (account Account) Leak() string { return account.pin }`)
 	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
-		t.Fatalf("a native Go method must not bypass Go++ class privacy, got %v", err)
+		t.Fatalf("a native Go method must not bypass GPP class privacy, got %v", err)
 	}
 }
 
@@ -391,7 +391,7 @@ func reveal(value any) string {
 	}
 }`)
 	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
-		t.Fatalf("a native Go type switch must not bypass Go++ class privacy, got %v", err)
+		t.Fatalf("a native Go type switch must not bypass GPP class privacy, got %v", err)
 	}
 }
 
@@ -399,7 +399,7 @@ func TestResolveProgramRejectsPrivateAccessFromNativeGoPackageValue(t *testing.T
 	program := parseProgram(t, `class Account { pin string }
 var leaked = Account{pin: "hidden"}`)
 	if _, err := ResolveProgram(program); err == nil || !strings.Contains(err.Error(), "cannot access private member pin") {
-		t.Fatalf("a native Go package value must not bypass Go++ class privacy, got %v", err)
+		t.Fatalf("a native Go package value must not bypass GPP class privacy, got %v", err)
 	}
 }
 

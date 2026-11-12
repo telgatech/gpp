@@ -385,7 +385,7 @@ func prepareRecordContextAST(file *File, context constructorContext) error {
 // lowerRecordOnlyBlock is deliberately narrower than lowerExceptionBlockNodes.
 // Record inference runs before the ordinary per-declaration semantic context is
 // complete, so this pass may rewrite record calls and collection element types,
-// but must leave every other Go++ construct untouched.
+// but must leave every other GPP construct untouched.
 func lowerRecordOnlyBlock(block *BlockStmt, context constructorContext) error {
 	if block == nil {
 		return nil

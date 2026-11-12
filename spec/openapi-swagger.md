@@ -1,4 +1,4 @@
-# Go++ HTTP OpenAPI and Swagger Specification
+# GPP HTTP OpenAPI and Swagger Specification
 
 ## 1. Overview
 
@@ -52,7 +52,7 @@ There must not be a separate API-definition file that developers have to keep sy
 The model is:
 
 ```text
-Go++ handler declarations
+GPP handler declarations
         ↓
 HTTP semantic metadata
         ↓
@@ -183,7 +183,7 @@ OpenAPI generation is opt-in.
 
 # 8. Canonical HTTP Path Syntax
 
-Go++ HTTP routes use brace parameters.
+GPP HTTP routes use brace parameters.
 
 Example:
 
@@ -535,7 +535,7 @@ Nested combinations should work recursively.
 
 # 20. Primitive Mapping
 
-At minimum, map common Go/Go++ primitive types:
+At minimum, map common Go/GPP primitive types:
 
 ```text
 string
@@ -637,7 +637,7 @@ must not appear in the OpenAPI schema.
 
 # 24. Required Fields
 
-Where the Go++ type/binding model can determine requiredness, OpenAPI should represent it.
+Where the GPP type/binding model can determine requiredness, OpenAPI should represent it.
 
 Do not mark every property required merely because it exists as a field.
 
@@ -725,7 +725,7 @@ The security description should come from the same metadata enforcing authentica
 
 Role/permission annotations may contribute documentation extensions or operation descriptions where useful.
 
-However, OpenAPI security semantics should not be distorted merely to encode Go++-specific authorization details.
+However, OpenAPI security semantics should not be distorted merely to encode GPP-specific authorization details.
 
 Standard OpenAPI constructs should be preferred.
 
@@ -1112,9 +1112,9 @@ It should not require application developers to install Node.js, npm, or copy fr
 
 The default Swagger UI implementation should preferably work without depending on a public CDN at runtime.
 
-Required static resources may be embedded in the Go++ HTTP library/application binary.
+Required static resources may be embedded in the GPP HTTP library/application binary.
 
-This preserves Go++'s single-binary deployment model.
+This preserves GPP's single-binary deployment model.
 
 ---
 
@@ -1145,7 +1145,7 @@ Swagger UI is a presentation layer.
 The relationship is:
 
 ```text
-Go++ HTTP metadata
+GPP HTTP metadata
         ↓
 OpenAPI document
         ↓
@@ -1160,7 +1160,7 @@ Swagger annotations
 application routing
 ```
 
-Application routing remains defined entirely by Go++ HTTP routes.
+Application routing remains defined entirely by GPP HTTP routes.
 
 ---
 
@@ -1248,7 +1248,7 @@ Schema details should be generated from the actual source types.
 
 # 52. No Duplicate API DSL
 
-Go++ should not require code such as:
+GPP should not require code such as:
 
 ```gpp
 openapi {
@@ -1275,7 +1275,7 @@ Duplicating route declarations creates synchronization problems and contradicts 
 The source-of-truth hierarchy is:
 
 ```text
-Go++ route declaration
+GPP route declaration
         ↓
 HTTP semantic model
         ↓
@@ -1315,7 +1315,7 @@ V1 does not require a large OpenAPI-specific annotation surface.
 
 Do not introduce dozens of annotations merely to mirror every field in the OpenAPI specification.
 
-Go++ should infer the common case automatically.
+GPP should infer the common case automatically.
 
 Application code should normally look like:
 
@@ -1444,7 +1444,7 @@ OpenAPI generation
 Swagger UI assets
 ```
 
-should be compatible with Go++'s single executable deployment model.
+should be compatible with GPP's single executable deployment model.
 
 No external sidecar or documentation server should be required.
 
@@ -1508,9 +1508,9 @@ Do not guess that routes are "internal" based on their names.
 
 # 66. Handwritten Go Handlers
 
-If mixed Go/Go++ applications register HTTP routes dynamically through native Go code outside the Go++ server's route metadata, those routes may not be representable automatically.
+If mixed Go/GPP applications register HTTP routes dynamically through native Go code outside the GPP server's route metadata, those routes may not be representable automatically.
 
-`http.OpenAPI` guarantees documentation for routes known to the Go++ HTTP semantic model.
+`http.OpenAPI` guarantees documentation for routes known to the GPP HTTP semantic model.
 
 The compiler/runtime should not claim completeness for arbitrary runtime route registration it cannot inspect.
 
@@ -1522,7 +1522,7 @@ Failure to encode or serve a compiler-generated OpenAPI document should be consi
 
 It should route through normal server error handling where possible.
 
-A malformed OpenAPI document generated from valid compiler metadata should be treated as a Go++ implementation defect.
+A malformed OpenAPI document generated from valid compiler metadata should be treated as a GPP implementation defect.
 
 ---
 
@@ -1576,7 +1576,7 @@ class App : http.Server @{
 The model is:
 
 ```text
-typed Go++ handlers
+typed GPP handlers
         ↓
 HTTP route metadata
         ↓
@@ -1613,4 +1613,4 @@ The core rules are:
 
 > OpenAPI is generated from the same typed HTTP metadata that drives routing, so the application has one source of truth.
 
-> Go++ HTTP paths use `{name}` syntax consistently, including `/users/{id}`.
+> GPP HTTP paths use `{name}` syntax consistently, including `/users/{id}`.

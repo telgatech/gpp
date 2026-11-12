@@ -2,7 +2,7 @@
 
 ## Goal
 
-Provide opt-in serialization support for Go++ classes through:
+Provide opt-in serialization support for GPP classes through:
 
 ```go
 @{encoding.Serializable}
@@ -16,7 +16,7 @@ Initial formats:
 * YAML
 * GOB
 
-The feature should be implemented through ordinary Go++ annotations plus compile-time code generation.
+The feature should be implemented through ordinary GPP annotations plus compile-time code generation.
 
 ---
 
@@ -168,7 +168,7 @@ static func FromJSON(data []byte) (User, error) {
 }
 ```
 
-Exact lowering may differ due to Go++ object layout.
+Exact lowering may differ due to GPP object layout.
 
 ---
 
@@ -192,7 +192,7 @@ That dependency belongs to `gpp/encoding`, not to the compiler core.
 # GOB
 
 GOB uses Go's standard `encoding/gob` backend and is intended for internal
-Go/Go++ communication, local persistence, caches, queues, and snapshots.
+Go/GPP communication, local persistence, caches, queues, and snapshots.
 
 ```go
 func ToGOB() ([]byte, error)
@@ -327,7 +327,7 @@ Exact generated representation is implementation-defined.
 
 # User-Facing Abstraction
 
-Users should not need to write Go struct tags directly for ordinary Go++ classes.
+Users should not need to write Go struct tags directly for ordinary GPP classes.
 
 Preferred:
 
@@ -436,7 +436,7 @@ class Employee : Person @{
 }
 ```
 
-`Employee.ToJSON()` should serialize the persisted/visible fields of the complete `Employee` object according to Go++ class field semantics, including inherited fields.
+`Employee.ToJSON()` should serialize the persisted/visible fields of the complete `Employee` object according to GPP class field semantics, including inherited fields.
 
 ---
 
@@ -668,13 +668,13 @@ Do not build custom graph serialization solely for this feature.
 
 # Visibility
 
-By default, serialization should follow the language's public/private field behavior chosen for Go++ classes.
+By default, serialization should follow the language's public/private field behavior chosen for GPP classes.
 
 Preferred initial rule:
 
 Serialize fields that are eligible according to generated Go representation and encoding metadata.
 
-If Go++ private field semantics make native encoders unsuitable directly, generated transport structures/code may be required.
+If GPP private field semantics make native encoders unsuitable directly, generated transport structures/code may be required.
 
 Do not expose private implementation fields accidentally.
 

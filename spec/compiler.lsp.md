@@ -1,8 +1,8 @@
-# Go++ `gpp lsp` Command Specification
+# GPP `gpp lsp` Command Specification
 
 ## 1. Overview
 
-`gpp lsp` starts the Go++ Language Server Protocol service used by editors and IDEs.
+`gpp lsp` starts the GPP Language Server Protocol service used by editors and IDEs.
 
 Typical invocation:
 
@@ -23,7 +23,7 @@ JSON-RPC / LSP
       ↕
 gpp lsp
       ↓
-Go++ workspace
+GPP workspace
       ↓
 parser
 semantic analysis
@@ -48,7 +48,7 @@ gpp doc
 
 # 2. Design Goal
 
-The purpose of `gpp lsp` is to make Go++ feel like a normal modern language inside editors.
+The purpose of `gpp lsp` is to make GPP feel like a normal modern language inside editors.
 
 The server should provide:
 
@@ -135,7 +135,7 @@ project-b
     → gpp lsp process B
 ```
 
-There is no global Go++ daemon in v0.1.
+There is no global GPP daemon in v0.1.
 
 ---
 
@@ -509,7 +509,7 @@ go test
 
 on every editor change.
 
-Most editor functionality should come directly from Go++ semantic analysis.
+Most editor functionality should come directly from GPP semantic analysis.
 
 Backend compilation may be used only for exceptional diagnostics that cannot otherwise be determined.
 
@@ -566,13 +566,13 @@ The LSP uses the same source-location infrastructure as normal compiler diagnost
 
 Generated Go filenames and locations should not appear in normal editor diagnostics.
 
-If a backend Go diagnostic is used, it must be remapped to the original Go++ source before being published.
+If a backend Go diagnostic is used, it must be remapped to the original GPP source before being published.
 
 ---
 
 # 29. Diagnostic Severity
 
-The server should map Go++ diagnostic categories to LSP severity levels:
+The server should map GPP diagnostic categories to LSP severity levels:
 
 ```text
 compiler error
@@ -587,15 +587,15 @@ non-fatal advisory
 
 Exact categorization may evolve.
 
-Published Go++ diagnostics carry stable string codes so extensions can offer
+Published GPP diagnostics carry stable string codes so extensions can offer
 reliable code actions:
 
 | Code | Meaning |
 | --- | --- |
-| `GPP1000` | Go++ syntax error |
+| `GPP1000` | GPP syntax error |
 | `GPP1001` | Unterminated string or rune literal |
 | `GPP1002` | Unterminated block comment |
-| `GPP2000` | Go++ semantic or resolution error |
+| `GPP2000` | GPP semantic or resolution error |
 
 The literal and block-comment diagnostics include structured `data` describing
 the delimiter fix. `textDocument/codeAction` returns a quick fix that inserts
@@ -731,7 +731,7 @@ The implementation resolves lexical parameters and declarations in the active
 function or method, class members, receiver members, and applicable extension
 methods. Receiver lookup understands explicit and safe selectors, inferred
 class and string values, lambda parameters where their collection element type
-is known, and fields declared in anonymous structs. Dotted Go++ imports expose
+is known, and fields declared in anonymous structs. Dotted GPP imports expose
 their logical package members and package path segments. Annotation completion
 filters declarations by the target currently being annotated.
 
@@ -785,7 +785,7 @@ The server supports:
 textDocument/hover
 ```
 
-Hover should show source-level Go++ information.
+Hover should show source-level GPP information.
 
 Example:
 
@@ -1037,7 +1037,7 @@ using the same formatter as:
 gpp fmt
 ```
 
-The editor must not implement a separate Go++ formatter.
+The editor must not implement a separate GPP formatter.
 
 ---
 
@@ -1117,7 +1117,7 @@ OAuth(
 
 # 55. Overload Awareness
 
-Signature help should understand Go++ overloads.
+Signature help should understand GPP overloads.
 
 As arguments are typed, applicable overloads may be prioritized.
 
@@ -1143,7 +1143,7 @@ These should not block the initial LSP release.
 
 # 57. Semantic Highlighting
 
-Semantic tokens are desirable because Go++ has concepts that generic syntax highlighting cannot fully understand:
+Semantic tokens are desirable because GPP has concepts that generic syntax highlighting cannot fully understand:
 
 ```text
 class
@@ -1167,7 +1167,7 @@ comment, string, number, operator, decorator
 ```
 
 The ordered modifiers are `declaration`, `readonly`, `static`, `deprecated`,
-and `defaultLibrary`. Go++ declarations, annotation uses, enum members, methods,
+and `defaultLibrary`. GPP declarations, annotation uses, enum members, methods,
 lambda and catch parameters, operators such as `?.` and `??`, and opaque
 template bodies receive semantic classifications in addition to lexical
 keywords, comments, and literals.
@@ -1192,7 +1192,7 @@ The server should recognize:
 .gpp.tpl
 ```
 
-files where Go++ template declarations are supported.
+files where GPP template declarations are supported.
 
 Capabilities may include:
 
@@ -1239,7 +1239,7 @@ tpl.UserPage(w, user)
 Errors in template declarations should point to the `.gpp.tpl` source.
 
 The LSP must report duplicate effective `tpl.Path(...)` patterns as compile-time
-diagnostics for declarations in the same Go++ package, including conflicts
+diagnostics for declarations in the same GPP package, including conflicts
 between template declarations in different source files. Equal paths in
 different packages are valid. The diagnostic should identify the conflicting
 template and its source location, using the same path normalization and
@@ -1274,7 +1274,7 @@ Completion, hover, and definitions should expose relevant native Go information.
 
 # 63. Go Package Information
 
-Where practical, Go++ tooling should reuse Go package/type metadata rather than parsing Go source independently.
+Where practical, GPP tooling should reuse Go package/type metadata rather than parsing Go source independently.
 
 Useful infrastructure includes Go package loading/type information.
 
@@ -1284,7 +1284,7 @@ The exact implementation remains internal.
 
 # 64. Imported Go Methods
 
-Native Go methods participate in semantic lookup before Go++ extension methods according to the normal extension resolution rules.
+Native Go methods participate in semantic lookup before GPP extension methods according to the normal extension resolution rules.
 
 Editor completion and hover must reflect the same resolution.
 
@@ -1292,7 +1292,7 @@ Editor completion and hover must reflect the same resolution.
 
 # 65. Packages
 
-The LSP must understand Go++ package rules:
+The LSP must understand GPP package rules:
 
 ```text
 one package declaration per file
@@ -1317,7 +1317,7 @@ For v0.1, manually written imports plus semantic completion is acceptable.
 
 # 67. Versioned Imports
 
-If Go++ supports imports such as:
+If GPP supports imports such as:
 
 ```gpp
 import "github.com/example/foo@v1.2.3"
@@ -1340,7 +1340,7 @@ Typical inputs include:
 .gpp.tpl files
 go.mod
 Go source dependencies where needed
-Go++ compiler/project configuration
+GPP compiler/project configuration
 ```
 
 Generated build artifacts should normally be excluded.
@@ -1372,7 +1372,7 @@ It should provide conversions between:
 
 ```text
 byte offset
-Go++ source span
+GPP source span
 line
 column
 LSP position
@@ -1386,7 +1386,7 @@ The same source manager should support compiler diagnostics and LSP features.
 
 LSP positions use editor-oriented character positions that commonly require UTF-16 code-unit handling.
 
-Go++ source management must correctly convert between:
+GPP source management must correctly convert between:
 
 ```text
 UTF-8 byte offsets used internally
@@ -1669,7 +1669,7 @@ It should not silently disable language services.
 Example:
 
 ```text
-Go++ compiler `gpp` was not found in PATH.
+GPP compiler `gpp` was not found in PATH.
 ```
 
 A configurable explicit executable path may be supported.
@@ -1691,7 +1691,7 @@ document symbols
 formatting
 ```
 
-This is enough to make Go++ productive in an editor.
+This is enough to make GPP productive in an editor.
 
 ---
 
@@ -1925,7 +1925,7 @@ URI/position conversion
     ↓
 Workspace operation
     ↓
-Go++ result
+GPP result
     ↓
 LSP response conversion
 ```
@@ -1939,7 +1939,7 @@ It should contain as little language-semantic logic as possible.
 `gpp lsp` v0.1 is not intended to provide:
 
 ```text
-a global machine-wide Go++ daemon
+a global machine-wide GPP daemon
 a network service
 remote code execution
 project builds on every keypress
@@ -2003,7 +2003,7 @@ The core rules are:
 
 > Unsaved editor buffers are first-class compiler inputs.
 
-> The server reuses the same parser, semantic model, source manager, formatter, and documentation metadata as the rest of the Go++ toolchain.
+> The server reuses the same parser, semantic model, source manager, formatter, and documentation metadata as the rest of the GPP toolchain.
 
 > v0.1 may reparse changed files and reanalyze whole packages rather than implementing sophisticated incremental compilation.
 

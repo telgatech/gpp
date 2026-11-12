@@ -1,4 +1,4 @@
-# Go++ Constructors and Instance Initialization
+# GPP Constructors and Instance Initialization
 
 ## Status
 
@@ -9,12 +9,12 @@ and error propagation.
 
 ## Goals
 
-Go++ classes should have a compact, predictable construction model that:
+GPP classes should have a compact, predictable construction model that:
 
 * returns a mutable class instance rather than a temporary value;
 * allows a class to validate or normalize itself immediately after allocation;
 * composes correctly with inheritance and polymorphism;
-* supports Go++ named and positional construction arguments; and
+* supports GPP named and positional construction arguments; and
 * keeps ordinary Go composite literals valid for interoperability.
 
 The model is deliberately limited to instance initialization. It does not add
@@ -31,7 +31,7 @@ class Person {
 }
 ```
 
-Go++ accepts positional construction:
+GPP accepts positional construction:
 
 ```go
 p := Person("Bob", 42)
@@ -63,7 +63,7 @@ For a class with no user-defined initializer, the call is conceptually lowered
 to an addressable Go composite literal:
 
 ```go
-// Go++
+// GPP
 p := Person("Bob", 42)
 
 // Conceptual Go lowering
@@ -111,7 +111,7 @@ field with its parent name:
 value := C(A.Name: "left", B.Name: "right")
 ```
 
-The normal Go++ argument rules apply:
+The normal GPP argument rules apply:
 
 * unknown fields are compile-time errors;
 * duplicate fields are compile-time errors;
@@ -166,7 +166,7 @@ p, err := Person("Bob", 42)
 The first result is always `*Person`. The second result is the initializer's
 error. A non-error initializer returns only `*Person`.
 
-This follows Go++'s ordinary trailing-error rules. Omitting the trailing error
+This follows GPP's ordinary trailing-error rules. Omitting the trailing error
 promotes a non-nil error to an exception:
 
 ```go
@@ -244,7 +244,7 @@ base from dispatching into a derived initializer unexpectedly.
 
 ## Composite literals remain distinct
 
-Go-style composite literals remain valid Go++:
+Go-style composite literals remain valid GPP:
 
 ```go
 value := Person{
@@ -270,7 +270,7 @@ existing literal construction.
 ## Interaction with errors and exceptions
 
 An initializer error is an ordinary trailing error result. It participates in
-the same rules as any other Go or Go++ function returning `error`:
+the same rules as any other Go or GPP function returning `error`:
 
 ```go
 person, err := Person(inputName, inputAge)
@@ -290,7 +290,7 @@ silently discard initialization errors.
 
 ## Interoperability and generated Go
 
-Constructor-style calls are Go++ syntax and may lower to generated helper
+Constructor-style calls are GPP syntax and may lower to generated helper
 functions when an initializer or inheritance chain requires sequencing. The
 generated API should preserve these properties:
 

@@ -1,4 +1,4 @@
-# Go++ `gpp fiximports` Command Specification
+# GPP `gpp fiximports` Command Specification
 
 ## 1. Purpose
 
@@ -16,15 +16,15 @@ gpp fiximports --stdout main.gpp
 ```
 
 With no path, the command scans the current project. Directory discovery uses
-the same Go++ source extensions and ignored directories as `gpp fmt`.
+the same GPP source extensions and ignored directories as `gpp fmt`.
 
 ## 2. Resolution
 
 The command considers packages listed by the active Go toolchain and current
-module, along with the bundled Go++ standard library. For each qualified use,
+module, along with the bundled GPP standard library. For each qualified use,
 it selects a unique matching package by this priority:
 
-1. bundled Go++ standard-library packages;
+1. bundled GPP standard-library packages;
 2. Go standard-library packages;
 3. other packages available to the current module.
 
@@ -44,12 +44,12 @@ already be available to the module before it can be selected.
 
 Imports are inserted as a new grouped import declaration after the existing
 imports, or after the package clause when the file has no imports. New paths
-are sorted lexically. If source uses require both a Go++ package and a Go
-standard-library package with the same package name, the Go++ package keeps
+are sorted lexically. If source uses require both a GPP package and a Go
+standard-library package with the same package name, the GPP package keeps
 the natural name and the standard-library package receives a `std` prefix
 (for example, `http` and `stdhttp`). The affected standard-library selectors
 are rewritten to the prefixed alias. This also applies when the colliding
-Go++ package is already imported. A source receiver already written with the
+GPP package is already imported. A source receiver already written with the
 `std` prefix explicitly requests a matching Go standard-library package.
 
 Existing import paths and comments MUST be preserved. An existing standard
@@ -67,7 +67,7 @@ does not modify them, and exits non-zero when any such file is found.
 `--stdout` writes the result for exactly one source file and does not modify
 it. `--check` and `--stdout` cannot be combined.
 
-Malformed Go++ input is reported and left untouched. Ambiguous or unavailable
+Malformed GPP input is reported and left untouched. Ambiguous or unavailable
 package matches are not errors and remain unchanged.
 
 ## 5. Relationship to formatting

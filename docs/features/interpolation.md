@@ -17,13 +17,13 @@ keeps simple expressions close to the surrounding text:
 message := fmt.Sprintf("Hello %s, order %d", user.Name, order.ID)
 ```
 
-**Go++ interpolation**
+**GPP interpolation**
 
 ```go
 message := "Hello {{user.Name}}, order {{order.ID}}"
 ```
 
-Expressions between `{{` and `}}` are Go++ expressions. The compiler lowers
+Expressions between `{{` and `}}` are GPP expressions. The compiler lowers
 the interpolation to formatting code, so it does not change the type or
 behavior of the values being interpolated. Interpolation works in both quoted
 strings and raw backtick strings.

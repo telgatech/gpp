@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   lang: 'en-US',
-  title: 'Go++',
+  title: 'GPP',
   description: 'A practical, modern superset of Go.',
   base: '/',
   cleanUrls: true,
@@ -20,8 +20,8 @@ export default defineConfig({
   ],
   themeConfig: {
     logo: {
-      src: '/go-gopher-nav.webp',
-      alt: 'Go++ blue gopher head'
+      src: '/gpp_monogram.png',
+      alt: 'GPP monogram'
     },
     siteTitle: false,
     nav: [
@@ -77,7 +77,7 @@ export default defineConfig({
           text: 'Go workflow and tools',
           items: [
             { text: 'Go compatibility', link: '/features/packages' },
-            { text: 'Mixed Go and Go++ builds', link: '/features/mixed-go' },
+            { text: 'Mixed Go and GPP builds', link: '/features/mixed-go' },
             { text: 'Project CLI', link: '/features/project-cli' },
             { text: 'Formatter', link: '/features/formatter' },
             { text: 'Source documentation', link: '/features/source-docs' },

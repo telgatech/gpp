@@ -1,8 +1,8 @@
-# Go++ Feature Spec: Declared Annotations
+# GPP Feature Spec: Declared Annotations
 
 ## Goal
 
-Add first-class annotation declarations to Go++.
+Add first-class annotation declarations to GPP.
 
 Annotations should behave like normal package declarations, similar in spirit to:
 
@@ -61,7 +61,7 @@ annotation Range(min int, max int) on field
 
 annotation Route(method string, path string) on method
 
-Parameter syntax should reuse ordinary Go++ parameter/type parsing where practical.
+Parameter syntax should reuse ordinary GPP parameter/type parsing where practical.
 
 Annotations are invoked like functions:
 
@@ -101,7 +101,7 @@ annotation Baz(name string) on class
 
 ## 4. Package visibility
 
-Annotation declarations follow normal Go/Go++ capitalization rules.
+Annotation declarations follow normal Go/GPP capitalization rules.
 
 Example:
 
@@ -213,7 +213,7 @@ package
 Recommended meanings:
 
 class
-    Go++ class declarations
+    GPP class declarations
 
 field
     class fields and other supported field declarations
@@ -983,7 +983,7 @@ annotation (
     Required on field, parameter
 )
 
-should feel as native to Go++ as:
+should feel as native to GPP as:
 
 import (...)
 var (...)

@@ -23,7 +23,7 @@ func (s *server) executeCommand(params executeCommandParams) (any, error) {
 	case "gpp.getDiagnostics":
 		return s.diagnosticsForURI(uri), nil
 	default:
-		return nil, fmt.Errorf("unsupported Go++ command: %s", params.Command)
+		return nil, fmt.Errorf("unsupported GPP command: %s", params.Command)
 	}
 }
 

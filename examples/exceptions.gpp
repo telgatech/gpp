@@ -1,6 +1,7 @@
 package main
 
 import (
+    "errors"
     "fmt"
     "os"
 )
@@ -23,7 +24,19 @@ class PermissionError {
 }
 
 func ReadConfig(path string) []byte {
-    return os.ReadFile(path)
+    return os.ReadFile(path) //all trailing errors are automatically promoted to exceptions unless you handle it explicitly
+}
+
+func foo() error {
+    return errors.New("foo unavailable")
+}
+
+func quux(fail bool=false) (int, int, error) {
+    if fail {
+        return 640, 480, errors.New("quux unavailable")
+    } else {
+        return 640, 480, nil
+    }
 }
 
 func main() {
@@ -50,6 +63,38 @@ func main() {
         fmt.Println("client error:", e.Error())
     }
 
-    _, err := os.ReadFile("optional-config.json")
+    // Single return value example
+    // Handle foo error locally
+    if err := foo();err!=nil {
+        fmt.Println("explicit foo error:", err)
+    }
+
+    _ = foo() //handle foo error explicitly but discard it
+    fmt.Println("dicard foo error and don't raise an exception")
+
+    // Handle foo as an exception
+    try {
+        foo()
+    } catch err {
+        fmt.Println("foo failed:", err)
+    }
+
+    // Uncomment to let foo's non-nil error propagate out of main:
+    // foo()
+
+    // Multi return values example
+    quux() // No exception, discard return values
+
+    try {
+        quux(true) // The int results are discarded; the trailing error still throws.
+    } catch e {
+        fmt.Println("quux failed:", e)
+    }
+
+    // Handle quux error explicitly
+    width, height, quuxErr := quux(true)
+    fmt.Println("explicit quux error:", width, height, quuxErr != nil)
+
+    _, err := os.ReadFile("missing-config.json")
     fmt.Println("explicit error:", err != nil)
 }

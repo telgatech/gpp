@@ -1,4 +1,4 @@
-# Go++ HTTP Error Templates and Context Response Helpers Addendum
+# GPP HTTP Error Templates and Context Response Helpers Addendum
 
 ## 1. Overview
 
@@ -58,7 +58,7 @@ class Server {
 }
 ```
 
-Because Go++ methods are polymorphic by default, a derived server may override it:
+Because GPP methods are polymorphic by default, a derived server may override it:
 
 ```gpp
 class App : http.Server {
@@ -170,7 +170,7 @@ data
     template input exposed as `.`
 ```
 
-The template data may be any suitable Go++ value.
+The template data may be any suitable GPP value.
 
 There is no required `http.ErrorData` class.
 
@@ -237,7 +237,7 @@ struct(
 )
 ```
 
-Struct fields follow normal Go++ / Go capitalization semantics.
+Struct fields follow normal GPP / Go capitalization semantics.
 
 Uppercase fields are exported.
 
@@ -308,7 +308,7 @@ class App : http.Server {
 }
 ```
 
-The exact anonymous struct shape is inferred from the value supplied by the server/application according to normal Go++ struct rules.
+The exact anonymous struct shape is inferred from the value supplied by the server/application according to normal GPP struct rules.
 
 A named class may also be used if preferred.
 
@@ -384,7 +384,7 @@ No separate `NotFoundTemplate` API is required.
 
 # 12. Uncaught Handler Error
 
-An uncaught Go++ error during request execution should default to HTTP 500.
+An uncaught GPP error during request execution should default to HTTP 500.
 
 Conceptually:
 
@@ -903,7 +903,7 @@ ctx.Text(...)
 ctx.HTML(...)
 ```
 
-Therefore normal Go++ automatic trailing-error promotion applies.
+Therefore normal GPP automatic trailing-error promotion applies.
 
 Typical handler:
 
@@ -1083,7 +1083,7 @@ route missing?
          ↓
        execute route
          ↓
-       uncaught Go++ error?
+       uncaught GPP error?
          ├─ no → normal response
          └─ yes
               ↓
@@ -1126,7 +1126,7 @@ framework template inheritance
 special ErrorPage override syntax
 ```
 
-Customization uses mechanisms Go++ already has:
+Customization uses mechanisms GPP already has:
 
 ```text
 normal virtual method override

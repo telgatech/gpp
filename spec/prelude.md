@@ -1,15 +1,15 @@
-# Go++ Feature Spec: Implicit prelude.gpp
+# GPP Feature Spec: Implicit prelude.gpp
 
 ## Goal
 
-Provide a small, automatically available Go++ prelude containing universally useful extensions and helpers so ordinary programs can be productive immediately without repetitive imports.
+Provide a small, automatically available GPP prelude containing universally useful extensions and helpers so ordinary programs can be productive immediately without repetitive imports.
 
 The prelude must remain:
 
 - small
 - general-purpose
 - predictable
-- implemented in ordinary Go++ where possible
+- implemented in ordinary GPP where possible
 - layered on top of native Go types
 - free of domain-specific frameworks
 
@@ -21,13 +21,13 @@ The built-in prelude source is:
 
 prelude.gpp
 
-It ships with the Go++ compiler/distribution.
+It ships with the GPP compiler/distribution.
 
 Users do not need to import it.
 
 ## 2. Loading behavior
 
-Every Go++ package automatically has access to symbols and extension methods declared by prelude.gpp.
+Every GPP package automatically has access to symbols and extension methods declared by prelude.gpp.
 
 Conceptually:
 
@@ -35,7 +35,7 @@ package usercode
 
 implicitly sees:
 
-import/preload Go++ prelude
+import/preload GPP prelude
 
 Do NOT textually concatenate prelude.gpp into source files.
 
@@ -43,7 +43,7 @@ Recommended implementation:
 
 1. Parse/type-check prelude.gpp once.
 2. Cache its semantic representation.
-3. Make exported prelude symbols/extensions visible in every Go++ package.
+3. Make exported prelude symbols/extensions visible in every GPP package.
 4. Compile required generated Go alongside user code.
 
 ## 3. Go standard library remains separate
@@ -65,10 +65,10 @@ The model is:
 Go stdlib
     native Go packages
 
-Go++ prelude
+GPP prelude
     implicit convenience helpers/extensions
 
-Optional Go++ libraries
+Optional GPP libraries
     explicitly imported packages such as model/web/validate
 
 ## 4. Design rule
@@ -208,7 +208,7 @@ extend []T {
 The algorithm-specific semantics, including allocation, ordering, and empty
 input behavior, are defined in the generic slice algorithms section below.
 
-Exact generic constraint syntax should follow whatever Go++ currently supports.
+Exact generic constraint syntax should follow whatever GPP currently supports.
 
 If generic extension constraints are not yet implemented, split implementations using available Go generic mechanisms or defer constrained methods.
 
@@ -590,13 +590,13 @@ users.Filter(func(u User) bool {
     return u.Active
 })
 
-If Go++ later gains concise function syntax, these APIs automatically become nicer.
+If GPP later gains concise function syntax, these APIs automatically become nicer.
 
 Do not make the prelude depend on speculative language features.
 
 ## 23. Implementation language
 
-Prefer implementing prelude.gpp in Go++ itself.
+Prefer implementing prelude.gpp in GPP itself.
 
 Example:
 
@@ -614,7 +614,7 @@ extend []T {
 This serves two purposes:
 
 1. useful standard conveniences
-2. a real-world stress test/demo of Go++ features
+2. a real-world stress test/demo of GPP features
 
 Use native Go interop where useful.
 
@@ -641,7 +641,7 @@ Do not silently let the prelude override user-defined behavior.
 Recommended precedence:
 
 1. real/native methods
-2. Go++ class methods
+2. GPP class methods
 3. explicitly imported/user extension methods
 4. prelude extension methods
 
@@ -679,7 +679,7 @@ When disabled:
 
 - no prelude symbols
 - no prelude extensions
-- normal Go++ language remains available
+- normal GPP language remains available
 
 This is useful for:
 
@@ -690,13 +690,13 @@ This is useful for:
 
 ## 28. Versioning
 
-The prelude is versioned with the Go++ compiler.
+The prelude is versioned with the GPP compiler.
 
 Do not fetch a remote prelude during compilation.
 
 Compiler distribution contains the canonical prelude.gpp.
 
-Programs therefore get deterministic prelude behavior for a given Go++ compiler version.
+Programs therefore get deterministic prelude behavior for a given GPP compiler version.
 
 ## 29. Source availability
 
@@ -704,7 +704,7 @@ Ship prelude.gpp as readable source.
 
 Users should be able to inspect it.
 
-It should demonstrate idiomatic Go++.
+It should demonstrate idiomatic GPP.
 
 Avoid hiding most of the implementation in compiler intrinsics unless required for correctness/performance.
 
@@ -838,7 +838,7 @@ extend []T where T cmp.Ordered {
     }
 }
 
-If Go++ does not yet support this constraint syntax, implement later rather than adding ad-hoc compiler behavior.
+If GPP does not yet support this constraint syntax, implement later rather than adding ad-hoc compiler behavior.
 
 ## 33. Suggested v1 contents
 
@@ -973,13 +973,13 @@ must make prelude extension calls unresolved.
 
 ## 36. Design principle
 
-prelude.gpp should make Go++ pleasant immediately without creating a second standard library.
+prelude.gpp should make GPP pleasant immediately without creating a second standard library.
 
 Use native Go types.
 Use native Go packages underneath.
 Add only small universal conveniences.
 
-If a feature can be implemented as ordinary Go++ extension code, prefer that over compiler magic.
+If a feature can be implemented as ordinary GPP extension code, prefer that over compiler magic.
 
 The ideal experience is:
 

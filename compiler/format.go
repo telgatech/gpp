@@ -66,7 +66,7 @@ func formatSourceWithFile(file *File, source string) string {
 		}
 		// Raw strings and block comments may contain intentional leading
 		// whitespace. Preserve those lines byte-for-byte while still advancing
-		// the scanner state so subsequent Go++ code is indented correctly.
+		// the scanner state so subsequent GPP code is indented correctly.
 		if state.mode == '`' || state.mode == '/' {
 			lines[index] = line
 			formatBraceDelta(line, &state)
@@ -115,7 +115,7 @@ func formatSourceWithFile(file *File, source string) string {
 }
 
 // formatGoCompatibleSource delegates ordinary Go files and snippets to
-// gofmt. Go++ constructs that Go cannot parse continue through the
+// gofmt. GPP constructs that Go cannot parse continue through the
 // source-preserving formatter below.
 func formatGoCompatibleSource(source string) (string, bool) {
 	prefix := ""
@@ -1041,7 +1041,7 @@ func formatBraceDelta(line string, state *formatScanState) int {
 			index++
 		case '{':
 			// Template actions use a double brace pair. They are opaque
-			// template syntax rather than Go++ block delimiters.
+			// template syntax rather than GPP block delimiters.
 			if index+1 < len(line) && line[index+1] == '{' {
 				index += 2
 				continue

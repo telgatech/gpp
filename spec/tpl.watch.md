@@ -1,4 +1,4 @@
-# Go++ Template System Addendum
+# GPP Template System Addendum
 
 This addendum updates the `gpp/tpl` specification in three areas:
 
@@ -31,7 +31,7 @@ tmpl.Execute(...)
 tmpl.ExecuteTemplate(...)
 ```
 
-Go++ therefore uses:
+GPP therefore uses:
 
 ```gpp id="6u0qqh"
 tpl.Execute(w, key, args...)
@@ -242,7 +242,7 @@ means:
 2. rediscover `.gpp.tpl` files for registered directories;
 3. parse template declarations;
 4. parse template bodies through `html/template`;
-5. perform Go++ template validation;
+5. perform GPP template validation;
 6. validate names and path registrations;
 7. construct a replacement registry;
 8. atomically publish the replacement only if the complete reload succeeds.
@@ -306,9 +306,9 @@ The failed reload must not:
 
 ---
 
-# 10. Reload and Go++ Error Promotion
+# 10. Reload and GPP Error Promotion
 
-Because `Reload` returns `error`, normal Go++ automatic error promotion applies.
+Because `Reload` returns `error`, normal GPP automatic error promotion applies.
 
 Typical use:
 
@@ -738,7 +738,7 @@ parse declarations
     ↓
 html/template parser
     ↓
-Go++ validation
+GPP validation
     ↓
 active registry
     ↓
@@ -778,7 +778,7 @@ tpl.Reload
 The resulting separation is:
 
 ```text id="4j66vp"
-Go++ compiler
+GPP compiler
     knows template declarations
     knows compile-time signatures
     discovers .gpp.tpl

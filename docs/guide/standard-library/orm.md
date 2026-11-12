@@ -1,6 +1,6 @@
 # `gpp/orm`
 
-`gpp/orm` is a lightweight helper layer over Go's `database/sql`. A model is a class that extends `orm.Model`; annotations identify its table and persisted columns. The package uses Go++ class and field metadata to generate straightforward CRUD operations while leaving the connection, transactions, and SQL driver in your hands.
+`gpp/orm` is a lightweight helper layer over Go's `database/sql`. A model is a class that extends `orm.Model`; annotations identify its table and persisted columns. The package uses GPP class and field metadata to generate straightforward CRUD operations while leaving the connection, transactions, and SQL driver in your hands.
 
 ## Why use it
 
@@ -8,11 +8,11 @@ Writing the same column lists, scan destinations, and insert argument lists for 
 
 ## Side by side: insert and load a model
 
-The Go++ version declares the mapping once on a class and uses ORM methods for insert and load. Select the Go tab to compare the equivalent manual SQL:
+The GPP version declares the mapping once on a class and uses ORM methods for insert and load. Select the Go tab to compare the equivalent manual SQL:
 
 ::: code-group
 
-```gpp [Go++]
+```gpp [GPP]
 class Employee : orm.Model {
 	ID int
 	Name string
@@ -69,7 +69,7 @@ Cursor paging avoids large `OFFSET` values, which can require the database to
 compute and skip many rows. See PostgreSQL's [`LIMIT` and `OFFSET`
 documentation](https://www.postgresql.org/docs/current/queries-limit.html).
 
-The Go++ calls omit the trailing `error` result. A database failure propagates through Go++'s exception behavior; add a `try`/`catch` at a boundary when you need to recover or add context, and otherwise let it reach a higher-level handler.
+The GPP calls omit the trailing `error` result. A database failure propagates through GPP's exception behavior; add a `try`/`catch` at a boundary when you need to recover or add context, and otherwise let it reach a higher-level handler.
 
 ## More examples
 

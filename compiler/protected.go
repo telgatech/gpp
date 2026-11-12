@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// generatedMemberName maps protected Go++ names to exported implementation
+// generatedMemberName maps protected GPP names to exported implementation
 // names so a derived class in another Go package can reach the member. The
 // generated spelling is an implementation detail; source tooling keeps the
 // original name.

@@ -232,7 +232,7 @@ func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
 	})
 }
 
-func gppHTTPListenerAddress(address net.Addr) string {
+func gppHTTPListenerURL(address net.Addr) string {
 	tcpAddress, ok := address.(*net.TCPAddr)
 	if !ok {
 		return address.String()
@@ -241,7 +241,7 @@ func gppHTTPListenerAddress(address net.Addr) string {
 	if tcpAddress.IP == nil || tcpAddress.IP.IsUnspecified() {
 		host = "localhost"
 	}
-	return net.JoinHostPort(host, fmt.Sprint(tcpAddress.Port))
+	return "http://" + net.JoinHostPort(host, fmt.Sprint(tcpAddress.Port))
 }
 
 func gppHTTPPublicDir(app any) string {
@@ -1103,7 +1103,7 @@ class Server {
 		}
 		descriptor := gppRuntimeClass(router)
 		if descriptor == nil {
-			return fmt.Errorf("http: mounted value must be a Go++ class")
+			return fmt.Errorf("http: mounted value must be a GPP class")
 		}
 		if !gppHasAnnotation(descriptor, "gpp.http.Mountable") {
 			return fmt.Errorf("http: mounted class must have the http.Mountable annotation")
@@ -1258,7 +1258,7 @@ class Server {
 			mountDescriptor := gppRuntimeClass(mount.Router)
 			if mountDescriptor == nil {
 				_ = listener.Close()
-				return fmt.Errorf("http: mounted router has no Go++ class metadata")
+				return fmt.Errorf("http: mounted router has no GPP class metadata")
 			}
 			routerPrefix := ""
 			if args := gppAnnotationArgs(mountDescriptor, "gpp.http.Prefix"); len(args) > 0 {
@@ -1303,8 +1303,8 @@ class Server {
 			<-done
 			return err
 		}
-		listenerAddress := gppHTTPListenerAddress(listener.Addr())
-		log.Printf("gpp/http: listening on %s", listenerAddress)
+		listenerURL := gppHTTPListenerURL(listener.Addr())
+		log.Printf("gpp/http: listening on %s", listenerURL)
 		if len(tpl.ManagedSourcePaths()) > 0 {
 			this.templateWatchStop = make(chan struct{})
 			this.templateWatchDone = make(chan struct{})

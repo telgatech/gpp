@@ -77,7 +77,7 @@ for _, entry := range entries {
 `Get` returns `(zero, false)` for a missing key. `Keys` and `Values` return
 new slices in insertion order. `Entries` returns a snapshot slice of
 `OrderedMapEntry` values with public `Key` and `Value` fields. Iterate over the
-snapshot with Go++'s `for range` syntax.
+snapshot with GPP's `for range` syntax.
 
 ## Stack and queue
 

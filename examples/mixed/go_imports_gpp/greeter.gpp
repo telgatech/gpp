@@ -4,7 +4,7 @@ class Greeting {
 	Name string
 
 	func Message() string {
-		return "Hello " + this.Name + " from Go++"
+		return "Hello " + this.Name + " from GPP"
 	}
 }
 

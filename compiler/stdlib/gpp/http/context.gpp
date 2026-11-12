@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime"
 	stdhttp "net/http"
+	"strconv"
+	"strings"
 	"golang.org/x/net/websocket"
 	std "gpp/std"
 	tpl "gpp/tpl"
@@ -99,6 +102,22 @@ class Context {
 		return this.commit(status, "application/json", body.Bytes())
 	}
 
+	// Respond negotiates HTML or JSON from the request's Accept header. JSON is
+	// the default when either format is acceptable; unsupported formats get 406.
+	func Respond(status int, data any) error {
+		gppHTTPVaryAccept(this.Response.Header())
+		accept := this.Request.Header.Get("Accept")
+		jsonPreference := gppHTTPAcceptPreferenceFor(accept, "application/json")
+		htmlPreference := gppHTTPAcceptPreferenceFor(accept, "text/html")
+		if !jsonPreference.accepted && !htmlPreference.accepted {
+			return this.Text(stdhttp.StatusNotAcceptable, "not acceptable")
+		}
+		if htmlPreference.accepted && (!jsonPreference.accepted || htmlPreference.quality > jsonPreference.quality) {
+			return this.HTML(status, data)
+		}
+		return this.JSON(status, data)
+	}
+
 	// HTML renders a template as an HTML response. An empty key uses the request path.
 	func HTML(status int = 200, data any = nil, key string = "") error {
 		if key == "" {
@@ -129,6 +148,65 @@ class Context {
 			this.Written = true
 		}
 	}
+}
+
+type gppHTTPAcceptPreference struct {
+	quality     float64
+	specificity int
+	matched     bool
+	accepted    bool
+}
+
+func gppHTTPAcceptPreferenceFor(accept string, representation string) gppHTTPAcceptPreference {
+	if strings.TrimSpace(accept) == "" {
+		if representation == "application/json" {
+			return gppHTTPAcceptPreference{quality: 1, specificity: 0, matched: true, accepted: true}
+		}
+		return gppHTTPAcceptPreference{}
+	}
+	preference := gppHTTPAcceptPreference{}
+	for _, item := range strings.Split(accept, ",") {
+		mediaType, parameters, err := mime.ParseMediaType(strings.TrimSpace(item))
+		if err != nil {
+			continue
+		}
+		quality := 1.0
+		if rawQuality, exists := parameters["q"]; exists {
+			quality, err = strconv.ParseFloat(rawQuality, 64)
+			if err != nil || quality < 0 || quality > 1 {
+				continue
+			}
+		}
+		specificity := -1
+		if mediaType == representation {
+			specificity = 2
+		} else if mediaType == "*/*" {
+			specificity = 0
+		} else {
+			majorType, _, hasSubtype := strings.Cut(representation, "/")
+			if hasSubtype && mediaType == majorType+"/*" {
+				specificity = 1
+			}
+		}
+		if specificity < 0 {
+			continue
+		}
+		if !preference.matched || specificity > preference.specificity || (specificity == preference.specificity && quality > preference.quality) {
+			preference = gppHTTPAcceptPreference{quality: quality, specificity: specificity, matched: true, accepted: quality > 0}
+		}
+	}
+	return preference
+}
+
+func gppHTTPVaryAccept(header stdhttp.Header) {
+	for _, value := range header.Values("Vary") {
+		for _, token := range strings.Split(value, ",") {
+			if token == "*" || strings.EqualFold(strings.TrimSpace(token), "Accept") {
+				return
+			}
+		}
+	}
+	header.Add("Vary", "Accept")
 }
 
 extend *Context {

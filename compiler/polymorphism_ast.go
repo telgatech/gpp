@@ -6,7 +6,7 @@ import (
 )
 
 // transformPolymorphicDeclarationsAST lowers dispatch-sensitive declarations
-// and calls from the structured Go++ body tree. The legacy implementation in
+// and calls from the structured GPP body tree. The legacy implementation in
 // emitter.go remains below as a compatibility fallback for source fragments
 // that the body parser cannot represent yet.
 func transformPolymorphicDeclarationsAST(src string, context constructorContext) (string, bool, error) {

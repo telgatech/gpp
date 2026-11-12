@@ -52,7 +52,7 @@ model's static `Get` or `Select` method.
 `Select[T]` returns every row. Scalar result types require one result column.
 All methods pass `args` to `database/sql` without interpolation.
 
-Result types may be scalars, Go structs, or Go++ anonymous structs. Use
+Result types may be scalars, Go structs, or GPP anonymous structs. Use
 pointer type arguments for pointer-shaped results:
 
 ```go
@@ -69,7 +69,7 @@ allocates the value only after a row is found.
 ## Struct mapping
 
 Column labels match exported result fields case-insensitively, ignoring
-underscores and hyphens. Go++ anonymous structs may provide their generated field
+underscores and hyphens. GPP anonymous structs may provide their generated field
 accessors. Unmatched result columns are scanned into discard destinations, and
 unmatched fields retain their zero values. If multiple fields normalize to the
 same name, the query must use an explicit alias to disambiguate them. Duplicate

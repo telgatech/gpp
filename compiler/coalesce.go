@@ -171,7 +171,7 @@ func expressionNodeSelectorReceiver(selector *SelectorExpr) string {
 }
 
 // transformErrorCoalescing lowers A ?? B to a generic helper call. Ordinary
-// operands fall back after a Go++ thrown error; explicit safe-access operands
+// operands fall back after a GPP thrown error; explicit safe-access operands
 // also fall back after a nil receiver check. In both cases fallback evaluation
 // remains lazy and errors from the fallback are not swallowed by the operator.
 func transformErrorCoalescing(src string, context constructorContext) (string, error) {
@@ -194,7 +194,7 @@ func transformErrorCoalescing(src string, context constructorContext) (string, e
 
 // transformErrorCoalescingAST lowers coalescing operators discovered in the
 // structured body AST. This path intentionally does not reconstruct a Go AST;
-// source spans, operands, and type hints all come from Go++ nodes.
+// source spans, operands, and type hints all come from GPP nodes.
 func transformErrorCoalescingAST(src string, context constructorContext) (string, bool, error) {
 	tokens, err := LexSource("coalescing", src)
 	if err != nil {

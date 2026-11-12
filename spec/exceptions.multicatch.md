@@ -1,8 +1,8 @@
-# Go++ Multi-Type Catch Add-on Specification
+# GPP Multi-Type Catch Add-on Specification
 
 ## 1. Overview
 
-Go++ `catch` clauses may match more than one error type.
+GPP `catch` clauses may match more than one error type.
 
 Canonical syntax:
 
@@ -18,13 +18,13 @@ This means:
 
 > Handle the propagated error if it matches `Foo`, `Bar`, or `Baz`.
 
-The feature extends the existing Go++ `try/catch/finally` model without introducing union types.
+The feature extends the existing GPP `try/catch/finally` model without introducing union types.
 
 ---
 
 # 2. Existing Catch Forms
 
-Go++ supports typed catches:
+GPP supports typed catches:
 
 ```gpp
 try {
@@ -149,7 +149,7 @@ catch (Foo, Bar, Baz) e {
 }
 ```
 
-The comma-separated form is intentionally simple and consistent with ordinary Go++ lists.
+The comma-separated form is intentionally simple and consistent with ordinary GPP lists.
 
 ---
 
@@ -279,7 +279,7 @@ A `Foo` error is handled by the first clause.
 
 # 11. Type Matching
 
-Typed catch matching uses the same Go++ error matching semantics as existing typed catches.
+Typed catch matching uses the same GPP error matching semantics as existing typed catches.
 
 A bare named catch type matches both its value and pointer forms when each form
 implements Go's `error` interface. For example, `catch Foo` matches a thrown
@@ -306,13 +306,13 @@ errors.As
 
 where appropriate.
 
-For Go++ throwable classes implementing:
+For GPP throwable classes implementing:
 
 ```gpp
 Error() string
 ```
 
-normal Go++ type compatibility and inheritance rules apply.
+normal GPP type compatibility and inheritance rules apply.
 
 ---
 
@@ -365,7 +365,7 @@ This avoids inventing union-type semantics.
 
 # 14. Common Parent Optimization
 
-If all listed types share a meaningful common Go++ superclass that itself satisfies the throwable/error requirements, the compiler may expose that common type where this is statically safe.
+If all listed types share a meaningful common GPP superclass that itself satisfies the throwable/error requirements, the compiler may expose that common type where this is statically safe.
 
 Example:
 
@@ -473,7 +473,7 @@ catch ValidationError, PermissionError e {
 }
 ```
 
-Exact narrowing syntax follows the existing Go++ error/type system.
+Exact narrowing syntax follows the existing GPP error/type system.
 
 The multi-type catch itself does not introduce special pattern-matching syntax.
 
@@ -496,7 +496,7 @@ The compiler should report a duplicate catch type.
 
 # 20. Invalid Non-Error Types
 
-Each listed type must be catchable under normal Go++ error rules.
+Each listed type must be catchable under normal GPP error rules.
 
 Invalid:
 
@@ -796,7 +796,7 @@ try {
 }
 ```
 
-`finally` runs according to the existing Go++ exception semantics.
+`finally` runs according to the existing GPP exception semantics.
 
 ---
 
@@ -812,7 +812,7 @@ try {
 }
 ```
 
-the new propagated error leaves the handler according to ordinary Go++ error propagation.
+the new propagated error leaves the handler according to ordinary GPP error propagation.
 
 The same catch clause does not recursively catch errors thrown from its own body.
 
@@ -842,7 +842,7 @@ Inner clauses get first opportunity to handle propagated errors.
 
 Multi-type catch does not change the existing rule:
 
-> Raw Go `panic` is not automatically treated as a Go++ propagated error.
+> Raw Go `panic` is not automatically treated as a GPP propagated error.
 
 Therefore:
 
@@ -851,13 +851,13 @@ catch Foo, Bar e {
 }
 ```
 
-matches Go++ error propagation, not arbitrary panics.
+matches GPP error propagation, not arbitrary panics.
 
 ---
 
 # 36. Go Error Interoperability
 
-Native Go errors remain catchable when they participate in the existing Go++ typed-catch mechanism.
+Native Go errors remain catchable when they participate in the existing GPP typed-catch mechanism.
 
 For example, where appropriate:
 
@@ -871,7 +871,7 @@ The exact matching behavior follows existing native-Go error interop.
 
 ---
 
-# 37. Custom Go++ Errors
+# 37. Custom GPP Errors
 
 Example:
 
@@ -1109,7 +1109,7 @@ catch Foo,
 
 completion may suggest valid catchable error types.
 
-It should prefer types satisfying the Go++ error/throwable rules.
+It should prefer types satisfying the GPP error/throwable rules.
 
 ---
 

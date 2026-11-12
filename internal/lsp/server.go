@@ -1,4 +1,4 @@
-// Package lsp implements the editor-facing JSON-RPC service for Go++.
+// Package lsp implements the editor-facing JSON-RPC service for GPP.
 //
 // The server deliberately stays dependency-free. It speaks the small JSON-RPC
 // envelope used by LSP directly and delegates parsing, semantic validation,
@@ -570,7 +570,7 @@ func (w *workspaceState) analyze() {
 
 // checkGeneratedGo runs the compiler's code-generation pipeline against the
 // current in-memory workspace buffers. It catches errors that only appear
-// after Go++ lowering (including invalid generated Go) while keeping generated
+// after GPP lowering (including invalid generated Go) while keeping generated
 // files and build metadata out of the user's project tree.
 func (w *workspaceState) checkGeneratedGo(ctx context.Context, byModule map[string][]*compiler.File, modulePaths map[string]string) {
 	if w.codegenKeys == nil {
@@ -695,7 +695,7 @@ func (w *workspaceState) generatedSourceFile(generatedPath, moduleRoot, outputDi
 	generatedName := filepath.Base(relative)
 	generatedDir := filepath.Dir(relative)
 	for _, state := range w.files {
-		if state == nil || !isGoPlusFile(state.Path) || state.File == nil {
+		if state == nil || !isGPPFile(state.Path) || state.File == nil {
 			continue
 		}
 		root, _ := moduleInfoForPath(state.Path)
@@ -1025,12 +1025,12 @@ func exportedName(name string) bool {
 	return false
 }
 
-func isGoPlusFile(path string) bool {
+func isGPPFile(path string) bool {
 	return strings.HasSuffix(path, ".gpp") || strings.HasSuffix(path, ".gpp.tpl")
 }
 
 func isWorkspaceSourceFile(path string) bool {
-	return isGoPlusFile(path) || strings.HasSuffix(path, ".go")
+	return isGPPFile(path) || strings.HasSuffix(path, ".go")
 }
 
 func moduleInfoForPath(filename string) (string, string) {
@@ -3239,7 +3239,7 @@ func (s *server) importHoverAt(state *fileState, offset int) *hover {
 		}
 		kind, documentation := "import", ""
 		if imported.LogicalPackage {
-			kind = "Go++ package"
+			kind = "GPP package"
 		} else if s.workspace.docIndex != nil {
 			packageName := packageLeaf(imported.Path)
 			if pkg := s.workspace.docIndex.Packages[packageName]; pkg != nil {

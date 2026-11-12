@@ -1,8 +1,8 @@
-# Go++ Standard Type Ergonomic Extensions Specification
+# GPP Standard Type Ergonomic Extensions Specification
 
 ## 1. Overview
 
-Go++ provides a small set of ergonomic extension methods for commonly used standard Go types.
+GPP provides a small set of ergonomic extension methods for commonly used standard Go types.
 
 The goal is to improve everyday readability without introducing new runtime types or duplicating large parts of the standard library.
 
@@ -18,7 +18,7 @@ err.Is(sql.ErrNoRows)
 body := resp.Body.ReadAll()
 ```
 
-These are ordinary Go++ extension methods over existing Go types.
+These are ordinary GPP extension methods over existing Go types.
 
 They are not compiler intrinsics unless an implementation requirement makes that unavoidable.
 
@@ -62,7 +62,7 @@ The prelude should remain small, predictable, and Go-like.
 
 # 3. Implementation Model
 
-The preferred implementation uses normal Go++ extension declarations.
+The preferred implementation uses normal GPP extension declarations.
 
 Conceptually:
 
@@ -84,7 +84,7 @@ extend error {
 }
 ```
 
-These extensions should compile to ordinary Go functions using the normal Go++ extension-method lowering rules.
+These extensions should compile to ordinary Go functions using the normal GPP extension-method lowering rules.
 
 No wrapper types are introduced.
 
@@ -136,7 +136,7 @@ or to a generated extension helper that calls it.
 
 # 5. Prelude Integration
 
-The core ergonomic extensions should be available automatically through the Go++ prelude.
+The core ergonomic extensions should be available automatically through the GPP prelude.
 
 Users should not need to write:
 
@@ -151,7 +151,7 @@ s.TrimSpace()
 s.Contains("foo")
 ```
 
-The prelude remains compiler-shipped Go++ source.
+The prelude remains compiler-shipped GPP source.
 
 A future:
 
@@ -237,7 +237,7 @@ not user-perceived grapheme clusters.
 
 # 7. String Convenience Extensions
 
-Go++ may additionally provide a few small conveniences that are not direct one-to-one wrappers.
+GPP may additionally provide a few small conveniences that are not direct one-to-one wrappers.
 
 Recommended:
 
@@ -308,7 +308,7 @@ Instead of:
 name := strings.TrimSpace(strings.ToLower(input))
 ```
 
-Go++ may use:
+GPP may use:
 
 ```gpp
 name := input.ToLower().TrimSpace()
@@ -395,7 +395,7 @@ user := users.Find(u => u.ID == id)
 
 returns the first matching value.
 
-The exact no-match behavior must remain consistent with Go++'s nil/zero-value philosophy.
+The exact no-match behavior must remain consistent with GPP's nil/zero-value philosophy.
 
 For v1, `Find` should return the element type's zero value if no match exists.
 
@@ -464,7 +464,7 @@ For an empty slice, they return the zero value of `T`.
 
 No exception is thrown merely because the slice is empty.
 
-This follows Go++'s general preference for non-exceptional nil/zero handling.
+This follows GPP's general preference for non-exceptional nil/zero handling.
 
 ---
 
@@ -813,7 +813,7 @@ Instead of:
 errors.Is(err, sql.ErrNoRows)
 ```
 
-Go++ may write:
+GPP may write:
 
 ```gpp
 err.Is(sql.ErrNoRows)
@@ -879,7 +879,7 @@ replaces:
 body, err := io.ReadAll(resp.Body)
 ```
 
-Because Go++ automatically promotes omitted trailing errors:
+Because GPP automatically promotes omitted trailing errors:
 
 ```gpp
 body := resp.Body.ReadAll()
@@ -938,7 +938,7 @@ Do not grow primitive numeric types into large utility APIs.
 
 # 39. Existing Native Methods Win
 
-Normal Go++ extension resolution rules apply.
+Normal GPP extension resolution rules apply.
 
 If a native Go type already has a method with the requested name and compatible call:
 
@@ -978,7 +978,7 @@ This preserves full Go interoperability.
 
 # 41. Extension Discovery
 
-Prelude extensions should be discoverable by Go++ tooling.
+Prelude extensions should be discoverable by GPP tooling.
 
 For example, autocomplete on:
 
@@ -1188,7 +1188,7 @@ This reduces surprises in fluent chains.
 
 # 49. Nil Behavior
 
-Extensions must follow normal Go++ nil behavior.
+Extensions must follow normal GPP nil behavior.
 
 For receiver types that may be nil:
 
@@ -1212,7 +1212,7 @@ Example:
 io.Reader.ReadAll() ([]byte, error)
 ```
 
-Then Go++ automatic error promotion naturally applies.
+Then GPP automatic error promotion naturally applies.
 
 Do not convert errors into sentinel zero values just to make an extension look simpler.
 
@@ -1334,7 +1334,7 @@ if err != nil {
 }
 ```
 
-With Go++:
+With GPP:
 
 ```gpp
 name := input.ToLower().TrimSpace()
@@ -1377,11 +1377,11 @@ The feature follows this model:
 ```text
 existing Go type
     +
-ordinary Go++ extension declaration
+ordinary GPP extension declaration
     +
 small compiler-shipped prelude
     =
-more ergonomic Go++ syntax
+more ergonomic GPP syntax
 ```
 
 Examples:

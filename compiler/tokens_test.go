@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestLexSourceRetainsCommentsLiteralsAndGoPlusOperators(t *testing.T) {
+func TestLexSourceRetainsCommentsLiteralsAndGPPOperators(t *testing.T) {
 	source := "// docs\nfunc main() {\n" +
 		"value := \"hello {world}\" // trailing\n" +
 		"raw := `raw {world}`\n" +
@@ -150,7 +150,7 @@ func TestTokenInterpolationDetectionIgnoresComments(t *testing.T) {
 	}
 }
 
-func TestGoImportsUsesLosslessTokensForMixedGoPlusDeclarations(t *testing.T) {
+func TestGoImportsUsesLosslessTokensForMixedGPPDeclarations(t *testing.T) {
 	file, err := ParseFile("mixed-imports.gpp", `
 import f "fmt"
 
@@ -166,7 +166,7 @@ func first(value string = "default") string {
 		t.Fatal(err)
 	}
 	if len(imports) != 1 || imports[0].Name == nil || imports[0].Name.Name != "f" || imports[0].Path.Value != `"fmt"` {
-		t.Fatalf("mixed Go++ import was not extracted from tokens: %#v", imports)
+		t.Fatalf("mixed GPP import was not extracted from tokens: %#v", imports)
 	}
 }
 

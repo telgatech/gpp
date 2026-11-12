@@ -10,14 +10,14 @@ import (
 	"strings"
 )
 
-// officialStdlib contains the compiler-distributed Go++ standard packages.
+// officialStdlib contains the compiler-distributed GPP standard packages.
 // They are embedded so official imports never require a network lookup.
 //
 //go:embed stdlib/gpp/*/*.gpp stdlib/gpp/exp/*/*.gpp stdlib/gpp/http/assets/swagger/*
 var officialStdlib embed.FS
 
 // EmbeddedStdlibAvailable reports whether the compiler was built with its
-// compiler-owned Go++ standard library resources.
+// compiler-owned GPP standard library resources.
 func EmbeddedStdlibAvailable() bool {
 	entries, err := fs.Glob(officialStdlib, "stdlib/gpp/*/*.gpp")
 	if err != nil {
@@ -27,7 +27,7 @@ func EmbeddedStdlibAvailable() bool {
 	return err == nil && len(entries)+len(nested) > 0
 }
 
-// OfficialStdlibPackages returns the compiler-shipped Go++ package paths that
+// OfficialStdlibPackages returns the compiler-shipped GPP package paths that
 // can be inspected by source-level tooling such as `gpp doc`.
 func OfficialStdlibPackages() []string {
 	return []string{"gpp/container", "gpp/cron", "gpp/encoding", "gpp/exp/http", "gpp/http", "gpp/orm", "gpp/sql", "gpp/std", "gpp/test", "gpp/tpl"}

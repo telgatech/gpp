@@ -1,6 +1,6 @@
 # Getting started
 
-Go++ is distributed as a Go CLI. The compiler generates ordinary Go in a
+GPP is distributed as a Go CLI. The compiler generates ordinary Go in a
 per-project workspace under the system cache, then delegates dependency
 resolution, building, and execution to the Go toolchain.
 
@@ -17,8 +17,8 @@ resolution, building, and execution to the Go toolchain.
     </div>
     <ol>
       <li><a href="https://brew.sh/">Install Homebrew</a> if needed.</li>
-      <li>Add the Go++ tap: <pre><code>brew tap telgatech/gpp</code></pre></li>
-      <li>Install Go++ and verify it: <pre><code>brew install --HEAD telgatech/gpp/gpp
+      <li>Add the GPP tap: <pre><code>brew tap telgatech/gpp</code></pre></li>
+      <li>Install GPP and verify it: <pre><code>brew install --HEAD telgatech/gpp/gpp
 gpp version</code></pre></li>
       <li>Update to the latest commit on <code>main</code>: <pre><code>brew update
 brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
@@ -30,7 +30,7 @@ brew upgrade --fetch-HEAD telgatech/gpp/gpp</code></pre></li>
       <img src="/go.svg" width="32" height="32" alt="Go icon">
       <h3>Go install</h3>
     </div>
-    <p>For Go developers who already have Go 1.27 or newer and want to try Go++ quickly:</p>
+    <p>For Go developers who already have Go 1.27 or newer and want to try GPP quickly:</p>
     <pre><code>go install github.com/telgatech/gpp@main</code></pre>
     <p>Check the installation with <code>gpp version</code>.</p>
   </section>
@@ -95,7 +95,7 @@ The generated `main.gpp` contains:
 import "fmt"
 
 func main() {
-	fmt.Println("Hello from Go++")
+	fmt.Println("Hello from GPP")
 }
 ```
 
@@ -144,7 +144,7 @@ gpp version
 
 ## Working with existing Go
 
-Go++ accepts ordinary Go imports and can be mixed with `.go` files. The
+GPP accepts ordinary Go imports and can be mixed with `.go` files. The
 repository includes examples in `examples/mixed/` showing both directions:
 
 ```bash
@@ -153,7 +153,7 @@ gpp run examples/mixed/go_imports_gpp
 ```
 
 This makes adoption incremental: keep stable Go packages as they are and use
-Go++ where its higher-level constructs are useful.
+GPP where its higher-level constructs are useful.
 
 ## Next steps
 

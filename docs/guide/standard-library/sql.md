@@ -2,9 +2,9 @@
 
 `gpp/sql` adds typed `Get[T]` and `Select[T]` methods to Go's `*sql.DB` and
 `*sql.Tx`. It keeps full SQL queries while returning scalars, inline structs,
-and structs with static Go++ types.
+and structs with static GPP types.
 
-For Go++ model mapping and CRUD helpers, see the [ORM guide](/guide/standard-library/orm).
+For GPP model mapping and CRUD helpers, see the [ORM guide](/guide/standard-library/orm).
 
 Import `gpp/sql` to enable its database extension methods:
 
@@ -15,7 +15,7 @@ import (
 )
 ```
 
-Keep this as a named import: Go++ uses the package import to resolve the
+Keep this as a named import: GPP uses the package import to resolve the
 extension methods, so a blank import (`_`) does not make `db.Get[T]` available.
 
 Then describe each query result at the call site:

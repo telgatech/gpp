@@ -1,18 +1,18 @@
 # `gpp/tpl`
 
-`gpp/tpl` renders Go++ templates using typed arguments and Go's template execution model. Templates can be declared in source or loaded from `.gpp.tpl` files, composed through layouts, and served by the HTTP package.
+`gpp/tpl` renders GPP templates using typed arguments and Go's template execution model. Templates can be declared in source or loaded from `.gpp.tpl` files, composed through layouts, and served by the HTTP package.
 
 ## Why use it
 
-HTML often mixes presentation with application logic. Templates provide an explicit presentation layer, while typed template parameters make the data expected by a page visible in the source. Go++ templates retain Go template execution semantics and can be used without adopting a separate web framework.
+HTML often mixes presentation with application logic. Templates provide an explicit presentation layer, while typed template parameters make the data expected by a page visible in the source. GPP templates retain Go template execution semantics and can be used without adopting a separate web framework.
 
 ## Side by side: render a page
 
-Go++ connects a typed template declaration to its invocation. Select the Go tab to compare it with explicit `html/template` setup:
+GPP connects a typed template declaration to its invocation. Select the Go tab to compare it with explicit `html/template` setup:
 
 ::: code-group
 
-```go [Go++]
+```go [GPP]
 class Post { Title string }
 
 template Page(post Post) {
@@ -32,7 +32,7 @@ err := tmpl.Execute(&output, post)
 
 ## The `tpl` namespace and generated functions
 
-`template` is a recognized Go++ declaration keyword, not a function call or a
+`template` is a recognized GPP declaration keyword, not a function call or a
 string passed to a registration API. This lets a template be written in the
 same source file as the code that uses it, with a function-like signature that
 makes its inputs and purpose clear:
@@ -47,17 +47,17 @@ tpl.Page(&output, post)
 
 The body accepts HTML or XML markup directly; you do not wrap it in quotes or
 escape it into a string. That gives a similar inline-markup convenience to
-JSX, while keeping Go++ template bodies in Go's `html/template` syntax and
+JSX, while keeping GPP template bodies in Go's `html/template` syntax and
 using its standard actions to access template data.
 
 Here `Page` declares a renderer that expects a `Post`; the template body uses
 that value as `.`. The declaration can live in a `.gpp` file or in a dedicated
 `.gpp.tpl` file.
 
-`tpl` is Go++'s special template namespace. You do not construct a `tpl`
+`tpl` is GPP's special template namespace. You do not construct a `tpl`
 value or register each source template by hand: every template known at
 compile time is exposed as a statically typed function under its name. For
-example, `template Page(post Post)` provides `tpl.Page(...)`. Go++ resolves
+example, `template Page(post Post)` provides `tpl.Page(...)`. GPP resolves
 that name to a generated renderer whose Go signature includes the declared
 parameters, so a direct call is checked for the template name, argument count,
 and argument types during compilation.
@@ -72,7 +72,7 @@ func Page(w io.Writer, post Post) error
 
 That writer-first rule applies even to templates with no data parameters. It
 lets a template render directly to a buffer, file, or HTTP response without
-building an intermediate string. The renderer returns an error; Go++
+building an intermediate string. The renderer returns an error; GPP
 propagates it automatically when the call does not capture it:
 
 ```go

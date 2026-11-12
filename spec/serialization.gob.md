@@ -77,7 +77,7 @@ func ToGOB() ([]byte, error) {
 }
 ```
 
-Exact generated code may differ because of Go++ class lowering.
+Exact generated code may differ because of GPP class lowering.
 
 ## Static Deserialization
 
@@ -144,7 +144,7 @@ JSON and YAML are primarily interchange formats.
 
 GOB is primarily suitable for:
 
-* Go/Go++ internal communication
+* Go/GPP internal communication
 * local persistence
 * caches
 * queues
@@ -199,7 +199,7 @@ If the compiler already generates an encoding transport representation for a cla
 For example:
 
 ```text
-Go++ class
+GPP class
     ↓
 generated serializable transport representation
     ↓
@@ -285,7 +285,7 @@ Do not create a separate collection serialization system solely for GOB.
 
 Go's `encoding/gob` may require concrete types stored behind interfaces to be registered.
 
-If Go++ classes stored in interface-typed fields require registration, `gpp/encoding` may generate or perform the necessary registration.
+If GPP classes stored in interface-typed fields require registration, `gpp/encoding` may generate or perform the necessary registration.
 
 For example, implementation may use:
 

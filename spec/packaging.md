@@ -1,14 +1,14 @@
-# Go++ CLI Packaging and Release Specification
+# GPP CLI Packaging and Release Specification
 
 ## Goal
 
-Distribute Go++ as a single executable named:
+Distribute GPP as a single executable named:
 
 ```text
 gpp
 ```
 
-The executable should contain the full Go++ command-line interface and dispatch all development tasks through subcommands.
+The executable should contain the full GPP command-line interface and dispatch all development tasks through subcommands.
 
 The preferred installation command is:
 
@@ -40,7 +40,7 @@ provided that directory is on `PATH`.
 
 # Single Binary
 
-Go++ should use one executable:
+GPP should use one executable:
 
 ```text
 gpp
@@ -254,7 +254,7 @@ gpp version
 
 # `gpp init`
 
-Creates a new Go++ project with a starter source file, root Go module, and Git
+Creates a new GPP project with a starter source file, root Go module, and Git
 history. The default module path is `example.com/<directory-name>` with the
 directory name normalized for use as a module component. Pass `-module` to
 choose a different path.
@@ -297,7 +297,7 @@ Recommended generated source:
 import "fmt"
 
 func main() {
-    fmt.Println("Hello from Go++")
+    fmt.Println("Hello from GPP")
 }
 ```
 
@@ -307,7 +307,7 @@ No explicit:
 package main
 ```
 
-should be required because Go++ defaults to `main`.
+should be required because GPP defaults to `main`.
 
 The command requires a supported Go toolchain because it creates and tidies the
 project's module.
@@ -316,7 +316,7 @@ project's module.
 
 # `gpp build`
 
-Compiles Go++ source into a native executable.
+Compiles GPP source into a native executable.
 
 Examples:
 
@@ -354,7 +354,7 @@ project's default cached workspace.
 
 # `gpp run`
 
-Compiles and immediately runs a Go++ program.
+Compiles and immediately runs a GPP program.
 
 Examples:
 
@@ -382,7 +382,7 @@ The command should create any temporary Go module/build environment required int
 
 # `gpp clean`
 
-Removes Go++-generated temporary or cache artifacts.
+Removes GPP-generated temporary or cache artifacts.
 
 It should not delete user source.
 
@@ -401,7 +401,7 @@ The exact cache location may be platform-dependent.
 
 # `gpp fmt`
 
-Formats Go++ source.
+Formats GPP source.
 
 Example:
 
@@ -415,7 +415,7 @@ or:
 gpp fmt app.gpp
 ```
 
-Formatting should operate on Go++ syntax rather than merely formatting generated Go.
+Formatting should operate on GPP syntax rather than merely formatting generated Go.
 
 The style should be deterministic.
 
@@ -423,7 +423,7 @@ The style should be deterministic.
 
 # `gpp test`
 
-Runs Go++ tests.
+Runs GPP tests.
 
 Example:
 
@@ -439,7 +439,7 @@ gpp test ./...
 
 Exact testing syntax may evolve, but all testing should remain behind the same `gpp` executable.
 
-The command may lower Go++ tests to Go and then invoke:
+The command may lower GPP tests to Go and then invoke:
 
 ```bash
 go test
@@ -451,7 +451,7 @@ internally.
 
 # `gpp env`
 
-Displays Go++ environment information, including the cache root used by
+Displays GPP environment information, including the cache root used by
 generation commands. `GPP_CACHE` may be set to override the system cache path.
 
 Recommended fields include:
@@ -484,7 +484,7 @@ This command is primarily diagnostic.
 
 # `gpp doctor`
 
-Checks whether the local machine is capable of compiling Go++ programs.
+Checks whether the local machine is capable of compiling GPP programs.
 
 It should verify at least:
 
@@ -500,7 +500,7 @@ basic temporary build succeeds
 Possible output:
 
 ```text
-Go++ 0.1.0
+GPP 0.1.0
 
 ✓ Go found
 ✓ Go version supported
@@ -566,17 +566,17 @@ with no arguments should display concise help.
 Example:
 
 ```text
-Go++ compiler and toolchain
+GPP compiler and toolchain
 
 Usage:
     gpp <command> [arguments]
 
 Commands:
-    init       create a Go++ project
-    build      build a Go++ program
-    run        build and run a Go++ program
+    init       create a GPP project
+    build      build a GPP program
+    run        build and run a GPP program
     clean      remove generated build artifacts
-    fmt        format Go++ source
+    fmt        format GPP source
     fiximports add missing imports
     test       run tests
     env        show environment information
@@ -595,7 +595,7 @@ gpp run --help
 
 # Standard Library Packaging
 
-Compiler-owned Go++ resources should be embedded into the `gpp` executable.
+Compiler-owned GPP resources should be embedded into the `gpp` executable.
 
 This includes, where applicable:
 
@@ -646,13 +646,13 @@ go install github.com/telgatech/gpp@main
 gpp run hello.gpp
 ```
 
-without further Go++ setup.
+without further GPP setup.
 
 ---
 
 # Embedded Prelude
 
-The Go++ prelude should be embedded in the compiler executable.
+The GPP prelude should be embedded in the compiler executable.
 
 The compiler may load it logically for every compilation.
 
@@ -774,7 +774,7 @@ Example:
 ```text
 Go toolchain not found.
 
-Go++ currently requires Go to build programs.
+GPP currently requires Go to build programs.
 Install Go and ensure `go` is available on PATH.
 ```
 
@@ -793,7 +793,7 @@ Compilation should fail clearly when the installed version is unsupported.
 Example:
 
 ```text
-Go++ 0.1.0 requires Go 1.xx or newer.
+GPP 0.1.0 requires Go 1.xx or newer.
 Found Go 1.yy.
 ```
 
@@ -809,7 +809,7 @@ For single-file programs:
 gpp run hello.gpp
 ```
 
-Go++ may internally create a temporary module such as:
+GPP may internally create a temporary module such as:
 
 ```text
 /tmp/gpp-xxxx/
@@ -851,7 +851,7 @@ Normal builds should not clutter source directories with generated Go.
 
 ---
 
-# Mixed Go and Go++ Projects
+# Mixed Go and GPP Projects
 
 The toolchain should support projects containing both:
 
@@ -864,7 +864,7 @@ files where practical.
 
 Native Go source should remain usable directly.
 
-Go++ should generate additional Go source and compile the combined package.
+GPP should generate additional Go source and compile the combined package.
 
 ---
 
@@ -946,7 +946,7 @@ must install that release.
 
 # Compiler and Standard Library Versioning
 
-The embedded Go++ standard library should be versioned with the compiler.
+The embedded GPP standard library should be versioned with the compiler.
 
 For the initial design:
 
@@ -1062,7 +1062,7 @@ and normal shell scripting.
 
 # Compiler Diagnostics
 
-Errors should refer to Go++ source locations, not generated Go implementation details wherever possible.
+Errors should refer to GPP source locations, not generated Go implementation details wherever possible.
 
 Preferred:
 
@@ -1082,7 +1082,7 @@ unless generated-Go details are explicitly requested.
 
 # Public CLI Stability
 
-Once released, command names should be treated as part of the public Go++ developer experience.
+Once released, command names should be treated as part of the public GPP developer experience.
 
 Prefer:
 
@@ -1116,16 +1116,16 @@ gpp run
 The user should immediately see:
 
 ```text
-Hello from Go++
+Hello from GPP
 ```
 
-No additional Go++ installation or configuration should be necessary.
+No additional GPP installation or configuration should be necessary.
 
 ---
 
 # Design Principle
 
-Go++ should feel like a normal Go toolchain extension rather than a large standalone SDK.
+GPP should feel like a normal Go toolchain extension rather than a large standalone SDK.
 
 The release model is:
 
@@ -1134,10 +1134,10 @@ Go toolchain
      +
 single gpp executable
      +
-embedded Go++ compiler/runtime/stdlib
+embedded GPP compiler/runtime/stdlib
 ```
 
-The single executable owns the complete Go++ frontend experience:
+The single executable owns the complete GPP frontend experience:
 
 ```text
 gpp init
@@ -1157,4 +1157,4 @@ The preferred installation contract is:
 go install github.com/telgatech/gpp@main
 ```
 
-and that should be sufficient to install the Go++ toolchain frontend.
+and that should be sufficient to install the GPP toolchain frontend.

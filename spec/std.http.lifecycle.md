@@ -15,7 +15,7 @@ The design should preserve these principles:
 * overriding `BeforeListen()` must not disable default signal handling.
 * applications may override shutdown setup deliberately.
 * request hooks provide a simple place for application-wide request setup, logging, context values, and cleanup.
-* all hooks are ordinary polymorphic Go++ methods.
+* all hooks are ordinary polymorphic GPP methods.
 * no compiler special cases are required.
 
 ---
@@ -957,7 +957,7 @@ Startup must be structured so `AfterListen()` executes once the server has actua
 
 # Polymorphism
 
-All hooks are normal virtual Go++ methods.
+All hooks are normal virtual GPP methods.
 
 Example:
 
@@ -1341,7 +1341,7 @@ AfterShutdown
 
 They are ordinary methods implemented by `gpp/http.Server`.
 
-The implementation should rely only on existing Go++ capabilities:
+The implementation should rely only on existing GPP capabilities:
 
 ```text
 classes

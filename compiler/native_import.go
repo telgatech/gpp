@@ -16,7 +16,7 @@ var nativePackageCache = struct {
 }
 
 // importNativePackage keeps native type resolution from repeatedly decoding
-// the same export data while a generated Go++ package is being emitted.
+// the same export data while a generated GPP package is being emitted.
 // Standard-library sources can contain many native selectors, and the emitter
 // may inspect each selector more than once during overload and polymorphism
 // passes.

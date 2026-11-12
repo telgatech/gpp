@@ -1,13 +1,13 @@
-# Go++ Native Type Resolver
+# GPP Native Type Resolver
 
 ## Purpose
 
 The compiler must be able to determine the static type of ordinary Go
-expressions before applying Go++ transformations such as extension methods,
+expressions before applying GPP transformations such as extension methods,
 implicit error propagation, overload selection, and lambda inference.
 
 This is a compiler capability, not a new runtime or type-system feature.
-Generated Go++ programs continue to use the original Go types.
+Generated GPP programs continue to use the original Go types.
 
 ## Required behavior
 
@@ -32,9 +32,9 @@ The second form must resolve `FormValue` to `string`, then resolve
 
 For an expression, resolution proceeds from the innermost receiver outward:
 
-1. Go++ local variables, parameters, class fields, and class methods;
-2. Go++ extension-call results;
-3. imported Go++ package functions and methods;
+1. GPP local variables, parameters, class fields, and class methods;
+2. GPP extension-call results;
+3. imported GPP package functions and methods;
 4. imported native Go package functions and methods;
 5. exported fields on imported native Go structs;
 6. literals, composite literals, and other existing syntax rules.
@@ -72,7 +72,7 @@ the previous expression's native type. It must also resolve methods such as:
 response.Body.ReadAll()
 ```
 
-when `ReadAll` is a Go++ extension on `io.Reader`.
+when `ReadAll` is a GPP extension on `io.Reader`.
 
 Pointer and value method sets follow Go's normal rules. Exported fields and
 methods are eligible; inaccessible native members are not exposed by the
@@ -115,14 +115,14 @@ expression unchanged and allow normal Go compilation to report the resulting
 error. It must not guess a type or silently select an unrelated extension.
 
 If multiple native declarations are possible, resolution must follow Go's
-normal import and method-set rules. Ambiguous Go++ extensions remain compiler
+normal import and method-set rules. Ambiguous GPP extensions remain compiler
 errors under the existing extension rules.
 
 ## Compatibility
 
 This feature does not change:
 
-- Go or Go++ runtime representations;
+- Go or GPP runtime representations;
 - Go import semantics;
 - native method precedence;
 - extension declaration syntax;
@@ -138,9 +138,9 @@ The initial resolver does not attempt to become a complete replacement for
 arguments, perform whole-program data-flow analysis, or expose unexported Go
 members.
 
-Explicitly instantiated Go and Go++ generic types are in scope for the shared
+Explicitly instantiated Go and GPP generic types are in scope for the shared
 type model. Generic class declarations and the required type-parameter
-substitution rules are specified in [generic Go++ classes](./generic-classes.md).
+substitution rules are specified in [generic GPP classes](./generic-classes.md).
 
 ## Acceptance examples
 

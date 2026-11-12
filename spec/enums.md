@@ -1,8 +1,8 @@
-# Go++ Enum Specification
+# GPP Enum Specification
 
 ## Goal
 
-Add real enums to Go++ as first-class typed scalar values with:
+Add real enums to GPP as first-class typed scalar values with:
 
 * explicit backing types
 * concise member declarations
@@ -261,7 +261,7 @@ StatusPending
 StatusActive
 ```
 
-at the Go++ source level.
+at the GPP source level.
 
 The compiler may use such names internally when lowering to Go.
 
@@ -396,7 +396,7 @@ role := Role.From("manager")
 
 returns an error.
 
-Because Go++ automatically promotes omitted trailing errors, ordinary use effectively throws:
+Because GPP automatically promotes omitted trailing errors, ordinary use effectively throws:
 
 ```go
 role := Role.From("manager")
@@ -779,7 +779,7 @@ Example:
 user := User.FromJSON(data)
 ```
 
-will automatically propagate that error under normal Go++ error semantics.
+will automatically propagate that error under normal GPP error semantics.
 
 Explicit handling remains possible:
 
@@ -1239,7 +1239,7 @@ func RoleFrom(value string) (Role, error) {
 }
 ```
 
-Go++ exposes this as:
+GPP exposes this as:
 
 ```go
 Role.From(value)
@@ -1275,7 +1275,7 @@ Avoid runtime scanning or registration where unnecessary.
 
 # Reflection
 
-Enums should participate in Go++ introspection.
+Enums should participate in GPP introspection.
 
 A type descriptor may expose enum-specific metadata such as:
 
@@ -1325,7 +1325,7 @@ must remain distinct concepts.
 
 # Methods
 
-Enums may support ordinary methods if Go++'s type method model permits them.
+Enums may support ordinary methods if GPP's type method model permits them.
 
 Example:
 
@@ -1351,7 +1351,7 @@ Status.From(...)
 
 is a static enum method.
 
-Additional static methods may be added through normal Go++ extension syntax if supported:
+Additional static methods may be added through normal GPP extension syntax if supported:
 
 ```go
 extend Status {
@@ -1411,7 +1411,7 @@ case Status.Active:
 }
 ```
 
-Go++ may improve exhaustiveness diagnostics later, but that is not required for v1.
+GPP may improve exhaustiveness diagnostics later, but that is not required for v1.
 
 ---
 
@@ -1461,7 +1461,7 @@ String-backed enums typically have Go zero value:
 
 which may not correspond to any declared member.
 
-Go++ should distinguish:
+GPP should distinguish:
 
 ```text
 underlying Go zero representation
@@ -1485,7 +1485,7 @@ The language should not silently invent an empty enum member.
 
 Generated Go or unsafe/native interop may theoretically construct an enum with an undeclared backing value.
 
-Go++ code should not assume such a value is valid merely because the underlying scalar exists.
+GPP code should not assume such a value is valid merely because the underlying scalar exists.
 
 Operations such as:
 
@@ -1503,7 +1503,7 @@ error / invalid marker
 
 should be defined consistently by the runtime metadata implementation.
 
-Ordinary Go++ source should normally create enums only through declared members or `.From`.
+Ordinary GPP source should normally create enums only through declared members or `.From`.
 
 ---
 
@@ -1521,7 +1521,7 @@ This allows them to participate naturally in:
 * Go maps and slices
 * external Go APIs expecting compatible named/scalar values
 
-Go++ should preserve ordinary Go ABI compatibility where possible.
+GPP should preserve ordinary Go ABI compatibility where possible.
 
 ---
 

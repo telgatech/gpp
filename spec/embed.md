@@ -1,8 +1,8 @@
-# Go++ Embedded Resource Declaration Specification
+# GPP Embedded Resource Declaration Specification
 
 ## Goal
 
-Provide a simple source-level way to embed files and directories into a Go++ binary without requiring:
+Provide a simple source-level way to embed files and directories into a GPP binary without requiring:
 
 * `//go:embed` comments
 * explicit `embed.FS` declarations
@@ -15,7 +15,7 @@ The declaration should be part of the program source so builds remain reproducib
 
 # Basic Syntax
 
-Go++ adds an `embed` declaration form:
+GPP adds an `embed` declaration form:
 
 ```go
 embed (
@@ -165,7 +165,7 @@ and:
 http.FileServer(http.FS(staticFiles))
 ```
 
-No Go++-specific filesystem API should be required.
+No GPP-specific filesystem API should be required.
 
 ---
 
@@ -279,7 +279,7 @@ embed logo "assets/logo.svg"
 
 but grouped declarations are the preferred form.
 
-The grouped syntax should match other Go++ declaration groups such as:
+The grouped syntax should match other GPP declaration groups such as:
 
 ```go
 import (
@@ -325,7 +325,7 @@ Embedding is determined at build time and should not depend on runtime values.
 
 # Path Base
 
-Embed paths should be resolved relative to the Go++ project/module root, not the shell's current working directory.
+Embed paths should be resolved relative to the GPP project/module root, not the shell's current working directory.
 
 Given:
 
@@ -493,7 +493,7 @@ This should mirror ordinary test-source exclusion semantics.
 
 # Go Lowering
 
-Go++ should lower embed declarations using Go's standard:
+GPP should lower embed declarations using Go's standard:
 
 ```go
 embed
@@ -568,7 +568,7 @@ The user should not need to call `fs.Sub` manually.
 
 Go's `//go:embed` patterns are relative to the Go source package containing them.
 
-Because Go++ may generate temporary Go source elsewhere, the compiler must ensure embed paths remain valid.
+Because GPP may generate temporary Go source elsewhere, the compiler must ensure embed paths remain valid.
 
 Implementation strategies may include:
 
@@ -634,7 +634,7 @@ entries := fs.ReadDir(staticFiles, ".")
 server := http.FileServer(http.FS(staticFiles))
 ```
 
-The feature should avoid introducing unnecessary Go++ wrappers.
+The feature should avoid introducing unnecessary GPP wrappers.
 
 ---
 
@@ -792,9 +792,9 @@ Recommended v1 behavior:
 
 > Recursively embed the directory contents according to Go's embed rules.
 
-Do not invent a separate Go++ hidden-file convention unless necessary.
+Do not invent a separate GPP hidden-file convention unless necessary.
 
-If Go's underlying embed behavior excludes particular names by default, Go++ should document that behavior rather than silently pretending otherwise.
+If Go's underlying embed behavior excludes particular names by default, GPP should document that behavior rather than silently pretending otherwise.
 
 ---
 
@@ -802,9 +802,9 @@ If Go's underlying embed behavior excludes particular names by default, Go++ sho
 
 Symlink behavior should follow Go embed safety restrictions.
 
-Do not attempt to make Go++ embedding traverse arbitrary symlinks around the project tree.
+Do not attempt to make GPP embedding traverse arbitrary symlinks around the project tree.
 
-If a resource cannot legally be embedded under Go's rules, emit a clear Go++ diagnostic.
+If a resource cannot legally be embedded under Go's rules, emit a clear GPP diagnostic.
 
 ---
 
@@ -838,7 +838,7 @@ Do not initially add:
 "static/*.css"
 ```
 
-or arbitrary glob declarations as a Go++ source feature.
+or arbitrary glob declarations as a GPP source feature.
 
 Directories already cover the common recursive case:
 
@@ -909,7 +909,7 @@ consistently with grouped Go-style declarations.
 
 # Diagnostics
 
-Compiler diagnostics should refer to the Go++ declaration.
+Compiler diagnostics should refer to the GPP declaration.
 
 Example:
 
@@ -953,7 +953,7 @@ is ordinary symbol resolution.
 
 # Exported Embedded Resources
 
-Capitalization should follow normal Go++ visibility rules.
+Capitalization should follow normal GPP visibility rules.
 
 Example:
 
@@ -991,7 +991,7 @@ embed (
 )
 ```
 
-another Go++ package may import it and use:
+another GPP package may import it and use:
 
 ```go
 assets.Files

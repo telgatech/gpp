@@ -2,11 +2,8 @@
 layout: home
 
 hero:
-  text: Go++
-  tagline: "Extends Go with classes, inheritance, generics, function overloading, named arguments, exceptions, extension methods, annotations, anonymous structs, enums and more!"
-  image:
-    src: /go-gopher-superman.webp
-    alt: Go's blue gopher mascot flying upward with a red cape
+  text: Write less. Do more.
+  tagline: "Build on Go with classes, generics, exceptions, and more—while keeping Go’s packages, toolchain, and runtime."
   actions:
     - theme: brand
       text: Explore the features
@@ -36,39 +33,39 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <div class="home-faq-heading">
 <h2 class="home-faq-title">Frequently asked questions</h2>
-<p>Quick answers about Go++, its current status, and how to get involved.</p>
+<p>Quick answers about GPP, its current status, and how to get involved.</p>
 </div>
 
 <div class="home-faq">
 
 <details>
-<summary>What is Go++?</summary>
-<p>Go++ is an experiment in adding higher-level language features to Go while preserving Go’s familiar tools, packages, and runtime. It adds features such as classes, multiple inheritance, overloading, exceptions, and built-in serialization.</p>
+<summary>What is GPP?</summary>
+<p>GPP is an experiment in adding higher-level language features to Go while preserving Go’s familiar tools, packages, and runtime. It adds features such as classes, multiple inheritance, overloading, exceptions, and built-in serialization.</p>
 </details>
 
 <details>
-<summary>Is Go++ an official Go project?</summary>
-<p>No. Go++ is an independent project and is not affiliated with or endorsed by Google or the Go team.</p>
+<summary>Is GPP an official Go project?</summary>
+<p>No. GPP is an independent project and is not affiliated with or endorsed by Google or the Go team.</p>
 </details>
 
 <details>
-<summary>How does Go++ work with Go?</summary>
-<p>Go++ lowers to ordinary Go, so projects can use existing Go packages and interoperate with Go code. Compile <code>.gpp</code> files with the <code>gpp</code> CLI; the Go toolchain then builds and runs the generated Go. <a href="/guide/getting-started">Get started</a> or browse the <a href="/examples/">complete examples</a>.</p>
+<summary>How does GPP work with Go?</summary>
+<p>GPP lowers to ordinary Go, so projects can use existing Go packages and interoperate with Go code. Compile <code>.gpp</code> files with the <code>gpp</code> CLI; the Go toolchain then builds and runs the generated Go. <a href="/guide/getting-started">Get started</a> or browse the <a href="/examples/">complete examples</a>.</p>
 </details>
 
 <details>
-<summary>Can I adopt Go++ gradually?</summary>
-<p>Yes. Start with familiar Go syntax and compile <code>.go</code> files with <code>gpp run</code>. Add Go++ features like classes or named arguments when they help, and keep existing Go code alongside it. See <a href="/features/mixed-go">how Go and Go++ work together</a>.</p>
+<summary>Can I adopt GPP gradually?</summary>
+<p>Yes. Start with familiar Go syntax and compile <code>.go</code> files with <code>gpp run</code>. Add GPP features like classes or named arguments when they help, and keep existing Go code alongside it. See <a href="/features/mixed-go">how Go and GPP work together</a>.</p>
 </details>
 
 <details>
-<summary>Is Go++ ready for production?</summary>
-<p>Go++ is still an experiment and has not yet received broad community review. Until then, please don’t adopt it casually for production systems.</p>
+<summary>Is GPP ready for production?</summary>
+<p>GPP is still an experiment and has not yet received broad community review. Until then, please don’t adopt it casually for production systems.</p>
 </details>
 
 <details>
-<summary>What license applies to Go++?</summary>
-<p>Go++ uses the same BSD 3-Clause license as Go. You can use, modify, and redistribute Go++ in source or binary form, including commercially, as long as you follow the license conditions. See the <a href="https://github.com/telgatech/gpp/blob/main/LICENSE">full license</a>. Some bundled third-party components have their own notices and licenses.</p>
+<summary>What license applies to GPP?</summary>
+<p>GPP uses the same BSD 3-Clause license as Go. You can use, modify, and redistribute GPP in source or binary form, including commercially, as long as you follow the license conditions. See the <a href="https://github.com/telgatech/gpp/blob/main/LICENSE">full license</a>. Some bundled third-party components have their own notices and licenses.</p>
 </details>
 
 <details>
@@ -82,17 +79,17 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 </details>
 
 <details>
-<summary>How can I try Go++?</summary>
-<p>Follow the <a href="/guide/getting-started">Getting Started guide</a> to install Go++ and create your first project.</p>
+<summary>How can I try GPP?</summary>
+<p>Follow the <a href="/guide/getting-started">Getting Started guide</a> to install GPP and create your first project.</p>
 </details>
 
 </div>
 
 <footer class="catalog-footer">
 <div class="catalog-footer-copy">
-<p class="catalog-footer-eyebrow">Ready to try Go++?</p>
+<p class="catalog-footer-eyebrow">Ready to try GPP?</p>
 <h2>Build your first project</h2>
-<p>Go++ compiles to ordinary Go, so you can keep the packages, tools, and deployment flow you already know.</p>
+<p>GPP compiles to ordinary Go, so you can keep the packages, tools, and deployment flow you already know.</p>
 </div>
 <a href="/guide/getting-started">Get started <span aria-hidden="true">→</span></a>
 </footer>

@@ -81,7 +81,7 @@ func (s *server) semanticTokens(uri string) map[string]any {
 	}
 	classified := map[int]semanticToken{}
 	if state.File != nil {
-		classifyGoPlusTokens(state.File, classified)
+		classifyGPPTokens(state.File, classified)
 		s.classifyLocalBindings(state, classified)
 	}
 	for _, token := range state.FileTokens() {
@@ -296,7 +296,7 @@ func (state *fileState) FileTokens() []compiler.Token {
 	return state.File.Tokens
 }
 
-func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
+func classifyGPPTokens(file *compiler.File, result map[int]semanticToken) {
 	classNames := map[string]bool{}
 	enumNames := map[string]bool{}
 	enumMembers := map[string]bool{}
@@ -465,7 +465,7 @@ func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
 		}
 	}
 
-	// Lambda parameter names are identified by the Go++ arrow token.
+	// Lambda parameter names are identified by the GPP arrow token.
 	for index, token := range file.Tokens {
 		if token.Text != "=>" || index == 0 {
 			continue
@@ -494,7 +494,7 @@ func classifyGoPlusTokens(file *compiler.File, result map[int]semanticToken) {
 	}
 
 	// Catch bindings and the special atExit hook are ordinary functions/locals
-	// syntactically, but dedicated tokens make their Go++ intent visible.
+	// syntactically, but dedicated tokens make their GPP intent visible.
 	for index, token := range file.Tokens {
 		if token.Text == "catch" && index+1 < len(file.Tokens) && file.Tokens[index+1].Kind == compiler.TokenIdentifier {
 			mark(file.Tokens[index+1].Span, semanticParameter, 0)
@@ -519,7 +519,7 @@ func markDeclaredTypeParameters(tokens []compiler.Token, declarationName string,
 		return nil
 	}
 
-	// Go++ places generic parameters directly after the class or function name.
+	// GPP places generic parameters directly after the class or function name.
 	// Find that bracket list in source tokens rather than using TypeParameterNode
 	// spans, which are relative to the parsed type-parameter fragment.
 	nameIndex := -1

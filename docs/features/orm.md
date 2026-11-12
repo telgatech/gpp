@@ -1,6 +1,6 @@
 # ORM models
 
-The Go++ ORM maps annotated classes to database tables and supplies common
+The GPP ORM maps annotated classes to database tables and supplies common
 CRUD operations. It is designed around `database/sql`, so database handles,
 transactions, and SQL remain part of the familiar Go ecosystem.
 
@@ -28,7 +28,7 @@ Handwritten SQL gives direct control. The ORM reduces repeated column mapping
 for routine operations:
 
 ::: code-group
-```gpp [Go++]
+```gpp [GPP]
 class Employee : orm.Model {
     ID int
     Name string

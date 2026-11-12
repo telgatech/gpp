@@ -20,6 +20,8 @@ type exceptionContext struct {
 	RuntimeEmitted bool
 }
 
+const exceptionRuntimeSourceMarker = "// __gppGeneratedExceptionRuntime__"
+
 func exceptionRuntimeDefinitions() string {
 	return `type __gppThrownError struct {
 	err error
@@ -1502,9 +1504,9 @@ func lowerExceptionABIBoundaryNode(body *ast.BlockStmt, resultType TypeNode, res
 		}
 	}
 	if len(fields) == 0 {
-		return lowerExceptionVoidBoundaryNode(body, used)
+		return lowerExceptionVoidBoundaryNode(body, used, context)
 	}
-	return lowerExceptionResultBoundaryNode(body, fields, used)
+	return lowerExceptionResultBoundaryNode(body, fields, used, context)
 }
 
 // transformPolymorphicTypeNode is the typed counterpart of
@@ -1544,31 +1546,54 @@ func transformPolymorphicTypeNode(typeNode TypeNode, context constructorContext)
 	}
 }
 
-func lowerExceptionVoidBoundaryNode(body *ast.BlockStmt, used map[string]bool) (*ast.BlockStmt, error) {
+func lowerExceptionVoidBoundaryNode(body *ast.BlockStmt, used map[string]bool, context constructorContext) (*ast.BlockStmt, error) {
 	returned := ast.NewIdent(nextExceptionName(used, "__gppBoundaryReturned"))
 	recovered := ast.NewIdent(nextExceptionName(used, "__gppBoundaryRecovered"))
 	isReturned := ast.NewIdent(nextExceptionName(used, "__gppIsReturned"))
+	panicStatements := make([]ast.Stmt, 0, 2)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		panicStatements = append(panicStatements, marker)
+	}
+	panicStatements = append(panicStatements, &ast.ExprStmt{X: call(ast.NewIdent("panic"), recovered)})
 	deferBody := &ast.BlockStmt{List: []ast.Stmt{
 		&ast.AssignStmt{Lhs: []ast.Expr{recovered}, Tok: token.DEFINE, Rhs: []ast.Expr{call(ast.NewIdent("recover"))}},
 		&ast.IfStmt{Cond: &ast.BinaryExpr{X: recovered, Op: token.NEQ, Y: ast.NewIdent("nil")}, Body: &ast.BlockStmt{List: []ast.Stmt{
 			&ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent("_"), isReturned}, Tok: token.DEFINE, Rhs: []ast.Expr{&ast.TypeAssertExpr{X: recovered, Type: ast.NewIdent("__gppExceptionReturn")}}},
-			&ast.IfStmt{Cond: &ast.UnaryExpr{Op: token.NOT, X: isReturned}, Body: &ast.BlockStmt{List: []ast.Stmt{
-				&ast.ExprStmt{X: call(ast.NewIdent("panic"), recovered)},
-			}}},
+			&ast.IfStmt{Cond: &ast.UnaryExpr{Op: token.NOT, X: isReturned}, Body: &ast.BlockStmt{List: panicStatements}},
 			&ast.AssignStmt{Lhs: []ast.Expr{returned}, Tok: token.ASSIGN, Rhs: []ast.Expr{ast.NewIdent("true")}},
 		}}},
 	}}
 	deferStatement := &ast.DeferStmt{Call: &ast.CallExpr{Fun: &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: deferBody}}}
-	functionBody := &ast.BlockStmt{List: append([]ast.Stmt{deferStatement}, body.List...)}
+	functionStatements := make([]ast.Stmt, 0, len(body.List)+2)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		functionStatements = append(functionStatements, marker)
+	}
+	functionStatements = append(functionStatements, deferStatement)
+	functionStatements = append(functionStatements, body.List...)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		functionStatements = append(functionStatements, marker)
+	}
+	functionBody := &ast.BlockStmt{List: functionStatements}
 	run := &ast.ExprStmt{X: call(&ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: functionBody})}
-	return &ast.BlockStmt{List: []ast.Stmt{
+	statements := make([]ast.Stmt, 0, len(body.List)+5)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		statements = append(statements, marker)
+	}
+	statements = append(statements,
 		&ast.DeclStmt{Decl: &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{Names: []*ast.Ident{returned}, Type: ast.NewIdent("bool")}}}},
-		run,
-		&ast.IfStmt{Cond: returned, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{}}}},
-	}}, nil
+	)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		statements = append(statements, marker)
+	}
+	statements = append(statements, run)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		statements = append(statements, marker)
+	}
+	statements = append(statements, &ast.IfStmt{Cond: returned, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{}}}})
+	return &ast.BlockStmt{List: statements}, nil
 }
 
-func lowerExceptionResultBoundaryNode(body *ast.BlockStmt, fields []exceptionResultField, used map[string]bool) (*ast.BlockStmt, error) {
+func lowerExceptionResultBoundaryNode(body *ast.BlockStmt, fields []exceptionResultField, used map[string]bool, context constructorContext) (*ast.BlockStmt, error) {
 	resultFields := &ast.FieldList{}
 	fieldTypes := make([]ast.Expr, len(fields))
 	for index, field := range fields {
@@ -1635,9 +1660,28 @@ func lowerExceptionResultBoundaryNode(body *ast.BlockStmt, fields []exceptionRes
 		}}})
 	}
 	deferStmt := &ast.DeferStmt{Call: &ast.CallExpr{Fun: &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}}, Body: &ast.BlockStmt{List: deferStatements}}}}
-	closureBody := &ast.BlockStmt{List: append([]ast.Stmt{deferStmt}, append(body.List, &ast.ReturnStmt{})...)}
+	closureStatements := make([]ast.Stmt, 0, len(body.List)+3)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		closureStatements = append(closureStatements, marker)
+	}
+	closureStatements = append(closureStatements, deferStmt)
+	closureStatements = append(closureStatements, body.List...)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		closureStatements = append(closureStatements, marker)
+	}
+	closureStatements = append(closureStatements, &ast.ReturnStmt{})
+	closureBody := &ast.BlockStmt{List: closureStatements}
 	closure := &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{}, Results: resultFields}, Body: closureBody}
-	return &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{Results: []ast.Expr{&ast.CallExpr{Fun: closure}}}}}, nil
+	statements := make([]ast.Stmt, 0, 2)
+	if marker := exceptionGeneratedLineMarker(); marker != nil {
+		statements = append(statements, marker)
+	}
+	statements = append(statements, &ast.ReturnStmt{Results: []ast.Expr{&ast.CallExpr{Fun: closure}}})
+	return &ast.BlockStmt{List: statements}, nil
+}
+
+func exceptionGeneratedLineMarker() ast.Stmt {
+	return &ast.ExprStmt{X: call(identifier(exceptionGeneratedLineMarkerPrefix + "1"))}
 }
 
 func lowerExceptionGoStmtNode(statement Stmt, context constructorContext, rethrowName string) ([]ast.Stmt, error) {
@@ -2304,7 +2348,7 @@ func lowerRecordCollectionTypeNode(literal *CompositeLiteralExpr, context constr
 	return fmt.Errorf("cannot infer record collection element type")
 }
 
-// lowerRecordCallExprNode lowers the Go++ record(name: value, ...) form to a
+// lowerRecordCallExprNode lowers the GPP record(name: value, ...) form to a
 // generated structural composite literal.  Keeping this conversion on the
 // expression AST means direct function/method emission does not need to render
 // the call to source merely to infer the record shape.
@@ -4039,7 +4083,7 @@ func transformExceptionABIBoundaries(src string, context constructorContext) (st
 		return transformed, err
 	}
 	// This is the final ABI boundary for a structured top-level function. The
-	// source has already gone through the Go++ body AST lowerers, so use the
+	// source has already gone through the GPP body AST lowerers, so use the
 	// parsed FunctionDecl/Method metadata directly instead of reparsing the
 	// lowered fragment through go/parser. The generated wrapper is still
 	// materialized as Go source at the emission boundary.
@@ -4191,6 +4235,7 @@ func formatExceptionASTBody(body *ast.BlockStmt) (string, error) {
 }
 
 const exceptionSourceLineMarkerPrefix = "__gppSourceLine_"
+const exceptionGeneratedLineMarkerPrefix = "__gppGeneratedLine_"
 
 var exceptionSourceLineMarkerPattern = regexp.MustCompile(`(?m)^[\t ]*__gppSourceLine_([0-9a-f]+)_([0-9]+)\(\);?[\t ]*$`)
 

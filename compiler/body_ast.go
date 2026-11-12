@@ -287,7 +287,7 @@ type statementDraft struct {
 // have a dedicated node. It contains tokens and recursively structured
 // blocks, never an executable source string or a duplicate typed statement.
 // As statement coverage grows, values of this type should disappear from
-// ordinary Go++ programs.
+// ordinary GPP programs.
 type TokenStmt struct {
 	Kind      BodyStmtKind
 	Tokens    []Token
@@ -1356,7 +1356,7 @@ func parseStatementExpressions(kind BodyStmtKind, header []Token) []ExprNode {
 		if err != nil || expression == nil {
 			// The token stream remains the authoritative representation until
 			// this syntax gets a dedicated expression parser. Do not silently
-			// drop an expression: a missing value can make a Go++ return or call
+			// drop an expression: a missing value can make a GPP return or call
 			// appear valid to a later AST emitter.
 			preserved := significantSyntaxTokens(part)
 			if len(preserved) > 0 {

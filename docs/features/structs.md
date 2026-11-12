@@ -3,16 +3,16 @@
 Anonymous structs represent small data shapes without declaring a named class first.
 They are handy for local results, configuration fragments, and values passed
 between nearby functions when a reusable nominal type would add ceremony.
-Go++ uses `struct(...)` for anonymous values, `struct Name { ... }` for concise
+GPP uses `struct(...)` for anonymous values, `struct Name { ... }` for concise
 named declarations, and `Name(...)` to construct named structs with fields.
 
 ## Name fields at the point of use
 
 Go usually introduces an anonymous shape with an anonymous struct type. A
-Go++ struct gives fields names directly in the value expression:
+GPP struct gives fields names directly in the value expression:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 user := struct(
     Name: "Ada",
     Active: true,
@@ -109,7 +109,7 @@ result struct just for this operation.
 
 ## Pass anonymous structs as function arguments
 
-Functions can accept `struct` parameters too. Go++ infers the parameter's
+Functions can accept `struct` parameters too. GPP infers the parameter's
 concrete shape from struct values passed at call sites in the same program:
 
 ```go

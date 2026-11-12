@@ -1,4 +1,4 @@
-# Go++ Feature Spec: Multi-Target Extension Methods
+# GPP Feature Spec: Multi-Target Extension Methods
 
 ## Goal
 
@@ -184,7 +184,7 @@ Each receiver target gets its own generic extension method.
 - maps where otherwise valid
 - pointers
 - imported Go types
-- Go++ classes
+- GPP classes
 - instantiated generic types where extension methods already permit them
 
 Examples:
@@ -384,7 +384,7 @@ No changes to existing lookup precedence.
 Continue using:
 
 1. real/native methods
-2. Go++ class/inherited methods
+2. GPP class/inherited methods
 3. visible extension methods
 
 Multi-target extensions simply register one extension method independently against each target.
@@ -501,7 +501,7 @@ must not wrap or modify either type.
 
 Both remain actual standard-library/database/sql types.
 
-The extension only affects Go++ call resolution and lowering.
+The extension only affects GPP call resolution and lowering.
 
 No runtime representation is needed.
 

@@ -10,7 +10,7 @@ A free function is already a natural Go option. A static method keeps the
 operation discoverable beside the class it creates:
 
 ::: code-group
-```go [Go++]
+```go [GPP]
 class User {
     Name string
 

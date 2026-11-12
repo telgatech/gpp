@@ -85,7 +85,7 @@ for (const file of rootFiles) {
   entries.push(await writeExamplePage({
     name: file,
     title: file,
-    summary: `${descriptions.get(file) ?? 'A runnable Go++ source example.'}${relatedDescription}`,
+    summary: `${descriptions.get(file) ?? 'A runnable GPP source example.'}${relatedDescription}`,
     command,
     files: relatedFiles,
     notes,
@@ -109,8 +109,8 @@ for (const project of ['go_from_gpp', 'go_imports_gpp']) {
     .map((name) => `${directory}/${name}`)
   entries.push(await writeExamplePage({
     name: directory,
-    title: project === 'go_from_gpp' ? 'Go++ calling Go' : 'Go importing Go++',
-    summary: descriptions.get('mixed/') ?? 'A complete mixed-language project showing Go and Go++ interoperability.',
+    title: project === 'go_from_gpp' ? 'GPP calling Go' : 'Go importing GPP',
+    summary: descriptions.get('mixed/') ?? 'A complete mixed-language project showing Go and GPP interoperability.',
     command: `gpp run examples/mixed/${project}`,
     files,
   }))

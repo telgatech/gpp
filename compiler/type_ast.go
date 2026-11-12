@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// TypeNode is the syntax-level representation of a Go++ type. Identifier
+// TypeNode is the syntax-level representation of a GPP type. Identifier
 // spellings and source metadata remain strings because they are lexical data;
 // the type grammar itself is represented by these nodes and can be consumed
 // without reparsing type text.
@@ -833,9 +833,9 @@ func typeParameterNodesSource(parameters []TypeParameterNode) (string, error) {
 	return "[" + strings.Join(parts, ", ") + "]", nil
 }
 
-// goTypeParameterNodesSource emits constraints required by Go's syntax. Go++
+// goTypeParameterNodesSource emits constraints required by Go's syntax. GPP
 // treats an omitted constraint as `any`, so preserve the concise form in
-// Go++ source rendering while making generated Go declarations explicit.
+// GPP source rendering while making generated Go declarations explicit.
 func goTypeParameterNodesSource(parameters []TypeParameterNode) (string, error) {
 	if len(parameters) == 0 {
 		return "", nil

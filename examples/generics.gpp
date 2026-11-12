@@ -81,7 +81,7 @@ func main() {
 	fmt.Println("stack:", last, ok, integers.Len())
 
 	words := Stack[string](Items: []string{})
-	words.Push("Go++")
+	words.Push("GPP")
 	word, ok := words.Pop()
 	fmt.Println("string stack:", word, ok, words.Len())
 

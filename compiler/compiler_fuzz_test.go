@@ -10,7 +10,7 @@ import (
 )
 
 // FuzzCompileSourceProducesValidGoSyntax sends whole source files through
-// parsing, semantic resolution, and code generation. Invalid Go++ source may
+// parsing, semantic resolution, and code generation. Invalid GPP source may
 // return a compiler error; generated Go must remain syntactically valid.
 func FuzzCompileSourceProducesValidGoSyntax(f *testing.F) {
 	f.Add("package main\nfunc main() {}\n")
@@ -81,7 +81,7 @@ func main() {
 			}
 			return nil
 		}); err != nil {
-			t.Fatalf("compiler generated invalid Go syntax: %v\nGo++ source:\n%s", err, source)
+			t.Fatalf("compiler generated invalid Go syntax: %v\nGPP source:\n%s", err, source)
 		}
 	})
 }

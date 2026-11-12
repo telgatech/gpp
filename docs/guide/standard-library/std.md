@@ -1,6 +1,6 @@
 # `gpp/std`
 
-`gpp/std` provides annotations shared by Go++ packages.
+`gpp/std` provides annotations shared by GPP packages.
 
 ## `Deprecated`
 
@@ -36,7 +36,7 @@ class Model {
 
 The language server omits annotated methods from completion suggestions,
 including inherited member suggestions. A hook can be overridden, but ordinary
-Go++ code can call it only from the class that first declares it; an override
+GPP code can call it only from the class that first declares it; an override
 does not transfer that permission to a child. This keeps lifecycle timing under
 the declaring class's control. Framework dispatch through internal interfaces
 or runtime hook lookup remains allowed, and normal method dispatch still selects
