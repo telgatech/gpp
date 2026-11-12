@@ -3,7 +3,7 @@ layout: home
 
 hero:
   text: Write less. Do more.
-  tagline: "Build on Go with classes, generics, exceptions, and more—while keeping Go’s packages, toolchain, and runtime."
+  tagline: "Build on Go with classes, generics, exceptions, and more!"
   actions:
     - theme: brand
       text: Explore the features
