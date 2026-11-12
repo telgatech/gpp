@@ -49,6 +49,7 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	context.AtExit = atExit
 	context.Development = options.Development
 	context.Templates = model.Packages[file.Package].Templates
+	context.Ternary = &ternaryContext{}
 	context.Records = newRecordContext()
 	context.AvailableImports = map[string]string{}
 	context.GlobalValueTypes = globalValueTypesForFile(file)
@@ -140,6 +141,7 @@ type constructorContext struct {
 	Templates                  map[string]*TemplateDecl
 	IntrospectionRuntimeImport string
 	Exceptions                 *exceptionContext
+	Ternary                    *ternaryContext
 	GeneratedFilePath          string
 	ImportedTypes              map[string]map[string]bool
 	ImportedPackageNames       map[string]string
@@ -357,6 +359,12 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 
 	declarationsPrefix := localRuntimeImports + embedDefinitions + templateDefinitions
+	if fileHasTernary(file) && (context.Ternary == nil || !context.Ternary.RuntimeEmitted) {
+		declarationsPrefix += ternaryRuntimeDefinitions()
+		if context.Ternary != nil {
+			context.Ternary.RuntimeEmitted = true
+		}
+	}
 	if context.Exceptions != nil && !context.Exceptions.RuntimeEmitted {
 		declarationsPrefix += exceptionRuntimeSourceMarker + "\n" + exceptionRuntimeDefinitions()
 		context.Exceptions.RuntimeEmitted = true
@@ -404,6 +412,33 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	result = mapGeneratedSourceLocations(result, context.GeneratedFilePath)
 
 	return result, nil
+}
+
+func fileHasTernary(file *File) bool {
+	if file == nil {
+		return false
+	}
+	tokens, err := LexSource(file.Name, file.Source)
+	if err != nil {
+		return false
+	}
+	for _, token := range tokens {
+		if token.Text == "?" && token.Kind == TokenPunctuation {
+			return true
+		}
+	}
+	return false
+}
+
+func ternaryRuntimeDefinitions() string {
+	return `func __gppTernary[T any](condition bool, whenTrue, whenFalse func() T) T {
+	if condition {
+		return whenTrue()
+	}
+	return whenFalse()
+}
+
+`
 }
 
 func mapGeneratedSourceLocations(source []byte, generatedPath string) []byte {

@@ -589,6 +589,42 @@ func (parser *expressionParser) parse(minPrecedence int) (ExprNode, error) {
 			continue
 		}
 		operator := parser.tokens[parser.index].Text
+		if operator == "?" {
+			const ternaryPrecedence = 2
+			if ternaryPrecedence < minPrecedence {
+				break
+			}
+			question := parser.tokens[parser.index]
+			parser.index++
+			whenTrue, err := parser.parse(0)
+			if err != nil {
+				return nil, err
+			}
+			if !parser.take(":") {
+				return nil, fmt.Errorf("expected : after ternary true expression")
+			}
+			whenFalse, err := parser.parse(ternaryPrecedence)
+			if err != nil {
+				return nil, err
+			}
+			if whenTrue == nil || whenFalse == nil {
+				return nil, fmt.Errorf("ternary expression requires both result expressions")
+			}
+			leftTokens := tokensBetweenSpans(parser.sourceTokens, whenTrue.Span().Start, whenTrue.Span().End)
+			falseTokens := tokensBetweenSpans(parser.sourceTokens, whenFalse.Span().Start, whenFalse.Span().End)
+			leftBranch := &LambdaExpr{Body: whenTrue, BodyTokens: leftTokens, SpanValue: whenTrue.Span()}
+			falseBranch := &LambdaExpr{Body: whenFalse, BodyTokens: falseTokens, SpanValue: whenFalse.Span()}
+			left = &CallExpr{
+				Callee: &NameExpr{Name: "__gppTernary", SpanValue: question.Span},
+				Arguments: []CallArg{
+					{Value: left},
+					{Value: leftBranch},
+					{Value: falseBranch},
+				},
+				SpanValue: Span{Start: left.Span().Start, End: whenFalse.Span().End, Line: left.Span().Line, Column: left.Span().Column},
+			}
+			continue
+		}
 		precedence, ok := expressionPrecedence(operator)
 		if !ok || precedence < minPrecedence {
 			break

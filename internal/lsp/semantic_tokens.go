@@ -79,6 +79,10 @@ func (s *server) semanticTokens(uri string) map[string]any {
 	if state == nil {
 		return map[string]any{"data": []uint32{}}
 	}
+	if state.semanticTokensCached && state.semanticTokensSource == state.Source {
+		return map[string]any{"data": state.semanticTokensData}
+	}
+	positions := newSourcePositionIndex(state.Source)
 	classified := map[int]semanticToken{}
 	if state.File != nil {
 		classifyGPPTokens(state.File, classified)
@@ -114,7 +118,7 @@ func (s *server) semanticTokens(uri string) map[string]any {
 			}
 		}
 		for _, part := range splitSourceLines(state.Source, token.Span.Start, token.Span.End) {
-			line, character := positionAtByteOffset(state.Source, part[0])
+			line, character := positions.position(state.Source, part[0])
 			length := utf16Length(state.Source[part[0]:part[1]])
 			if length == 0 {
 				continue
@@ -132,7 +136,7 @@ func (s *server) semanticTokens(uri string) map[string]any {
 				continue
 			}
 			for _, part := range splitSourceLines(state.Source, template.BodySpan.Start, template.BodySpan.End) {
-				line, character := positionAtByteOffset(state.Source, part[0])
+				line, character := positions.position(state.Source, part[0])
 				classified[part[0]] = semanticToken{line: line, character: character, length: utf16Length(state.Source[part[0]:part[1]]), tokenType: semanticString, start: part[0], end: part[1]}
 			}
 		}
@@ -164,6 +168,9 @@ func (s *server) semanticTokens(uri string) map[string]any {
 		data = append(data, uint32(deltaLine), uint32(deltaCharacter), uint32(token.length), uint32(token.tokenType), uint32(token.modifiers))
 		lastLine, lastCharacter = token.line, token.character
 	}
+	state.semanticTokensSource = state.Source
+	state.semanticTokensData = data
+	state.semanticTokensCached = true
 	return map[string]any{"data": data}
 }
 
@@ -260,11 +267,41 @@ func (s *server) classifyLocalBindings(state *fileState, classified map[int]sema
 	if state == nil || state.File == nil {
 		return
 	}
+	tokens := state.File.Tokens
+	candidates := make(map[*compiler.Method]map[string]bool)
+	methodScopes := state.methodScopes
+	if len(methodScopes) == 0 {
+		methodScopes = collectMethodScopes(state)
+	}
+	for _, scope := range methodScopes {
+		if scope.method == nil {
+			continue
+		}
+		start := sort.Search(len(tokens), func(index int) bool { return tokens[index].Span.Start >= scope.start })
+		for index := start; index < len(tokens) && tokens[index].Span.Start <= scope.end; index++ {
+			token := tokens[index]
+			if token.Kind != compiler.TokenIdentifier {
+				continue
+			}
+			parameter, hasSemanticToken := classified[token.Span.Start]
+			if (!hasSemanticToken || parameter.tokenType != semanticParameter) && !localDeclarationToken(tokens, token) {
+				continue
+			}
+			if candidates[scope.method] == nil {
+				candidates[scope.method] = make(map[string]bool)
+			}
+			candidates[scope.method][token.Text] = true
+		}
+	}
 	for _, token := range state.File.Tokens {
 		if s.cancelled() {
 			return
 		}
 		if token.Kind != compiler.TokenIdentifier {
+			continue
+		}
+		method, _ := enclosingMethod(state, token.Span.Start)
+		if method == nil || !candidates[method][token.Text] {
 			continue
 		}
 		binding, ok := s.localBindingAt(state, token.Span.Start, token.Text)
@@ -700,24 +737,31 @@ func splitSourceLines(source string, start, end int) [][2]int {
 	return result
 }
 
-func positionAtByteOffset(source string, offset int) (int, int) {
-	position := Position{}
-	for index, r := range source {
-		if index >= offset {
-			break
-		}
-		if r == '\n' {
-			position.Line++
-			position.Character = 0
-			continue
-		}
-		if r > 0xffff {
-			position.Character += 2
-		} else {
-			position.Character++
+type sourcePositionIndex struct {
+	lineStarts []int
+}
+
+func newSourcePositionIndex(source string) sourcePositionIndex {
+	index := sourcePositionIndex{lineStarts: []int{0}}
+	for offset := 0; offset < len(source); offset++ {
+		if source[offset] == '\n' {
+			index.lineStarts = append(index.lineStarts, offset+1)
 		}
 	}
-	return position.Line, position.Character
+	return index
+}
+
+func (index sourcePositionIndex) position(source string, offset int) (int, int) {
+	if offset < 0 {
+		offset = 0
+	} else if offset > len(source) {
+		offset = len(source)
+	}
+	line := sort.Search(len(index.lineStarts), func(i int) bool { return index.lineStarts[i] > offset }) - 1
+	if line < 0 {
+		line = 0
+	}
+	return line, utf16Length(source[index.lineStarts[line]:offset])
 }
 
 func semanticModifiersAt(tokens map[int]semanticToken, start int) int {

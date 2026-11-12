@@ -130,6 +130,19 @@
   generated class interface. Safe access is not inferred for ordinary `.`
   access or arbitrary receiver expressions.
 
+## Conditional expressions
+- Support the conventional conditional expression syntax:
+    label := enabled ? "on" : "off"
+- The condition must be a boolean expression.
+- Evaluate only the selected result expression; the other branch must have no
+  side effects.
+- Both result expressions must resolve to a compatible Go result type.
+- Conditional expressions associate to the right, so nested expressions can
+  be written without parentheses:
+    result := first ? "first" : second ? "second" : "other"
+- The operator has lower precedence than logical and arithmetic expressions,
+  and higher precedence than assignment. Parentheses may be used for clarity.
+
 ## Exceptions
 - Exceptions are not a v0.2 priority.
 - They are considered harder because Go has no native exception model suitable for transparent lowering.

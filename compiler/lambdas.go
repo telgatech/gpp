@@ -29,6 +29,20 @@ func lambdaFunctionTypesForCall(call *CallExpr, index int, context constructorCo
 	if call == nil || index < 0 || index >= len(call.Arguments) {
 		return nil
 	}
+	if name, ok := call.Callee.(*NameExpr); ok && name.Name == "__gppTernary" && len(call.Arguments) == 3 && (index == 1 || index == 2) {
+		valueTypes := cloneStringMap(context.GlobalValueTypes)
+		if valueTypes == nil {
+			valueTypes = map[string]string{}
+		}
+		for name, typeName := range context.CurrentParameterTypes {
+			valueTypes[name] = typeName
+		}
+		otherBranch := 3 - index
+		result := coalesceExpressionTypeAST(ternaryBranchValue(call.Arguments[otherBranch].Value), context, valueTypes)
+		if result != nil {
+			return []*FunctionType{{Results: []TypeNode{result}}}
+		}
+	}
 	candidates := []callableSignature{}
 	switch function := call.Callee.(type) {
 	case *NameExpr:
@@ -259,6 +273,12 @@ func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode
 		}
 	}
 	if call, ok := expression.(*CallExpr); ok {
+		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "__gppTernary" && len(call.Arguments) == 3 {
+			if result := lambdaExpressionTypeAST(ternaryBranchValue(call.Arguments[1].Value), parameters, context); result != nil {
+				return result
+			}
+			return lambdaExpressionTypeAST(ternaryBranchValue(call.Arguments[2].Value), parameters, context)
+		}
 		if name, ok := call.Callee.(*NameExpr); ok && name.Name == "len" {
 			return lambdaNamedType("int")
 		}
@@ -330,6 +350,13 @@ func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode
 		return parseTypeText(strings.TrimSpace(inferred))
 	}
 	return nil
+}
+
+func ternaryBranchValue(expression ExprNode) ExprNode {
+	if branch, ok := expression.(*LambdaExpr); ok {
+		return branch.Body
+	}
+	return expression
 }
 
 func lambdaNamedType(name string) TypeNode {
@@ -422,6 +449,11 @@ type lambdaASTSpan struct {
 }
 
 func transformLambdas(src string, context constructorContext) (string, error) {
+	var err error
+	src, err = transformTernaryExpressions(src)
+	if err != nil {
+		return "", err
+	}
 	if transformed, handled, err := transformLambdasAST(src, context); handled {
 		return transformed, err
 	}
@@ -1121,6 +1153,14 @@ func lambdaExpectedTypesForCallAST(call *CallExpr, index int, context constructo
 	result := []string{}
 	switch function := call.Callee.(type) {
 	case *NameExpr:
+		if function.Name == "__gppTernary" && len(call.Arguments) == 3 && (index == 1 || index == 2) {
+			otherBranch := 3 - index
+			if resultType := coalesceExpressionTypeAST(ternaryBranchValue(call.Arguments[otherBranch].Value), context, valueTypes); resultType != nil {
+				if resultTypeName, err := typeNodeSource(resultType); err == nil && strings.TrimSpace(resultTypeName) != "" {
+					return []string{"func() " + strings.TrimSpace(resultTypeName)}
+				}
+			}
+		}
 		for _, signature := range context.FunctionSignatures[function.Name] {
 			if index < len(signature.Parameters) {
 				result = append(result, signature.Parameters[index].typeText())

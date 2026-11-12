@@ -2,6 +2,8 @@
 
 ## 2026-11-12
 
+- Improved native Go field and method navigation in template-based GPP files, and showed documentation for Go struct fields on hover.
+- Added lazy, right-associative conditional expressions with the `condition ? value : fallback` syntax.
 - Corrected generated source mappings for exception runtime and boundary frames so panic stack traces no longer point to unrelated GPP lines.
 
 ## 2026-11-10

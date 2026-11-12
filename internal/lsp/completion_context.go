@@ -122,6 +122,11 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 		for _, info := range s.nativeGoMembersForGPPExpression(state, receiver, offset) {
 			add(completionForSymbol(info.Symbol))
 		}
+		if state.File != nil && len(state.File.Tokens) == 0 {
+			for _, info := range s.nativeGoMembersForGPPSelector(state, receiver, offset) {
+				add(completionForSymbol(info.Symbol))
+			}
+		}
 		typeName := s.receiverTypeForExpression(state, receiver, len(selectorPrefix)-1, offset)
 		if typeName != "" {
 			if packageName, packageDir, memberType, ok := s.importedTypePackage(state, typeName); ok {
@@ -372,6 +377,10 @@ func nextCompletionTokenBackward(tokens []compiler.Token, index int) int {
 }
 
 func (s *server) importedTypePackage(state *fileState, typeName string) (string, string, string, bool) {
+	typeName = strings.TrimSpace(typeName)
+	for strings.HasPrefix(typeName, "*") {
+		typeName = strings.TrimSpace(strings.TrimPrefix(typeName, "*"))
+	}
 	for separator := strings.LastIndexByte(typeName, '.'); separator > 0; separator = strings.LastIndexByte(typeName[:separator], '.') {
 		qualifier, memberType := typeName[:separator], typeName[separator+1:]
 		if packageName, packageDir, found := s.importedPackageForQualifier(state, qualifier); found && memberType != "" {
@@ -379,6 +388,105 @@ func (s *server) importedTypePackage(state *fileState, typeName string) (string,
 		}
 	}
 	return "", "", "", false
+}
+
+func sourceParameterInfo(source string, parameters compiler.Span, name string) (compiler.Span, string) {
+	if name == "" || parameters.Start < 0 || parameters.End > len(source) || parameters.End <= parameters.Start {
+		return compiler.Span{}, ""
+	}
+	start, end := parameters.Start, parameters.End
+	for cursor := start; cursor < end; {
+		if source[cursor] == '"' || source[cursor] == '\'' || source[cursor] == '`' {
+			cursor = skipSourceQuoted(source, cursor, end)
+			continue
+		}
+		if !isIdentifierByte(source[cursor]) {
+			cursor++
+			continue
+		}
+		identifierStart := cursor
+		for cursor < end && isIdentifierByte(source[cursor]) {
+			cursor++
+		}
+		if source[identifierStart:cursor] != name {
+			continue
+		}
+		typeStart := cursor
+		for typeStart < end && (source[typeStart] == ' ' || source[typeStart] == '\t' || source[typeStart] == '\r' || source[typeStart] == '\n') {
+			typeStart++
+		}
+		if typeStart >= end || source[typeStart] == ',' || source[typeStart] == '=' || source[typeStart] == ')' {
+			continue
+		}
+		typeEnd := sourceParameterTypeEnd(source, typeStart, end)
+		for typeEnd > typeStart && (source[typeEnd-1] == ' ' || source[typeEnd-1] == '\t' || source[typeEnd-1] == '\r' || source[typeEnd-1] == '\n') {
+			typeEnd--
+		}
+		if typeEnd > typeStart {
+			return compiler.Span{Start: identifierStart, End: cursor}, strings.TrimSpace(source[typeStart:typeEnd])
+		}
+	}
+	return compiler.Span{}, ""
+}
+
+func sourceParameterTypeEnd(source string, start, limit int) int {
+	var parentheses, brackets, braces int
+	var quote byte
+	for index := start; index < limit; index++ {
+		character := source[index]
+		if quote != 0 {
+			if character == '\\' && quote != '`' {
+				index++
+				continue
+			}
+			if character == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch character {
+		case '"', '\'', '`':
+			quote = character
+		case '(':
+			parentheses++
+		case ')':
+			if parentheses == 0 && brackets == 0 && braces == 0 {
+				return index
+			}
+			parentheses--
+		case '[':
+			brackets++
+		case ']':
+			if brackets > 0 {
+				brackets--
+			}
+		case '{':
+			braces++
+		case '}':
+			if braces > 0 {
+				braces--
+			}
+		case ',', '=':
+			if parentheses == 0 && brackets == 0 && braces == 0 {
+				return index
+			}
+		}
+	}
+	return limit
+}
+
+func skipSourceQuoted(source string, start, limit int) int {
+	quote := source[start]
+	for index := start + 1; index < limit; index++ {
+		if source[index] == '\\' && quote != '`' {
+			index++
+			continue
+		}
+		if source[index] == quote {
+			return index + 1
+		}
+	}
+	return limit
 }
 
 func (s *server) importCompletions(state *fileState) []CompletionItem {
@@ -559,16 +667,34 @@ func (s *server) packageSymbols(packageName, packageDir string) []symbolInfo {
 	if packageName == "" && packageDir == "" {
 		return nil
 	}
-	var result []symbolInfo
-	for _, info := range s.workspace.symbols {
-		if packageName != "" && info.Symbol.Package != packageName {
-			continue
+	if packageDir != "" {
+		if s.workspace.symbolsByDirectory != nil {
+			candidates := s.workspace.symbolsByDirectory[filepath.Clean(packageDir)]
+			if packageName == "" {
+				return candidates
+			}
+			result := make([]symbolInfo, 0, len(candidates))
+			for _, info := range candidates {
+				if info.Symbol.Package == packageName {
+					result = append(result, info)
+				}
+			}
+			return result
 		}
-		if packageDir != "" {
-			if filepath.Clean(filepath.Dir(info.Path)) == packageDir {
+		var result []symbolInfo
+		for _, info := range s.workspace.symbols {
+			if filepath.Clean(filepath.Dir(info.Path)) == filepath.Clean(packageDir) && (packageName == "" || info.Symbol.Package == packageName) {
 				result = append(result, info)
 			}
-		} else if info.Symbol.Package == packageName {
+		}
+		return result
+	}
+	if s.workspace.symbolsByPackage != nil {
+		return s.workspace.symbolsByPackage[packageName]
+	}
+	var result []symbolInfo
+	for _, info := range s.workspace.symbols {
+		if info.Symbol.Package == packageName {
 			result = append(result, info)
 		}
 	}
@@ -1430,11 +1556,28 @@ func (s *server) importedPackageForQualifier(state *fileState, qualifier string)
 	return "", "", false
 }
 
+type workspacePackageImport struct {
+	name  string
+	dir   string
+	found bool
+}
+
 func (s *server) workspacePackageForImport(from *fileState, importPath string) (string, string, bool) {
 	if s.workspace == nil || from == nil || importPath == "" {
 		return "", "", false
 	}
 	currentModuleRoot, _ := moduleInfoForPath(from.Path)
+	cacheKey := filepath.Clean(currentModuleRoot) + "\x00" + filepath.Clean(filepath.Dir(from.Path)) + "\x00" + importPath
+	if cached, ok := s.workspace.packageImportCache[cacheKey]; ok {
+		return cached.name, cached.dir, cached.found
+	}
+	remember := func(name, dir string, found bool) (string, string, bool) {
+		if s.workspace.packageImportCache == nil {
+			s.workspace.packageImportCache = make(map[string]workspacePackageImport)
+		}
+		s.workspace.packageImportCache[cacheKey] = workspacePackageImport{name: name, dir: dir, found: found}
+		return name, dir, found
+	}
 	var fallbackName, fallbackDir string
 	for _, candidate := range s.workspace.files {
 		if candidate == nil || candidate.File == nil {
@@ -1458,7 +1601,7 @@ func (s *server) workspacePackageForImport(from *fileState, importPath string) (
 		if relativeDir == "." && isGPPFile(candidate.Path) && importPath == modulePath+"/"+candidate.File.Package {
 			candidateDir := filepath.Clean(filepath.Dir(candidate.Path))
 			if filepath.Clean(moduleRoot) == filepath.Clean(currentModuleRoot) {
-				return candidate.File.Package, candidateDir, true
+				return remember(candidate.File.Package, candidateDir, true)
 			}
 			if fallbackDir != "" && (fallbackDir != candidateDir || fallbackName != candidate.File.Package) {
 				return "", "", false
@@ -1469,7 +1612,7 @@ func (s *server) workspacePackageForImport(from *fileState, importPath string) (
 		if candidateImport == importPath {
 			candidateDir := filepath.Clean(filepath.Dir(candidate.Path))
 			if filepath.Clean(moduleRoot) == filepath.Clean(currentModuleRoot) {
-				return candidate.File.Package, candidateDir, true
+				return remember(candidate.File.Package, candidateDir, true)
 			}
 			if fallbackDir != "" && fallbackDir != candidateDir {
 				return "", "", false
@@ -1477,7 +1620,7 @@ func (s *server) workspacePackageForImport(from *fileState, importPath string) (
 			fallbackName, fallbackDir = candidate.File.Package, candidateDir
 		}
 	}
-	return fallbackName, fallbackDir, fallbackDir != ""
+	return remember(fallbackName, fallbackDir, fallbackDir != "")
 }
 
 func (s *server) annotationDeclarations(state *fileState) []*compiler.AnnotationDecl {
@@ -1634,6 +1777,11 @@ func (s *server) receiverType(state *fileState, receiver string, offset int) str
 					}
 					for _, parameter := range method.ParameterAST {
 						if parameter.Name == receiver && parameter.Type != nil {
+							if len(state.File.Tokens) == 0 {
+								if _, typeName := sourceParameterInfo(state.Source, method.ParametersSpan, receiver); typeName != "" {
+									return typeName
+								}
+							}
 							return sourceType(state.Source, parameter.Type.Span())
 						}
 					}
@@ -1646,6 +1794,11 @@ func (s *server) receiverType(state *fileState, receiver string, offset int) str
 				}
 				for _, parameter := range function.Method.ParameterAST {
 					if parameter.Name == receiver && parameter.Type != nil {
+						if len(state.File.Tokens) == 0 {
+							if _, typeName := sourceParameterInfo(state.Source, function.Method.ParametersSpan, receiver); typeName != "" {
+								return typeName
+							}
+						}
 						return sourceType(state.Source, parameter.Type.Span())
 					}
 				}
@@ -1691,8 +1844,9 @@ func lambdaElementType(s *server, state *fileState, name string, offset int) str
 		return ""
 	}
 	tokens := state.File.Tokens
-	for arrow := len(tokens) - 1; arrow >= 0; arrow-- {
-		if tokens[arrow].Text != "=>" || tokens[arrow].Span.Start >= offset || arrow == 0 {
+	lastToken := sort.Search(len(tokens), func(index int) bool { return tokens[index].Span.Start >= offset }) - 1
+	for arrow := lastToken; arrow >= 0; arrow-- {
+		if tokens[arrow].Text != "=>" || arrow == 0 {
 			continue
 		}
 		parameterStart := arrow - 1

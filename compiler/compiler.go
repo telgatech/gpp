@@ -469,6 +469,7 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 	introspection := newIntrospectionContext(model.Packages[packageName].Classes)
 	introspection.Enabled = usesIntrospection
 	exceptions := &exceptionContext{}
+	ternary := &ternaryContext{}
 	preludeEmitted := false
 	output := generatedPackageOutput{Fingerprint: fingerprint, Files: make(map[string]string, len(files))}
 	for _, file := range files {
@@ -480,6 +481,7 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 		context.Records = records
 		context.Introspection = introspection
 		context.Exceptions = exceptions
+		context.Ternary = ternary
 		context.Annotations = model.Packages[packageName].Annotations
 		context.Package = packageName
 		context.AtExit = packageName == "main" && atExit
@@ -551,7 +553,7 @@ func generatedPackageFingerprints(program *Program, model *SemanticModel, option
 	localFingerprints := make(map[string]string, len(filesByPackage))
 	for packageName, files := range filesByPackage {
 		h := sha256.New()
-		writePackageHashPart(h, "package-fingerprint-version=5")
+		writePackageHashPart(h, "package-fingerprint-version=6")
 		writePackageHashPart(h, "package="+packageName)
 		for _, file := range files {
 			writePackageHashPart(h, "source-path="+file.SourcePath)

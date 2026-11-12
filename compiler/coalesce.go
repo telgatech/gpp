@@ -703,6 +703,12 @@ func coalesceExpressionTypeNode(expression ExprNode, context constructorContext,
 			}
 		}
 	case *CallExpr:
+		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "__gppTernary" && len(value.Arguments) == 3 {
+			if branchType := coalesceExpressionTypeNode(ternaryBranchValue(value.Arguments[1].Value), context, valueTypes); branchType != "" {
+				return branchType
+			}
+			return coalesceExpressionTypeNode(ternaryBranchValue(value.Arguments[2].Value), context, valueTypes)
+		}
 		if index, ok := value.Callee.(*IndexExpr); ok {
 			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") {
 				if typeExpression, ok := index.Index.(*TypeExpr); ok {
@@ -826,6 +832,12 @@ func coalesceExpressionTypeAST(expression ExprNode, context constructorContext, 
 			}
 		}
 	case *CallExpr:
+		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "__gppTernary" && len(value.Arguments) == 3 {
+			if branchType := coalesceExpressionTypeAST(ternaryBranchValue(value.Arguments[1].Value), context, valueTypes); branchType != nil {
+				return branchType
+			}
+			return coalesceExpressionTypeAST(ternaryBranchValue(value.Arguments[2].Value), context, valueTypes)
+		}
 		if index, ok := value.Callee.(*IndexExpr); ok {
 			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") {
 				if typeExpression, ok := index.Index.(*TypeExpr); ok {
