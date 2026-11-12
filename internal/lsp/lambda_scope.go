@@ -1,8 +1,13 @@
 package lsp
 
-import "github.com/telgatech/gpp/compiler"
+import (
+	"sort"
+
+	"github.com/telgatech/gpp/compiler"
+)
 
 type lambdaParameter struct {
+	name        string
 	declaration compiler.Span
 	scope       compiler.Span
 	arrow       compiler.Token
@@ -12,8 +17,33 @@ func lambdaParameterAt(state *fileState, method *compiler.Method, name string, o
 	if state == nil || state.File == nil || method == nil || method.BodyAST == nil || name == "" {
 		return lambdaParameter{}, false
 	}
+	if state.lambdaParameters == nil {
+		state.lambdaParameters = make(map[*compiler.Method][]lambdaParameter)
+	}
+	parameters, cached := state.lambdaParameters[method]
+	if !cached {
+		parameters = collectLambdaParameters(state, method)
+		state.lambdaParameters[method] = parameters
+	}
 	var selected lambdaParameter
 	selectedSize := int(^uint(0) >> 1)
+	for _, parameter := range parameters {
+		if parameter.declaration.End <= parameter.declaration.Start || offset < parameter.scope.Start || offset > parameter.scope.End || parameter.name != name {
+			continue
+		}
+		size := parameter.scope.End - parameter.scope.Start
+		if size < selectedSize {
+			selected, selectedSize = parameter, size
+		}
+	}
+	if selected.declaration.End <= selected.declaration.Start {
+		return lambdaParameter{}, false
+	}
+	return selected, true
+}
+
+func collectLambdaParameters(state *fileState, method *compiler.Method) []lambdaParameter {
+	var result []lambdaParameter
 	var visitExpression func(compiler.ExprNode)
 	visitExpression = func(expression compiler.ExprNode) {
 		if expression == nil {
@@ -22,27 +52,19 @@ func lambdaParameterAt(state *fileState, method *compiler.Method, name string, o
 		switch value := expression.(type) {
 		case *compiler.LambdaExpr:
 			span := value.SpanValue
-			if offset >= span.Start && offset <= span.End {
+			arrowIndex := sort.Search(len(state.File.Tokens), func(index int) bool { return state.File.Tokens[index].Span.Start >= span.Start })
+			var arrow compiler.Token
+			for index := arrowIndex; index < len(state.File.Tokens) && state.File.Tokens[index].Span.Start < span.End; index++ {
+				if state.File.Tokens[index].Text == "=>" {
+					arrow = state.File.Tokens[index]
+					break
+				}
+			}
+			if arrow.Span.End > arrow.Span.Start {
 				for _, parameter := range value.Parameters {
-					if parameter.Kind != compiler.TokenIdentifier || parameter.Text != name {
-						continue
+					if parameter.Kind == compiler.TokenIdentifier {
+						result = append(result, lambdaParameter{name: parameter.Text, declaration: parameter.Span, scope: span, arrow: arrow})
 					}
-					size := span.End - span.Start
-					if size >= selectedSize {
-						continue
-					}
-					var arrow compiler.Token
-					for _, token := range state.File.Tokens {
-						if token.Text == "=>" && token.Span.Start >= parameter.Span.End && token.Span.Start < span.End {
-							arrow = token
-							break
-						}
-					}
-					if arrow.Span.End <= arrow.Span.Start {
-						continue
-					}
-					selected = lambdaParameter{declaration: parameter.Span, scope: span, arrow: arrow}
-					selectedSize = size
 				}
 			}
 			visitExpression(value.Body)
@@ -53,7 +75,10 @@ func lambdaParameterAt(state *fileState, method *compiler.Method, name string, o
 			visitExpression(value.Left)
 			visitExpression(value.Right)
 		case *compiler.AssignmentExpr:
-			for _, child := range append(append([]compiler.ExprNode{}, value.Left...), value.Right...) {
+			for _, child := range value.Left {
+				visitExpression(child)
+			}
+			for _, child := range value.Right {
 				visitExpression(child)
 			}
 		case *compiler.SelectorExpr:
@@ -101,8 +126,5 @@ func lambdaParameterAt(state *fileState, method *compiler.Method, name string, o
 		}
 	}
 	compiler.WalkBlockExpressions(method.BodyAST, visitExpression)
-	if selected.declaration.End <= selected.declaration.Start {
-		return lambdaParameter{}, false
-	}
-	return selected, true
+	return result
 }

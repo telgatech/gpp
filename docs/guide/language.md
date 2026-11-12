@@ -85,6 +85,18 @@ Format("value")
 Resolution happens at compile time. An ambiguous call is a diagnostic; it is
 not deferred to runtime reflection.
 
+## Conditional expressions
+
+Choose between two values inline with `condition ? whenTrue : whenFalse`:
+
+```gpp
+label := enabled ? "on" : "off"
+```
+
+The condition must be boolean, both branches must have compatible Go types,
+and only the selected branch is evaluated. Nested conditionals associate from
+right to left.
+
 Class methods can also overload a non-generic method with a generic one. An
 explicit type argument selects the generic overload, while a call without one
 selects the non-generic overload:

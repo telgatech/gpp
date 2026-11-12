@@ -1259,6 +1259,11 @@ func directExpressionSafe(expression ExprNode, context constructorContext) bool 
 	case *TypeAssertExpr:
 		return directExpressionSafe(value.Expression, context)
 	case *CallExpr:
+		if runtimeWrapper, ok := value.Callee.(*NameExpr); ok && runtimeWrapper.Name == "__gppTernary" {
+			// Ternary branches need the enclosing block's local value types to
+			// infer their shared result type; retain them for the source AST pass.
+			return false
+		}
 		if selector, ok := value.Callee.(*SelectorExpr); ok {
 			if context.Templates != nil && context.Templates[selector.Name] != nil {
 				// Template calls need the template registry/static wrapper lowering.

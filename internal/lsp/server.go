@@ -349,15 +349,22 @@ type initializeParams struct {
 }
 
 type fileState struct {
-	Path       string
-	URI        string
-	Source     string
-	Open       bool
-	Version    int
-	HasVersion bool
-	File       *compiler.File
-	goHoverMu  sync.Mutex
-	goHover    *nativeGoHoverCache
+	Path                   string
+	URI                    string
+	Source                 string
+	Open                   bool
+	Version                int
+	HasVersion             bool
+	File                   *compiler.File
+	methodScopes           []methodScope
+	identifierIndices      map[string][]int
+	localBindingCandidates map[*compiler.Method]map[string][]localBindingCandidate
+	lambdaParameters       map[*compiler.Method][]lambdaParameter
+	semanticTokensSource   string
+	semanticTokensData     []uint32
+	semanticTokensCached   bool
+	goHoverMu              sync.Mutex
+	goHover                *nativeGoHoverCache
 }
 
 type symbolInfo struct {
@@ -365,15 +372,35 @@ type symbolInfo struct {
 	Path   string
 }
 
+type workspaceModuleInfo struct {
+	root       string
+	modulePath string
+}
+
+func cachedWorkspaceModuleInfo(cache map[string]workspaceModuleInfo, path string) (string, string) {
+	directory := filepath.Clean(filepath.Dir(path))
+	if info, ok := cache[directory]; ok {
+		return info.root, info.modulePath
+	}
+	root, modulePath := moduleInfoForPath(path)
+	cache[directory] = workspaceModuleInfo{root: root, modulePath: modulePath}
+	return root, modulePath
+}
+
 type workspaceState struct {
-	roots       []string
-	files       map[string]*fileState
-	diagnostics map[string][]Diagnostic
-	codegenKeys map[string][32]byte
-	docIndex    *compiler.DocIndex
-	symbols     []symbolInfo
-	official    []*compiler.File
-	logger      *log.Logger
+	roots              []string
+	files              map[string]*fileState
+	diagnostics        map[string][]Diagnostic
+	codegenKeys        map[string][32]byte
+	docIndex           *compiler.DocIndex
+	symbols            []symbolInfo
+	symbolsByName      map[string][]symbolInfo
+	symbolsByPackage   map[string][]symbolInfo
+	symbolsByDirectory map[string][]symbolInfo
+	symbolPathCache    map[string]string
+	official           []*compiler.File
+	packageImportCache map[string]workspacePackageImport
+	logger             *log.Logger
 }
 
 var materializedOfficialStdlib = struct {
@@ -494,6 +521,20 @@ func (w *workspaceState) refresh() []string {
 }
 
 func (w *workspaceState) analyze() {
+	w.analyzeModule("")
+}
+
+func (w *workspaceState) analyzeFile(path string) {
+	moduleRoot, _ := moduleInfoForPath(path)
+	if moduleRoot == "" {
+		moduleRoot = filepath.Dir(path)
+	}
+	w.analyzeModule(filepath.Clean(moduleRoot))
+}
+
+func (w *workspaceState) analyzeModule(changedRoot string) {
+	w.packageImportCache = nil
+	moduleInfoCache := make(map[string]workspaceModuleInfo)
 	parsed := make([]*compiler.File, 0, len(w.files))
 	byModule := map[string][]*compiler.File{}
 	modulePaths := map[string]string{}
@@ -504,7 +545,24 @@ func (w *workspaceState) analyze() {
 	sort.Strings(filePaths)
 	for _, path := range filePaths {
 		state := w.files[path]
+		moduleRoot, modulePath := cachedWorkspaceModuleInfo(moduleInfoCache, state.Path)
+		if moduleRoot == "" {
+			moduleRoot = filepath.Dir(state.Path)
+		}
+		moduleRoot = filepath.Clean(moduleRoot)
+		if changedRoot != "" && moduleRoot != changedRoot {
+			if state.File != nil {
+				parsed = append(parsed, state.File)
+			}
+			continue
+		}
 		state.File = nil
+		state.methodScopes = nil
+		state.identifierIndices = nil
+		state.semanticTokensSource = ""
+		state.semanticTokensData = nil
+		state.semanticTokensCached = false
+		delete(w.diagnostics, state.URI)
 		if !isWorkspaceSourceFile(state.Path) {
 			continue
 		}
@@ -524,10 +582,6 @@ func (w *workspaceState) analyze() {
 		file.SourcePath = state.Path
 		state.File = file
 		parsed = append(parsed, file)
-		moduleRoot, modulePath := moduleInfoForPath(state.Path)
-		if moduleRoot == "" {
-			moduleRoot = filepath.Dir(state.Path)
-		}
 		byModule[moduleRoot] = append(byModule[moduleRoot], file)
 		modulePaths[moduleRoot] = modulePath
 		w.diagnostics[state.URI] = []Diagnostic{}
@@ -556,6 +610,12 @@ func (w *workspaceState) analyze() {
 			}
 		}
 	}
+	for _, state := range w.files {
+		state.methodScopes = collectMethodScopes(state)
+		state.identifierIndices = indexIdentifierTokens(state.File)
+		state.localBindingCandidates = nil
+		state.lambdaParameters = nil
+	}
 	// The prelude is a compiler-owned source file rather than a package import.
 	// Add it to the documentation index for completion and hover, but not to
 	// semantic resolution where it would become a second user package.
@@ -576,6 +636,7 @@ func (w *workspaceState) checkGeneratedGo(ctx context.Context, byModule map[stri
 	if w.codegenKeys == nil {
 		w.codegenKeys = map[string][32]byte{}
 	}
+	moduleInfoCache := make(map[string]workspaceModuleInfo)
 	for root, files := range byModule {
 		if ctx.Err() != nil {
 			return
@@ -588,7 +649,7 @@ func (w *workspaceState) checkGeneratedGo(ctx context.Context, byModule map[stri
 			if state == nil || !isWorkspaceSourceFile(state.Path) {
 				continue
 			}
-			stateRoot, _ := moduleInfoForPath(state.Path)
+			stateRoot, _ := cachedWorkspaceModuleInfo(moduleInfoCache, state.Path)
 			if stateRoot == "" {
 				stateRoot = filepath.Dir(state.Path)
 			}
@@ -953,6 +1014,7 @@ func (w *workspaceState) collectSymbols() []symbolInfo {
 	if w.docIndex == nil {
 		return nil
 	}
+	w.symbolPathCache = make(map[string]string)
 	var result []symbolInfo
 	seen := map[string]bool{}
 	for _, pkg := range w.docIndex.Packages {
@@ -963,6 +1025,17 @@ func (w *workspaceState) collectSymbols() []symbolInfo {
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].Symbol.FullName < result[j].Symbol.FullName
 	})
+	w.symbolsByName = make(map[string][]symbolInfo)
+	w.symbolsByPackage = make(map[string][]symbolInfo)
+	w.symbolsByDirectory = make(map[string][]symbolInfo)
+	for _, info := range result {
+		w.symbolsByName[info.Symbol.Name] = append(w.symbolsByName[info.Symbol.Name], info)
+		w.symbolsByPackage[info.Symbol.Package] = append(w.symbolsByPackage[info.Symbol.Package], info)
+		if info.Path != "" {
+			directory := filepath.Clean(filepath.Dir(info.Path))
+			w.symbolsByDirectory[directory] = append(w.symbolsByDirectory[directory], info)
+		}
+	}
 	return result
 }
 
@@ -977,7 +1050,10 @@ func (w *workspaceState) appendSymbol(result *[]symbolInfo, seen map[string]bool
 		child := compiler.DocSymbol{Kind: compiler.DocField, Name: field.Name, FullName: symbol.FullName + "." + field.Name, Package: symbol.Package, Parent: symbol.Name, Doc: field.Doc, Signature: field.Name + " " + field.Type, Exported: exportedName(field.Name), SourceFile: symbol.SourceFile, SourceLine: symbol.SourceLine}
 		w.appendSymbol(result, seen, child)
 	}
-	for _, child := range append(append([]compiler.DocSymbol{}, symbol.Methods...), symbol.Static...) {
+	for _, child := range symbol.Methods {
+		w.appendSymbol(result, seen, child)
+	}
+	for _, child := range symbol.Static {
 		w.appendSymbol(result, seen, child)
 	}
 	for _, value := range symbol.Values {
@@ -987,6 +1063,19 @@ func (w *workspaceState) appendSymbol(result *[]symbolInfo, seen map[string]bool
 }
 
 func (w *workspaceState) symbolPath(symbol compiler.DocSymbol) string {
+	cacheKey := symbol.Package + "\x00" + filepath.Clean(symbol.SourceFile)
+	if path, ok := w.symbolPathCache[cacheKey]; ok {
+		return path
+	}
+	path := w.findSymbolPath(symbol)
+	if w.symbolPathCache == nil {
+		w.symbolPathCache = make(map[string]string)
+	}
+	w.symbolPathCache[cacheKey] = path
+	return path
+}
+
+func (w *workspaceState) findSymbolPath(symbol compiler.DocSymbol) string {
 	for path, state := range w.files {
 		if state.File == nil || state.File.Package != symbol.Package {
 			continue
@@ -1222,6 +1311,7 @@ func (s *server) scheduleGeneratedDiagnostics() {
 	baselineCounts := make(map[string]int, len(s.workspace.diagnostics))
 	byModule := map[string][]*compiler.File{}
 	modulePaths := map[string]string{}
+	moduleInfoCache := make(map[string]workspaceModuleInfo)
 	fingerprint := sha256.New()
 	moduleRoots := map[string]bool{}
 	roots := append([]string(nil), s.workspace.roots...)
@@ -1243,7 +1333,7 @@ func (s *server) scheduleGeneratedDiagnostics() {
 		fingerprint.Write([]byte(state.Source))
 		fingerprint.Write([]byte{0})
 		if isWorkspaceSourceFile(path) {
-			root, modulePath := moduleInfoForPath(path)
+			root, modulePath := cachedWorkspaceModuleInfo(moduleInfoCache, path)
 			if root == "" {
 				root = filepath.Dir(path)
 			}
@@ -1661,7 +1751,7 @@ func (s *server) handle(request rpcRequest) (bool, error) {
 				"selectionRangeProvider":           true,
 				"documentLinkProvider":             map[string]any{"resolveProvider": true},
 				"inlayHintProvider":                map[string]any{"resolveProvider": true},
-				"codeLensProvider":                 map[string]any{"resolveProvider": true},
+				"codeLensProvider":                 map[string]any{"resolveProvider": false},
 				"callHierarchyProvider":            true,
 				"typeHierarchyProvider":            true,
 				"referencesProvider":               true,
@@ -1783,7 +1873,7 @@ func (s *server) handle(request rpcRequest) (bool, error) {
 			if params.TextDocument.Version != nil {
 				state.Version, state.HasVersion = *params.TextDocument.Version, true
 			}
-			s.workspace.analyze()
+			s.workspace.analyzeFile(state.Path)
 			s.scheduleGeneratedDiagnostics()
 			s.publishDiagnostics()
 		}
@@ -1800,11 +1890,17 @@ func (s *server) handle(request rpcRequest) (bool, error) {
 		if err := decodeParams(request.Params, &params); err != nil {
 			return true, err
 		}
-		if params.Text != nil {
-			state := s.ensureFile(params.TextDocument.URI)
-			state.Source, state.Open = *params.Text, true
+		// didSave normally carries no text. The synchronized buffer is already
+		// current, so avoid reparsing and resolving the entire workspace again.
+		if params.Text == nil {
+			return true, nil
 		}
-		s.workspace.analyze()
+		state := s.ensureFile(params.TextDocument.URI)
+		if state.Source == *params.Text {
+			return true, nil
+		}
+		state.Source, state.Open = *params.Text, true
+		s.workspace.analyzeFile(state.Path)
 		s.scheduleGeneratedDiagnostics()
 		s.publishDiagnostics()
 		return true, nil
@@ -2274,8 +2370,13 @@ func (s *server) ensureFile(uri string) *fileState {
 
 func (s *server) open(uri, source string) {
 	state := s.ensureFile(uri)
+	unchanged := state.File != nil && state.Source == source
 	state.Source, state.Open = source, true
-	s.workspace.analyze()
+	if unchanged {
+		s.publishDiagnosticsFor(state.URI)
+		return
+	}
+	s.workspace.analyzeFile(state.Path)
 	s.scheduleGeneratedDiagnostics()
 	s.publishDiagnostics()
 }
@@ -2284,16 +2385,21 @@ func (s *server) close(uri string) {
 	state := s.ensureFile(uri)
 	state.Open, state.HasVersion = false, false
 	if data, err := os.ReadFile(state.Path); err == nil {
-		state.Source = string(data)
+		diskSource := string(data)
+		if state.File != nil && diskSource == state.Source {
+			state.Source = diskSource
+			return
+		}
+		state.Source = diskSource
 	} else {
 		delete(s.workspace.files, state.Path)
 		delete(s.workspace.diagnostics, state.URI)
-		s.workspace.analyze()
+		s.workspace.analyzeFile(state.Path)
 		s.scheduleGeneratedDiagnostics()
 		s.publishDiagnostics(state.URI)
 		return
 	}
-	s.workspace.analyze()
+	s.workspace.analyzeFile(state.Path)
 	s.scheduleGeneratedDiagnostics()
 	s.publishDiagnostics()
 }
@@ -2345,6 +2451,31 @@ func (s *server) publishDiagnostics(removed ...string) {
 	}
 }
 
+func (s *server) publishDiagnosticsFor(uri string) {
+	state := s.workspace.files[pathFromURI(uri)]
+	if state == nil {
+		return
+	}
+	diagnostics := append([]Diagnostic(nil), s.workspace.diagnostics[state.URI]...)
+	diagnostics = append(diagnostics, s.backendDiagnostics[state.URI]...)
+	diagnostics = append(diagnostics, s.nativeGoDiagnostics()[state.URI]...)
+	diagnostics = deduplicateDiagnostics(diagnostics)
+	if diagnostics == nil {
+		diagnostics = []Diagnostic{}
+	}
+	params := map[string]any{"uri": state.URI, "diagnostics": diagnostics}
+	if state.HasVersion {
+		params["version"] = state.Version
+	}
+	if err := s.write(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "textDocument/publishDiagnostics",
+		"params":  params,
+	}); err != nil {
+		s.logger.Printf("publish diagnostics: %v", err)
+	}
+}
+
 func deduplicateDiagnostics(diagnostics []Diagnostic) []Diagnostic {
 	result := make([]Diagnostic, 0, len(diagnostics))
 	indices := map[string]int{}
@@ -2375,10 +2506,12 @@ func (s *server) symbolsAt(uri string, position Position) (string, Range) {
 		if token, ok := identifierTokenAt(state.File.Tokens, offset); ok {
 			return token.Text, rangeForOffsets(state.Source, token.Span.Start, token.Span.End)
 		}
-		// A successfully parsed buffer has authoritative token boundaries. Do
-		// not fall back to substring matching inside comments, strings, or raw
-		// template content.
-		return "", Range{}
+		// A complete token stream has authoritative boundaries. When lexing
+		// stopped on opaque template markup, the parsed GPP declarations still
+		// provide safe regions for source-text symbol lookup.
+		if len(state.File.Tokens) > 0 || !sourceTextSymbolLookupAllowed(state.File, offset) {
+			return "", Range{}
+		}
 	}
 	start := offset
 	for start > 0 && isIdentifierByte(state.Source[start-1]) {
@@ -2394,8 +2527,109 @@ func (s *server) symbolsAt(uri string, position Position) (string, Range) {
 	return state.Source[start:end], rangeForOffsets(state.Source, start, end)
 }
 
+func sourceTextSymbolLookupAllowed(file *compiler.File, offset int) bool {
+	if file == nil {
+		return true
+	}
+	contains := func(span compiler.Span) bool {
+		return span.Start <= offset && offset <= span.End
+	}
+	if file.PackageAST != nil && contains(file.PackageAST.SpanValue) {
+		return true
+	}
+	for _, imported := range file.Imports {
+		if contains(imported.SpanValue) {
+			return true
+		}
+	}
+	for _, declaration := range file.Decls {
+		if template, ok := declaration.(*compiler.TemplateDecl); ok {
+			if template.SpanValue.Start <= offset && offset < template.BodySpan.Start {
+				return true
+			}
+			continue
+		}
+		if contains(declaration.Span()) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceQualifierAt(source string, offset int) (string, bool) {
+	if offset < 0 || offset > len(source) {
+		return "", false
+	}
+	start, end := offset, offset
+	for start > 0 && isIdentifierByte(source[start-1]) {
+		start--
+	}
+	for end < len(source) && isIdentifierByte(source[end]) {
+		end++
+	}
+	if start == end || start == 0 || source[start-1] != '.' {
+		return "", false
+	}
+	qualifierEnd := start - 1
+	qualifierStart := qualifierEnd
+	for qualifierStart > 0 && isIdentifierByte(source[qualifierStart-1]) {
+		qualifierStart--
+	}
+	if qualifierStart == qualifierEnd {
+		return "", false
+	}
+	return source[qualifierStart:qualifierEnd], true
+}
+
+func sourceSelectorReceiverAt(source string, offset int) (string, int, bool) {
+	if offset < 0 || offset > len(source) {
+		return "", 0, false
+	}
+	start := offset
+	for start > 0 && isIdentifierByte(source[start-1]) {
+		start--
+	}
+	if start < len(source) && isIdentifierByte(source[start]) {
+		for start > 0 && isIdentifierByte(source[start-1]) {
+			start--
+		}
+	}
+	dot := start - 1
+	if dot < 0 || source[dot] != '.' {
+		if offset > 0 && source[offset-1] == '.' {
+			dot = offset - 1
+		} else {
+			return "", 0, false
+		}
+	}
+	end := dot
+	for end > 0 && (source[end-1] == ' ' || source[end-1] == '\t') {
+		end--
+	}
+	begin := end
+	for begin > 0 && isIdentifierByte(source[begin-1]) {
+		begin--
+	}
+	if begin == end {
+		return "", 0, false
+	}
+	for begin > 1 && source[begin-1] == '.' {
+		previousEnd := begin - 1
+		previousStart := previousEnd
+		for previousStart > 0 && isIdentifierByte(source[previousStart-1]) {
+			previousStart--
+		}
+		if previousStart == previousEnd {
+			break
+		}
+		begin = previousStart
+	}
+	return source[begin:end], dot, true
+}
+
 func (s *server) findSymbols(name string, uri string) []symbolInfo {
 	var result []symbolInfo
+	candidates := s.symbolsNamed(name)
 	currentPackage := ""
 	currentDirectory := ""
 	hasCurrentFile := false
@@ -2407,27 +2641,20 @@ func (s *server) findSymbols(name string, uri string) []symbolInfo {
 		hasCurrentFile = true
 		currentDirectory = filepath.Clean(filepath.Dir(state.Path))
 	}
-	for _, info := range s.workspace.symbols {
-		if info.Symbol.Name != name {
-			continue
-		}
+	for _, info := range candidates {
 		if currentPackage != "" && info.Symbol.Package == currentPackage && filepath.Clean(filepath.Dir(info.Path)) == currentDirectory {
 			result = append(result, info)
 		}
 	}
 	if len(result) == 0 && currentPackage == "" && hasCurrentFile {
-		for _, info := range s.workspace.symbols {
-			if info.Symbol.Name == name && filepath.Clean(filepath.Dir(info.Path)) == currentDirectory {
+		for _, info := range candidates {
+			if filepath.Clean(filepath.Dir(info.Path)) == currentDirectory {
 				result = append(result, info)
 			}
 		}
 	}
 	if len(result) == 0 && currentPackage == "" && !hasCurrentFile {
-		for _, info := range s.workspace.symbols {
-			if info.Symbol.Name == name {
-				result = append(result, info)
-			}
-		}
+		result = append(result, candidates...)
 	}
 	return result
 }
@@ -2442,6 +2669,56 @@ func (s *server) resolveSymbolsAt(uri string, position Position, name string) []
 		return s.findSymbols(name, uri)
 	}
 	offset := offsetAt(state.Source, position)
+	if len(state.File.Tokens) == 0 && !sourceTextSymbolLookupAllowed(state.File, offset) {
+		return nil
+	}
+	if len(state.File.Tokens) == 0 && sourceTextSymbolLookupAllowed(state.File, offset) {
+		if qualifier, ok := sourceQualifierAt(state.Source, offset); ok {
+			if packageName, packageDir, found := s.importedPackageForQualifier(state, qualifier); found {
+				var result []symbolInfo
+				for _, info := range s.packageSymbols(packageName, packageDir) {
+					if info.Symbol.Name == name {
+						result = append(result, info)
+					}
+				}
+				return result
+			}
+		}
+		if receiver, dotOffset, ok := sourceSelectorReceiverAt(state.Source, offset); ok {
+			for _, info := range s.nativeGoMembersForGPPSelector(state, receiver, offset) {
+				if info.Symbol.Name == name {
+					return []symbolInfo{info}
+				}
+			}
+			typeName := s.receiverTypeForExpression(state, receiver, dotOffset, offset)
+			if packageName, packageDir, memberType, found := s.importedTypePackage(state, typeName); found {
+				var result []symbolInfo
+				for _, info := range s.packageSymbols(packageName, packageDir) {
+					if info.Symbol.Parent == memberType && info.Symbol.Name == name {
+						result = append(result, info)
+					}
+				}
+				if len(result) == 0 {
+					result = s.inheritedMembersForType(packageName, packageDir, memberType, name)
+				}
+				if len(result) > 0 {
+					return result
+				}
+			}
+			className := s.classTypeForReceiver(state, receiver, offset)
+			if className == "" {
+				className = typeName
+			}
+			if className != "" {
+				if members := s.classMembersForType(state, className, name, false); len(members) > 0 {
+					return members
+				}
+				if members := s.classMembersForType(state, className, name, true); len(members) > 0 {
+					return members
+				}
+			}
+		}
+	}
 	if token, ok := identifierTokenAt(state.File.Tokens, offset); ok {
 		index := tokenIndexAt(state.File.Tokens, token.Span.Start)
 		if index >= 0 && index+1 < len(state.File.Tokens) && state.File.Tokens[index+1].Text == ":" {
@@ -2520,8 +2797,8 @@ func (s *server) resolveSymbolsAt(uri string, position Position, name string) []
 	}
 	// At a declaration, prefer the declaration in this exact file. This
 	// disambiguates identically named methods declared by different classes.
-	for _, info := range s.workspace.symbols {
-		if info.Path != state.Path || info.Symbol.Name != name {
+	for _, info := range s.symbolsNamed(name) {
+		if info.Path != state.Path {
 			continue
 		}
 		if symbolDeclarationContains(state, info.Symbol, offset) {
@@ -2529,6 +2806,22 @@ func (s *server) resolveSymbolsAt(uri string, position Position, name string) []
 		}
 	}
 	return s.findSymbols(name, uri)
+}
+
+func (s *server) symbolsNamed(name string) []symbolInfo {
+	if s.workspace == nil {
+		return nil
+	}
+	if s.workspace.symbolsByName != nil {
+		return s.workspace.symbolsByName[name]
+	}
+	var result []symbolInfo
+	for _, info := range s.workspace.symbols {
+		if info.Symbol.Name == name {
+			result = append(result, info)
+		}
+	}
+	return result
 }
 
 func (s *server) inheritedMembersForType(packageName, packageDir, typeName, memberName string) []symbolInfo {
@@ -2969,8 +3262,8 @@ func (s *server) symbolsMatching(uri, name string, accept func(compiler.DocSymbo
 	if state != nil && state.File != nil {
 		scope = workspaceScopePath(state.Path)
 	}
-	for _, info := range s.workspace.symbols {
-		if info.Symbol.Name == name && accept(info.Symbol) && (scope == "" || workspaceScopePath(info.Path) == scope) {
+	for _, info := range s.symbolsNamed(name) {
+		if accept(info.Symbol) && (scope == "" || workspaceScopePath(info.Path) == scope) {
 			result = append(result, info)
 		}
 	}
@@ -3577,6 +3870,62 @@ type localBinding struct {
 	Method      *compiler.Method
 }
 
+type methodScope struct {
+	start     int
+	end       int
+	method    *compiler.Method
+	className string
+}
+
+func indexIdentifierTokens(file *compiler.File) map[string][]int {
+	if file == nil {
+		return nil
+	}
+	indices := make(map[string][]int)
+	for index, token := range file.Tokens {
+		if token.Kind == compiler.TokenIdentifier {
+			indices[token.Text] = append(indices[token.Text], index)
+		}
+	}
+	return indices
+}
+
+func collectMethodScopes(state *fileState) []methodScope {
+	if state == nil || state.File == nil {
+		return nil
+	}
+	var result []methodScope
+	add := func(method *compiler.Method, className string) {
+		if method == nil {
+			return
+		}
+		result = append(result, methodScope{start: method.SpanValue.Start, end: method.BodySpan.End, method: method, className: className})
+	}
+	for _, declaration := range state.File.Decls {
+		switch value := declaration.(type) {
+		case *compiler.FunctionDecl:
+			add(&value.Method, "")
+		case *compiler.ClassDecl:
+			for index := range value.Methods {
+				add(&value.Methods[index], value.Name)
+			}
+		case *compiler.ExtendDecl:
+			receiver := extensionReceiverType(state.Source, value)
+			for index := range value.Methods {
+				add(&value.Methods[index], receiver)
+			}
+		case *compiler.MixedDecl:
+			for _, function := range value.Functions {
+				if function != nil {
+					add(&function.Method, "")
+				}
+			}
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool { return result[i].start < result[j].start })
+	return result
+}
+
 func (s *server) localBindingAt(state *fileState, offset int, name string) (localBinding, bool) {
 	method, className := enclosingMethod(state, offset)
 	if method == nil {
@@ -3605,6 +3954,19 @@ func (s *server) localBindingAt(state *fileState, offset int, name string) (loca
 
 func enclosingMethod(state *fileState, offset int) (*compiler.Method, string) {
 	if state == nil || state.File == nil {
+		return nil, ""
+	}
+	if len(state.methodScopes) > 0 {
+		index := sort.Search(len(state.methodScopes), func(index int) bool { return state.methodScopes[index].start > offset }) - 1
+		for ; index >= 0; index-- {
+			scope := state.methodScopes[index]
+			if offset >= scope.start && offset <= scope.end {
+				return scope.method, scope.className
+			}
+			if scope.end < offset {
+				break
+			}
+		}
 		return nil, ""
 	}
 	for _, declaration := range state.File.Decls {
@@ -3641,6 +4003,12 @@ func enclosingMethod(state *fileState, offset int) (*compiler.Method, string) {
 
 type lexicalBlock struct{ start, end, depth int }
 
+type localBindingCandidate struct {
+	binding localBinding
+	depth   int
+	catch   bool
+}
+
 func (s *server) localBindingInMethod(state *fileState, method *compiler.Method, name string, offset int) (localBinding, bool) {
 	if state == nil || state.File == nil || method == nil || offset < method.SpanValue.Start || offset > method.BodySpan.End {
 		return localBinding{}, false
@@ -3648,67 +4016,100 @@ func (s *server) localBindingInMethod(state *fileState, method *compiler.Method,
 	if selectorMemberAt(state, offset) {
 		return localBinding{}, false
 	}
-	type candidate struct {
-		binding localBinding
-		depth   int
+	if state.localBindingCandidates == nil {
+		state.localBindingCandidates = make(map[*compiler.Method]map[string][]localBindingCandidate)
 	}
-	var best *candidate
+	byName := state.localBindingCandidates[method]
+	if byName == nil {
+		byName = make(map[string][]localBindingCandidate)
+		state.localBindingCandidates[method] = byName
+		s.buildLocalBindingCandidates(state, method, byName)
+	}
+	var best *localBindingCandidate
+	var parameterBinding *localBinding
+	for index := range byName[name] {
+		candidate := &byName[name][index]
+		binding := candidate.binding
+		if candidate.catch {
+			inDeclaration := offset >= binding.Declaration.Start && offset <= binding.Declaration.End
+			if !inDeclaration && (offset < binding.ScopeStart || offset > binding.ScopeEnd) {
+				continue
+			}
+		} else if binding.Kind == "parameter" {
+			if offset < method.BodySpan.Start && (offset < binding.Declaration.Start || offset > binding.Declaration.End) {
+				continue
+			}
+			if parameterBinding == nil {
+				parameterBinding = &binding
+			}
+			continue
+		} else if binding.Declaration.Start > offset || offset < binding.ScopeStart || offset > binding.ScopeEnd {
+			continue
+		}
+		if best == nil || candidate.depth > best.depth || candidate.depth == best.depth && binding.Declaration.Start > best.binding.Declaration.Start {
+			best = candidate
+		}
+	}
+	if best != nil {
+		if best.binding.Type == "inferred" {
+			if index := tokenIndexAt(state.File.Tokens, best.binding.Declaration.Start); index >= 0 {
+				s.inferLocalBinding(state, method, index, &best.binding)
+			}
+		}
+		return best.binding, true
+	}
+	if parameterBinding != nil {
+		return *parameterBinding, true
+	}
+	return localBinding{}, false
+}
+
+func (s *server) buildLocalBindingCandidates(state *fileState, method *compiler.Method, result map[string][]localBindingCandidate) {
 	blocks := lexicalBlocks(method.BodyAST, method.BodySpan)
 	tokens := state.File.Tokens
-	for index, token := range tokens {
-		if token.Kind != compiler.TokenIdentifier || token.Text != name || token.Span.Start > offset || token.Span.Start < method.BodySpan.Start || token.Span.End > method.BodySpan.End || !localDeclarationToken(tokens, token) {
+	for _, parameter := range method.ParameterAST {
+		declaration := parameterNameSpan(tokens, method.ParameterAST, method.ParametersSpan, parameter.Name)
+		sourceTypeName := ""
+		if declaration.End <= declaration.Start && len(tokens) == 0 {
+			declaration, sourceTypeName = sourceParameterInfo(state.Source, method.ParametersSpan, parameter.Name)
+		}
+		if declaration.End <= declaration.Start {
+			continue
+		}
+		typeName := parameterTypeFromTokens(tokens, method.SpanValue, parameter.Name)
+		if typeName == "" {
+			typeName = sourceTypeName
+		}
+		if typeName == "" && parameter.Type != nil {
+			typeName = sourceType(state.Source, parameter.Type.Span())
+		}
+		binding := localBinding{Declaration: declaration, ScopeStart: method.BodySpan.Start, ScopeEnd: method.BodySpan.End, Kind: "parameter", Type: typeName, Method: method}
+		result[parameter.Name] = append(result[parameter.Name], localBindingCandidate{binding: binding})
+	}
+	start := sort.Search(len(tokens), func(index int) bool { return tokens[index].Span.Start >= method.BodySpan.Start })
+	for index := start; index < len(tokens) && tokens[index].Span.Start < method.BodySpan.End; index++ {
+		token := tokens[index]
+		if token.Kind != compiler.TokenIdentifier || !localDeclarationToken(tokens, token) {
 			continue
 		}
 		block, ok := declarationBlock(blocks, token.Span.Start)
-		if !ok || offset < block.start || offset > block.end {
+		if !ok {
 			continue
 		}
 		binding := localBinding{Declaration: token.Span, ScopeStart: block.start, ScopeEnd: block.end, Kind: "variable", Type: "inferred", Method: method}
 		if index > 0 && tokens[index-1].Text == "const" {
 			binding.Kind = "constant"
 		}
-		s.inferLocalBinding(state, method, index, &binding)
-		candidate := candidate{binding: binding, depth: block.depth}
-		if best == nil || candidate.depth > best.depth || candidate.depth == best.depth && candidate.binding.Declaration.Start > best.binding.Declaration.Start {
-			best = &candidate
-		}
+		result[token.Text] = append(result[token.Text], localBindingCandidate{binding: binding, depth: block.depth})
 	}
 	for _, catch := range catchBindings(state, method.BodyAST) {
-		inDeclaration := offset >= catch.Declaration.Start && offset <= catch.Declaration.End
-		if catch.Name != name || !inDeclaration && (offset < catch.ScopeStart || offset > catch.ScopeEnd) {
-			continue
-		}
 		block, ok := declarationBlock(blocks, catch.ScopeStart)
 		if !ok {
 			continue
 		}
 		binding := localBinding{Declaration: catch.Declaration, ScopeStart: catch.ScopeStart, ScopeEnd: catch.ScopeEnd, Kind: "variable", Type: catch.Type, Method: method}
-		candidate := candidate{binding: binding, depth: block.depth}
-		if best == nil || candidate.depth > best.depth || candidate.depth == best.depth && candidate.binding.Declaration.Start > best.binding.Declaration.Start {
-			best = &candidate
-		}
+		result[catch.Name] = append(result[catch.Name], localBindingCandidate{binding: binding, depth: block.depth, catch: true})
 	}
-	if best != nil {
-		return best.binding, true
-	}
-	for _, parameter := range method.ParameterAST {
-		if parameter.Name != name {
-			continue
-		}
-		declaration := parameterNameSpan(tokens, method.ParameterAST, method.ParametersSpan, name)
-		if declaration.End <= declaration.Start {
-			continue
-		}
-		typeName := parameterTypeFromTokens(tokens, method.SpanValue, name)
-		if typeName == "" && parameter.Type != nil {
-			typeName = sourceType(state.Source, parameter.Type.Span())
-		}
-		if offset < method.BodySpan.Start && (offset < declaration.Start || offset > declaration.End) {
-			continue
-		}
-		return localBinding{Declaration: declaration, ScopeStart: method.BodySpan.Start, ScopeEnd: method.BodySpan.End, Kind: "parameter", Type: typeName, Method: method}, true
-	}
-	return localBinding{}, false
 }
 
 func parameterNameSpan(tokens []compiler.Token, parameters []compiler.ParameterNode, bounds compiler.Span, name string) compiler.Span {
@@ -3774,6 +4175,10 @@ func catchBindings(state *fileState, root *compiler.BlockStmt) []catchLocal {
 	if state == nil || root == nil {
 		return nil
 	}
+	identifierIndices := state.identifierIndices
+	if identifierIndices == nil {
+		identifierIndices = indexIdentifierTokens(state.File)
+	}
 	var result []catchLocal
 	var visit func(*compiler.BlockStmt)
 	visit = func(block *compiler.BlockStmt) {
@@ -3787,10 +4192,16 @@ func catchBindings(state *fileState, root *compiler.BlockStmt) []catchLocal {
 				for _, clause := range value.Catches {
 					if clause.Binding != "" && clause.Body != nil {
 						var declaration compiler.Span
-						for _, token := range state.File.Tokens {
-							if token.Kind == compiler.TokenIdentifier && token.Text == clause.Binding && token.Span.Start >= clause.SpanValue.Start && token.Span.Start < clause.Body.SpanValue.Start {
-								declaration = token.Span
+						indices := identifierIndices[clause.Binding]
+						start := sort.Search(len(indices), func(index int) bool {
+							return state.File.Tokens[indices[index]].Span.Start >= clause.SpanValue.Start
+						})
+						for _, index := range indices[start:] {
+							token := state.File.Tokens[index]
+							if token.Span.Start >= clause.Body.SpanValue.Start {
+								break
 							}
+							declaration = token.Span
 						}
 						if declaration.End > declaration.Start {
 							typeName := "error"
@@ -4036,6 +4447,18 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 			return field.Type
 		}
 	case *compiler.CallExpr:
+		if callee, ok := value.Callee.(*compiler.NameExpr); ok && callee.Name == "__gppTernary" && len(value.Arguments) == 3 {
+			for _, index := range []int{1, 2} {
+				branch := value.Arguments[index].Value
+				if lambda, ok := branch.(*compiler.LambdaExpr); ok {
+					branch = lambda.Body
+				}
+				if typeName := s.expressionType(state, method, branch, depth+1); typeName != "" {
+					return typeName
+				}
+			}
+			return ""
+		}
 		if isMapConstructorCall(value.Callee) {
 			valueType := ""
 			for _, argument := range value.Arguments {
@@ -4567,10 +4990,7 @@ func (s *server) documentHighlights(params textDocumentPositionParams) []Documen
 		return nil
 	}
 	var result []DocumentHighlight
-	for _, location := range s.references(params.TextDocument.URI, params.Position, true) {
-		if location.URI != state.URI {
-			continue
-		}
+	for _, location := range s.referencesInDocument(state, params.Position) {
 		kind := 2
 		offset := offsetAt(state.Source, location.Range.Start)
 		if tokenIndex := tokenIndexAt(state.File.Tokens, offset); tokenIndex >= 0 && tokenIndex+1 < len(state.File.Tokens) {
@@ -4582,6 +5002,58 @@ func (s *server) documentHighlights(params textDocumentPositionParams) []Documen
 		result = append(result, DocumentHighlight{Range: location.Range, Kind: kind})
 	}
 	return result
+}
+
+func (s *server) referencesInDocument(state *fileState, position Position) []Location {
+	if state == nil || state.File == nil {
+		return nil
+	}
+	name, _ := s.symbolsAt(state.URI, position)
+	if name == "" {
+		return nil
+	}
+	offset := offsetAt(state.Source, position)
+	// The existing local-binding paths are already restricted to this file.
+	if _, ok := s.localBindingAt(state, offset, name); ok {
+		return s.references(state.URI, position, true)
+	}
+	if s.typeParameterAt(state, name, offset) != nil {
+		return s.references(state.URI, position, true)
+	}
+
+	choices := s.resolveSymbolsAt(state.URI, position, name)
+	selected := make(map[string]bool, len(choices))
+	for _, choice := range choices {
+		selected[semanticSymbolKey(choice)] = true
+	}
+	result := make([]Location, 0)
+	for _, span := range identifierSpansForState(state, name) {
+		if s.cancelled() {
+			return nil
+		}
+		at := offsetAt(state.Source, span.Start)
+		if len(state.File.Tokens) == 0 && !sourceTextSymbolLookupAllowed(state.File, at) {
+			continue
+		}
+		if _, localBinding := s.localBindingAt(state, at, name); localBinding {
+			continue
+		}
+		if len(selected) > 0 {
+			resolved := s.resolveSymbolsAt(state.URI, positionAtOffset(state.Source, at), name)
+			matches := false
+			for _, candidate := range resolved {
+				if selected[semanticSymbolKey(candidate)] {
+					matches = true
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+		}
+		result = append(result, Location{URI: state.URI, Range: span})
+	}
+	return sortLocations(result)
 }
 
 func (s *server) foldingRanges(uri string) []FoldingRange {
@@ -4929,7 +5401,10 @@ func (s *server) codeLenses(uri string) []CodeLens {
 		}
 		result = append(result, CodeLens{
 			Range: Range{Start: location.Range.Start, End: location.Range.Start},
-			Data:  codeLensResolveData{URI: uri, FullName: info.Symbol.FullName, Path: info.Path},
+			Command: &Command{
+				Title: "Show references", Command: "gpp.showReferences",
+				Arguments: []any{map[string]any{"uri": uri, "position": location.Range.Start}},
+			},
 		})
 	}
 	return result
@@ -5317,9 +5792,12 @@ func (s *server) references(uri string, position Position, includeDeclaration bo
 		if state.File == nil || len(selected) == 0 && len(packages) > 0 && !packages[state.File.Package] {
 			continue
 		}
-		for _, span := range identifierSpans(state.File, state.Source, name) {
+		for _, span := range identifierSpansForState(state, name) {
 			if s.cancelled() {
 				return nil
+			}
+			if len(state.File.Tokens) == 0 && !sourceTextSymbolLookupAllowed(state.File, offsetAt(state.Source, span.Start)) {
+				continue
 			}
 			location := Location{URI: state.URI, Range: span}
 			if _, localBinding := s.localBindingAt(state, offsetAt(state.Source, span.Start), name); localBinding {
@@ -6449,6 +6927,25 @@ func declarationLineMatches(line string, symbol compiler.DocSymbol) bool {
 
 func identifierAtLineStart(line, name string) bool {
 	return strings.HasPrefix(line, name+" ") || strings.HasPrefix(line, name+"\t") || line == name
+}
+
+func identifierSpansForState(state *fileState, name string) []Range {
+	if state == nil || state.File == nil {
+		return nil
+	}
+	if state.identifierIndices != nil && len(state.File.Tokens) > 0 {
+		indices := state.identifierIndices[name]
+		if len(indices) == 0 {
+			return nil
+		}
+		result := make([]Range, 0, len(indices))
+		for _, index := range indices {
+			token := state.File.Tokens[index]
+			result = append(result, rangeForOffsets(state.Source, token.Span.Start, token.Span.End))
+		}
+		return result
+	}
+	return identifierSpans(state.File, state.Source, name)
 }
 
 func identifierSpans(file *compiler.File, source, name string) []Range {

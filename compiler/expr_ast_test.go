@@ -168,13 +168,23 @@ class User {
 	}
 }
 
-func TestUnsupportedExpressionRemainsTokenStructured(t *testing.T) {
+func TestTernaryExpressionBuildsLazyCallNode(t *testing.T) {
 	expression, err := ParseExpressionTokens(expressionTokens(t, `value ? "yes" : "no"`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := expression.(*TokenExpr); !ok {
-		t.Fatalf("expected transitional token expression, got %#v", expression)
+	ternary, ok := expression.(*CallExpr)
+	if !ok || len(ternary.Arguments) != 3 {
+		t.Fatalf("expected ternary helper call with condition and two lazy branches, got %#v", expression)
+	}
+	callee, ok := ternary.Callee.(*NameExpr)
+	if !ok || callee.Name != "__gppTernary" {
+		t.Fatalf("expected ternary helper callee, got %#v", ternary.Callee)
+	}
+	for index, argument := range ternary.Arguments[1:] {
+		if _, ok := argument.Value.(*LambdaExpr); !ok {
+			t.Fatalf("ternary branch %d should be lazy, got %#v", index, argument.Value)
+		}
 	}
 }
 

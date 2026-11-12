@@ -51,12 +51,16 @@ func (s *server) nativeGoExternalHover(state *fileState, name string, offset int
 		return nil
 	}
 	var object types.Object
+	owner := ""
 	if strings.EqualFold(filepath.Ext(state.Path), ".go") {
 		object = s.nativeGoObjectAt(state, name, offset)
 	} else {
 		object = s.nativeGoImportedObjectAt(state, name, offset)
 		if object == nil {
 			object = s.nativeGoGPPObjectAt(state, name, offset)
+		}
+		if object == nil {
+			object, owner = s.nativeGoGPPSelectorObjectAt(state, name, offset)
 		}
 	}
 	if object == nil || object.Pkg() == nil {
@@ -68,7 +72,7 @@ func (s *server) nativeGoExternalHover(state *fileState, name string, offset int
 	if cache, _ := s.nativeGoInfoForFile(state); cache != nil && cache.importedFileSets[object.Pkg().Path()] != nil {
 		return nil
 	}
-	return nativeGoHoverForObject(object, selection)
+	return nativeGoHoverForObject(object, selection, owner)
 }
 
 func (s *server) nativeGoObjectAt(state *fileState, name string, offset int) types.Object {
@@ -190,7 +194,44 @@ func (s *server) nativeGoImportedDefinition(state *fileState, name string, offse
 	if object == nil {
 		object = s.nativeGoGPPObjectAt(state, name, offset)
 	}
-	return s.nativeGoDefinitionForObject(object)
+	owner := ""
+	if object == nil {
+		object, owner = s.nativeGoGPPSelectorObjectAt(state, name, offset)
+	}
+	return s.nativeGoDefinitionForObject(object, owner)
+}
+
+func (s *server) nativeGoGPPSelectorObjectAt(state *fileState, name string, offset int) (types.Object, string) {
+	if state == nil || state.File == nil || name == "" {
+		return nil, ""
+	}
+	receiver, _, ok := sourceSelectorReceiverAt(state.Source, offset)
+	if !ok {
+		return nil, ""
+	}
+	receiverType := s.nativeGoTypeForGPPSelector(state, receiver, offset, 0)
+	if receiverType == nil {
+		return nil, ""
+	}
+	object, _, _ := types.LookupFieldOrMethod(receiverType, true, nil, name)
+	if object == nil {
+		return nil, ""
+	}
+	return object, nativeGoNamedTypeName(receiverType)
+}
+
+func nativeGoNamedTypeName(value types.Type) string {
+	if value == nil {
+		return ""
+	}
+	value = types.Unalias(value)
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = types.Unalias(pointer.Elem())
+	}
+	if named, ok := value.(*types.Named); ok && named.Obj() != nil {
+		return named.Obj().Name()
+	}
+	return ""
 }
 
 func (s *server) nativeGoImportedSourceDefinition(state *fileState, name string, offset int) *Location {
@@ -273,7 +314,7 @@ func (s *server) nativeGoImportedSourceDefinition(state *fileState, name string,
 	return nil
 }
 
-func (s *server) nativeGoDefinitionForObject(object types.Object) *Location {
+func (s *server) nativeGoDefinitionForObject(object types.Object, ownerNames ...string) *Location {
 	if object == nil || object.Pkg() == nil {
 		return nil
 	}
@@ -292,7 +333,16 @@ func (s *server) nativeGoDefinitionForObject(object types.Object) *Location {
 		if parseErr != nil || file == nil {
 			continue
 		}
-		if start, end, found := nativeGoObjectSourceSpan(file, fset, object); found {
+		owner := ""
+		if len(ownerNames) > 0 {
+			owner = ownerNames[0]
+		}
+		if owner == "" {
+			if function, ok := object.(*types.Func); ok {
+				owner = nativeGoObjectReceiverName(function)
+			}
+		}
+		if start, end, found := nativeGoObjectSourceSpan(file, fset, object, owner); found {
 			source, readErr := os.ReadFile(path)
 			if readErr == nil {
 				return &Location{URI: uriForPath(path), Range: rangeForOffsets(string(source), start, end)}
@@ -369,7 +419,7 @@ func (s *server) nativeGoTypeForGPPPackageValue(state *fileState, name string, o
 	return nil
 }
 
-func nativeGoObjectSourceSpan(file *ast.File, fset *token.FileSet, object types.Object) (int, int, bool) {
+func nativeGoObjectSourceSpan(file *ast.File, fset *token.FileSet, object types.Object, owner string) (int, int, bool) {
 	if file == nil || fset == nil || object == nil {
 		return 0, 0, false
 	}
@@ -395,6 +445,17 @@ func nativeGoObjectSourceSpan(file *ast.File, fset *token.FileSet, object types.
 		case *ast.TypeSpec:
 			if _, ok := object.(*types.TypeName); ok && declaration.Name.Name == object.Name() {
 				start, end = declaration.Name.Pos(), declaration.Name.End()
+			} else if field, ok := object.(*types.Var); ok && field.IsField() && declaration.Name.Name == owner {
+				if structure, ok := declaration.Type.(*ast.StructType); ok {
+					for _, candidate := range structure.Fields.List {
+						for _, name := range candidate.Names {
+							if name.Name == object.Name() {
+								start, end = name.Pos(), name.End()
+								return false
+							}
+						}
+					}
+				}
 			}
 		case *ast.ValueSpec:
 			switch object.(type) {
@@ -453,7 +514,7 @@ func nativeGoObjectReceiverName(function *types.Func) string {
 	return ""
 }
 
-func nativeGoHoverForObject(object types.Object, selection Range) *hover {
+func nativeGoHoverForObject(object types.Object, selection Range, ownerNames ...string) *hover {
 	if object == nil || object.Pkg() == nil {
 		return nil
 	}
@@ -483,15 +544,33 @@ func nativeGoHoverForObject(object types.Object, selection Range) *hover {
 	if constant, ok := object.(*types.Const); ok {
 		value += "\n\nValue: `" + constant.Val().ExactString() + "`"
 	}
-	if documentation := nativeGoExternalDocumentation(object); documentation != "" {
+	owner := ""
+	if len(ownerNames) > 0 {
+		owner = ownerNames[0]
+	}
+	if owner == "" {
+		if function, ok := object.(*types.Func); ok {
+			owner = nativeGoObjectReceiverName(function)
+		}
+	}
+	if documentation := nativeGoExternalDocumentation(object, owner); documentation != "" {
 		value += "\n\n" + documentation
 	}
 	return &hover{Contents: markupContent{Kind: "markdown", Value: value}, Range: &selection}
 }
 
-func nativeGoExternalDocumentation(object types.Object) string {
+func nativeGoExternalDocumentation(object types.Object, ownerNames ...string) string {
 	if object == nil || object.Pkg() == nil {
 		return ""
+	}
+	owner := ""
+	if len(ownerNames) > 0 {
+		owner = ownerNames[0]
+	}
+	if field, ok := object.(*types.Var); ok && field.IsField() {
+		if documentation := nativeGoFieldDocumentation(object.Pkg().Path(), owner, object.Name()); documentation != "" {
+			return documentation
+		}
 	}
 	packageDoc := nativeGoPackageDocumentation(object.Pkg().Path())
 	if packageDoc == nil {
@@ -546,11 +625,95 @@ func nativeGoExternalDocumentation(object types.Object) string {
 			}
 		}
 	case *types.Var:
+		if value.IsField() {
+			for pass := 0; pass < 2; pass++ {
+				for _, documentedType := range packageDoc.Types {
+					if pass == 0 && (owner == "" || documentedType.Name != owner) || pass == 1 && owner != "" && documentedType.Name == owner {
+						continue
+					}
+					if documentedType.Decl == nil || len(documentedType.Decl.Specs) == 0 {
+						continue
+					}
+					declaration, ok := documentedType.Decl.Specs[0].(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					structure, ok := declaration.Type.(*ast.StructType)
+					if !ok {
+						continue
+					}
+					for _, field := range structure.Fields.List {
+						for _, fieldName := range field.Names {
+							if fieldName.Name == name {
+								if field.Doc != nil && strings.TrimSpace(field.Doc.Text()) != "" {
+									return strings.TrimSpace(field.Doc.Text())
+								}
+								if field.Comment != nil {
+									return strings.TrimSpace(field.Comment.Text())
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		for _, group := range packageDoc.Vars {
 			for _, declaredName := range group.Names {
 				if declaredName == name {
 					return strings.TrimSpace(group.Doc)
 				}
+			}
+		}
+	}
+	return ""
+}
+
+func nativeGoFieldDocumentation(importPath, owner, name string) string {
+	if importPath == "" || name == "" || filepath.IsAbs(importPath) {
+		return ""
+	}
+	directory := filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(importPath))
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return ""
+	}
+	for pass := 0; pass < 2; pass++ {
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			path := filepath.Join(directory, entry.Name())
+			file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
+			if parseErr != nil || file == nil {
+				continue
+			}
+			var documentation string
+			ast.Inspect(file, func(node ast.Node) bool {
+				declaration, ok := node.(*ast.TypeSpec)
+				if !ok || pass == 0 && (owner == "" || declaration.Name.Name != owner) || pass == 1 && owner != "" && declaration.Name.Name == owner {
+					return true
+				}
+				structure, ok := declaration.Type.(*ast.StructType)
+				if !ok {
+					return false
+				}
+				for _, field := range structure.Fields.List {
+					for _, fieldName := range field.Names {
+						if fieldName.Name != name {
+							continue
+						}
+						if field.Doc != nil && strings.TrimSpace(field.Doc.Text()) != "" {
+							documentation = strings.TrimSpace(field.Doc.Text())
+						} else if field.Comment != nil {
+							documentation = strings.TrimSpace(field.Comment.Text())
+						}
+						return false
+					}
+				}
+				return false
+			})
+			if documentation != "" {
+				return documentation
 			}
 		}
 	}
@@ -1113,6 +1276,62 @@ func (s *server) nativeGoMembersForGPPExpression(state *fileState, receiver stri
 	if typeOfReceiver == nil {
 		return nil
 	}
+	return s.nativeGoMembersForType(typeOfReceiver)
+}
+
+func (s *server) nativeGoMembersForGPPSelector(state *fileState, receiver string, offset int) []symbolInfo {
+	typeOfReceiver := s.nativeGoTypeForGPPSelector(state, receiver, offset, 0)
+	if typeOfReceiver == nil {
+		return nil
+	}
+	return s.nativeGoMembersForType(typeOfReceiver)
+}
+
+func (s *server) nativeGoTypeForGPPSelector(state *fileState, expression string, offset, depth int) types.Type {
+	if state == nil || state.File == nil || expression == "" || depth > 32 {
+		return nil
+	}
+	if separator := strings.LastIndexByte(expression, '.'); separator > 0 && separator < len(expression)-1 {
+		base, member := strings.TrimSpace(expression[:separator]), strings.TrimSpace(expression[separator+1:])
+		if baseType := s.nativeGoTypeForGPPSelector(state, base, offset, depth+1); baseType != nil {
+			if object, _, _ := types.LookupFieldOrMethod(baseType, true, nil, member); object != nil {
+				return object.Type()
+			}
+		}
+		baseTypeName := s.receiverType(state, base, offset)
+		if _, _, _, found := s.importedTypePackage(state, baseTypeName); found {
+			for _, info := range s.classMembersForType(state, baseTypeName, member, false) {
+				if info.Symbol.Kind != compiler.DocField {
+					continue
+				}
+				fieldType := symbolResultType(info.Symbol.Signature, member)
+				if fieldType == "" {
+					continue
+				}
+				definition := s.fileForSymbolPath(info.Path)
+				if definition == nil {
+					continue
+				}
+				definitionState := &fileState{Path: info.Path, URI: uriForPath(info.Path), Source: definition.Source, File: definition}
+				if resolved := s.nativeGoTypeFromGPPTypeName(definitionState, fieldType); resolved != nil {
+					return resolved
+				}
+			}
+		}
+		return nil
+	}
+	if binding, found := s.localBindingAt(state, offset-1, expression); found && binding.Type != "" {
+		if nativeType := s.nativeGoTypeFromGPPTypeName(state, binding.Type); nativeType != nil {
+			return nativeType
+		}
+	}
+	if typeName := s.receiverType(state, expression, offset); typeName != "" {
+		return s.nativeGoTypeFromGPPTypeName(state, typeName)
+	}
+	return nil
+}
+
+func (s *server) nativeGoMembersForType(typeOfReceiver types.Type) []symbolInfo {
 	if pointer, ok := types.Unalias(typeOfReceiver).(*types.Pointer); ok {
 		typeOfReceiver = pointer.Elem()
 	}
@@ -1161,6 +1380,7 @@ func (s *server) nativeGoMembersForGPPExpression(state *fileState, receiver stri
 				Package:   packageName,
 				Parent:    named.Obj().Name(),
 				Signature: types.TypeString(field.Type(), nil),
+				Doc:       nativeGoExternalDocumentation(field, named.Obj().Name()),
 				Exported:  true,
 			}
 			result = append(result, symbolInfo{Symbol: symbol})

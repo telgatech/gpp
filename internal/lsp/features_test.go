@@ -1443,11 +1443,15 @@ func TestLSPAdvertisesSemanticTokensAndCodeActions(t *testing.T) {
 			t.Fatalf("editor feature %s should be advertised when implemented: %#v", capability, capabilities)
 		}
 	}
-	for _, capability := range []string{"documentLinkProvider", "inlayHintProvider", "codeLensProvider"} {
+	for _, capability := range []string{"documentLinkProvider", "inlayHintProvider"} {
 		provider, ok := capabilities[capability].(map[string]any)
 		if !ok || provider["resolveProvider"] != true {
 			t.Fatalf("%s resolution should be advertised: %#v", capability, capabilities[capability])
 		}
+	}
+	codeLensProvider, ok := capabilities["codeLensProvider"].(map[string]any)
+	if !ok || codeLensProvider["resolveProvider"] != false {
+		t.Fatalf("code lenses should provide ready-to-run commands without resolution: %#v", capabilities["codeLensProvider"])
 	}
 	diagnosticProvider, ok := capabilities["diagnosticProvider"].(map[string]any)
 	if !ok || diagnosticProvider["identifier"] != "gpp" || diagnosticProvider["workspaceDiagnostics"] != true {
@@ -3688,15 +3692,16 @@ func TestEditorResolveItemsSurviveLSPJSONRoundTrip(t *testing.T) {
 	}
 	lenses := arrayResult("textDocument/codeLens", 5, textDocument)
 	if len(lenses) == 0 {
-		t.Fatal("code lens request should return deferred reference lenses")
+		t.Fatal("code lens request should return reference commands")
 	}
 	lens := lenses[0].(map[string]any)
-	if lens["data"] == nil || lens["command"] != nil {
-		t.Fatalf("code lens should carry opaque resolver data and defer its command: %#v", lens)
+	command, ok := lens["command"].(map[string]any)
+	if !ok || command["command"] != "gpp.showReferences" || command["title"] != "Show references" || lens["data"] != nil {
+		t.Fatalf("code lens should carry a ready-to-run reference command: %#v", lens)
 	}
-	resolvedLens := request("codeLens/resolve", 6, lens)
-	if resolvedLens["command"] == nil {
-		t.Fatalf("code lens resolve should add its command after the JSON round trip: %#v", resolvedLens)
+	arguments := command["arguments"].([]any)[0].(map[string]any)
+	if arguments["uri"] != mainState.URI || arguments["locations"] != nil {
+		t.Fatalf("code lens should defer reference collection until invoked: %#v", arguments)
 	}
 }
 
@@ -4543,7 +4548,7 @@ func TestTypeHierarchyResolvesOrdinaryModuleImportParentsByDirectory(t *testing.
 	}
 }
 
-func TestFunctionCodeLensCountsReferences(t *testing.T) {
+func TestFunctionCodeLensDefersReferenceCollection(t *testing.T) {
 	source := "package main\nclass Widget {}\nfunc target() {}\nfunc caller() { target(); _ = Widget{} }\n"
 	file, err := compiler.ParseFile("main.gpp", source)
 	if err != nil {
@@ -4557,13 +4562,13 @@ func TestFunctionCodeLensCountsReferences(t *testing.T) {
 	workspace.symbols = workspace.collectSymbols()
 	server := &server{workspace: workspace}
 	lenses := server.codeLenses(state.URI)
-	counts := map[string]string{}
+	commands := map[string]bool{}
 	for _, lens := range lenses {
-		if lens.Data == nil {
+		if lens.Command == nil {
 			continue
 		}
-		// Exercise the same JSON round trip as the LSP client between the
-		// initial codeLens response and codeLens/resolve.
+		// The command is returned immediately; references are collected only
+		// when the user invokes it.
 		encoded, err := json.Marshal(lens)
 		if err != nil {
 			t.Fatal(err)
@@ -4572,28 +4577,21 @@ func TestFunctionCodeLensCountsReferences(t *testing.T) {
 		if err := json.Unmarshal(encoded, &clientLens); err != nil {
 			t.Fatal(err)
 		}
-		var data codeLensResolveData
-		if encodedData, err := json.Marshal(clientLens.Data); err != nil {
-			t.Fatal(err)
-		} else if err := json.Unmarshal(encodedData, &data); err != nil {
-			t.Fatal(err)
-		}
-		resolved := server.resolveCodeLens(clientLens)
-		if resolved.Command == nil {
-			t.Errorf("code lens for %s should resolve to a reference-count command: %#v", data.FullName, resolved)
+		if clientLens.Command == nil || clientLens.Command.Command != "gpp.showReferences" || clientLens.Data != nil {
+			t.Errorf("code lens should retain its ready-to-run reference command after JSON round trip: %#v", clientLens)
 			continue
 		}
-		counts[data.FullName] = resolved.Command.Title
-		args := resolved.Command.Arguments[0].(map[string]any)
+		args := clientLens.Command.Arguments[0].(map[string]any)
 		if args["uri"] != state.URI {
-			t.Errorf("code lens for %s should retain the current document URI: %#v", data.FullName, args)
+			t.Errorf("code lens should retain the current document URI: %#v", args)
 		}
+		if args["locations"] != nil {
+			t.Errorf("code lens should defer reference collection until invocation: %#v", args)
+		}
+		commands[clientLens.Command.Title] = true
 	}
-	if counts["main.target"] != "1 references" {
-		t.Errorf("function should show its reference count, got %#v", counts)
-	}
-	if counts["main.Widget"] != "1 references" {
-		t.Errorf("class should show the same reference count metadata, got %#v", counts)
+	if !commands["Show references"] {
+		t.Errorf("function and class lenses should offer Show references, got %#v", commands)
 	}
 }
 
