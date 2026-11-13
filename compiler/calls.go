@@ -2188,6 +2188,9 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 	if isMapConstructorCallee(call.Callee) {
 		return inferMapConstructorType(call, valueTypes, context)
 	}
+	if isRegexpBuiltinCallee(call.Callee) && len(call.Arguments) == 1 {
+		return regexpBuiltinTypeName(context)
+	}
 	if callee, ok := call.Callee.(*NameExpr); ok && callee.Name == "__gppUnwrap" && len(call.Arguments) == 1 {
 		if inner, ok := call.Arguments[0].Value.(*CallExpr); ok {
 			return staticCallResultTypeNode(inner, context, valueTypes)

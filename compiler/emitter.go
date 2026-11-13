@@ -68,6 +68,10 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 			}
 		}
 	}
+	if fileUsesRegexpBuiltin(file) {
+		alias := regexpBuiltinImportAlias(context.AvailableImports)
+		context.AvailableImports[alias] = "regexp"
+	}
 	context.Introspection.Enabled = fileUsesIntrospection(file)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
 	if !options.NoPrelude {
@@ -285,6 +289,10 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	var out strings.Builder
 
 	fmt.Fprintf(&out, "package %s\n\n", goPackageName(file.Package))
+	regexAlias := ""
+	if fileUsesRegexpBuiltin(file) {
+		regexAlias = regexpBuiltinImportAlias(context.AvailableImports)
+	}
 
 	interpolationName, needsFmtImport, err := interpolationImport(file)
 	if err != nil {
@@ -309,6 +317,12 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 	body = insertAfterImports(body, templateImports)
 	body = rewriteLogicalPackageImports(body, file.Imports, context.ModulePath)
+	if regexAlias != "" {
+		body, err = rewriteRegexpBuiltins(body, regexAlias)
+		if err != nil {
+			return nil, diagnosticAt(file.Name, Span{}, err)
+		}
+	}
 	body = ensureGeneratedImports(body, context)
 	body = rewriteOfficialImports(body, context.ModulePath)
 	enumErrorAlias, enumNeedsErrorImport := enumErrorImport(file)
