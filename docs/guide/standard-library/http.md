@@ -87,7 +87,7 @@ return server.ListenAndServe()
 ```
 :::
 
-`Listen(port)` creates the listener and runs the server. Pass `0` to let the operating system choose an available port; the assigned port is available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the log uses `http://localhost:8080` instead of an unspecified wildcard address.
+`Listen(port)` creates the listener and runs the server. Pass `0` to let the operating system choose an available port; the assigned port is available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`. Set the optional `Name` field to prefix server logs and label the startup message (for example, `API listening on http://localhost:8080`); an empty name keeps the default `gpp/http` label. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the log uses `http://localhost:8080` instead of an unspecified wildcard address.
 
 Static files are checked before `Handle(ctx)` and route dispatch, regardless of whether they come from `PublicDir` or an `http.Files` annotation. A matching GET or HEAD file is served first; directory requests serve `index.html`, or `index.htm` when `index.html` is absent. Directory listings are disabled by default, so a directory without an index falls through to the handler and then registered routes. Set `DirListing: true` on the server or on an `http.Files` annotation to enable listings for that mount. Static responses use `Cache-Control: public, max-age=300` by default, retain `FileServer` conditional caching, and use gzip for compressible content when requested. Range responses are not compressed.
 
@@ -285,11 +285,13 @@ class App : http.Server @{http.Prefix("/api")} {
 }
 ```
 
-The context provides `Text`, `JSON`, `HTML`, `Respond`, and `Redirect` response helpers. `Respond(status, data)` negotiates HTML or JSON from the request's `Accept` header, so one route can serve a template to browsers and JSON to API clients:
+The context provides `Text`, `JSON`, `HTML`, `Respond`, and `Redirect` response helpers. Add response fields to `ctx.Data` and return without writing to let the server call `Respond()` automatically. A matching registered view can render a static page even when no route is declared for it. `Respond(status, data)` negotiates HTML or JSON from the request's `Accept` header, so one route can serve a template to browsers and JSON to API clients:
 
 ```gpp
 func Profile(ctx *http.Context) error @{http.GET("/profile")} {
-    return ctx.Respond(200, struct(Name: "Ada", Active: true))
+    ctx.Data["Name"] = "Ada"
+    ctx.Data["Active"] = true
+    return nil
 }
 ```
 
@@ -456,9 +458,13 @@ The `OAuthLogin` hook receives the normalized identity (and has a token-aware ov
 
 ## Templates and error pages
 
-`http.Server` accepts a `Templates *html/template.Template` set. Assign a parsed
-Go template set when constructing the server to use standard Go template names
-and `define` blocks with `ctx.HTML`:
+`http.Server` accepts either a pre-parsed `Templates *html/template.Template`
+set or `TemplateFiles []string`. Assign `Templates` when reusing a parsed set;
+`TemplateFiles` are reparsed on every request so edits appear without restarting
+the server, which is useful during development. When `ENV=production`, the files
+are parsed once and reused. Do not set both. For example,
+assign a parsed Go template set to use standard template names and `define`
+blocks with `ctx.HTML`:
 
 ```gpp
 import "html/template"
@@ -472,6 +478,12 @@ if _, err := views.Parse(`
     panic(err)
 }
 app := App(Templates: views)
+```
+
+For live template edits, pass the source files instead:
+
+```gpp
+app := App(TemplateFiles: []string{"views/users.html", "views/errors.html"})
 ```
 
 `ctx.HTML` first looks up the supplied key as an exact Go template name. If the
