@@ -414,7 +414,7 @@ func Greeting() string {
 	}
 }
 
-func TestCompileFilesSupportsFormattedRawAndEscapedInterpolation(t *testing.T) {
+func TestCompileFilesSupportsFormattedInterpolationAndLiteralRawStrings(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
@@ -442,7 +442,7 @@ func TestCompileFilesSupportsFormattedRawAndEscapedInterpolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generated interpolation program did not run: %v\n%s", err, output)
 	}
-	expected := "Hello Bob 12.50 007\nraw Bob path C:\\\\users\\Bob\nUse {{name}}\n"
+	expected := "Hello Bob 12.50 007\nraw {{name}} path C:\\\\users\\{{name}}\nUse {{name}}\n"
 	if string(output) != expected {
 		t.Fatalf("unexpected interpolation output:\n%s", output)
 	}
@@ -625,7 +625,7 @@ func TestEmitRejectsInvalidInterpolation(t *testing.T) {
 	}{
 		{name: "empty", source: `func main() { _ = "{{}}" }`, want: "empty interpolation expression"},
 		{name: "format", source: `func main() { _ = "{{1:.2f}}" }`, want: "expected Go fmt format"},
-		{name: "unterminated", source: "func main() { _ = `{{value` }", want: "unterminated interpolation"},
+		{name: "unterminated", source: "func main() { _ = \"{{value\" }", want: "unterminated interpolation"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			file, err := ParseFile(test.name+".gpp", test.source)

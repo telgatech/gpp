@@ -101,11 +101,14 @@ The examples cover:
 - `mixed/` — side-by-side compilation in both directions: GPP calling
   handwritten Go functions and handwritten Go importing generated GPP code.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
-  annotated HTTP and WebSocket handlers, path parameters, status-aware JSON/text/template responses,
+  annotated HTTP and WebSocket handlers, path parameters, status-aware JSON and text responses,
+  standard `html/template` views selected by name or `{id}` path pattern,
   custom error templates, request context values, lifecycle hooks, graceful
   shutdown, configurable ports, path and hostname mounts for independent route
   classes, and opt-in OpenAPI JSON plus self-contained Swagger UI endpoints
   under the configured prefix.
+- `html_template.gpp` — passes a standard `html/template` set to
+  `http.Context` and matches a `/users/{id}` definition against `/users/123`.
 - `sse.gpp` — a GET endpoint that streams periodic multiline events with
   incrementing IDs and retry delay using the optional `http.SSE` marker.
 - `oauth.gpp` — the bundled `gpp/http` OAuth/OIDC login flow with a built-in

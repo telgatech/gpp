@@ -456,7 +456,33 @@ The `OAuthLogin` hook receives the normalized identity (and has a token-aware ov
 
 ## Templates and error pages
 
-Templates can be declared in GPP or loaded from template files. A handler can render one with typed application data:
+`http.Server` accepts a `Templates *html/template.Template` set. Assign a parsed
+Go template set when constructing the server to use standard Go template names
+and `define` blocks with `ctx.HTML`:
+
+```gpp
+import "html/template"
+
+views := template.New("views")
+if _, err := views.Parse(`
+{{define "Page"}}<h1>{{.}}</h1>{{end}}
+{{define "ErrorPage"}}<h1>{{.Code}} {{.Message}}</h1>{{end}}
+{{define "/users/{id}"}}<h1>{{.Name}}</h1>{{end}}
+`); err != nil {
+    panic(err)
+}
+app := App(Templates: views)
+```
+
+`ctx.HTML` first looks up the supplied key as an exact Go template name. If the
+key is a request path and has no exact match, it checks named templates with
+`{id}` path segments, such as `/users/{id}` matching `/users/123`; patterns
+with more literal segments take precedence. Path values are not merged into the
+template data, so pass them from the route handler as usual. Go `define` blocks
+remain available to each executed template through the shared set.
+
+When `Templates` is nil, `ctx.HTML` continues to use GPP's registered template
+system. A handler can render a GPP-declared template with typed application data:
 
 ```go
 template ProfilePage(user User) {
@@ -472,7 +498,7 @@ class App : http.Server {
 }
 ```
 
-`ctx.HTML` takes optional `status`, `data`, and `key` arguments in that order. Status defaults to 200, data defaults to `nil`, and an omitted key uses the current request path to find a matching `tpl.Path` template. For example, `ctx.HTML(200, user)` renders the URL-bound template, `ctx.HTML(404, data, "NotFound")` selects a named template and status, and `ctx.HTML(201)` sets a status without passing data. `ctx.Template` remains an obsolete alias for `ctx.HTML`. `ErrorTemplate()` selects the template used for server-generated error pages. For URL-bound templates and the generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed template source files are present, the server lifecycle starts a watcher that reloads them after edits.
+`ctx.HTML` takes optional `status`, `data`, and `key` arguments in that order. Status defaults to 200, data defaults to `nil`, and an omitted key uses the current request path. With a standard `Templates` set, the path can match a named `{id}` pattern; with `Templates` unset, it can match a GPP `tpl.Path` declaration. `ctx.HTML(404, data, "NotFound")` selects a named template and status, and `ctx.HTML(201)` sets a status without passing data. `ctx.Template` remains an obsolete alias for `ctx.HTML`. `ErrorTemplate()` selects the template used for server-generated error pages and must name a template in the configured set when `Templates` is set. For GPP URL-bound templates and generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed GPP template source files are present, the server lifecycle starts a watcher that reloads them after edits.
 
 ## HTTPS and deployment boundaries
 

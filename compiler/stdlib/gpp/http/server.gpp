@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	htmltemplate "html/template"
 	"log"
 	"mime"
 	"net"
@@ -175,10 +176,14 @@ func gppContextForRequest(response stdhttp.ResponseWriter, request *stdhttp.Requ
 		state.Context.Response = response
 		state.Context.Request = request
 		state.Context.TemplateScope = gppTemplateScope(router)
+		if templates := gppHTTPTemplates(router); templates != nil {
+			state.Context.Templates = templates
+		}
 		return state.Context, state
 	}
 	ctx := gppNewContext(response, request)
 	ctx.TemplateScope = gppTemplateScope(router)
+	ctx.Templates = gppHTTPTemplates(router)
 	return ctx, nil
 }
 
@@ -197,6 +202,7 @@ func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
 	return stdhttp.HandlerFunc(func(response stdhttp.ResponseWriter, request *stdhttp.Request) {
 		ctx := gppNewContext(response, request)
 		ctx.TemplateScope = gppTemplateScope(app)
+		ctx.Templates = gppHTTPTemplates(app)
 		state := &gppHTTPRequestState{Context: ctx}
 		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
 			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
@@ -246,6 +252,28 @@ func gppHTTPListenerURL(address net.Addr) string {
 
 func gppHTTPPublicDir(app any) string {
 	return gppHTTPStringField(app, "PublicDir")
+}
+
+func gppHTTPTemplates(app any) *htmltemplate.Template {
+	value := reflect.ValueOf(app)
+	if !value.IsValid() {
+		return nil
+	}
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return nil
+	}
+	field := value.FieldByName("Templates")
+	if !field.IsValid() || !field.CanInterface() {
+		return nil
+	}
+	templates, _ := field.Interface().(*htmltemplate.Template)
+	return templates
 }
 
 func gppHTTPStringField(app any, name string) string {
@@ -1082,6 +1110,8 @@ type gppHTTPErrorData struct {
 // Server runs an HTTP application with annotated routes, middleware hooks, and mounted routers.
 class Server {
 	HTTPServer *stdhttp.Server
+	// Templates is the html/template set used by Context.HTML. Parse named views into it before serving.
+	Templates *htmltemplate.Template
 	PublicDir string
 	DirListing bool
 	PublicCacheControl string

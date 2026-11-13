@@ -2,12 +2,8 @@
 
 ## 1. Overview
 
-GPP supports string interpolation in both:
-
-```text
-"double-quoted strings"
-`raw backtick strings`
-```
+GPP interpolates expressions in double-quoted strings. Backtick raw strings
+preserve their contents literally, following Go's raw-string behavior.
 
 Interpolation uses:
 
@@ -30,10 +26,7 @@ message := "Hello {{name}}"
 
 priceText := "Price: {{price:%.2f}}"
 
-html := `
-    <h1>{{title}}</h1>
-    <p>Total: {{price * quantity:%.2f}}</p>
-`
+html := `<h1>{{title}}</h1>`
 ```
 
 The goals are:
@@ -41,15 +34,16 @@ The goals are:
 * remove common `fmt.Sprintf` boilerplate;
 * preserve Go formatting conventions;
 * support arbitrary GPP expressions;
-* work consistently in interpreted and raw strings;
-* support multiline strings and multiline expressions;
+* follow Go's string-literal behavior for raw strings;
+* support multiline expressions inside interpolated strings;
 * avoid introducing a new formatting mini-language.
 
 ---
 
 # 2. Supported String Forms
 
-Interpolation applies to both Go string literal forms.
+Interpolation applies to double-quoted Go string literals. Backtick raw strings
+are literal and do not interpolate.
 
 ## Double-quoted strings
 
@@ -73,19 +67,8 @@ contains an interpreted newline escape.
 `Hello {{name}}`
 ```
 
-Raw strings preserve normal Go raw-string behavior while still recognizing GPP interpolation delimiters.
-
-Example:
-
-```gpp
-message := `
-Hello {{name}}
-
-Welcome to {{site.Name}}.
-`
-```
-
-Backtick strings are especially useful for:
+This string contains the literal text `{{name}}`. Raw strings preserve their
+contents exactly and are useful for:
 
 * HTML fragments;
 * SQL;
@@ -408,62 +391,31 @@ Interpolation occurs as part of the GPP compilation process.
 
 # 13. Raw Backtick String Semantics
 
-Backtick strings retain normal Go raw-string behavior.
-
-Example:
+Backtick strings retain normal Go raw-string behavior and do not interpolate.
 
 ```gpp
-message := `
-Hello {{name}}
-Path: C:\users\{{name}}
-`
+source := `<h1>{{.Name}}</h1>`
+path := `C:\users\{{name}}`
 ```
 
-Backslashes remain literal.
-
-Interpolation still recognizes:
-
-```text
-{{ ... }}
-```
-
-inside the raw string.
-
-Therefore raw strings are raw with respect to Go escaping, but not with respect to GPP interpolation.
+Both values preserve their contents exactly. Use a double-quoted string when
+GPP interpolation is needed. For a dynamic multiline string, use a standard Go
+formatter such as `fmt.Sprintf`.
 
 ---
 
-# 14. Multiline Interpolation
+# 14. Multiline String Construction
 
-Interpolation expressions may span lines.
-
-Example:
-
-```gpp
-message := `
-Total: {{
-    subtotal +
-    tax +
-    shipping
-:%.2f}}
-`
-```
-
-or, where formatting is not used:
+Backtick strings provide readable multiline literals. Since raw strings do not
+interpolate, use `fmt.Sprintf` when dynamic values are needed:
 
 ```gpp
-message := `
-Result: {{
-    CalculateTotal(
-        subtotal,
-        tax,
-        shipping,
-    )
-}}
-`
+message := fmt.Sprintf(`
+Total: %.2f
+`, subtotal + tax + shipping)
 ```
 
-Whitespace inside the interpolation expression is governed by normal GPP expression parsing.
+GPP interpolation remains available in double-quoted strings.
 
 ---
 
@@ -518,63 +470,36 @@ The exact parser implementation is compiler-defined.
 
 # 17. Literal `{{` and `}}`
 
-GPP must provide a deterministic way to emit interpolation delimiters literally.
+Backtick strings are literal, so Go template actions can be written directly:
 
-Recommended syntax:
+```gpp
+source := `<h1>{{.Name}}</h1>`
+```
+
+Inside a double-quoted interpolated string, a backslash before the opener emits
+it literally:
+
+```gpp
+source := "<h1>\{{.Name}}</h1>"
+```
+
+The existing doubled-delimiter form remains supported in double-quoted strings:
 
 ```text
 {{{{  -> literal {{
 }}}}  -> literal }}
 ```
 
-Example:
-
-```gpp
-"Use {{{{name}}}} in the configuration"
-```
-
-produces:
-
-```text
-Use {{name}} in the configuration
-```
-
-The same escaping works in both:
-
-```text
-"..."
-`...`
-```
-
-string forms.
+For example, `"Use {{{{name}}}} in the configuration"` produces
+`Use {{name}} in the configuration`.
 
 ---
 
-# 18. Why Delimiter Doubling Is Preferred
+# 18. Raw Strings and Templates
 
-Backtick strings do not normally interpret backslash escapes.
-
-Therefore a rule such as:
-
-```text
-\{{
-```
-
-would make raw strings unexpectedly treat backslash as special.
-
-Using:
-
-```text
-{{{{
-```
-
-and:
-
-```text
-}}}}
-```
-
-keeps interpolation escaping consistent across both string literal forms.
+Raw strings are the natural way to write literal Go template source because
+GPP does not interpret their delimiters. Template actions are then evaluated
+later by `html/template`, when the parsed template executes.
 
 ---
 
@@ -984,13 +909,14 @@ GPP interpolation syntax and Go `html/template` syntax both use:
 
 but they operate in different contexts.
 
-Inside a GPP string literal:
+Inside a double-quoted GPP string literal:
 
 ```gpp
 "Hello {{name}}"
 ```
 
-GPP interpolation applies.
+GPP interpolation applies. Backtick strings are literal, including any
+`{{...}}` sequences.
 
 Inside a template declaration:
 
@@ -1002,103 +928,49 @@ template Page(user User) {
 
 Go `html/template` syntax applies.
 
-The parser already knows whether it is currently parsing a GPP string or a raw template body, so these uses are unambiguous.
+The parser distinguishes double-quoted GPP strings, literal raw strings, and raw template declaration bodies.
 
 ---
 
 # 38. Raw String and Template Distinction
 
-This:
+Backtick strings preserve template source literally:
 
 ```gpp
 source := `
-    <h1>{{user.Name}}</h1>
+    <h1>{{.Name}}</h1>
 `
 ```
 
-is a GPP interpolated raw string.
-
-Therefore `user.Name` is evaluated immediately when the string is constructed.
-
-If literal Go template source is desired:
-
-```gotemplate
-<h1>{{.Name}}</h1>
-```
-
-the interpolation delimiters must be escaped inside the GPP string:
-
-```gpp
-source := `
-    <h1>{{{{.Name}}}}</h1>
-`
-```
-
-which produces:
-
-```gotemplate
-<h1>{{.Name}}</h1>
-```
-
-This is particularly relevant when constructing source for:
-
-```gpp
-tpl.Execute(w, source, data)
-```
-
----
+The action remains in the string until it is parsed and executed by
+`html/template`.
 
 # 39. Example: Dynamic Template Source
 
-To construct literal template source:
+When GPP interpolation is needed, use a double-quoted string. For dynamic
+multiline output, use a standard Go formatter such as `fmt.Sprintf` and keep
+template actions in a raw string:
 
 ```gpp
-source := `
-    <h1>{{{{.Title}}}}</h1>
-`
+name := "Ada"
+source := `<h1>{{.Name}}</h1>`
+html := fmt.Sprintf("<p>Hello %s</p>", name)
 ```
-
-then:
-
-```gpp
-tpl.Execute(w, source, post)
-```
-
-The GPP interpolation layer produces:
-
-```gotemplate
-<h1>{{.Title}}</h1>
-```
-
-which is then parsed by `html/template`.
-
----
 
 # 40. Example: Mixed Construction
 
-GPP interpolation may still be used to construct part of a dynamic template source deliberately.
-
-Example:
+A template can be kept literal while data is supplied separately:
 
 ```gpp
-heading := "Customer"
-
-source := `
-    <h1>{{heading}}</h1>
-    <p>{{{{.Name}}}}</p>
-`
+source := `<h1>{{.Name}}</h1>`
+tpl.Execute(w, source, user)
 ```
 
-The resulting template source becomes:
+For immediate GPP interpolation, use a double-quoted string:
 
-```gotemplate
-<h1>Customer</h1>
-<p>{{.Name}}</p>
+```gpp
+greeting := "Hello {{user.Name}}"
 ```
-
-This behavior follows directly from the two parsing stages.
-
----
 
 # 41. Interpolation in Struct Fields
 
@@ -1133,24 +1005,24 @@ Normal annotation constant-expression rules apply.
 
 ---
 
-# 43. Interpolation in Raw Multiline Content
+# 43. Dynamic Multiline Content
 
-A primary intended use case is readable multiline construction:
+Use `fmt.Sprintf` when constructing a multiline string with dynamic values:
 
 ```gpp
-email := `
-Hello {{user.Name}},
+email := fmt.Sprintf(`
+Hello %s,
 
-Your order {{order.ID}} has shipped.
+Your order %d has shipped.
 
-Total: {{order.Total:%.2f}}
+Total: %.2f
 
 Thanks,
-{{company.Name}}
-`
+%s
+`, user.Name, order.ID, order.Total, company.Name)
 ```
 
-This should require no `fmt.Sprintf`.
+The raw format string remains literal; Go's formatter inserts the values.
 
 ---
 
@@ -1372,7 +1244,7 @@ Expr(total, "%.2f")
 
 The emitter then lowers the sequence efficiently.
 
-This representation works identically for double-quoted and raw strings.
+This representation is used for double-quoted interpolated strings.
 
 ---
 
@@ -1408,14 +1280,9 @@ The exact AST shape is implementation-defined.
 
 # 56. Lexer Behavior
 
-The lexer must recognize interpolation delimiters inside:
-
-```text
-double-quoted string literals
-raw backtick string literals
-```
-
-It must not apply GPP string interpolation while parsing a `template` declaration's raw body.
+The lexer recognizes interpolation delimiters inside double-quoted string
+literals. Backtick raw strings are preserved literally. It must not apply GPP
+string interpolation while parsing a `template` declaration's raw body.
 
 Template bodies belong to `html/template`, not the GPP string lexer.
 
@@ -1423,14 +1290,9 @@ Template bodies belong to `html/template`, not the GPP string lexer.
 
 # 57. Source Preservation
 
-For raw backtick strings, literal source content should be preserved exactly except for:
-
-```text
-GPP interpolation substitution
-interpolation delimiter escaping
-```
-
-No whitespace normalization should occur.
+For raw backtick strings, literal source content should be preserved exactly,
+including interpolation-like delimiters and backslashes. No whitespace
+normalization should occur.
 
 ---
 
@@ -1440,13 +1302,10 @@ Existing non-interpolated Go string literals remain source compatible.
 
 Existing double-quoted interpolation remains valid.
 
-The primary compatibility extension is that interpolation now also applies to:
-
-```text
-backtick raw strings
-```
-
-and gains optional formatting.
+Backtick strings no longer interpolate; they now preserve Go raw-string
+contents literally. Existing raw strings that relied on GPP interpolation
+should use double-quoted interpolation or an explicit Go formatter such as
+`fmt.Sprintf`.
 
 ---
 
@@ -1547,14 +1406,9 @@ Examples:
 
 "Total: {{price * quantity:%.2f}}"
 
-`
-User: {{user.Name}}
-Balance: {{user.Balance:%10.2f}}
-`
-
 "Debug: {{value:%#v}}"
 ```
 
 The core rule is:
 
-> GPP interpolation adds ergonomic expression insertion and Go-native formatting to both ordinary and raw strings without introducing a second expression language or a second formatting language.
+> GPP interpolation adds expression insertion and Go-native formatting to double-quoted strings while backtick strings retain Go's literal raw-string behavior.

@@ -8,15 +8,15 @@ func main() {
 	fmt.Println("Hello {{name}}")
 	fmt.Println("Total: {{quantity * price:%.2f}}")
 
-	message := `
-Order for {{name}}
-Quantity: {{quantity}}
-Url: /users/{{name}}
-Path: C:\users\{{name}}
-`
+	message := fmt.Sprintf(`
+Order for %s
+Quantity: %v
+Url: /users/%s
+Path: C:\users\%s
+`, name, quantity, name, name)
 	fmt.Print(message)
 
-	// Escape delimiters when constructing source for html/template.
-	templateSource := `<h1>{{{{.Name}}}}</h1>`
+	// Raw strings preserve html/template actions literally.
+	templateSource := `<h1>{{.Name}}</h1>`
 	fmt.Println(templateSource)
 }
