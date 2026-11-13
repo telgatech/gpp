@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-13
+
+- Added the general `regexp(pattern)` builtin and regex matching in tagged switches; literal switch patterns compile once per source file and are reused, while dynamic patterns compile when their case is checked.
+- Consolidated regex demonstrations into `examples/regexp.gpp`, including `CompileRegex()`, native `regexp` selectors, and regex switch cases.
+- Removed legacy `record(...)` construction and `record` collection markers in favor of anonymous struct syntax.
+
 ## 2026-11-12
 
 - Improved native Go field and method navigation in template-based GPP files, and showed documentation for Go struct fields on hover.

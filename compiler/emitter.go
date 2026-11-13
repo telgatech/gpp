@@ -299,7 +299,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		return nil, err
 	}
 	context.InterpolationName = interpolationName
-	if tokenSequence(file.Tokens, "record") || tokenSequence(file.Tokens, "struct", "(") || tokenSequence(file.Tokens, "let") {
+	if tokenSequence(file.Tokens, "struct", "(") || tokenSequence(file.Tokens, "let") {
 		if err := prepareRecordContextAST(file, context); err != nil {
 			return nil, err
 		}
@@ -318,7 +318,11 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	body = insertAfterImports(body, templateImports)
 	body = rewriteLogicalPackageImports(body, file.Imports, context.ModulePath)
 	if regexAlias != "" {
-		body, err = rewriteRegexpBuiltins(body, regexAlias)
+		sourceKey := file.SourcePath
+		if sourceKey == "" {
+			sourceKey = file.Name
+		}
+		body, err = rewriteRegexpBuiltins(body, regexAlias, sourceKey)
 		if err != nil {
 			return nil, diagnosticAt(file.Name, Span{}, err)
 		}

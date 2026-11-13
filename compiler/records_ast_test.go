@@ -109,7 +109,7 @@ func TestTransformMapLiteralInfersStrongAndMixedValueTypes(t *testing.T) {
 func TestCollectRecordValueTypesUsesImportedFunctionResults(t *testing.T) {
 	source := `func main() {
     keyID := common.GetEnv("KEY_ID", "")
-    _ = record(key: keyID)
+    _ = struct(key: keyID)
 }`
 	signature := callableSignature{
 		Name:      "GetEnv",
@@ -133,7 +133,7 @@ func TestCollectRecordValueTypesPreservesDeclaredTypeAcrossAssignment(t *testing
 	source := `func payment() {
     amount := int64(9900)
     amount = 4900
-    _ = record(amount: amount)
+    _ = struct(amount: amount)
 }`
 
 	valueTypes, handled := collectRecordValueTypesAST(source, constructorContext{})
@@ -151,7 +151,7 @@ func TestCollectRecordValueTypesUnwrapsTryHandledTupleAssignment(t *testing.T) {
     try {
         user = requireUser()
     } catch err {}
-    _ = record(name: user.Name)
+    _ = struct(name: user.Name)
 }`
 	context := constructorContext{
 		Targets: map[string]constructorTarget{
@@ -190,8 +190,8 @@ func TestCollectRecordValueTypesUnwrapsTryHandledTupleAssignment(t *testing.T) {
 	}
 }
 
-func TestRecordCallInferenceErrorIncludesValueExpression(t *testing.T) {
-	tokens, err := LexSource("record-error.gpp", `record(key: keyID)`)
+func TestAnonymousStructCallInferenceErrorIncludesValueExpression(t *testing.T) {
+	tokens, err := LexSource("struct-error.gpp", `struct(key: keyID)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestRecordCallInferenceErrorIncludesValueExpression(t *testing.T) {
 	}
 	call, ok := expression.(*CallExpr)
 	if !ok {
-		t.Fatalf("expected record call, got %T", expression)
+		t.Fatalf("expected struct call, got %T", expression)
 	}
 	_, _, err = lowerRecordCallExprNode(call, constructorContext{Records: newRecordContext()})
 	if err == nil || err.Error() != "1:13: cannot infer type of record field key from keyID" {
@@ -216,7 +216,7 @@ func TestEmitInfersRecordFieldTypeFromClassSelector(t *testing.T) {
 
 func main() {
     var user *SessionUser
-    _ = record(name: user.Name)
+    _ = struct(name: user.Name)
 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -227,14 +227,14 @@ func main() {
 }
 
 func TestRewriteRecordCollectionLiteralsUsesBodyAST(t *testing.T) {
-	source := `func Users() []record {
-    return []record{__gpp_record_deadbeef{Name: "A"}}
+	source := `func Users() []struct { Name string } {
+    return []struct { Name string }{{Name: "A"}}
 }`
 	transformed, handled, err := rewriteRecordCollectionLiteralsAST(source, constructorContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !handled || !strings.Contains(transformed, "[]__gpp_record_deadbeef{") {
-		t.Fatalf("expected structured collection type lowering, handled=%v output=%s", handled, transformed)
+	if !handled || transformed != source {
+		t.Fatalf("native anonymous struct collection should remain unchanged, handled=%v output=%s", handled, transformed)
 	}
 }

@@ -64,7 +64,7 @@ second line__RAW__
 	_ = text
 	_ = user?.Name
 	_ = user?.Name ?? "Unknown"
-	_ = record(Name: "Ada")
+	_ = struct(Name: "Ada")
 	_ = users.Any(it => it.Name != "")
 	try { user.Greeting() } catch err { _ = err }
 }
@@ -117,7 +117,7 @@ func atExit() {}
 		modifiers[name] |= int(data[index+4])
 		previousLine, previousCharacter, previousLength = line, character, length
 	}
-	for _, expected := range []string{"class", "User", "Table", "Name", "Greeting", "template", "UserCard", "record", "?.", "??", "=>", "catch", "err", "atExit"} {
+	for _, expected := range []string{"class", "User", "Table", "Name", "Greeting", "template", "UserCard", "struct", "?.", "??", "=>", "catch", "err", "atExit"} {
 		if !found[expected] {
 			t.Errorf("semantic tokens omitted %q; got %#v", expected, found)
 		}
@@ -388,7 +388,7 @@ func inspect(users []User, user User) {
 	userValue := User()
 	childValue := Child()
 	labels := []string{"a", "b"}
-	profile := record(Name: "Ada", Age: 42)
+	profile := struct(Name: "Ada", Age: 42)
 	_ = user.Name
 	_ = userValue
 	_ = labels.Any(item => item != "")

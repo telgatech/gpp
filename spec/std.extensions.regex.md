@@ -22,6 +22,8 @@ case "/", regexp(`^/users/[0-9]+$`):
 
 Regex cases can be mixed with ordinary exact-match cases. The switch value is evaluated once, and multiple expressions in one case retain Go's first-match behavior.
 
+Literal patterns used directly in regex switch cases are compiled once during package initialization and reused. Dynamic pattern expressions are evaluated and compiled when their case is checked.
+
 `regexp(pattern)` is call syntax. Package selectors such as `regexp.Compile` and `regexp.MustCompile` remain ordinary Go package selectors. If the file has an import alias collision, GPP uses a separate generated alias for the builtin.
 
 The existing explicit, error-returning string extension remains available for patterns that may be invalid at runtime:

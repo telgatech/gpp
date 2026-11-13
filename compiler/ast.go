@@ -118,7 +118,7 @@ func (declaration *GoDecl) Span() Span {
 }
 
 // ValueDecl is a GPP value declaration whose initializer expressions require
-// GPP lowering (for example `let user = record(...)` or a `??` expression).
+// GPP lowering (for example `let user = struct(...)` or a `??` expression).
 // Its names, type, and values are structured nodes; the token slice is kept
 // only for exact source spans and comments.
 type ValueDecl struct {
