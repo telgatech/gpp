@@ -2,6 +2,8 @@
 
 ## 2026-11-13
 
+- Made backtick strings literal so Go template delimiters and other raw content pass through unchanged; double-quoted strings retain GPP interpolation.
+- Added `http.Server.Templates` for standard Go `html/template` sets, including named `define` execution and `{id}` path-pattern view lookup through `Context.HTML`.
 - Added the general `regexp(pattern)` builtin and regex matching in tagged switches; literal switch patterns compile once per source file and are reused, while dynamic patterns compile when their case is checked.
 - Consolidated regex demonstrations into `examples/regexp.gpp`, including `CompileRegex()`, native `regexp` selectors, and regex switch cases.
 - Removed legacy `record(...)` construction and `record` collection markers in favor of anonymous struct syntax.

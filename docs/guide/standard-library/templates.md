@@ -113,10 +113,11 @@ tpl.Listing(&output, "Bicycles")
 
 ## Bind a template to a URL path
 
-Use the `tpl.Path` annotation when a template should be selected by the
-incoming URL path. The annotation records a route-shaped pattern on the
-template; it does not register an HTTP handler by itself. For example, the
-template below is associated with any `/posts/{id}` request:
+Use the `tpl.Path` annotation when a GPP-declared template should be selected
+by the incoming URL path. The annotation records a route-shaped pattern on the
+template; it does not register an HTTP handler by itself. For traditional Go
+`html/template` sets passed through `http.Server.Templates`, define named Go
+templates with route-shaped names instead; see the [HTTP guide](/guide/standard-library/http#templates-and-error-pages). For example, this GPP template is associated with any `/posts/{id}` request:
 
 ```go
 template PostPage(post Post) @{tpl.Path("/posts/{id}")} {
@@ -124,11 +125,11 @@ template PostPage(post Post) @{tpl.Path("/posts/{id}")} {
 }
 ```
 
-`ctx.HTML(200, post)` automatically uses the current request path to find the
-matching `tpl.Path` annotation, supplies the matched path parameters, and
-writes the rendered template as an HTML response. If no template matches, it
-returns an error to the handler. The handler does not need to pass
-`ctx.Request.URL.Path` itself:
+When `http.Server.Templates` is nil, `ctx.HTML(200, post)` uses the current
+request path to find the matching `tpl.Path` annotation, supplies the matched
+path parameters, and writes the rendered template as an HTML response. If no
+template matches, it returns an error to the handler. The handler does not need
+to pass `ctx.Request.URL.Path` itself:
 
 ```go
 class App : http.Server {

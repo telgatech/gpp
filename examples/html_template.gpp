@@ -1,0 +1,24 @@
+package main
+
+import (
+    "fmt"
+    "html/template"
+    "net/http/httptest"
+    http "gpp/http"
+)
+
+func main() {
+    views := template.Must(template.New("/users/{id}").Parse(`<h1>Hello, {{.Name}}</h1>`))
+    request := httptest.NewRequest("GET", "/users/123", nil)
+    response := httptest.NewRecorder()
+    ctx := &http.Context{
+        Response: response,
+        Request: request,
+        Templates: views,
+    }
+
+    if err := ctx.HTML(200, struct(Name: "Ada")); err != nil {
+        panic(err)
+    }
+    fmt.Println(response.Code, response.Body.String())
+}

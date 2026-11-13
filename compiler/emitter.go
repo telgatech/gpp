@@ -1372,9 +1372,9 @@ func goASTNodeNeedsLowering(node ast.Decl, placements []AnnotationPlacement, con
 		}
 		switch value := current.(type) {
 		case *ast.BasicLit:
-			if value.Kind == token.STRING && len(value.Value) >= 2 {
+			if value.Kind == token.STRING && len(value.Value) >= 2 && value.Value[0] != '`' {
 				content := value.Value[1 : len(value.Value)-1]
-				needs = interpolationLiteralHasExpression(content) || strings.Contains(content, "{{{{") || strings.Contains(content, "}}}}")
+				needs = interpolationLiteralHasExpression(content) || strings.Contains(content, "{{{{") || strings.Contains(content, "}}}}") || strings.Contains(content, `\{{`)
 			}
 		case *ast.CallExpr:
 			identifier, ok := value.Fun.(*ast.Ident)
@@ -4130,11 +4130,11 @@ func tokensNeedInterpolationLowering(tokens []Token) bool {
 		return true
 	}
 	for _, token := range tokens {
-		if token.Kind != TokenString && token.Kind != TokenRawString {
+		if token.Kind != TokenString {
 			continue
 		}
 		content := token.Text[1 : len(token.Text)-1]
-		if strings.Contains(content, "{{{{") || strings.Contains(content, "}}}}") {
+		if strings.Contains(content, "{{{{") || strings.Contains(content, "}}}}") || strings.Contains(content, `\{{`) {
 			return true
 		}
 	}
@@ -4143,7 +4143,7 @@ func tokensNeedInterpolationLowering(tokens []Token) bool {
 
 func tokensHaveInterpolation(tokens []Token) bool {
 	for _, token := range tokens {
-		if token.Kind != TokenString && token.Kind != TokenRawString {
+		if token.Kind != TokenString {
 			continue
 		}
 		if len(token.Text) < 2 {
@@ -4190,9 +4190,6 @@ func sourceHasInterpolation(src string) bool {
 			if end < 0 {
 				return false
 			}
-			if interpolationLiteralHasExpression(src[i+1 : i+1+end]) {
-				return true
-			}
 			i += end + 2
 			continue
 		}
@@ -4203,6 +4200,10 @@ func sourceHasInterpolation(src string) bool {
 
 func interpolationLiteralHasExpression(content string) bool {
 	for i := 0; i+1 < len(content); {
+		if content[i] == '\\' && i+2 < len(content) && content[i+1] == '{' && content[i+2] == '{' {
+			i += 3
+			continue
+		}
 		if content[i] != '{' || content[i+1] != '{' {
 			i++
 			continue
@@ -5050,11 +5051,11 @@ func transformEscapedInterpolationChecked(src string) (string, error) {
 	}
 	replacements := []replacement{}
 	for _, token := range tokens {
-		if token.Kind != TokenString && token.Kind != TokenRawString || len(token.Text) < 2 {
+		if token.Kind != TokenString || len(token.Text) < 2 {
 			continue
 		}
 		content := token.Text[1 : len(token.Text)-1]
-		if !strings.Contains(content, "{{{{") && !strings.Contains(content, "}}}}") {
+		if !strings.Contains(content, "{{{{") && !strings.Contains(content, "}}}}") && !strings.Contains(content, `\{{`) {
 			continue
 		}
 		expression, parseErr := parseInterpolatedString(token)

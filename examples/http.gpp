@@ -2,17 +2,21 @@ package main
 
 import (
     "fmt"
+    htmltemplate "html/template"
     stdhttp "net/http"
     http "gpp/http"
 )
 
-template Page(value string) {
-	<h1>{{.}}</h1>
-}
-
-template ErrorPage(data any) {
-	<h1>{{.Code}} {{.Message}}</h1>
-	<p>{{.Path}}</p>
+func exampleTemplates() *htmltemplate.Template {
+    views := htmltemplate.New("views")
+    if _, err := views.Parse(`
+{{define "Page"}}<h1>{{.}}</h1>{{end}}
+{{define "ErrorPage"}}<h1>custom {{.Code}} {{.Message}}</h1><p>{{.Path}}</p>{{end}}
+{{define "/api/users/{id}"}}<h1>User: {{.Name}}</h1>{{end}}
+`); err != nil {
+        panic(err)
+    }
+    return views
 }
 
 class HealthStatus {
@@ -63,6 +67,10 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         return ctx.JSON(200, struct(Name: name, Active: active))
     }
 
+    func UserProfile(ctx *http.Context, id string @{http.Path}) error @{http.GET("/users/{id}")} {
+        return ctx.HTML(200, struct(Name: id))
+    }
+
     func CreateUser(ctx *http.Context, input *CreateUserRequest @{http.Body}) error @{http.POST("/users")} {
         return ctx.JSON(201, input)
     }
@@ -97,7 +105,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
     func Preview(ctx *http.Context) error @{
         http.GET("/preview"),
         http.Summary("Render the template preview"),
-        http.Description("Returns a small HTML page rendered from a GPP template."),
+        http.Description("Returns a small HTML page rendered from html/template."),
         http.Tags("Templates")
     } {
         return ctx.HTML(200, "GPP HTTP", "Page")
@@ -120,7 +128,7 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
 
 func main() {
     try {
-        app := App()
+        app := App(Templates: exampleTemplates())
         app.Mount(AdminRoutes(), "/admin", "admin.localhost")
         app.Listen(0)
     } catch err {

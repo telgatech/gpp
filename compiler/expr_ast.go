@@ -766,7 +766,9 @@ func parseInterpolatedString(token Token) (ExprNode, error) {
 	if len(token.Text) < 2 {
 		return nil, nil
 	}
-	raw := token.Kind == TokenRawString
+	if token.Kind == TokenRawString {
+		return nil, nil
+	}
 	content := token.Text[1 : len(token.Text)-1]
 	segments := []StringSegment{}
 	literal := strings.Builder{}
@@ -779,6 +781,12 @@ func parseInterpolatedString(token Token) (ExprNode, error) {
 		literal.Reset()
 	}
 	for index := 0; index < len(content); {
+		if strings.HasPrefix(content[index:], `\{{`) {
+			literal.WriteString("{{")
+			changed = true
+			index += 3
+			continue
+		}
 		if strings.HasPrefix(content[index:], "{{{{") {
 			literal.WriteString("{{")
 			changed = true
@@ -836,7 +844,7 @@ func parseInterpolatedString(token Token) (ExprNode, error) {
 	if !changed {
 		return nil, nil
 	}
-	return &InterpolatedStringExpr{Raw: raw, Segments: segments, SpanValue: token.Span}, nil
+	return &InterpolatedStringExpr{Segments: segments, SpanValue: token.Span}, nil
 }
 
 func expressionNodeSource(expression ExprNode) (string, error) {
