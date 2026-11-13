@@ -105,15 +105,16 @@ type constructorTarget struct {
 }
 
 type overloadContext struct {
-	Functions        map[string]map[int]string
-	FunctionTypes    map[string]map[string]string
-	Methods          map[string]map[int]string
-	MethodTypes      map[string]map[string]string
-	ClassMethods     map[string]map[string]map[int]string
-	ClassMethodTypes map[string]map[string]map[string]string
-	ClassFieldTypes  map[string]map[string]string
-	LocalTypes       map[string]string
-	CurrentClass     string
+	Functions             map[string]map[int]string
+	FunctionTypes         map[string]map[string]string
+	NativeFunctionReturns map[string][]string
+	Methods               map[string]map[int]string
+	MethodTypes           map[string]map[string]string
+	ClassMethods          map[string]map[string]map[int]string
+	ClassMethodTypes      map[string]map[string]map[string]string
+	ClassFieldTypes       map[string]map[string]string
+	LocalTypes            map[string]string
+	CurrentClass          string
 }
 
 type constructorContext struct {
@@ -226,13 +227,14 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 		Targets: targets,
 		Enums:   map[string]*EnumDecl{},
 		Overloads: overloadContext{
-			Functions:        map[string]map[int]string{},
-			FunctionTypes:    map[string]map[string]string{},
-			Methods:          map[string]map[int]string{},
-			MethodTypes:      map[string]map[string]string{},
-			ClassMethods:     map[string]map[string]map[int]string{},
-			ClassMethodTypes: map[string]map[string]map[string]string{},
-			ClassFieldTypes:  map[string]map[string]string{},
+			Functions:             map[string]map[int]string{},
+			FunctionTypes:         map[string]map[string]string{},
+			NativeFunctionReturns: map[string][]string{},
+			Methods:               map[string]map[int]string{},
+			MethodTypes:           map[string]map[string]string{},
+			ClassMethods:          map[string]map[string]map[int]string{},
+			ClassMethodTypes:      map[string]map[string]map[string]string{},
+			ClassFieldTypes:       map[string]map[string]string{},
 		},
 		FunctionSignatures:     map[string][]callableSignature{},
 		MethodSignatures:       map[string][]callableSignature{},
@@ -287,6 +289,9 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 
 func emitFile(file *File, context constructorContext) ([]byte, error) {
 	var out strings.Builder
+	if context.Overloads.NativeFunctionReturns == nil {
+		context.Overloads.NativeFunctionReturns = nativeFunctionReturnTypes(file)
+	}
 
 	fmt.Fprintf(&out, "package %s\n\n", goPackageName(file.Package))
 	regexAlias := ""
@@ -430,6 +435,112 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	result = mapGeneratedSourceLocations(result, context.GeneratedFilePath)
 
 	return result, nil
+}
+
+func nativeFunctionReturnTypes(file *File) map[string][]string {
+	returns := map[string][]string{}
+	ambiguous := map[string]bool{}
+	if file == nil {
+		return returns
+	}
+	addFunction := func(name string, results []string) {
+		if name == "" || len(results) == 0 || ambiguous[name] {
+			return
+		}
+		for index := range results {
+			results[index] = strings.TrimSpace(results[index])
+		}
+		if previous, exists := returns[name]; exists {
+			if !sameOverloadTypes(previous, results) {
+				delete(returns, name)
+				ambiguous[name] = true
+			}
+			return
+		}
+		returns[name] = append([]string(nil), results...)
+	}
+	add := func(declaration ast.Decl, fileSet *token.FileSet) {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Recv != nil || function.Type == nil || function.Type.Results == nil {
+			return
+		}
+		if fileSet == nil {
+			fileSet = token.NewFileSet()
+		}
+		results := []string{}
+		for _, result := range function.Type.Results.List {
+			var source strings.Builder
+			if err := format.Node(&source, fileSet, result.Type); err != nil {
+				continue
+			}
+			count := len(result.Names)
+			if count == 0 {
+				count = 1
+			}
+			for range count {
+				results = append(results, strings.TrimSpace(source.String()))
+			}
+		}
+		addFunction(function.Name.Name, results)
+	}
+	for _, declaration := range file.Decls {
+		switch value := declaration.(type) {
+		case *FunctionDecl:
+			results := []string{}
+			for _, result := range value.Method.ResultFieldsAST {
+				if result.Type == nil {
+					continue
+				}
+				if typeName, err := typeNodeSource(result.Type); err == nil {
+					results = append(results, typeName)
+				}
+			}
+			if len(value.Method.ResultFieldsAST) == 0 && value.Method.ResultAST != nil {
+				if typeName, err := typeNodeSource(value.Method.ResultAST); err == nil {
+					results = append(results, typeName)
+				}
+			}
+			addFunction(value.Name, results)
+		case *GoDecl:
+			for _, node := range value.Declarations {
+				add(node, value.FileSet)
+			}
+		case *MixedDecl:
+			for _, node := range value.GoASTDecls {
+				add(node, value.GoASTFileSet)
+			}
+		}
+	}
+	return returns
+}
+
+func sameOverloadTypes(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func mergeNativeFunctionReturnTypes(target map[string][]string, ambiguous map[string]bool, incoming map[string][]string) {
+	for name, results := range incoming {
+		if ambiguous[name] {
+			continue
+		}
+		previous, exists := target[name]
+		if !exists {
+			target[name] = append([]string(nil), results...)
+			continue
+		}
+		if !sameOverloadTypes(previous, results) {
+			delete(target, name)
+			ambiguous[name] = true
+		}
+	}
 }
 
 func fileHasTernary(file *File) bool {
@@ -1347,9 +1458,31 @@ func goDeclNeedsLowering(declaration *GoDecl, node ast.Decl, context constructor
 			needs = true
 			return false
 		}
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok && overloadMethodNeedsLowering(selector.Sel.Name, context.Overloads) {
+			needs = true
+			return false
+		}
 		return !needs
 	})
 	return needs
+}
+
+func overloadMethodNeedsLowering(name string, overloads overloadContext) bool {
+	for _, methods := range overloads.ClassMethods {
+		for _, goName := range methods[name] {
+			if goName != "" && goName != name {
+				return true
+			}
+		}
+	}
+	for _, methods := range overloads.ClassMethodTypes {
+		for _, goName := range methods[name] {
+			if goName != "" && goName != name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // goASTNodeNeedsLowering applies the narrow feature check directly to a single
@@ -1379,6 +1512,9 @@ func goASTNodeNeedsLowering(node ast.Decl, placements []AnnotationPlacement, con
 		case *ast.CallExpr:
 			identifier, ok := value.Fun.(*ast.Ident)
 			if ok && context.Targets[identifier.Name].Class != nil {
+				needs = true
+			}
+			if selector, ok := value.Fun.(*ast.SelectorExpr); ok && overloadMethodNeedsLowering(selector.Sel.Name, context.Overloads) {
 				needs = true
 			}
 		}
@@ -3263,6 +3399,14 @@ type overloadASTBody struct {
 	types map[string]string
 }
 
+const overloadNativeFunctionReturnsPrefix = "\x00gpp-native-returns:"
+
+func addNativeFunctionReturns(types map[string]string, overloads overloadContext) {
+	for name, results := range overloads.NativeFunctionReturns {
+		types[overloadNativeFunctionReturnsPrefix+name] = strings.Join(results, "\x00")
+	}
+}
+
 func transformOverloadsAST(src string, overloads overloadContext) (string, bool, error) {
 	tokens, err := LexSource("overloads", src)
 	if err != nil {
@@ -3284,6 +3428,7 @@ func transformOverloadsAST(src string, overloads overloadContext) (string, bool,
 			if types == nil {
 				types = map[string]string{}
 			}
+			addNativeFunctionReturns(types, overloads)
 			for _, parameter := range function.Method.ParameterAST {
 				if parameter.Type == nil {
 					continue
@@ -3309,6 +3454,7 @@ func transformOverloadsAST(src string, overloads overloadContext) (string, bool,
 		if types == nil {
 			types = map[string]string{}
 		}
+		addNativeFunctionReturns(types, overloads)
 		bodies = append(bodies, overloadASTBody{block: block, types: types})
 	}
 	if len(bodies) == 0 {
@@ -3543,7 +3689,7 @@ func collectOverloadStatementType(statement Stmt, types map[string]string) {
 		for index, name := range value.Names {
 			inferred := strings.TrimSpace(declared)
 			if inferred == "" && index < len(value.Values) {
-				inferred = overloadExpressionTypeKey(value.Values[index], types)
+				inferred = overloadExpressionResultTypeKey(value.Values[index], index, types)
 			}
 			if inferred != "" {
 				types[name.Text] = inferred
@@ -3653,6 +3799,7 @@ func collectOverloadCalls(expression ExprNode, types map[string]string, visit fu
 				}
 			}
 		}
+		collectOverloadStatementTypes(value.Body, literalTypes)
 		collectOverloadBodyCalls(value.Body, literalTypes, visit)
 	}
 }
@@ -3713,6 +3860,10 @@ func overloadExpressionTypeKey(expression ExprNode, types map[string]string) str
 			return "float64"
 		}
 		return types[value.Name]
+	case *CallExpr:
+		if _, ok := value.Callee.(*NameExpr); ok {
+			return overloadExpressionResultTypeKey(value, 0, types)
+		}
 	case *UnaryExpr:
 		if value.Operator == "&" {
 			if name := overloadExpressionTypeKey(value.Operand, types); name != "" {
@@ -3735,6 +3886,24 @@ func overloadExpressionTypeKey(expression ExprNode, types map[string]string) str
 			return "bool"
 		}
 		return overloadExpressionTypeKey(value.Left, types)
+	}
+	return ""
+}
+
+func overloadExpressionResultTypeKey(expression ExprNode, index int, types map[string]string) string {
+	if call, ok := expression.(*CallExpr); ok {
+		if name, ok := call.Callee.(*NameExpr); ok {
+			if encoded := types[overloadNativeFunctionReturnsPrefix+name.Name]; encoded != "" {
+				results := strings.Split(encoded, "\x00")
+				if index >= 0 && index < len(results) {
+					return strings.TrimSpace(results[index])
+				}
+			}
+		}
+		return ""
+	}
+	if index == 0 {
+		return overloadExpressionTypeKey(expression, types)
 	}
 	return ""
 }

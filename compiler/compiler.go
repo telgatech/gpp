@@ -472,12 +472,18 @@ func emitPackageFiles(files []*File, outputDir string, options CompileOptions, m
 	ternary := &ternaryContext{}
 	preludeEmitted := false
 	output := generatedPackageOutput{Fingerprint: fingerprint, Files: make(map[string]string, len(files))}
+	nativeFunctionReturns := map[string][]string{}
+	ambiguousNativeFunctionReturns := map[string]bool{}
+	for _, packageFile := range files {
+		mergeNativeFunctionReturnTypes(nativeFunctionReturns, ambiguousNativeFunctionReturns, nativeFunctionReturnTypes(packageFile))
+	}
 	for _, file := range files {
 		context, err := constructorContextForFile(file, model, options.ModulePath)
 		if err != nil {
 			return generatedPackageOutput{}, diagnosticAt(file.Name, Span{}, err)
 		}
 		context.GeneratedFilePath = outputPaths[file]
+		context.Overloads.NativeFunctionReturns = nativeFunctionReturns
 		context.Records = records
 		context.Introspection = introspection
 		context.Exceptions = exceptions
@@ -553,7 +559,7 @@ func generatedPackageFingerprints(program *Program, model *SemanticModel, option
 	localFingerprints := make(map[string]string, len(filesByPackage))
 	for packageName, files := range filesByPackage {
 		h := sha256.New()
-		writePackageHashPart(h, "package-fingerprint-version=6")
+		writePackageHashPart(h, "package-fingerprint-version=7")
 		writePackageHashPart(h, "package="+packageName)
 		for _, file := range files {
 			writePackageHashPart(h, "source-path="+file.SourcePath)

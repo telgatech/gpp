@@ -40,6 +40,13 @@ func gppServe(server *stdhttp.Server, listener net.Listener, ready chan bool, do
 
 type gppHTTPRequestContextKey struct{}
 
+type gppHTTPProductionTemplateCacheEntry struct {
+	Templates *htmltemplate.Template
+	Err       error
+}
+
+var gppHTTPProductionTemplateCache sync.Map
+
 type gppHTTPRequestState struct {
 	Context     *Context
 	FailureCode int
@@ -202,7 +209,12 @@ func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
 	return stdhttp.HandlerFunc(func(response stdhttp.ResponseWriter, request *stdhttp.Request) {
 		ctx := gppNewContext(response, request)
 		ctx.TemplateScope = gppTemplateScope(app)
-		ctx.Templates = gppHTTPTemplates(app)
+		templates, templateErr := gppHTTPTemplatesForRequest(app)
+		if templateErr != nil {
+			gppCallError(app, ctx, stdhttp.StatusInternalServerError, templateErr)
+			return
+		}
+		ctx.Templates = templates
 		state := &gppHTTPRequestState{Context: ctx}
 		if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
 			gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
@@ -234,6 +246,12 @@ func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
 		}
 		if afterErr != nil {
 			gppCallError(app, ctx, stdhttp.StatusInternalServerError, afterErr)
+			return
+		}
+		if !ctx.Written {
+			if err := ctx.Respond(); err != nil {
+				gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+			}
 		}
 	})
 }
@@ -274,6 +292,73 @@ func gppHTTPTemplates(app any) *htmltemplate.Template {
 	}
 	templates, _ := field.Interface().(*htmltemplate.Template)
 	return templates
+}
+
+func gppHTTPTemplateFiles(app any) []string {
+	value := reflect.ValueOf(app)
+	if !value.IsValid() {
+		return nil
+	}
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return nil
+	}
+	field := value.FieldByName("TemplateFiles")
+	if !field.IsValid() || !field.CanInterface() || field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.String {
+		return nil
+	}
+	files := make([]string, field.Len())
+	for index := range files {
+		files[index] = field.Index(index).String()
+	}
+	return files
+}
+
+func gppHTTPTemplatesForRequest(app any) (*htmltemplate.Template, error) {
+	templates := gppHTTPTemplates(app)
+	files := gppHTTPTemplateFiles(app)
+	if templates != nil && len(files) > 0 {
+		return nil, fmt.Errorf("http: configure either Templates or TemplateFiles, not both")
+	}
+	if templates != nil || len(files) == 0 {
+		return templates, nil
+	}
+	if gppHTTPIsProduction() {
+		workingDirectory, _ := os.Getwd()
+		key := workingDirectory + "\x00" + strings.Join(files, "\x00")
+		if cached, ok := gppHTTPProductionTemplateCache.Load(key); ok {
+			entry := cached.(gppHTTPProductionTemplateCacheEntry)
+			return entry.Templates, entry.Err
+		}
+		parsed, err := htmltemplate.ParseFiles(files...)
+		cached, _ := gppHTTPProductionTemplateCache.LoadOrStore(key, gppHTTPProductionTemplateCacheEntry{Templates: parsed, Err: err})
+		entry := cached.(gppHTTPProductionTemplateCacheEntry)
+		return entry.Templates, entry.Err
+	}
+	return htmltemplate.ParseFiles(files...)
+}
+
+func gppHTTPIsProduction() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("ENV")), "production")
+}
+
+func gppHTTPValidateTemplateConfig(app any) error {
+	if gppHTTPTemplates(app) != nil && len(gppHTTPTemplateFiles(app)) > 0 {
+		return fmt.Errorf("http: configure either Templates or TemplateFiles, not both")
+	}
+	return nil
+}
+
+func gppHTTPServerLabel(app any) string {
+	if name := strings.TrimSpace(gppHTTPStringField(app, "Name")); name != "" {
+		return name
+	}
+	return "gpp/http"
 }
 
 func gppHTTPStringField(app any, name string) string {
@@ -525,7 +610,7 @@ func gppErrorTemplate(app any) string {
 func gppCallError(app any, ctx *Context, code int, cause error) {
 	if ctx != nil && ctx.SSE != nil && ctx.SSE.Started {
 		if cause != nil {
-			log.Printf("http: handler error after SSE stream started: %v", cause)
+			log.Printf("%s: handler error after SSE stream started: %v", gppHTTPServerLabel(app), cause)
 		}
 		return
 	}
@@ -727,7 +812,7 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		ctx.Conn = connection
 		handler := reflect.ValueOf(router).MethodByName(methodName)
 		if !handler.IsValid() {
-			log.Printf("http: websocket handler %s not found", methodName)
+			log.Printf("%s: websocket handler %s not found", gppHTTPServerLabel(app), methodName)
 			_ = connection.Close()
 			return
 		}
@@ -738,15 +823,15 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		}
 		afterErr := gppCallHook(app, "AfterRequest", ctx)
 		if routeErr != nil {
-			log.Printf("http: websocket handler %s failed: %v", methodName, routeErr)
+			log.Printf("%s: websocket handler %s failed: %v", gppHTTPServerLabel(app), methodName, routeErr)
 			if afterErr != nil {
-				log.Printf("http: after-request hook failed after websocket handler %s: %v", methodName, afterErr)
+				log.Printf("%s: after-request hook failed after websocket handler %s: %v", gppHTTPServerLabel(app), methodName, afterErr)
 			}
 			_ = connection.Close()
 			return
 		}
 		if afterErr != nil {
-			log.Printf("http: after-request hook failed after websocket handler %s: %v", methodName, afterErr)
+			log.Printf("%s: after-request hook failed after websocket handler %s: %v", gppHTTPServerLabel(app), methodName, afterErr)
 			_ = connection.Close()
 		}
 	})
@@ -1022,6 +1107,15 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 	if fallback {
 		return gppRegisterMuxHandler(mux, "/", func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			ctx, state := gppContextForRequest(w, r, app)
+			if (r.Method == stdhttp.MethodGet || r.Method == stdhttp.MethodHead) && (len(ctx.Data) > 0 || gppHTTPTemplateMatchesPath(ctx.Templates, r.URL.Path)) {
+				if state != nil {
+					return
+				}
+				if err := ctx.Respond(); err != nil {
+					gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
+				}
+				return
+			}
 			if state != nil {
 				state.FailureCode = stdhttp.StatusNotFound
 				return
@@ -1030,6 +1124,14 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 		})
 	}
 	return nil
+}
+
+func gppHTTPTemplateMatchesPath(templates *htmltemplate.Template, path string) bool {
+	if templates == nil {
+		return false
+	}
+	_, matched := gppHTTPTemplateNameForPath(templates, path)
+	return matched
 }
 
 type gppTemplateStamp struct {
@@ -1110,8 +1212,12 @@ type gppHTTPErrorData struct {
 // Server runs an HTTP application with annotated routes, middleware hooks, and mounted routers.
 class Server {
 	HTTPServer *stdhttp.Server
+	// Name identifies this server in its logs. An empty name uses the default gpp/http label.
+	Name string
 	// Templates is the html/template set used by Context.HTML. Parse named views into it before serving.
 	Templates *htmltemplate.Template
+	// TemplateFiles are parsed on every request so edits appear without restarting the server. Use Templates to reuse a pre-parsed set.
+	TemplateFiles []string
 	PublicDir string
 	DirListing bool
 	PublicCacheControl string
@@ -1269,6 +1375,16 @@ class Server {
 		if this.GppDynamicObject != nil {
 			app = this.GppDynamicObject
 		}
+		if err := gppHTTPValidateTemplateConfig(app); err != nil {
+			_ = listener.Close()
+			return err
+		}
+		if gppHTTPIsProduction() && len(gppHTTPTemplateFiles(app)) > 0 {
+			if _, err := gppHTTPTemplatesForRequest(app); err != nil {
+				_ = listener.Close()
+				return err
+			}
+		}
 		descriptor := gppRuntimeClass(app)
 		mux := stdhttp.NewServeMux()
 		prefix := ""
@@ -1334,7 +1450,11 @@ class Server {
 			return err
 		}
 		listenerURL := gppHTTPListenerURL(listener.Addr())
-		log.Printf("gpp/http: listening on %s", listenerURL)
+		if name := strings.TrimSpace(this.Name); name != "" {
+			log.Printf("%s listening on %s", name, listenerURL)
+		} else {
+			log.Printf("gpp/http: listening on %s", listenerURL)
+		}
 		if len(tpl.ManagedSourcePaths()) > 0 {
 			this.templateWatchStop = make(chan struct{})
 			this.templateWatchDone = make(chan struct{})

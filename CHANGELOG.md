@@ -2,8 +2,13 @@
 
 ## 2026-11-13
 
+- Added `http.Server.TemplateFiles` for live development template reloads and one-time parsing when `ENV=production`; `Templates` and `TemplateFiles` are mutually exclusive.
+- Added an optional `http.Server.Name` for identifying server startup, SSE, and WebSocket logs.
+- Added automatic HTTP response finalization from map-backed `Context.Data`, with registered HTML views available as GET/HEAD fallbacks when no explicit route matches.
+- Extended overload lowering to native Go declarations, including GPP receiver types inferred through helper returns and nested function literals; bumped compiler and build cache versions to regenerate existing output.
 - Made backtick strings literal so Go template delimiters and other raw content pass through unchanged; double-quoted strings retain GPP interpolation.
 - Added `http.Server.Templates` for standard Go `html/template` sets, including named `define` execution and `{id}` path-pattern view lookup through `Context.HTML`.
+- Fixed trailing-error promotion for calls nested in `go` statement arguments; argument errors propagate before the goroutine starts while the launched function's own error remains discarded.
 - Added the general `regexp(pattern)` builtin and regex matching in tagged switches; literal switch patterns compile once per source file and are reused, while dynamic patterns compile when their case is checked.
 - Consolidated regex demonstrations into `examples/regexp.gpp`, including `CompileRegex()`, native `regexp` selectors, and regex switch cases.
 - Removed legacy `record(...)` construction and `record` collection markers in favor of anonymous struct syntax.

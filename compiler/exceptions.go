@@ -1172,6 +1172,24 @@ func lowerExceptionPromotionStatement(statement Stmt, context constructorContext
 			return err
 		}
 		value.Expression = lowered
+	case *GoStmt:
+		// A go statement discards the called function's results, but evaluates
+		// its function value and arguments in the current goroutine. Promote
+		// errors from nested calls there without promoting the launched call's
+		// own trailing error across the goroutine boundary.
+		if call, ok := value.Expression.(*CallExpr); ok {
+			lowered, err := lowerExceptionPromotionCallChildren(call, context)
+			if err != nil {
+				return err
+			}
+			value.Expression = lowered
+		} else {
+			lowered, err := lowerNestedExceptionPromotionExpr(value.Expression, context)
+			if err != nil {
+				return err
+			}
+			value.Expression = lowered
+		}
 	case *SendStmt:
 		var err error
 		value.Channel, err = lowerNestedExceptionPromotionExpr(value.Channel, context)

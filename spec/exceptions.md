@@ -1019,7 +1019,15 @@ Thrown errors do not propagate across goroutine boundaries.
 
 Each goroutine has its own propagation stack.
 
-For v1, if a direct goroutine call would require automatic trailing-error promotion, reject it.
+For v1, if a direct goroutine call would require automatic trailing-error promotion, reject it. A trailing error from the launched function itself is not promoted across the goroutine boundary.
+
+The function value and arguments are evaluated before the new goroutine starts. Therefore, a nested call in the callee expression or an argument may still promote its error in the current goroutine:
+
+```gpp
+go startServer(LoadConfig())
+```
+
+Here `LoadConfig()` runs in the current goroutine and its trailing error is promoted there; `startServer` runs in the new goroutine.
 
 Example:
 

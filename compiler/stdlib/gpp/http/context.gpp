@@ -19,6 +19,7 @@ class Context {
 	Response stdhttp.ResponseWriter
 	Request *stdhttp.Request
 	Values map[string]any
+	Data map[string]any
 	Status int
 	Written bool
 	Conn *websocket.Conn
@@ -118,6 +119,16 @@ class Context {
 			return this.HTML(status, data)
 		}
 		return this.JSON(status, data)
+	}
+
+	// Respond writes the context's data using the negotiated response format.
+	// The server calls this automatically when a handler returns without writing.
+	func Respond() error {
+		status := this.Status
+		if status == 0 {
+			status = stdhttp.StatusOK
+		}
+		return this.Respond(status, this.Data)
 	}
 
 	// HTML renders a template as an HTML response. An empty key uses the request path.
@@ -283,7 +294,7 @@ extend *Context {
 }
 
 func gppNewContext(response stdhttp.ResponseWriter, request *stdhttp.Request) *Context {
-	ctx := Context(Response: response, Request: request, Values: map[string]any{})
+	ctx := Context(Response: response, Request: request, Values: map[string]any{}, Data: map[string]any{})
 	ctx.SSE = SSEStream(Context: ctx)
 	return ctx
 }
