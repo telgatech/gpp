@@ -805,15 +805,15 @@ func main() {
 	if structValue.Name != "Grace" || structValue.Age != 85 { panic("Go struct JSON binding failed") }
 
 	recordContext := newContext("POST", "/record", "application/json", "{\"name\":\"Margaret\",\"age\":86,\"ignored\":\"field\"}")
-	recordValue := recordContext.Bind[record(name: string, age: int)]()
+	recordValue := recordContext.Bind[struct(name: string, age: int)]()
 	if recordValue.name != "Margaret" || recordValue.age != 86 { panic("record JSON binding failed") }
 
 	pointerRecordContext := newContext("POST", "/record-pointer", "application/json", "{\"name\":\"Lin\",\"age\":42}")
-	pointerRecord := pointerRecordContext.Bind[*record(name: string, age: int)]()
+	pointerRecord := pointerRecordContext.Bind[*struct(name: string, age: int)]()
 	if pointerRecord.name != "Lin" || pointerRecord.age != 42 { panic("pointer record JSON binding failed") }
 
 	queryContext := newContext("GET", "/query?name=Katherine&age=101", "", "")
-	queryValue := queryContext.Bind[record(name: string, age: int)]()
+	queryValue := queryContext.Bind[struct(name: string, age: int)]()
 	if queryValue.name != "Katherine" || queryValue.age != 101 { panic("record query binding failed") }
 
 	formContext := newContext("POST", "/form", "application/x-www-form-urlencoded", "name=Frances&age=68")
@@ -821,7 +821,7 @@ func main() {
 	if formValue.Name != "Frances" || formValue.Age != 68 { panic("class form binding failed") }
 
 	badContext := newContext("POST", "/bad", "application/json", "{\"name\":\"bad\",\"age\":\"not an integer\"}")
-	_, bindErr := badContext.Bind[record(name: string, age: int)]()
+	_, bindErr := badContext.Bind[struct(name: string, age: int)]()
 	if bindErr == nil { panic("expected invalid record field to return an error") }
 
 	fmt.Println("generic HTTP binding passed")
@@ -1220,8 +1220,8 @@ class App : http.Server @{http.IP("127.0.0.1"), http.OpenAPI, http.Swagger("/swa
 	func Create(ctx *http.Context) error @{
 		http.POST("/swagger"),
 		http.Summary("Create a health status"),
-		http.RequestBody("application/json", "Health status to create", record(OK: true)),
-		http.ResponseBody(201, "Health status created", "application/json", record(OK: true)),
+		http.RequestBody("application/json", "Health status to create", struct(OK: true)),
+		http.ResponseBody(201, "Health status created", "application/json", struct(OK: true)),
 		http.ResponseBody(400, "The request is invalid", "", nil)
 	} {
 		status := HealthStatus()
@@ -1559,7 +1559,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
     }
 
     func Accepted(ctx *http.Context) error @{http.GET("/accepted")} {
-        return ctx.JSON(202, record(OK: true))
+        return ctx.JSON(202, struct(OK: true))
     }
 
     func View(ctx *http.Context) error @{http.GET("/view")} {
@@ -3532,8 +3532,8 @@ func TestCompileFilesDeduplicatesRecordShapesAcrossFiles(t *testing.T) {
 	second := filepath.Join(inputDir, "second.gpp")
 
 	for filename, source := range map[string]string{
-		first:  "func First() record { return record(name: \"A\") }\n",
-		second: "func Second() record { return record(name: \"B\") }\n",
+		first:  "func First() struct { return struct(name: \"A\") }\n",
+		second: "func Second() struct { return struct(name: \"B\") }\n",
 	} {
 		if err := os.WriteFile(filename, []byte(source), 0644); err != nil {
 			t.Fatal(err)
@@ -3572,8 +3572,8 @@ func TestCompileFilesSupportsExportedCrossPackageRecords(t *testing.T) {
 
 	if err := os.WriteFile(people, []byte(`package demo.people
 
-func GetUser() record {
-    return record(Name: "Bob", Age: 42)
+func GetUser() struct {
+    return struct(Name: "Bob", Age: 42)
 }
 
 `), 0644); err != nil {
@@ -3623,8 +3623,8 @@ import (
     "fmt"
 )
 
-func GetUser() record {
-    return record(
+func GetUser() struct {
+    return struct(
         Name: "Bob",
         internal: "debug",
     )

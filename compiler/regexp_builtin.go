@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -62,13 +63,17 @@ func isRegexpBuiltinCallee(expression ExprNode) bool {
 	return ok && name.Name == "regexp"
 }
 
-func rewriteRegexpBuiltins(source, alias string) (string, error) {
+func rewriteRegexpBuiltins(source, alias, sourceKey string) (string, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "generated.go", "package generated\n"+source, parser.ParseComments|parser.AllErrors)
 	if err != nil {
 		return "", fmt.Errorf("cannot lower regexp builtin: %w", err)
 	}
-	rewriter := regexpBuiltinRewriter{alias: alias}
+	rewriter := regexpBuiltinRewriter{
+		alias:        alias,
+		sourceKey:    sourceKey,
+		casePatterns: map[string]string{},
+	}
 	if err := rewriter.rewriteFile(file); err != nil {
 		return "", err
 	}
@@ -84,9 +89,12 @@ func rewriteRegexpBuiltins(source, alias string) (string, error) {
 }
 
 type regexpBuiltinRewriter struct {
-	alias string
-	next  int
-	used  map[string]bool
+	alias        string
+	sourceKey    string
+	next         int
+	used         map[string]bool
+	casePatterns map[string]string
+	extraDecls   []ast.Decl
 }
 
 func (rewriter *regexpBuiltinRewriter) rewriteFile(file *ast.File) error {
@@ -113,6 +121,15 @@ func (rewriter *regexpBuiltinRewriter) rewriteFile(file *ast.File) error {
 		if rewriteErr != nil {
 			return false
 		}
+		if literal, ok := node.(*ast.FuncLit); ok {
+			statements, err := rewriter.rewriteStmtList(literal.Body.List)
+			if err != nil {
+				rewriteErr = err
+				return false
+			}
+			literal.Body.List = statements
+			return true
+		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok || !isRegexpBuiltinCall(call) {
 			return true
@@ -125,7 +142,11 @@ func (rewriter *regexpBuiltinRewriter) rewriteFile(file *ast.File) error {
 		*call = *rewritten
 		return true
 	})
-	return rewriteErr
+	if rewriteErr != nil {
+		return rewriteErr
+	}
+	file.Decls = append(file.Decls, rewriter.extraDecls...)
+	return nil
 }
 
 func (rewriter *regexpBuiltinRewriter) rewriteStmtList(statements []ast.Stmt) ([]ast.Stmt, error) {
@@ -274,7 +295,7 @@ func (rewriter *regexpBuiltinRewriter) rewriteSwitch(statement *ast.SwitchStmt) 
 		conditions := make([]ast.Expr, 0, len(clause.List))
 		for _, expression := range clause.List {
 			if originalCall := regexpCaseCall(expression); originalCall != nil {
-				call, err := rewriter.compileCall(originalCall)
+				call, err := rewriter.caseRegexp(originalCall)
 				if err != nil {
 					return nil, err
 				}
@@ -353,4 +374,43 @@ func (rewriter *regexpBuiltinRewriter) compileCall(call *ast.CallExpr) (*ast.Cal
 		Fun:  &ast.SelectorExpr{X: ast.NewIdent(rewriter.alias), Sel: ast.NewIdent("MustCompile")},
 		Args: call.Args,
 	}, nil
+}
+
+func (rewriter *regexpBuiltinRewriter) caseRegexp(call *ast.CallExpr) (ast.Expr, error) {
+	compiled, err := rewriter.compileCall(call)
+	if err != nil {
+		return nil, err
+	}
+	literal, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return compiled, nil
+	}
+	pattern, err := strconv.Unquote(literal.Value)
+	if err != nil {
+		return nil, err
+	}
+	if existing := rewriter.casePatterns[pattern]; existing != "" {
+		return ast.NewIdent(existing), nil
+	}
+	name := rewriter.freshRegexpName(pattern)
+	rewriter.casePatterns[pattern] = name
+	rewriter.extraDecls = append(rewriter.extraDecls, &ast.GenDecl{
+		Tok: token.VAR,
+		Specs: []ast.Spec{&ast.ValueSpec{
+			Names:  []*ast.Ident{ast.NewIdent(name)},
+			Values: []ast.Expr{compiled},
+		}},
+	})
+	return ast.NewIdent(name), nil
+}
+
+func (rewriter *regexpBuiltinRewriter) freshRegexpName(pattern string) string {
+	hash := sha256.Sum256([]byte(rewriter.sourceKey + "\x00" + pattern))
+	base := fmt.Sprintf("__gppRegexpPattern_%x", hash[:8])
+	name := base
+	for suffix := 2; rewriter.used[name]; suffix++ {
+		name = fmt.Sprintf("%s_%d", base, suffix)
+	}
+	rewriter.used[name] = true
+	return name
 }

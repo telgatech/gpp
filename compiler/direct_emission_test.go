@@ -283,7 +283,7 @@ func Choose(value Status) chan int {
 	}
 }
 
-func TestDirectFunctionEmissionLowersRecordCalls(t *testing.T) {
+func TestDirectFunctionEmissionRejectsLegacyRecordCalls(t *testing.T) {
 	file, err := ParseFile("direct-record.gpp", `
 func Make() any {
 	return record(name: "Bob", age: 42)
@@ -292,14 +292,8 @@ func Make() any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	function := file.Decls[0].(*FunctionDecl)
-	context := constructorContext{Records: newRecordContext()}
-	output, handled, err := directFunctionSource(function, context)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !handled || strings.Contains(output, "record(") || !strings.Contains(output, "__gpp_record_") {
-		t.Fatalf("record call was not lowered structurally: handled=%v output=%s", handled, output)
+	if _, err := Emit(file); err == nil {
+		t.Fatal("legacy record(...) constructor should be rejected")
 	}
 }
 

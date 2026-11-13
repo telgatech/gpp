@@ -2313,7 +2313,7 @@ func validateCallArgumentStyle(call *CallExpr) error {
 	return sourceLineError(call.Span(), err)
 }
 
-// lowerRecordCollectionTypeNode resolves []record and map[K]record directly
+// lowerRecordCollectionTypeNode resolves []struct and map[K]struct directly
 // on the expression AST.  Collection literals are the one record form where
 // the element shape is inferred from their children; leaving the TypeNode as
 // `record` would let direct Go AST emission produce invalid Go source.
@@ -2348,7 +2348,7 @@ func lowerRecordCollectionTypeNode(literal *CompositeLiteralExpr, context constr
 	return fmt.Errorf("cannot infer record collection element type")
 }
 
-// lowerRecordCallExprNode lowers the GPP record(name: value, ...) form to a
+// lowerRecordCallExprNode lowers the GPP struct(name: value, ...) form to a
 // generated structural composite literal.  Keeping this conversion on the
 // expression AST means direct function/method emission does not need to render
 // the call to source merely to infer the record shape.

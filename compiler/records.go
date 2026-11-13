@@ -797,7 +797,7 @@ func rewriteLetSyntax(src string) string {
 
 func transformRecordLiterals(src string, valueTypes map[string]string, context constructorContext, strict bool) (string, error) {
 	tokens, err := LexSource("record", src)
-	if err != nil || !tokenSequence(tokens, "record", "(") && !tokenSequence(tokens, "struct", "(") {
+	if err != nil || !tokenSequence(tokens, "struct", "(") {
 		return src, nil
 	}
 	if transformed, handled, err := transformRecordLiteralsAST(src, valueTypes, context, strict); handled {
@@ -1574,10 +1574,7 @@ func rewriteRecordCollectionLiterals(src string, context constructorContext) (st
 			index = end
 			continue
 		}
-		keyword := "record"
-		if !keywordAt(src, index, keyword) {
-			keyword = "struct"
-		}
+		keyword := "struct"
 		if !keywordAt(src, index, keyword) || (index > 0 && isIdentPart(src[index-1])) {
 			output.WriteByte(src[index])
 			index++
@@ -2318,11 +2315,11 @@ func namedRecordResultKind(parts []string) (string, bool) {
 }
 
 func isAnonymousStructMarker(parts []string) bool {
-	return len(parts) == 1 && (parts[0] == "record" || parts[0] == "struct")
+	return len(parts) == 1 && parts[0] == "struct"
 }
 
 func isAnonymousStructCall(name string) bool {
-	return name == "record" || name == "struct"
+	return name == "struct"
 }
 
 func inferRecordFunctionResultAST(block *BlockStmt, kind string, valueTypes map[string]string, context constructorContext, functionName string) (string, error) {

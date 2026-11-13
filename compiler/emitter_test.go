@@ -1689,44 +1689,18 @@ func main() {
 	}
 }
 
-func TestEmitSupportsAnonymousRecords(t *testing.T) {
-	file, err := ParseFile("records.gpp", `
-func GetUser() record {
-    return record(
-        name: "Bob",
-        age: 42,
-        profile: record(active: true),
-    )
-}
-
+func TestEmitRejectsLegacyRecordConstructor(t *testing.T) {
+	file, err := ParseFile("legacy_record.gpp", `
 func main() {
-    let user = GetUser()
-    _ = user.name
-    _ = user.profile.active
+    _ = record(name: "Bob")
 }
 `)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	code, err := Emit(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	generated := string(code)
-	for _, expected := range []string{
-		"type __gpp_record_",
-		"func GetUser() __gpp_record_",
-		"name: \"Bob\"",
-		"age: 42",
-	} {
-		if !strings.Contains(generated, expected) {
-			t.Fatalf("anonymous record output missing %q:\n%s", expected, code)
-		}
-	}
-	if strings.Contains(generated, "let user") {
-		t.Fatalf("let syntax was not lowered:\n%s", code)
+	if _, err := Emit(file); err == nil {
+		t.Fatal("legacy record(...) constructor should be rejected")
 	}
 }
 
@@ -1860,11 +1834,11 @@ func main() {
 
 func TestEmitInfersRecordParametersAfterFunctionResultInference(t *testing.T) {
 	file, err := ParseFile("record_parameter_inference.gpp", `
-func getUser() record {
-    return record(Name: "Bob", Age: 42)
+func getUser() struct {
+    return struct(Name: "Bob", Age: 42)
 }
 
-func userName(user record) string {
+func userName(user struct) string {
     return user.Name
 }
 
@@ -1891,8 +1865,8 @@ func main() {
 func TestEmitTreatsRecordFieldCaseAsSignificant(t *testing.T) {
 	file, err := ParseFile("record_visibility.gpp", `
 func main() {
-    exported := record(Name: "Bob")
-    internal := record(name: "Bob")
+    exported := struct(Name: "Bob")
+    internal := struct(name: "Bob")
     _ = exported.Name
     _ = internal.name
 }
@@ -1917,11 +1891,11 @@ func main() {
 
 func TestEmitRejectsInconsistentRecordReturns(t *testing.T) {
 	file, err := ParseFile("bad_records.gpp", `
-func Broken(ok bool) record {
+func Broken(ok bool) struct {
     if ok {
-        return record(message: "yes")
+        return struct(message: "yes")
     }
-    return record(message: 1)
+    return struct(message: 1)
 }
 `)
 	if err != nil {
@@ -1934,18 +1908,17 @@ func Broken(ok bool) record {
 	}
 }
 
-func TestEmitInfersRecordSlices(t *testing.T) {
+func TestEmitSupportsAnonymousStructSlices(t *testing.T) {
 	file, err := ParseFile("record_slice.gpp", `
-func Users() []record {
-    return []record{
-        record(name: "A", age: 1),
-        record(age: 2, name: "B"),
+func Users() any {
+    return []struct { name string; age int }{
+        {name: "A", age: 1},
+        {name: "B", age: 2},
     }
 }
 
 func main() {
-    users := Users()
-    _ = users[0].name
+    _ = Users()
 }
 `)
 	if err != nil {
@@ -1958,17 +1931,17 @@ func main() {
 	}
 
 	generated := string(code)
-	if !strings.Contains(generated, "func Users() []__gpp_record_") {
-		t.Fatalf("record slice return type was not inferred:\n%s", code)
+	if !strings.Contains(generated, "[]struct {") {
+		t.Fatalf("anonymous struct slice was not preserved:\n%s", code)
 	}
 }
 
-func TestEmitInfersRecordMaps(t *testing.T) {
+func TestEmitSupportsAnonymousStructMaps(t *testing.T) {
 	file, err := ParseFile("record_map.gpp", `
-func Users() map[string]record {
-    return map[string]record{
-        "first": record(name: "A"),
-        "second": record(name: "B"),
+func Users() any {
+    return map[string]struct { name string }{
+        "first": struct { name string }{name: "A"},
+        "second": struct { name string }{name: "B"},
     }
 }
 `)
@@ -1981,20 +1954,20 @@ func Users() map[string]record {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(code), "func Users() map[string]__gpp_record_") {
-		t.Fatalf("record map return type was not inferred:\n%s", code)
+	if !strings.Contains(string(code), "map[string]struct {") {
+		t.Fatalf("anonymous struct map was not preserved:\n%s", code)
 	}
 }
 
-func TestEmitSupportsLocalRecordCollections(t *testing.T) {
+func TestEmitSupportsLocalAnonymousStructCollections(t *testing.T) {
 	file, err := ParseFile("record_collections.gpp", `
 func main() {
-    users := []record{
-        record(name: "A"),
-        record(name: "B"),
+    users := []struct { name string }{
+        {name: "A"},
+        {name: "B"},
     }
-    byName := map[string]record{
-        "first": record(name: "A"),
+    byName := map[string]struct { name string }{
+        "first": struct { name string }{name: "A"},
     }
     _ = users[0].name
     _ = byName["first"].name
@@ -2010,19 +1983,19 @@ func main() {
 	}
 
 	generated := string(code)
-	if strings.Contains(generated, "[]record") || strings.Contains(generated, "map[string]record") {
-		t.Fatalf("local record collection types were not lowered:\n%s", code)
+	if strings.Contains(generated, "[]record") || strings.Contains(generated, "map[string]record") || !strings.Contains(generated, "[]struct {") {
+		t.Fatalf("local anonymous struct collections were not emitted natively:\n%s", code)
 	}
 }
 
 func TestEmitInfersRecordFunctionParameters(t *testing.T) {
 	file, err := ParseFile("record_parameter.gpp", `
-func PrintUser(user record) string {
+func PrintUser(user struct) string {
     return user.name
 }
 
 func main() {
-    _ = PrintUser(record(name: "Bob"))
+    _ = PrintUser(struct(name: "Bob"))
 }
 `)
 	if err != nil {
@@ -2787,5 +2760,33 @@ func main() {
 	_, err = Emit(file)
 	if err == nil || !strings.Contains(err.Error(), "lambda does not match any expected function type") {
 		t.Fatalf("expected missing lambda return error, got %v", err)
+	}
+}
+
+func TestEmitPrecompilesLiteralRegexpSwitchPatterns(t *testing.T) {
+	file, err := ParseFile("regexp_switch.gpp", `
+func main() {
+    path := "/health"
+    switch path {
+    case regexp("^/health$"):
+        _ = path
+    case regexp("^/health$"):
+        _ = path
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if count := strings.Count(generated, "MustCompile"); count != 1 {
+		t.Fatalf("expected duplicate literal patterns to share one compiled regexp, got %d:\n%s", count, generated)
+	}
+	if strings.Contains(generated, "case gppRegexp.MustCompile") || strings.Contains(generated, "regexp(`") {
+		t.Fatalf("regexp switch case was not lowered to a cached matcher:\n%s", generated)
 	}
 }
