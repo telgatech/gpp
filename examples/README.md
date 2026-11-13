@@ -97,6 +97,8 @@ The examples cover:
   multiline strings, and escaped delimiters for generated template source.
 - `regex.gpp` — explicit string-to-regex compilation, native regexp methods,
   direct chaining, and ordinary invalid-pattern error handling.
+- `regexp.gpp` — the `regexp(pattern)` builtin as a general expression and a
+  mixed exact-match/regex switch case, alongside `regexp.Compile`.
 - `mixed/` — side-by-side compilation in both directions: GPP calling
   handwritten Go functions and handwritten Go importing generated GPP code.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,

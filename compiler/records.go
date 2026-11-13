@@ -1896,6 +1896,9 @@ func inferRecordExprType(expression ExprNode, valueTypes map[string]string, cont
 		if isMapConstructorCallee(value.Callee) {
 			return inferMapConstructorType(value, valueTypes, context)
 		}
+		if isRegexpBuiltinCallee(value.Callee) && len(value.Arguments) == 1 {
+			return regexpBuiltinTypeName(context)
+		}
 		return inferRecordCallExprResult(value, valueTypes, context)
 	case *SelectorExpr:
 		if packageName, ok := value.Receiver.(*NameExpr); ok {

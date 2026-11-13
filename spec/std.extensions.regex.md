@@ -1,8 +1,30 @@
-# GPP String Regex Compilation Add-on Specification
+# GPP Regex Support Specification
 
 ## 1. Overview
 
-GPP adds one small regex-oriented extension to `string`:
+GPP provides a general `regexp(pattern)` builtin that compiles a pattern to Go's native `*regexp.Regexp`:
+
+```gpp
+re := regexp(`^[a-z]+$`)
+if re.MatchString(username) {
+    ...
+}
+```
+
+The same builtin can be used as a matcher in a tagged string switch:
+
+```gpp
+switch path {
+case "/", regexp(`^/users/[0-9]+$`):
+    ...
+}
+```
+
+Regex cases can be mixed with ordinary exact-match cases. The switch value is evaluated once, and multiple expressions in one case retain Go's first-match behavior.
+
+`regexp(pattern)` is call syntax. Package selectors such as `regexp.Compile` and `regexp.MustCompile` remain ordinary Go package selectors. If the file has an import alias collision, GPP uses a separate generated alias for the builtin.
+
+The existing explicit, error-returning string extension remains available for patterns that may be invalid at runtime:
 
 ```gpp id="i0qg4x"
 extend string {
@@ -16,7 +38,7 @@ Its purpose is to turn regex source text into Go's native:
 *regexp.Regexp
 ```
 
-while preserving GPP's normal automatic error propagation.
+while preserving GPP's normal automatic error propagation. Unlike `regexp(pattern)`, `CompileRegex()` returns an error rather than panicking for an invalid pattern.
 
 Example:
 
@@ -332,7 +354,7 @@ Caching can be explicit at the application level if needed.
 
 ---
 
-# 16. No `MustCompileRegex` in V1
+# 16. No `MustCompileRegex` String Extension
 
 V1 should not add:
 
@@ -348,7 +370,7 @@ re := pattern.CompileRegex()
 
 Automatic error promotion gives almost the same convenience without converting invalid regex syntax into panic behavior.
 
-If dogfooding later demonstrates a strong compile-time/static initialization case, `MustCompileRegex` may be reconsidered.
+The general `regexp(pattern)` builtin is a separate language feature. It does not add a `MustCompileRegex()` method to every string.
 
 ---
 
@@ -728,7 +750,7 @@ The standard-type ergonomic extensions specification should revise its previous 
 
 Instead of broadly excluding regex-related string ergonomics, the rule becomes:
 
-> GPP does not mirror the regex API onto `string`. It provides `string.CompileRegex()` as an explicit bridge from regex source text to Go's native `*regexp.Regexp`.
+> GPP does not mirror the regex API onto `string`. It provides `string.CompileRegex()` as an explicit, error-returning bridge from regex source text to Go's native `*regexp.Regexp`. The general `regexp(pattern)` builtin is available when panic-on-invalid-pattern semantics are acceptable.
 
 This preserves the original concern about turning `string` into a domain-heavy mega type while still removing repeated `regexp.Compile(...)` ceremony.
 
@@ -826,6 +848,12 @@ native Go regex API
 ```
 
 The core rules are:
+
+> `regexp(pattern)` is a general builtin that returns Go's native `*regexp.Regexp` and is also accepted in tagged string switch cases as a pattern matcher.
+
+> `regexp(pattern)` is distinct from selectors such as `regexp.Compile`; package selector syntax remains unchanged.
+
+> Literal patterns passed to `regexp(...)` are validated during compilation. Dynamic invalid patterns follow Go's `regexp.MustCompile` behavior and panic.
 
 > `CompileRegex()` is the only regex-specific `string` extension required for v1.
 

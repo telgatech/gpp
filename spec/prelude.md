@@ -119,6 +119,15 @@ name.Empty()
 
 The underlying values remain ordinary Go values.
 
+### Regex constructor builtin
+
+GPP also provides the compiler-recognized `regexp(pattern)` builtin. It returns
+Go's native `*regexp.Regexp` and can be used anywhere an expression is valid.
+Tagged string switches may use `case regexp(pattern)` for pattern matching.
+This is call syntax and does not change package selectors such as
+`regexp.Compile`. See [Regex Support](std.extensions.regex.md) for matching,
+aliasing, and invalid-pattern behavior.
+
 ### Inferred map literals
 
 The prelude provides a built-in `map(...)` literal for concise string-keyed

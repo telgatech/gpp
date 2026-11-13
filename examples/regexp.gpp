@@ -1,0 +1,27 @@
+import (
+	"fmt"
+	"regexp"
+)
+
+func main() {
+	pattern := `^/users/[0-9]+$`
+	re := regexp(pattern)
+	fmt.Println("matches user path:", re.MatchString("/users/42"))
+
+	path := "/users/42"
+	switch path {
+	case "/", regexp(pattern):
+		fmt.Println("matched home or user path")
+	case regexp(`^/health$`):
+		fmt.Println("matched health path")
+	default:
+		fmt.Println("no path matched")
+	}
+
+	// The builtin call and the standard library package selector coexist.
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("stdlib selector:", compiled.MatchString(path))
+}
