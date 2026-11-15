@@ -71,6 +71,8 @@ The examples cover:
   explicit error capture.
 - `cron.gpp` — related annotated jobs grouped on a `cron.Cron` instance,
   explicit startup, context-aware callbacks, and graceful shutdown.
+- `queue.gpp` — durable messages with priorities and bounded draining;
+  retries and dead-letter handling are checked in `tests/queue.gpp`.
 - `todo-app.gpp` — a server-rendered SQLite todo app with a JSON API, OpenAPI
   and Swagger UI, ORM static query methods with exception-based error handling,
   and a context-aware cron cleanup job.

@@ -25,6 +25,7 @@ project="$temp_root/project"
 echo "Initializing temporary project..."
 "$gpp" init -module example.com/gpp-example-smoke "$project"
 cp -R "$repo_root/examples" "$project/examples"
+cp -R "$repo_root/tests" "$project/tests"
 cd "$project"
 
 run_example() {
@@ -70,6 +71,13 @@ for source in examples/*.gpp; do
         *) run_example "$example" "$source" ;;
     esac
 done
+
+echo "Running durable queue tests..."
+"$gpp" test tests/queue.gpp >"$temp_root/queue-tests.log" 2>&1 || {
+	cat "$temp_root/queue-tests.log"
+	echo "Queue tests failed" >&2
+	exit 1
+}
 
 run_example packages examples/packages/people.gpp examples/packages/main.gpp
 run_example mixed-go-from-gpp examples/mixed/go_from_gpp

@@ -10,7 +10,7 @@ import (
 
 type gppORMColumn struct {
 	Name string
-	Field any
+	Field GppField
 }
 
 func gppORMModelScanTargets(target any, columnNames []string, columns []gppORMColumn) ([]any, error) {
@@ -26,11 +26,7 @@ func gppORMModelScanTargets(target any, columnNames []string, columns []gppORMCo
 			ambiguous[name] = true
 		}
 		byName[name] = column
-		field := reflect.ValueOf(column.Field)
-		if field.Kind() == reflect.Pointer {
-			field = field.Elem()
-		}
-		fieldName := gppORMNormalizeFieldName(fmt.Sprint(field.FieldByName("Name").Interface()))
+		fieldName := gppORMNormalizeFieldName(column.Field.Name)
 		if fieldName != name {
 			if _, exists := byName[fieldName]; exists {
 				ambiguous[fieldName] = true
@@ -79,180 +75,100 @@ func gppORMSnakeCase(value string) string {
 	return result.String()
 }
 
-func gppORMReflectIndex(value reflect.Value, index int) reflect.Value {
-	return value.Index(index)
-}
-
-func gppORMRuntimeClass(value any) any {
+func gppORMRuntimeClass(value any) *GppClass {
 	if value == nil {
 		return nil
 	}
-	handler := reflect.ValueOf(value).MethodByName("GppRuntimeClass")
-	if !handler.IsValid() {
-		return nil
-	}
-	result := handler.Call(nil)
-	if len(result) == 0 || !result[0].IsValid() || result[0].IsNil() {
-		return nil
-	}
-	return result[0].Interface()
-}
-
-func gppORMDynamicObject(value any) any {
-	reflected := reflect.ValueOf(value)
-	if !reflected.IsValid() {
-		return value
-	}
-	if reflected.Kind() == reflect.Pointer {
-		if reflected.IsNil() {
-			return value
-		}
-		reflected = reflected.Elem()
-	}
-	if reflected.Kind() != reflect.Struct {
-		return value
-	}
-	dynamicObject := reflected.FieldByName("GppDynamicObject")
-	if !dynamicObject.IsValid() || !dynamicObject.CanInterface() {
-		return value
-	}
-	if dynamicObject.Kind() == reflect.Interface || dynamicObject.Kind() == reflect.Pointer {
-		if dynamicObject.IsNil() {
-			return value
-		}
-	}
-	return dynamicObject.Interface()
-}
-
-func gppORMAnnotationArgs(owner any, name string) []any {
-	if owner == nil {
-		return nil
-	}
-	value := reflect.ValueOf(owner)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	if !value.IsValid() {
-		return nil
-	}
-	annotations := value.FieldByName("Annotations")
-	if !annotations.IsValid() {
-		return nil
-	}
-	for index := 0; index < annotations.Len(); index++ {
-		annotation := gppORMReflectIndex(annotations, index)
-		annotationName := fmt.Sprint(annotation.FieldByName("Name").Interface())
-		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
-		if annotationName != name && fullName != name {
-			continue
-		}
-		arguments := annotation.FieldByName("Args")
-		result := make([]any, arguments.Len())
-		for argIndex := 0; argIndex < arguments.Len(); argIndex++ {
-			result[argIndex] = gppORMReflectIndex(arguments, argIndex).Interface()
-		}
-		return result
+	if provider, ok := value.(interface{ GppRuntimeClass() *GppClass }); ok {
+		return provider.GppRuntimeClass()
 	}
 	return nil
 }
 
-func gppORMFieldAnnotations(field any) any {
-	value := reflect.ValueOf(field)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
+func gppORMDynamicObject(value any) any {
+	if provider, ok := value.(interface{ GppRuntimeObject() any }); ok {
+		return provider.GppRuntimeObject()
 	}
-	return value.FieldByName("Annotations").Interface()
+	return value
 }
 
-func gppORMColumns(descriptor any) ([]gppORMColumn, error) {
+func gppORMAnnotationArgs(annotations GppAnnotations, name string) []any {
+	for _, annotation := range annotations {
+		if annotation.Name != name && annotation.FullName != name {
+			continue
+		}
+		return append([]any(nil), annotation.Args...)
+	}
+	return nil
+}
+
+func gppORMFieldAnnotations(field GppField) GppAnnotations {
+	return field.Annotations
+}
+
+func gppORMColumns(descriptor *GppClass) ([]gppORMColumn, error) {
 	if descriptor == nil {
 		return nil, fmt.Errorf("orm: target has no GPP runtime class")
 	}
-	value := reflect.ValueOf(descriptor)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	fields := value.FieldByName("Fields")
 	columns := []gppORMColumn{}
-	for index := 0; index < fields.Len(); index++ {
-		field := gppORMReflectIndex(fields, index)
-		if gppORMHasAnnotation(gppORMFieldAnnotations(field.Interface()), "gpp.orm.Ignore") {
+	for _, field := range descriptor.Fields {
+		if gppORMHasAnnotation(gppORMFieldAnnotations(field), "gpp.orm.Ignore") {
 			continue
 		}
-		args := gppORMAnnotationArgs(field.Interface(), "gpp.orm.Column")
+		args := gppORMAnnotationArgs(field.Annotations, "gpp.orm.Column")
 		name := ""
 		if len(args) > 0 {
 			name = fmt.Sprint(args[0])
 		} else {
-			name = gppORMSnakeCase(fmt.Sprint(field.FieldByName("Name").Interface()))
+			name = gppORMSnakeCase(field.Name)
 		}
-		columns = append(columns, gppORMColumn{Name: name, Field: field.Interface()})
+		columns = append(columns, gppORMColumn{Name: name, Field: field})
 	}
 	if len(columns) == 0 {
-		return nil, fmt.Errorf("orm: %s has no persisted columns", fmt.Sprint(value.FieldByName("Name").Interface()))
+		return nil, fmt.Errorf("orm: %s has no persisted columns", descriptor.Name)
 	}
 	return columns, nil
 }
 
-func gppORMTable(descriptor any) (string, error) {
-	args := gppORMAnnotationArgs(descriptor, "gpp.orm.Table")
-	if len(args) > 0 {
-		return fmt.Sprint(args[0]), nil
-	}
+func gppORMTable(descriptor *GppClass) (string, error) {
 	if descriptor == nil {
 		return "", fmt.Errorf("orm: target has no GPP runtime class")
 	}
-	value := reflect.ValueOf(descriptor)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
+	args := gppORMAnnotationArgs(descriptor.Annotations, "gpp.orm.Table")
+	if len(args) > 0 {
+		return fmt.Sprint(args[0]), nil
 	}
-	if !value.IsValid() || !value.FieldByName("Name").IsValid() {
-		return "", fmt.Errorf("orm: target has no GPP runtime class name")
-	}
-	return gppORMSnakeCase(fmt.Sprint(value.FieldByName("Name").Interface())), nil
+	return gppORMSnakeCase(descriptor.Name), nil
 }
 
-func gppORMFieldGet(field any, object any) any {
-	value := reflect.ValueOf(field)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
+func gppORMFieldGet(field GppField, object any) any {
+	if field.Get == nil {
+		return nil
 	}
-	getter := value.FieldByName("Get")
-	return getter.Call([]reflect.Value{reflect.ValueOf(object)})[0].Interface()
+	return field.Get(object)
 }
 
-func gppORMFieldAddr(field any, object any) any {
-	value := reflect.ValueOf(field)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
+func gppORMFieldAddr(field GppField, object any) any {
+	if field.Addr == nil {
+		return nil
 	}
-	addr := value.FieldByName("Addr")
-	return addr.Call([]reflect.Value{reflect.ValueOf(object)})[0].Interface()
+	return field.Addr(object)
 }
 
-func gppORMHasPK(field any) bool {
+func gppORMHasPK(field GppField) bool {
 	return gppORMHasAnnotation(gppORMFieldAnnotations(field), "gpp.orm.PK")
 }
 
-func gppORMHasAnnotation(owner any, name string) bool {
-	if owner == nil {
-		return false
-	}
-	value := reflect.ValueOf(owner)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	annotations := value
-	for index := 0; index < annotations.Len(); index++ {
-		annotation := gppORMReflectIndex(annotations, index)
-		if fmt.Sprint(annotation.FieldByName("Name").Interface()) == name || fmt.Sprint(annotation.FieldByName("FullName").Interface()) == name {
+func gppORMHasAnnotation(annotations GppAnnotations, name string) bool {
+	for _, annotation := range annotations {
+		if annotation.Name == name || annotation.FullName == name {
 			return true
 		}
 	}
 	return false
 }
 
-func gppORMQuery(descriptor any, where string, limit string) (string, []gppORMColumn, error) {
+func gppORMQuery(descriptor *GppClass, where string, limit string) (string, []gppORMColumn, error) {
 	table, err := gppORMTable(descriptor)
 	if err != nil {
 		return "", nil, err
@@ -491,7 +407,7 @@ func gppORMSelectSQL(exec SQLExecutor, target any, query string, args ...any) er
 	return rows.Err()
 }
 
-func gppORMPrimaryKey(descriptor any) (string, error) {
+func gppORMPrimaryKey(descriptor *GppClass) (string, error) {
 	column, err := gppORMPrimaryKeyColumn(descriptor)
 	if err != nil {
 		return "", err
@@ -499,7 +415,7 @@ func gppORMPrimaryKey(descriptor any) (string, error) {
 	return column.Name, nil
 }
 
-func gppORMPrimaryKeyColumn(descriptor any) (gppORMColumn, error) {
+func gppORMPrimaryKeyColumn(descriptor *GppClass) (gppORMColumn, error) {
 	table, err := gppORMTable(descriptor)
 	if err != nil {
 		return gppORMColumn{}, err
@@ -537,15 +453,11 @@ func gppORMPrimaryKeyColumn(descriptor any) (gppORMColumn, error) {
 	return gppORMColumn{}, fmt.Errorf("orm: %s has no primary key", table)
 }
 
-func gppORMFieldName(field any) string {
-	value := reflect.ValueOf(field)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	return fmt.Sprint(value.FieldByName("Name").Interface())
+func gppORMFieldName(field GppField) string {
+	return field.Name
 }
 
-func gppORMOrderColumn(descriptor any, sortBy string) (string, error) {
+func gppORMOrderColumn(descriptor *GppClass, sortBy string) (string, error) {
 	if strings.TrimSpace(sortBy) == "" {
 		return gppORMPrimaryKey(descriptor)
 	}

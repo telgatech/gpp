@@ -68,6 +68,11 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 			}
 		}
 	}
+	for _, class := range model.Packages[file.Package].Classes {
+		if class.Owner == file && class.SerializationQualifier != "" {
+			context.AvailableImports[class.SerializationQualifier] = "gpp/encoding"
+		}
+	}
 	if fileUsesRegexpBuiltin(file) {
 		alias := regexpBuiltinImportAlias(context.AvailableImports)
 		context.AvailableImports[alias] = "regexp"
@@ -2095,6 +2100,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	emitSourceDirective(out, sourcePath, class.SourceLine)
 	fmt.Fprintf(out, "type __gpp_%s interface {\n", class.Name)
 	out.WriteString("\tGppRuntimeClass() *GppClass\n")
+	out.WriteString("\tGppRuntimeObject() any\n")
 	for _, method := range methods {
 		// Go interfaces cannot require generic methods. Keep the method on the
 		// concrete generated class, but omit it from the runtime class interface.
@@ -2126,6 +2132,12 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		out.WriteString("\tif this.GppDynamicClass != nil { return this.GppDynamicClass }\n")
 	}
 	fmt.Fprintf(out, "\treturn Gpp%sClass\n}\n\n", class.Name)
+	fmt.Fprintf(out, "func (this *%s) GppRuntimeObject() any {\n", class.Name)
+	out.WriteString("\tif this == nil { return nil }\n")
+	if context.Introspection != nil && context.Introspection.Enabled {
+		out.WriteString("\tif this.GppDynamicObject != nil { return this.GppDynamicObject }\n")
+	}
+	out.WriteString("\treturn this\n}\n\n")
 	if err := emitClassDescriptor(out, class, classes, context); err != nil {
 		return err
 	}

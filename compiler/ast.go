@@ -221,17 +221,18 @@ func (declaration *TemplateDecl) Span() Span {
 }
 
 type ClassDecl struct {
-	Name          string
-	Owner         *File
-	TypeParamsAST []TypeParameterNode
-	Doc           string
-	SourceFile    string
-	SourceLine    int
-	ParentAST     []TypeNode
-	Annotations   []AnnotationUse
-	Fields        []Field
-	Methods       []Method
-	SpanValue     Span
+	Name                   string
+	Owner                  *File
+	TypeParamsAST          []TypeParameterNode
+	Doc                    string
+	SourceFile             string
+	SourceLine             int
+	ParentAST              []TypeNode
+	Annotations            []AnnotationUse
+	SerializationQualifier string
+	Fields                 []Field
+	Methods                []Method
+	SpanValue              Span
 }
 
 func (*ClassDecl) node() {}

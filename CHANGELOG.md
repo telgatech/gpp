@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-15
+
+- Added experimental durable work queues in `gpp/exp/queue`.
+- Reduced reflection-based metadata access in the HTTP and ORM libraries.
+- Extended serialization to subclasses of serializable classes.
+- Extended default argument lowering to imported functions.
+
 ## 2026-11-13
 
 - Added `http.Server.TemplateFiles` for live development template reloads and one-time parsing when `ENV=production`; `Templates` and `TemplateFiles` are mutually exclusive.

@@ -206,8 +206,9 @@ func gppOAuthStrings(values []any) []string {
 	return result
 }
 
-func gppOAuthConfigs(descriptor any) ([]*gppOAuthConfig, error) {
-	annotations := gppAnnotationValues(descriptor, "gpp.http.OAuth")
+func gppOAuthConfigs(descriptor *GppClass) ([]*gppOAuthConfig, error) {
+	if descriptor == nil { return nil, nil }
+	annotations := gppAnnotationValues(descriptor.Annotations, "gpp.http.OAuth")
 	result := []*gppOAuthConfig{}
 	seen := map[string]bool{}
 	for _, args := range annotations {
@@ -240,28 +241,11 @@ func gppOAuthConfigs(descriptor any) ([]*gppOAuthConfig, error) {
 	return result, nil
 }
 
-func gppAnnotationValues(owner any, name string) [][]any {
-	if owner == nil {
-		return nil
-	}
-	value := reflect.ValueOf(owner)
-	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
-		if value.IsNil() { return nil }
-		value = value.Elem()
-	}
-	if !value.IsValid() { return nil }
-	annotations := value.FieldByName("Annotations")
-	if !annotations.IsValid() { return nil }
+func gppAnnotationValues(annotations GppAnnotations, name string) [][]any {
 	result := [][]any{}
-	for index := 0; index < annotations.Len(); index++ {
-		annotation := annotations.Index(index)
-		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
-		shortName := fmt.Sprint(annotation.FieldByName("Name").Interface())
-		if fullName != name && shortName != name { continue }
-		args := annotation.FieldByName("Args")
-		values := make([]any, args.Len())
-		for argIndex := 0; argIndex < args.Len(); argIndex++ { values[argIndex] = args.Index(argIndex).Interface() }
-		result = append(result, values)
+	for _, annotation := range annotations {
+		if annotation.FullName != name && annotation.Name != name { continue }
+		result = append(result, append([]any(nil), annotation.Args...))
 	}
 	return result
 }
@@ -275,7 +259,7 @@ func gppOAuthValidName(name string) bool {
 	return true
 }
 
-func gppOAuthNewEngine(descriptor any) (*gppOAuthEngine, error) {
+func gppOAuthNewEngine(descriptor *GppClass) (*gppOAuthEngine, error) {
 	configs, err := gppOAuthConfigs(descriptor)
 	if err != nil { return nil, err }
 	if len(configs) == 0 { return nil, nil }
@@ -381,7 +365,7 @@ func gppOAuthLogFailure(app any, provider string, cause error) {
 	}
 }
 
-func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string, engine *gppOAuthEngine) error {
+func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor *GppClass, prefix string, engine *gppOAuthEngine) error {
 	if engine == nil { return nil }
 	routes := gppOpenAPIRoutes(descriptor, prefix)
 	for name := range engine.Configs {

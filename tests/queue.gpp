@@ -1,0 +1,140 @@
+import (
+	"fmt"
+	"os"
+	"time"
+	queue "gpp/exp/queue"
+	"gpp/test"
+)
+
+var queueTestStarted chan struct{}
+var queueTestRelease chan struct{}
+var queueTestResults chan string
+
+class QueueTestMessage : queue.Message {
+	Name string
+	FailExecution bool
+
+	func Execute() error {
+		if this.Name == "first" {
+			queueTestStarted <- struct{}{}
+			<-queueTestRelease
+		}
+		if this.FailExecution {
+			return fmt.Errorf("message %s failed", this.Name)
+		}
+		queueTestResults <- this.Name
+		return nil
+	}
+}
+
+class QueueBehaviorTest : test.Suite {
+	File string
+	Queue *queue.Queue
+
+	func Setup() {
+		temporary := os.CreateTemp("", "gpp-queue-test-*.app")
+		this.File = temporary.Name()
+		temporary.Close()
+		os.Remove(this.File)
+		queueTestStarted = make(chan struct{}, 1)
+		queueTestRelease = make(chan struct{}, 1)
+		queueTestResults = make(chan string, 3)
+	}
+
+	func Teardown() {
+		if this.Queue != nil {
+			queueTestRelease <- struct{}{}
+			this.Queue.Stop()
+		}
+		os.Remove(this.File)
+	}
+
+	func DrainWaitsForPriorityOrderedWork() {
+		this.Queue = queue.New(this.File)
+		this.Queue.Push(QueueTestMessage(Name: "first", Priority: 1))
+		select {
+		case <-queueTestStarted:
+		case <-time.After(5 * time.Second):
+			this.Fail("queue did not start executing its first message")
+		}
+
+		this.Queue.Push(QueueTestMessage(Name: "normal", Priority: 1))
+		this.Queue.Push(QueueTestMessage(Name: "urgent", Priority: 10))
+		queueTestRelease <- struct{}{}
+
+		this.Queue.Drain(5 * time.Second)
+		this.Equal("first", <-queueTestResults)
+		this.Equal("urgent", <-queueTestResults)
+		this.Equal("normal", <-queueTestResults)
+		this.Queue = nil
+
+		this.Queue = queue.New(this.File)
+		select {
+		case name := <-queueTestResults:
+			this.Fail("acknowledged message was delivered again: " + name)
+		case <-time.After(100 * time.Millisecond):
+		}
+		this.Queue.Stop()
+		this.Queue = nil
+	}
+
+	func DrainTimeoutLeavesPendingWorkDurable() {
+		this.Queue = queue.New(this.File)
+		this.Queue.Push(QueueTestMessage(Name: "first", Priority: 1))
+		select {
+		case <-queueTestStarted:
+		case <-time.After(5 * time.Second):
+			this.Fail("queue did not start executing its first message")
+		}
+		this.Queue.Push(QueueTestMessage(Name: "later", Priority: 1))
+
+		err := this.Queue.Drain(50 * time.Millisecond)
+		this.Equal(true, err != nil)
+		queueTestRelease <- struct{}{}
+		this.Queue.Stop()
+		this.Queue = nil
+		this.Equal("first", <-queueTestResults)
+
+		this.Queue = queue.New(this.File)
+		this.Queue.Drain(5 * time.Second)
+		this.Equal("later", <-queueTestResults)
+		this.Queue = nil
+	}
+
+	func DeadLettersCanBeInspectedAndRemoved() {
+		this.Queue = queue.New(file: this.File, retries: 0)
+		this.Queue.Push(QueueTestMessage(Name: "dead-one", FailExecution: true))
+		this.Queue.Push(QueueTestMessage(Name: "dead-two", FailExecution: true))
+		this.Queue.Drain(5 * time.Second)
+		dead := this.Queue.Dead()
+		this.Equal(2, len(dead))
+		this.Equal(true, dead[0].Message != nil)
+		this.Equal(0, dead[0].Retries)
+		this.Queue = nil
+
+		this.Queue = queue.New(this.File)
+		dead = this.Queue.Dead()
+		this.Equal(2, len(dead))
+		this.Queue.Remove(dead[0])
+		dead = this.Queue.Dead()
+		this.Equal(1, len(dead))
+		this.Queue.Purge()
+		this.Equal(0, len(this.Queue.Dead()))
+		this.Queue.Stop()
+		this.Queue = nil
+	}
+
+	func CompactsCompletedHistoryOnOpen() {
+		this.Queue = queue.New(this.File)
+		this.Queue.Push(QueueTestMessage(Name: "completed"))
+		this.Queue.Drain(5 * time.Second)
+		this.Queue = nil
+		this.Equal("completed", <-queueTestResults)
+		this.Equal(true, os.Stat(this.File).Size() > 0)
+
+		this.Queue = queue.New(this.File)
+		this.Equal(0, int(os.Stat(this.File).Size()))
+		this.Queue.Stop()
+		this.Queue = nil
+	}
+}

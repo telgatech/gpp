@@ -40,6 +40,7 @@ before each docs development or production build.
 - [OAuth](./specifications/http.oauth)
 - [Typed SQL queries](./specifications/std.sql)
 - [ORM](./specifications/std.orm)
+- [Experimental work queue](./specifications/std.exp.queue)
 - [OpenAPI and Swagger](./specifications/openapi-swagger)
 - [Swagger UI](./specifications/swagger-ui)
 - [Templates](./specifications/tpl)

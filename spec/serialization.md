@@ -420,7 +420,9 @@ Same rule for generated static methods.
 
 # Inheritance
 
-Serializable behavior should apply to the concrete annotated class.
+Serializable behavior applies to the concrete annotated class and is inherited
+by subclasses. The compiler generates serialization methods for each concrete
+subclass so inherited fields and fields declared on that subclass are included.
 
 Example:
 
@@ -442,9 +444,8 @@ class Employee : Person @{
 
 # Annotation Inheritance
 
-Do not automatically inherit the `Serializable` annotation itself unless the language establishes that annotation inheritance generally works that way.
-
-Preferred rule:
+`Serializable` is an inheritable class annotation. This is an explicit rule for
+this annotation; it does not imply that all class annotations inherit.
 
 ```go
 class Person @{encoding.Serializable} {
@@ -454,18 +455,9 @@ class Employee : Person {
 }
 ```
 
-does not automatically imply that `Employee` gets generated serialization methods solely because `Person` is annotated.
-
-If users want serialization on `Employee`, they should explicitly declare:
-
-```go
-class Employee : Person @{
-    encoding.Serializable
-} {
-}
-```
-
-This keeps code generation explicit.
+`Employee` receives generated serialization methods because `Person` is
+serializable. Those methods encode the concrete `Employee` fields as well as
+the inherited fields; they do not reuse `Person`'s narrower encoder.
 
 ---
 

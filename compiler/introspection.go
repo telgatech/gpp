@@ -191,11 +191,28 @@ type GppParameter struct {
 type GppClass struct {
 	Name        string
 	Package     string
+	DecodeGOB   func([]byte) (any, error)
 	Parents     []*GppClass
 	Fields      []GppField
 	Methods     []GppMethod
 	Annotations GppAnnotations
 }
+
+var gppClassesByName = map[string]*GppClass{}
+
+func RegisterClass(class *GppClass) {
+	if class == nil || class.Name == "" {
+		return
+	}
+	gppClassesByName[class.Package+"."+class.Name] = class
+}
+
+func ClassByName(name string) *GppClass {
+	return gppClassesByName[name]
+}
+
+func __gppRegisterClass(class *GppClass) { RegisterClass(class) }
+func __gppClassByName(name string) *GppClass { return ClassByName(name) }
 
 type gppFormatVisit struct {
 	typeOf gppReflect.Type
@@ -306,6 +323,8 @@ type GppParameter = gppRuntime.GppParameter
 type GppClass = gppRuntime.GppClass
 
 func __gppInvocationError(message string) error { return gppRuntime.GppInvocationError(message) }
+func __gppRegisterClass(class *GppClass) { gppRuntime.RegisterClass(class) }
+func __gppClassByName(name string) *GppClass { return gppRuntime.ClassByName(name) }
 func __gppRegisterFunction(function GppFunction) { gppRuntime.RegisterFunction(function) }
 func __gppRegisteredFunctions() []GppFunction { return gppRuntime.RegisteredFunctions() }
 
@@ -411,7 +430,21 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 	if len(parentReferences) > 0 {
 		parents = "[]*GppClass{" + strings.Join(parentReferences, ", ") + "}"
 	}
-	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Package: %q, Parents: %s, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, templatePackageScope(context.ModulePath, context.Package), parents, annotationUsesLiteral(class.Annotations, context))
+	decodeGOB := "nil"
+	if hasGeneratedSerializationMethod(class, "ToGOB", false) {
+		decoder := serializationQualifierForClass(class)
+		if decoder == "" {
+			decoder = "encoding"
+		} else if decoder == "." {
+			decoder = ""
+		}
+		decoderCall := "DecodeGOB"
+		if decoder != "" {
+			decoderCall = decoder + ".DecodeGOB"
+		}
+		decodeGOB = fmt.Sprintf("func(data []byte) (any, error) { value := &%s{}; if err := %s(data, value); err != nil { return nil, err }; return value, nil }", class.Name, decoderCall)
+	}
+	fmt.Fprintf(out, "var Gpp%sClass = &GppClass{Name: %q, Package: %q, DecodeGOB: %s, Parents: %s, Annotations: %s, Methods: []GppMethod{\n", class.Name, class.Name, templatePackageScope(context.ModulePath, context.Package), decodeGOB, parents, annotationUsesLiteral(class.Annotations, context))
 	methods, err := effectiveMethodDescriptors(class, classes, map[*ClassDecl]bool{})
 	if err != nil {
 		return err
@@ -488,6 +521,7 @@ func emitClassDescriptor(out *strings.Builder, class *ClassDecl, classes map[str
 		}
 		methodIndex++
 	}
+	fmt.Fprintf(out, "\t__gppRegisterClass(Gpp%sClass)\n", class.Name)
 	out.WriteString("}\n\n")
 	return nil
 }

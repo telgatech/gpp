@@ -821,7 +821,8 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 		if method.IsStatic && tokensContainIdentifier(methodBodyTokens(method), "this") {
 			return methodDiagnosticf(class, &method, "static method %s has no this", method.Name)
 		}
-		if method.Name == "GppRuntimeClass" || method.Name == "GppInitialize" || method.Name == "__gppInit" {
+		if method.Name == "GppRuntimeClass" || method.Name == "GppRuntimeObject" ||
+			method.Name == "GppInitialize" || method.Name == "__gppInit" {
 			return methodDiagnosticf(class, &method, "class %s method %s is reserved for GPP generated methods", class.Name, method.Name)
 		}
 		if fields[method.Name] {

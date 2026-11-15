@@ -33,6 +33,60 @@ func TestTransformCallableCallsUsesBodyAST(t *testing.T) {
 	}
 }
 
+func TestTransformCallableCallsLowersImportedFunctionDefaults(t *testing.T) {
+	context := constructorContext{
+		ImportedFunctionSignatures: map[string]map[string][]callableSignature{
+			"queue": {
+				"New": {{
+					Name: "New",
+					Parameters: []parameterInfo{
+						{Name: "file", TypeAST: parseTypeText("string"), DefaultAST: &LiteralExpr{Text: `"app.queue"`, Kind: TokenString}, HasDefault: true},
+						{Name: "retries", TypeAST: parseTypeText("int"), DefaultAST: &LiteralExpr{Text: "3", Kind: TokenNumber}, HasDefault: true},
+					},
+				}},
+			},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "all defaults omitted",
+			source: `func main() { q := queue.New(); _ = q }`,
+			want:   `queue.New("app.queue", 3)`,
+		},
+		{
+			name:   "trailing default omitted",
+			source: `func main() { q := queue.New(file: "local.queue"); _ = q }`,
+			want:   `queue.New("local.queue", 3)`,
+		},
+		{
+			name:   "leading default omitted",
+			source: `func main() { q := queue.New(retries: 5); _ = q }`,
+			want:   `queue.New("app.queue", 5)`,
+		},
+		{
+			name:   "all arguments supplied by name",
+			source: `func main() { q := queue.New(retries: 5, file: "local.queue"); _ = q }`,
+			want:   `queue.New("local.queue", 5)`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transformed, handled, err := transformCallableCallsAST(test.source, context)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled || !strings.Contains(transformed, test.want) {
+				t.Fatalf("imported function defaults were not lowered: handled=%v source=%s; want %s", handled, transformed, test.want)
+			}
+		})
+	}
+}
+
 func TestTransformCallableCallsUsesTopLevelFunctionBodyAST(t *testing.T) {
 	context := constructorContext{
 		Targets: map[string]constructorTarget{"User": {}},

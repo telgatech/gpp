@@ -15,6 +15,7 @@ Each entry now has its own guide with an introduction, the problem it addresses,
 | [ORM](/guide/standard-library/orm) | Map annotated GPP models onto `database/sql` |
 | [Standard annotations](/guide/standard-library/std) | Share common annotations such as `Deprecated` across packages |
 | [HTTP](/guide/standard-library/http) | Build servers, routes, and WebSocket handlers from classes and annotations |
+| [Experimental work queue](/guide/standard-library/exp-queue) | Single-process durable message processing with priorities |
 | [Encoding](/guide/standard-library/encoding/) | Encode and decode JSON, YAML, and GOB |
 | [Templates](/guide/standard-library/templates) | Render typed GPP templates and HTTP pages |
 | [Testing](/guide/standard-library/testing) | Organize tests as suites, methods, and annotations |

@@ -32,8 +32,8 @@ var gppOpenAPIRouteAnnotations = []struct {
 	{Name: "gpp.http.DELETE", Method: "DELETE"},
 }
 
-func gppOpenAPIAnnotationPath(owner any, name string) string {
-	arguments := gppAnnotationArgs(owner, name)
+func gppOpenAPIAnnotationPath(annotations GppAnnotations, name string) string {
+	arguments := gppAnnotationArgs(annotations, name)
 	if len(arguments) == 0 {
 		return ""
 	}
@@ -47,21 +47,15 @@ func gppOpenAPIJoinPath(prefix, routePath string) string {
 	return strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(routePath, "/")
 }
 
-func gppOpenAPIRoutes(descriptor any, prefix string) []gppOpenAPIRoute {
-	value := gppOpenAPIDeref(reflect.ValueOf(descriptor))
-	if !value.IsValid() {
-		return nil
-	}
-	methods := value.FieldByName("Methods")
-	if !methods.IsValid() || methods.Kind() != reflect.Slice {
+func gppOpenAPIRoutes(descriptor *GppClass, prefix string) []gppOpenAPIRoute {
+	if descriptor == nil {
 		return nil
 	}
 	result := []gppOpenAPIRoute{}
-	for index := 0; index < methods.Len(); index++ {
-		method := methods.Index(index)
-		name := gppOpenAPIStringField(method, "Name")
+	for _, method := range descriptor.Methods {
+		name := method.Name
 		for _, route := range gppOpenAPIRouteAnnotations {
-			arguments := gppAnnotationArgs(method.Interface(), route.Name)
+			arguments := gppAnnotationArgs(method.Annotations, route.Name)
 			if len(arguments) == 0 {
 				continue
 			}
@@ -129,17 +123,17 @@ func gppOpenAPIIsJSONMediaType(value any) bool {
 	return contentType == "application/json" || strings.HasSuffix(contentType, "+json")
 }
 
-func gppOpenAPIHasJSONContract(descriptor any, handlerName string) bool {
+func gppOpenAPIHasJSONContract(descriptor *GppClass, handlerName string) bool {
 	method := gppOpenAPIMethodDescriptor(descriptor, handlerName)
-	if !method.IsValid() {
+	if method == nil {
 		return false
 	}
-	for _, annotation := range gppAnnotationValues(method.Interface(), "gpp.http.RequestBody") {
+	for _, annotation := range gppAnnotationValues(method.Annotations, "gpp.http.RequestBody") {
 		if len(annotation) > 0 && gppOpenAPIIsJSONMediaType(annotation[0]) {
 			return true
 		}
 	}
-	for _, annotation := range gppAnnotationValues(method.Interface(), "gpp.http.ResponseBody") {
+	for _, annotation := range gppAnnotationValues(method.Annotations, "gpp.http.ResponseBody") {
 		if len(annotation) > 2 && gppOpenAPIIsJSONMediaType(annotation[2]) {
 			return true
 		}
@@ -158,11 +152,13 @@ func gppSwaggerMountPath(path string) string {
 	return path
 }
 
-func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string) error {
-	hasOpenAPI := len(gppAnnotationArgs(descriptor, "gpp.http.OpenAPI")) > 0
-	hasSwagger := len(gppAnnotationArgs(descriptor, "gpp.http.Swagger")) > 0
-	openAPIPath := gppOpenAPIAnnotationPath(descriptor, "gpp.http.OpenAPI")
-	swaggerPath := gppOpenAPIAnnotationPath(descriptor, "gpp.http.Swagger")
+func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor *GppClass, prefix string) error {
+	var annotations GppAnnotations
+	if descriptor != nil { annotations = descriptor.Annotations }
+	hasOpenAPI := len(gppAnnotationArgs(annotations, "gpp.http.OpenAPI")) > 0
+	hasSwagger := len(gppAnnotationArgs(annotations, "gpp.http.Swagger")) > 0
+	openAPIPath := gppOpenAPIAnnotationPath(annotations, "gpp.http.OpenAPI")
+	swaggerPath := gppOpenAPIAnnotationPath(annotations, "gpp.http.Swagger")
 	if !hasOpenAPI && !hasSwagger {
 		return nil
 	}
@@ -294,7 +290,7 @@ func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handle
 	})
 }
 
-func gppBuildOpenAPIDocument(app any, descriptor any, prefix string) ([]byte, error) {
+func gppBuildOpenAPIDocument(app any, descriptor *GppClass, prefix string) ([]byte, error) {
 	schemas := map[string]any{}
 	paths := map[string]any{}
 	usedOperationIDs := map[string]bool{}
@@ -332,7 +328,7 @@ func gppBuildOpenAPIDocument(app any, descriptor any, prefix string) ([]byte, er
 	return stdjson.MarshalIndent(document, "", "  ")
 }
 
-func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas map[string]any, usedOperationIDs map[string]bool) (map[string]any, error) {
+func gppOpenAPIOperation(app any, descriptor *GppClass, route gppOpenAPIRoute, schemas map[string]any, usedOperationIDs map[string]bool) (map[string]any, error) {
 	operationID := route.Handler
 	if operationID == "" {
 		operationID = strings.ToLower(route.Method) + "_operation"
@@ -349,15 +345,15 @@ func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas
 		"operationId": operationID,
 	}
 	method := gppOpenAPIMethodDescriptor(descriptor, route.Handler)
-	if method.IsValid() {
-		if arguments := gppAnnotationArgs(method.Interface(), "gpp.http.Summary"); len(arguments) > 0 {
+	if method != nil {
+		if arguments := gppAnnotationArgs(method.Annotations, "gpp.http.Summary"); len(arguments) > 0 {
 			operation["summary"] = strings.TrimSpace(fmt.Sprint(arguments[0]))
 		}
-		if arguments := gppAnnotationArgs(method.Interface(), "gpp.http.Description"); len(arguments) > 0 {
+		if arguments := gppAnnotationArgs(method.Annotations, "gpp.http.Description"); len(arguments) > 0 {
 			operation["description"] = strings.TrimSpace(fmt.Sprint(arguments[0]))
 		}
 		tags := []string{}
-		for _, annotation := range gppAnnotationValues(method.Interface(), "gpp.http.Tags") {
+		for _, annotation := range gppAnnotationValues(method.Annotations, "gpp.http.Tags") {
 			for _, argument := range annotation {
 				name := strings.TrimSpace(fmt.Sprint(argument))
 				if name != "" && name != "<nil>" {
@@ -370,8 +366,8 @@ func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas
 		}
 	}
 	responses := map[string]any{}
-	if method.IsValid() {
-		for _, annotation := range gppAnnotationValues(method.Interface(), "gpp.http.ResponseBody") {
+	if method != nil {
+		for _, annotation := range gppAnnotationValues(method.Annotations, "gpp.http.ResponseBody") {
 			if len(annotation) < 4 {
 				continue
 			}
@@ -395,7 +391,7 @@ func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas
 	}
 	if len(responses) == 0 {
 		responses["200"] = map[string]any{"description": "Successful response"}
-		if method.IsValid() {
+		if method != nil {
 			resultType := gppOpenAPIResultType(app, route.Handler)
 			if resultType != nil {
 				response := responses["200"].(map[string]any)
@@ -410,23 +406,22 @@ func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas
 	parameters := []any{}
 	boundPathParameters := map[string]bool{}
 	bodyParameter := map[string]any(nil)
-	if method.IsValid() {
-		parameterValues := method.FieldByName("Parameters")
-		for index := 0; index < parameterValues.Len(); index++ {
-			parameter := parameterValues.Index(index)
-			name := gppOpenAPIStringField(parameter, "Name")
-			typeName := gppOpenAPITypeName(parameter.FieldByName("Type"))
+	if method != nil {
+		for _, parameter := range method.Parameters {
+			name := parameter.Name
+			typeName := ""
+			if parameter.Type != nil { typeName = parameter.Type.Name }
 			if name == "" || strings.EqualFold(name, "ctx") || strings.Contains(typeName, "Context") {
 				continue
 			}
 			binding := ""
 			bindingName := name
 			for _, annotation := range []string{"gpp.http.Path", "gpp.http.Query", "gpp.http.Body"} {
-				if !gppHasAnnotation(parameter.Interface(), annotation) {
+				if !gppHasAnnotation(parameter.Annotations, annotation) {
 					continue
 				}
 				binding = annotation
-				if arguments := gppAnnotationArgs(parameter.Interface(), annotation); len(arguments) > 0 {
+				if arguments := gppAnnotationArgs(parameter.Annotations, annotation); len(arguments) > 0 {
 					if explicitName := strings.TrimSpace(fmt.Sprint(arguments[0])); explicitName != "" {
 						bindingName = explicitName
 					}
@@ -478,8 +473,8 @@ func gppOpenAPIOperation(app any, descriptor any, route gppOpenAPIRoute, schemas
 		operation["parameters"] = parameters
 	}
 	requestBody := bodyParameter
-	if method.IsValid() {
-		if arguments := gppAnnotationArgs(method.Interface(), "gpp.http.RequestBody"); len(arguments) >= 3 {
+	if method != nil {
+		if arguments := gppAnnotationArgs(method.Annotations, "gpp.http.RequestBody"); len(arguments) >= 3 {
 			contentType := strings.TrimSpace(fmt.Sprint(arguments[0]))
 			description := strings.TrimSpace(fmt.Sprint(arguments[1]))
 			example := arguments[2]
@@ -549,22 +544,14 @@ func gppOpenAPIPathParameters(path string) []string {
 	return result
 }
 
-func gppOpenAPIMethodDescriptor(descriptor any, name string) reflect.Value {
-	value := gppOpenAPIDeref(reflect.ValueOf(descriptor))
-	if !value.IsValid() {
-		return reflect.Value{}
-	}
-	methods := value.FieldByName("Methods")
-	if !methods.IsValid() || methods.Kind() != reflect.Slice {
-		return reflect.Value{}
-	}
-	for index := 0; index < methods.Len(); index++ {
-		method := methods.Index(index)
-		if gppOpenAPIStringField(method, "Name") == name {
-			return method
+func gppOpenAPIMethodDescriptor(descriptor *GppClass, name string) *GppMethod {
+	if descriptor == nil { return nil }
+	for index := range descriptor.Methods {
+		if descriptor.Methods[index].Name == name {
+			return &descriptor.Methods[index]
 		}
 	}
-	return reflect.Value{}
+	return nil
 }
 
 func gppOpenAPIResultType(app any, methodName string) reflect.Type {
@@ -583,42 +570,9 @@ func gppOpenAPIResultType(app any, methodName string) reflect.Type {
 	return nil
 }
 
-func gppOpenAPITypeName(value reflect.Value) string {
-	value = gppOpenAPIDeref(value)
-	if !value.IsValid() {
-		return ""
-	}
-	name := value.FieldByName("Name")
-	if !name.IsValid() || name.Kind() != reflect.String {
-		return ""
-	}
-	return name.String()
-}
-
-func gppOpenAPIStringField(value reflect.Value, name string) string {
-	value = gppOpenAPIDeref(value)
-	if !value.IsValid() {
-		return ""
-	}
-	field := value.FieldByName(name)
-	if !field.IsValid() || field.Kind() != reflect.String {
-		return ""
-	}
-	return field.String()
-}
-
-func gppOpenAPIDescriptorName(descriptor any) string {
-	return gppOpenAPIStringField(reflect.ValueOf(descriptor), "Name")
-}
-
-func gppOpenAPIDeref(value reflect.Value) reflect.Value {
-	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
-		if value.IsNil() {
-			return reflect.Value{}
-		}
-		value = value.Elem()
-	}
-	return value
+func gppOpenAPIDescriptorName(descriptor *GppClass) string {
+	if descriptor == nil { return "" }
+	return descriptor.Name
 }
 
 func gppOpenAPISchemaForTypeName(typeName string, schemas map[string]any) map[string]any {

@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -26,14 +27,95 @@ func expandSerializableClasses(program *Program, model *SemanticModel, modulePat
 			}
 			qualifier, ok := serializationQualifier(class.Annotations, scope)
 			if !ok {
-				continue
+				inherited, err := inheritsSerializable(class, model, pkg, modulePath, map[*ClassDecl]bool{})
+				if err != nil {
+					return err
+				}
+				if !inherited {
+					continue
+				}
+				qualifier = generatedEncodingAlias(file)
 			}
+			class.SerializationQualifier = qualifier
 			if err := expandSerializableClass(class, qualifier); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func inheritsSerializable(class *ClassDecl, model *SemanticModel, pkg *PackageSymbols, modulePath string, visiting map[*ClassDecl]bool) (bool, error) {
+	if class == nil || pkg == nil || visiting[class] {
+		return false, nil
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+	for _, parentName := range classParentNames(class) {
+		parent := pkg.Classes[parentName]
+		if parent == nil {
+			parent = pkg.ImportedClasses[parentName]
+		}
+		if parent == nil && class.Owner != nil && model != nil {
+			if owner := model.Packages[class.Owner.Package]; owner != nil {
+				parent = owner.Classes[parentName]
+				if parent == nil {
+					parent = owner.ImportedClasses[parentName]
+				}
+			}
+		}
+		if parent == nil {
+			continue
+		}
+		parentPkg := packageForClass(parent, model, pkg)
+		parentScope := parentPkg.Annotations
+		if parent.Owner != nil {
+			var err error
+			parentScope, err = annotationScopeForFile(parent.Owner, model, modulePath)
+			if err != nil {
+				return false, err
+			}
+		}
+		if _, serializable := serializationQualifier(parent.Annotations, parentScope); serializable {
+			return true, nil
+		}
+		inherited, err := inheritsSerializable(parent, model, parentPkg, modulePath, visiting)
+		if err != nil {
+			return false, err
+		}
+		if inherited {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func packageForClass(class *ClassDecl, model *SemanticModel, fallback *PackageSymbols) *PackageSymbols {
+	if class != nil && class.Owner != nil && model != nil {
+		if pkg := model.Packages[class.Owner.Package]; pkg != nil {
+			return pkg
+		}
+	}
+	return fallback
+}
+
+func generatedEncodingAlias(file *File) string {
+	alias := "gppencoding"
+	used := map[string]bool{}
+	for _, imported := range file.Imports {
+		name := imported.Alias
+		if name == "" {
+			name = imported.Path
+			if slash := strings.LastIndex(name, "/"); slash >= 0 {
+				name = name[slash+1:]
+			}
+		}
+		used[name] = true
+	}
+	for suffix := 2; used[alias]; suffix++ {
+		alias = "gppencoding" + strconv.Itoa(suffix)
+	}
+	return alias
 }
 
 func serializationQualifier(uses []AnnotationUse, scope map[string]*AnnotationDecl) (string, bool) {

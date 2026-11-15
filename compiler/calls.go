@@ -1054,6 +1054,8 @@ func lowerCallableCallNode(call *CallExpr, context constructorContext) (ExprNode
 				if len(signatures) == 0 {
 					signatures = append(signatures, context.ClassMethodSignatures[context.CurrentClass][function.Name]...)
 				}
+			} else if imported := context.ImportedFunctionSignatures[receiver.Name][function.Name]; len(imported) > 0 {
+				signatures = append(signatures, imported...)
 			} else if _, isClass := context.Targets[receiver.Name]; isClass {
 				// Static GPP methods are emitted as package functions. A class
 				// receiver must therefore be lowered to that function instead of
@@ -1898,6 +1900,19 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 					replacement = "this." + function.Name + "(" + strings.Join(resolved, ", ") + ")"
 					changed = true
 				}
+			}
+		} else if signatures := context.ImportedFunctionSignatures[receiver][function.Name]; len(signatures) > 0 {
+			resolved, resolvedChanged, resolveErr := resolveCallableCall(function.Name, args, signatures)
+			if resolveErr != nil {
+				return callableCallRewrite{}, false, sourceLineError(call.Span(), resolveErr)
+			}
+			if resolvedChanged {
+				resolved, resolveErr = transformCallableArgumentSources(resolved, context)
+				if resolveErr != nil {
+					return callableCallRewrite{}, false, resolveErr
+				}
+				replacement = receiver + "." + function.Name + "(" + strings.Join(resolved, ", ") + ")"
+				changed = true
 			}
 		} else if target, ok := context.Targets[receiver]; ok {
 			_ = target

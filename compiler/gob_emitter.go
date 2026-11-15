@@ -66,6 +66,9 @@ func hasGeneratedSerializationMethod(class *ClassDecl, name string, static bool)
 }
 
 func serializationQualifierForClass(class *ClassDecl) string {
+	if class.SerializationQualifier != "" {
+		return class.SerializationQualifier
+	}
 	for _, use := range class.Annotations {
 		if use.Declaration == nil || annotationFullName(use.Declaration) != serializationPackage+".Serializable" {
 			continue

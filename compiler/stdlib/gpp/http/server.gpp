@@ -541,35 +541,20 @@ type gppHTTPStaticMount struct {
 func gppHTTPStaticMounts(app any) []gppHTTPStaticMount {
 	mounts := []gppHTTPStaticMount{}
 	descriptor := gppRuntimeClass(app)
-	value := reflect.ValueOf(descriptor)
-	if value.IsValid() && value.Kind() == reflect.Pointer && !value.IsNil() {
-		value = value.Elem()
-	}
-	if value.IsValid() && value.Kind() == reflect.Struct {
-		annotations := value.FieldByName("Annotations")
-		if annotations.IsValid() && annotations.Kind() == reflect.Slice {
-			for index := 0; index < annotations.Len(); index++ {
-				annotation := gppReflectIndex(annotations, index)
-				name := fmt.Sprint(annotation.FieldByName("Name").Interface())
-				fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
-				if name != "Files" && fullName != "gpp.http.Files" {
-					continue
-				}
-				arguments := annotation.FieldByName("Args")
-				if !arguments.IsValid() || arguments.Kind() != reflect.Slice || arguments.Len() < 2 {
-					continue
-				}
-				listing := false
-				if arguments.Len() > 2 {
-					listingValue := gppReflectIndex(arguments, 2)
-					listing = listingValue.IsValid() && listingValue.Kind() == reflect.Bool && listingValue.Bool()
-				}
-				mounts = append(mounts, gppHTTPStaticMount{
-					Path:       fmt.Sprint(gppReflectIndex(arguments, 0).Interface()),
-					Directory:  fmt.Sprint(gppReflectIndex(arguments, 1).Interface()),
-					DirListing: listing,
-				})
+	if descriptor != nil {
+		for _, annotation := range descriptor.Annotations {
+			if (annotation.Name != "Files" && annotation.FullName != "gpp.http.Files") || len(annotation.Args) < 2 {
+				continue
 			}
+			listing := false
+			if len(annotation.Args) > 2 {
+				listing, _ = annotation.Args[2].(bool)
+			}
+			mounts = append(mounts, gppHTTPStaticMount{
+				Path:       fmt.Sprint(annotation.Args[0]),
+				Directory:  fmt.Sprint(annotation.Args[1]),
+				DirListing: listing,
+			})
 		}
 	}
 	if directory := gppHTTPPublicDir(app); directory != "" {
@@ -775,7 +760,7 @@ func gppCallError(app any, ctx *Context, code int, cause error) {
 	}
 }
 
-func gppRouteHandler(router any, app any, methodName string, methodMetadata any, w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func gppRouteHandler(router any, app any, methodName string, methodMetadata GppMethod, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	handler := reflect.ValueOf(router).MethodByName(methodName)
 	ctx, state := gppContextForRequest(w, r, router)
 	if !handler.IsValid() {
@@ -822,27 +807,20 @@ func gppRouteHandler(router any, app any, methodName string, methodMetadata any,
 	}
 }
 
-func gppRouteArguments(handler reflect.Value, methodMetadata any, ctx *Context) ([]reflect.Value, error) {
-	parameters := reflect.ValueOf(methodMetadata)
-	if parameters.Kind() == reflect.Pointer {
-		parameters = parameters.Elem()
-	}
-	if !parameters.IsValid() || parameters.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("http: route handler parameter metadata is unavailable")
-	}
-	parameters = parameters.FieldByName("Parameters")
-	if !parameters.IsValid() || parameters.Len() != handler.Type().NumIn() {
+func gppRouteArguments(handler reflect.Value, methodMetadata GppMethod, ctx *Context) ([]reflect.Value, error) {
+	parameters := methodMetadata.Parameters
+	if len(parameters) != handler.Type().NumIn() {
 		return nil, fmt.Errorf("http: route handler parameter metadata does not match its signature")
 	}
 	arguments := make([]reflect.Value, handler.Type().NumIn())
 	arguments[0] = reflect.ValueOf(ctx)
 	for index := 1; index < handler.Type().NumIn(); index++ {
-		parameter := gppReflectIndex(parameters, index)
-		parameterName := fmt.Sprint(parameter.FieldByName("Name").Interface())
+		parameter := parameters[index]
+		parameterName := parameter.Name
 		annotationNames := []string{"gpp.http.Path", "gpp.http.Query", "gpp.http.Body"}
 		matched := ""
 		for _, name := range annotationNames {
-			if gppHasAnnotation(parameter.Interface(), name) {
+			if gppHasAnnotation(parameter.Annotations, name) {
 				if matched != "" {
 					return nil, fmt.Errorf("http: parameter %s has multiple request binding annotations", parameterName)
 				}
@@ -856,7 +834,7 @@ func gppRouteArguments(handler reflect.Value, methodMetadata any, ctx *Context) 
 		switch matched {
 		case "gpp.http.Path", "gpp.http.Query":
 			name := parameterName
-			if annotationArguments := gppAnnotationArgs(parameter.Interface(), matched); len(annotationArguments) > 0 {
+			if annotationArguments := gppAnnotationArgs(parameter.Annotations, matched); len(annotationArguments) > 0 {
 				if explicitName := strings.TrimSpace(fmt.Sprint(annotationArguments[0])); explicitName != "" {
 					name = explicitName
 				}
@@ -901,29 +879,22 @@ func gppRouteArguments(handler reflect.Value, methodMetadata any, ctx *Context) 
 	return arguments, nil
 }
 
-func gppValidateRouteSignature(handler reflect.Value, methodMetadata any) error {
+func gppValidateRouteSignature(handler reflect.Value, methodMetadata GppMethod) error {
 	contextType := reflect.TypeOf((*Context)(nil))
 	if !handler.IsValid() || handler.Type().NumIn() == 0 || handler.Type().In(0) != contextType {
 		return fmt.Errorf("route handler must take *http.Context as its first parameter")
 	}
-	metadata := reflect.ValueOf(methodMetadata)
-	if metadata.Kind() == reflect.Pointer {
-		metadata = metadata.Elem()
-	}
-	if !metadata.IsValid() || metadata.Kind() != reflect.Struct {
-		return fmt.Errorf("route handler parameter metadata is unavailable")
-	}
-	parameters := metadata.FieldByName("Parameters")
-	if !parameters.IsValid() || parameters.Len() != handler.Type().NumIn() {
+	parameters := methodMetadata.Parameters
+	if len(parameters) != handler.Type().NumIn() {
 		return fmt.Errorf("route handler parameter metadata does not match its signature")
 	}
 	bodyCount := 0
-	for index := 1; index < parameters.Len(); index++ {
-		parameter := gppReflectIndex(parameters, index)
-		name := fmt.Sprint(parameter.FieldByName("Name").Interface())
+	for index := 1; index < len(parameters); index++ {
+		parameter := parameters[index]
+		name := parameter.Name
 		matches := 0
 		for _, annotation := range []string{"gpp.http.Path", "gpp.http.Query", "gpp.http.Body"} {
-			if gppHasAnnotation(parameter.Interface(), annotation) {
+			if gppHasAnnotation(parameter.Annotations, annotation) {
 				matches++
 				if annotation == "gpp.http.Body" {
 					bodyCount++
@@ -988,16 +959,11 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 	wsHandler.ServeHTTP(w, r)
 }
 
-func gppRuntimeClass(value any) any {
-	method := reflect.ValueOf(value).MethodByName("GppRuntimeClass")
-	if !method.IsValid() {
-		return nil
+func gppRuntimeClass(value any) *GppClass {
+	if provider, ok := value.(interface{ GppRuntimeClass() *GppClass }); ok {
+		return provider.GppRuntimeClass()
 	}
-	result := method.Call(nil)
-	if len(result) == 0 || !result[0].IsValid() || result[0].IsNil() {
-		return nil
-	}
-	return result[0].Interface()
+	return nil
 }
 
 func gppTemplateScope(value any) string {
@@ -1005,78 +971,21 @@ func gppTemplateScope(value any) string {
 	if class == nil {
 		return ""
 	}
-	metadata := reflect.ValueOf(class)
-	if metadata.Kind() == reflect.Pointer {
-		if metadata.IsNil() {
-			return ""
-		}
-		metadata = metadata.Elem()
-	}
-	if !metadata.IsValid() || metadata.Kind() != reflect.Struct {
-		return ""
-	}
-	scope := metadata.FieldByName("Package")
-	if !scope.IsValid() || scope.Kind() != reflect.String {
-		return ""
-	}
-	return scope.String()
+	return class.Package
 }
 
-func gppReflectIndex(value reflect.Value, index int) reflect.Value {
-	return value.Index(index)
-}
-
-func gppAnnotationArgs(owner any, name string) []any {
-	if owner == nil {
-		return nil
-	}
-	value := reflect.ValueOf(owner)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	if !value.IsValid() {
-		return nil
-	}
-	annotations := value.FieldByName("Annotations")
-	if !annotations.IsValid() {
-		return nil
-	}
-	for index := 0; index < annotations.Len(); index++ {
-		annotation := gppReflectIndex(annotations, index)
-		annotationName := fmt.Sprint(annotation.FieldByName("Name").Interface())
-		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
-		if annotationName == name || fullName == name {
-			arguments := annotation.FieldByName("Args")
-			result := make([]any, arguments.Len())
-			for argIndex := 0; argIndex < arguments.Len(); argIndex++ {
-				result[argIndex] = gppReflectIndex(arguments, argIndex).Interface()
-			}
-			return result
+func gppAnnotationArgs(annotations GppAnnotations, name string) []any {
+	for _, annotation := range annotations {
+		if annotation.Name == name || annotation.FullName == name {
+			return append([]any(nil), annotation.Args...)
 		}
 	}
 	return nil
 }
 
-func gppHasAnnotation(owner any, name string) bool {
-	if owner == nil {
-		return false
-	}
-	value := reflect.ValueOf(owner)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	if !value.IsValid() {
-		return false
-	}
-	annotations := value.FieldByName("Annotations")
-	if !annotations.IsValid() {
-		return false
-	}
-	for index := 0; index < annotations.Len(); index++ {
-		annotation := gppReflectIndex(annotations, index)
-		annotationName := fmt.Sprint(annotation.FieldByName("Name").Interface())
-		fullName := fmt.Sprint(annotation.FieldByName("FullName").Interface())
-		if annotationName == name || fullName == name {
+func gppHasAnnotation(annotations GppAnnotations, name string) bool {
+	for _, annotation := range annotations {
+		if annotation.Name == name || annotation.FullName == name {
 			return true
 		}
 	}
@@ -1150,27 +1059,21 @@ func gppRegisterMuxHandler(mux *stdhttp.ServeMux, pattern string, handler func(s
 	return nil
 }
 
-func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor any, prefix string, host string, fallback bool) error {
+func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor *GppClass, prefix string, host string, fallback bool) error {
 	if descriptor == nil {
 		return nil
 	}
-	value := reflect.ValueOf(descriptor)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
 	rootHandlers := map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
 	routeHandlers := map[string]map[string]func(stdhttp.ResponseWriter, *stdhttp.Request){}
-	methods := value.FieldByName("Methods")
-	for index := 0; index < methods.Len(); index++ {
-		method := gppReflectIndex(methods, index)
-		methodName := fmt.Sprint(method.FieldByName("Name").Interface())
+	for _, method := range descriptor.Methods {
+		methodName := method.Name
 		register := func(routePath string, httpMethod string, websocketRoute bool) error {
 			handlerMethod := reflect.ValueOf(router).MethodByName(methodName)
 			if websocketRoute {
 				if !handlerMethod.IsValid() || handlerMethod.Type().NumIn() != 1 || handlerMethod.Type().In(0) != reflect.TypeOf((*Context)(nil)) {
 					return fmt.Errorf("http: WebSocket handler %s must take only *http.Context", methodName)
 				}
-			} else if err := gppValidateRouteSignature(handlerMethod, method.Interface()); err != nil {
+			} else if err := gppValidateRouteSignature(handlerMethod, method); err != nil {
 				return fmt.Errorf("http: invalid route handler %s: %w", methodName, err)
 			}
 			path := gppJoinHTTPPath(prefix, routePath)
@@ -1184,7 +1087,7 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 					gppWebSocketRouteHandler(router, app, methodName, w, r)
 					return
 				}
-				gppRouteHandler(router, app, methodName, method.Interface(), w, r)
+				gppRouteHandler(router, app, methodName, method, w, r)
 			}
 			if path == "/" {
 				if rootHandlers[httpMethod] != nil {
@@ -1212,13 +1115,13 @@ func gppRegisterRoutes(mux *stdhttp.ServeMux, router any, app any, descriptor an
 			{annotation: "gpp.http.PATCH", method: "PATCH"},
 			{annotation: "gpp.http.DELETE", method: "DELETE"},
 		} {
-			if arguments := gppAnnotationArgs(method.Interface(), route.annotation); len(arguments) > 0 {
+			if arguments := gppAnnotationArgs(method.Annotations, route.annotation); len(arguments) > 0 {
 				if err := register(fmt.Sprint(arguments[0]), route.method, false); err != nil {
 					return err
 				}
 			}
 		}
-		if arguments := gppAnnotationArgs(method.Interface(), "gpp.http.WebSocket"); len(arguments) > 0 {
+		if arguments := gppAnnotationArgs(method.Annotations, "gpp.http.WebSocket"); len(arguments) > 0 {
 			if err := register(fmt.Sprint(arguments[0]), "GET", true); err != nil {
 				return err
 			}
@@ -1397,7 +1300,7 @@ class Server {
 		if descriptor == nil {
 			return fmt.Errorf("http: mounted value must be a GPP class")
 		}
-		if !gppHasAnnotation(descriptor, "gpp.http.Mountable") {
+		if !gppHasAnnotation(descriptor.Annotations, "gpp.http.Mountable") {
 			return fmt.Errorf("http: mounted class must have the http.Mountable annotation")
 		}
 		if len(addresses) == 0 {
@@ -1506,7 +1409,7 @@ class Server {
 		descriptor := gppRuntimeClass(app)
 		network := "tcp"
 		address := ":" + fmt.Sprint(port)
-		if args := gppAnnotationArgs(descriptor, "gpp.http.Unix"); len(args) > 0 {
+		if args := gppAnnotationArgs(descriptor.Annotations, "gpp.http.Unix"); len(args) > 0 {
 			network = "unix"
 			address = fmt.Sprint(args[0])
 		}
@@ -1514,7 +1417,7 @@ class Server {
 			return fmt.Errorf("http: cannot pass a port when using a Unix socket")
 		}
 		if network == "tcp" {
-			if args := gppAnnotationArgs(descriptor, "gpp.http.IP"); len(args) > 0 {
+			if args := gppAnnotationArgs(descriptor.Annotations, "gpp.http.IP"); len(args) > 0 {
 				address = fmt.Sprint(args[0]) + address[strings.Index(address, ":"):]
 			}
 		}
@@ -1544,7 +1447,7 @@ class Server {
 		descriptor := gppRuntimeClass(app)
 		mux := stdhttp.NewServeMux()
 		prefix := ""
-		if args := gppAnnotationArgs(descriptor, "gpp.http.Prefix"); len(args) > 0 {
+		if args := gppAnnotationArgs(descriptor.Annotations, "gpp.http.Prefix"); len(args) > 0 {
 			prefix = fmt.Sprint(args[0])
 		}
 		oauthEngine, oauthErr := gppOAuthNewEngine(descriptor)
@@ -1563,7 +1466,7 @@ class Server {
 				return fmt.Errorf("http: mounted router has no GPP class metadata")
 			}
 			routerPrefix := ""
-			if args := gppAnnotationArgs(mountDescriptor, "gpp.http.Prefix"); len(args) > 0 {
+			if args := gppAnnotationArgs(mountDescriptor.Annotations, "gpp.http.Prefix"); len(args) > 0 {
 				routerPrefix = fmt.Sprint(args[0])
 			}
 			for _, address := range mount.Addresses {

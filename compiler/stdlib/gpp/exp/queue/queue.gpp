@@ -1,0 +1,849 @@
+package gpp.exp.queue
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/gob"
+	"fmt"
+	"hash/crc32"
+	"io"
+	stdlog "log"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+	gppencoding "gpp/encoding"
+)
+
+// Message is the serializable base class for durable queue messages. Concrete
+// subclasses provide Execute and get serialization for their own fields.
+class Message @{gppencoding.Serializable} {
+	Priority int
+
+	func Execute() error {
+		return fmt.Errorf("queue: message subclasses must implement Execute")
+	}
+
+	func QueuePriority() int {
+		return this.Priority
+	}
+
+}
+
+type gppQueueStored struct {
+	ID      uint64
+	Priority int
+	Retries int
+	LastError string
+	Type    string
+	Payload []byte
+}
+
+type gppQueueEvent struct {
+	Version uint8
+	Kind    uint8
+	ID      uint64
+	Priority int
+	Retries int
+	LastError string
+	Type    string
+	Payload []byte
+}
+
+class DeadLetter {
+	ID uint64
+	Priority int
+	Retries int
+	LastError string
+	Message GppMessage
+}
+
+// Queue stores GPP messages in a local append-only Gob log. It is intended for
+// one process and small to medium queues.
+class Queue {
+	file string
+	log *os.File
+	closeMu sync.Mutex
+	mu sync.Mutex
+	items map[uint64]gppQueueStored
+	dead map[uint64]gppQueueStored
+	pending []uint64
+	inFlight map[uint64]bool
+	nextID uint64
+	notify chan struct{}
+	stop chan struct{}
+	changed chan struct{}
+	workerDone chan struct{}
+	retries int
+	needsStartupCompaction bool
+	closing bool
+	closed bool
+	failure error
+
+	static func Create(file string) (*Queue, error) {
+		return Queue.CreateWithRetries(file, 3)
+	}
+
+	static func CreateWithRetries(file string, retries int) (*Queue, error) {
+		if strings.TrimSpace(file) == "" {
+			return nil, fmt.Errorf("queue: file path cannot be empty")
+		}
+		if retries < 0 {
+			return nil, fmt.Errorf("queue: retries cannot be negative")
+		}
+		absolute, err := filepath.Abs(file)
+		if err != nil {
+			return nil, fmt.Errorf("queue: resolve file path: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(absolute), 0755); err != nil {
+			return nil, fmt.Errorf("queue: create file directory: %w", err)
+		}
+		queue := &Queue{
+			file: absolute,
+			retries: retries,
+			items: map[uint64]gppQueueStored{},
+			dead: map[uint64]gppQueueStored{},
+			pending: []uint64{},
+			inFlight: map[uint64]bool{},
+			nextID: 1,
+			notify: make(chan struct{}, 1),
+			changed: make(chan struct{}, 1),
+			stop: make(chan struct{}),
+			workerDone: make(chan struct{}),
+		}
+		fileHandle, err := os.OpenFile(absolute, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+		if err != nil {
+			return nil, fmt.Errorf("queue: open file: %w", err)
+		}
+		queue.log = fileHandle
+		if err := queue.replay(fileHandle); err != nil {
+			_ = fileHandle.Close()
+			return nil, err
+		}
+		var compactErr error
+		if queue.needsStartupCompaction {
+			compactErr = queue.compact()
+		} else {
+			compactErr = queue.maybeCompact()
+		}
+		if compactErr != nil {
+			_ = queue.log.Close()
+			return nil, fmt.Errorf("queue: compact log on open: %w", compactErr)
+		}
+		go queue.consume()
+		return queue, nil
+	}
+
+	func replay(file *os.File) error {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("queue: seek log: %w", err)
+		}
+		var offset int64
+		for {
+			var header [4]byte
+			read, err := io.ReadFull(file, header[:])
+			if err == io.EOF && read == 0 {
+				break
+			}
+			if err != nil {
+				if truncateErr := file.Truncate(offset); truncateErr != nil {
+					return fmt.Errorf("queue: truncate incomplete log header: %w", truncateErr)
+				}
+				break
+			}
+			size := binary.LittleEndian.Uint32(header[:])
+			if size == 0 || size > 256*1024*1024 {
+				return fmt.Errorf("queue: invalid log record size %d at offset %d", size, offset)
+			}
+			payload := make([]byte, size)
+			if _, err := io.ReadFull(file, payload); err != nil {
+				if truncateErr := file.Truncate(offset); truncateErr != nil {
+					return fmt.Errorf("queue: truncate incomplete log record: %w", truncateErr)
+				}
+				break
+			}
+			var checksum [4]byte
+			if _, err := io.ReadFull(file, checksum[:]); err != nil {
+				if truncateErr := file.Truncate(offset); truncateErr != nil {
+					return fmt.Errorf("queue: truncate incomplete log checksum: %w", truncateErr)
+				}
+				break
+			}
+			if binary.LittleEndian.Uint32(checksum[:]) != crc32.ChecksumIEEE(payload) {
+				return fmt.Errorf("queue: log checksum mismatch at offset %d", offset)
+			}
+			var event gppQueueEvent
+			if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&event); err != nil {
+				return fmt.Errorf("queue: decode log record at offset %d: %w", offset, err)
+			}
+			if event.Version != 1 || (event.ID == 0 && event.Kind != 5) {
+				return fmt.Errorf("queue: invalid log event at offset %d", offset)
+			}
+			switch event.Kind {
+			case 1:
+				if event.Type == "" {
+					return fmt.Errorf("queue: enqueue event has no message type at offset %d", offset)
+				}
+				if _, exists := this.items[event.ID]; exists {
+					return fmt.Errorf("queue: duplicate message ID %d in log", event.ID)
+				}
+				if _, exists := this.dead[event.ID]; exists {
+					return fmt.Errorf("queue: duplicate message ID %d in log", event.ID)
+				}
+				stored := gppQueueStored{ID: event.ID, Priority: event.Priority, Retries: event.Retries, LastError: event.LastError, Type: event.Type, Payload: event.Payload}
+				this.items[event.ID] = stored
+				if event.ID >= this.nextID {
+					this.nextID = event.ID + 1
+				}
+			case 2:
+				this.needsStartupCompaction = true
+				delete(this.items, event.ID)
+				delete(this.dead, event.ID)
+				if event.ID >= this.nextID {
+					this.nextID = event.ID + 1
+				}
+			case 3:
+				stored, exists := this.items[event.ID]
+				if !exists {
+					return fmt.Errorf("queue: retry event has no message %d", event.ID)
+				}
+				stored.Retries = event.Retries
+				stored.LastError = event.LastError
+				this.items[event.ID] = stored
+			case 4:
+				stored := gppQueueStored{ID: event.ID, Priority: event.Priority, Retries: event.Retries, LastError: event.LastError, Type: event.Type, Payload: event.Payload}
+				if active, exists := this.items[event.ID]; exists {
+					stored = active
+					stored.Retries = event.Retries
+					stored.LastError = event.LastError
+				}
+				delete(this.items, event.ID)
+				this.dead[event.ID] = stored
+				if event.ID >= this.nextID {
+					this.nextID = event.ID + 1
+				}
+			case 5:
+				this.needsStartupCompaction = true
+				this.dead = map[uint64]gppQueueStored{}
+			default:
+				return fmt.Errorf("queue: unknown log event kind %d at offset %d", event.Kind, offset)
+			}
+			offset += int64(4) + int64(size) + int64(4)
+		}
+		this.pending = []uint64{}
+		for _, item := range this.items {
+			this.pending = gppQueueInsertPending(this.pending, this.items, item.ID)
+			if _, err := gppQueueRestore(item); err != nil {
+				return err
+			}
+		}
+		for _, item := range this.dead {
+			if _, err := gppQueueRestore(item); err != nil {
+				return err
+			}
+		}
+		_, err := file.Seek(0, io.SeekEnd)
+		if err != nil {
+			return fmt.Errorf("queue: seek log end: %w", err)
+		}
+		return nil
+	}
+
+	// Push durably stores a message and schedules it for execution.
+	func Push(message GppMessage) error {
+		class := message.GppRuntimeClass()
+		if class == nil || !gppQueueIsMessageClass(class, map[*GppClass]bool{}) {
+			return fmt.Errorf("queue: message must subclass queue.Message")
+		}
+		if !gppQueueHasConcreteExecute(class) {
+			return fmt.Errorf("queue: message class %s must implement Execute", class.Name)
+		}
+		if class.DecodeGOB == nil {
+			return fmt.Errorf("queue: message class %s has no generated serializer", class.Name)
+		}
+		payload, err := message.ToGOB()
+		if err != nil {
+			return fmt.Errorf("queue: serialize message: %w", err)
+		}
+		stored := gppQueueStored{Priority: message.QueuePriority(), Type: class.Package + "." + class.Name, Payload: payload}
+
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		if this.closed || this.closing {
+			return fmt.Errorf("queue: queue is closed")
+		}
+		if this.failure != nil {
+			return fmt.Errorf("queue: log is unavailable: %w", this.failure)
+		}
+		stored.ID = this.nextID
+		event := gppQueueEvent{Version: 1, Kind: 1, ID: stored.ID, Priority: stored.Priority, Type: stored.Type, Payload: stored.Payload}
+		if err := gppQueueAppend(this.log, event); err != nil {
+			this.failure = err
+			return err
+		}
+		this.nextID++
+		this.items[stored.ID] = stored
+		this.pending = gppQueueInsertPending(this.pending, this.items, stored.ID)
+		gppQueueNotify(this.notify)
+		gppQueueNotify(this.changed)
+		return nil
+	}
+
+	// Dead returns a snapshot of dead-letter messages without removing them.
+	func Dead() []*DeadLetter {
+		this.mu.Lock()
+		stored := make([]gppQueueStored, 0, len(this.dead))
+		for _, item := range this.dead {
+			stored = append(stored, item)
+		}
+		this.mu.Unlock()
+		sort.Slice(stored, func(left, right int) bool { return stored[left].ID < stored[right].ID })
+		result := make([]*DeadLetter, 0, len(stored))
+		for _, item := range stored {
+			message, err := gppQueueRestore(item)
+			if err != nil {
+				stdlog.Printf("queue: cannot restore dead-letter message %d (%s): %v", item.ID, item.Type, err)
+				continue
+			}
+			result = append(result, DeadLetter(ID: item.ID, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Message: message))
+		}
+		return result
+	}
+
+	// Remove deletes one dead-letter entry. It does not remove active work.
+	func Remove(item *DeadLetter) error {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		if this.closed || this.closing {
+			return fmt.Errorf("queue: queue is closed")
+		}
+		if _, exists := this.dead[item.ID]; !exists {
+			return fmt.Errorf("queue: dead-letter entry %d does not exist", item.ID)
+		}
+		if this.failure != nil {
+			return fmt.Errorf("queue: log is unavailable: %w", this.failure)
+		}
+		event := gppQueueEvent{Version: 1, Kind: 2, ID: item.ID}
+		if err := gppQueueAppend(this.log, event); err != nil {
+			this.failure = err
+			return err
+		}
+		delete(this.dead, item.ID)
+		return this.maybeCompact()
+	}
+
+	// Purge removes all dead-letter entries from the durable queue log.
+	func Purge() error {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		if this.closed || this.closing {
+			return fmt.Errorf("queue: queue is closed")
+		}
+		if len(this.dead) == 0 {
+			return nil
+		}
+		if this.failure != nil {
+			return fmt.Errorf("queue: log is unavailable: %w", this.failure)
+		}
+		event := gppQueueEvent{Version: 1, Kind: 5}
+		if err := gppQueueAppend(this.log, event); err != nil {
+			this.failure = err
+			return err
+		}
+		this.dead = map[uint64]gppQueueStored{}
+		return this.maybeCompact()
+	}
+
+	// Drain stops accepting messages and waits for queued work to finish. If the
+	// timeout expires, it stops after the current Execute call and preserves
+	// pending messages for the next queue.
+	func Drain(timeout time.Duration) error {
+		this.closeMu.Lock()
+		this.mu.Lock()
+		if this.closed {
+			this.mu.Unlock()
+			this.closeMu.Unlock()
+			<-this.workerDone
+			return this.finishClose()
+		}
+		this.closing = true
+		this.mu.Unlock()
+
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		for {
+			this.mu.Lock()
+			if len(this.items) == 0 {
+				this.closed = true
+				close(this.stop)
+				gppQueueNotify(this.changed)
+				this.mu.Unlock()
+				<-this.workerDone
+				this.closeMu.Unlock()
+				return this.finishClose()
+			}
+			if this.failure != nil {
+				err := fmt.Errorf("queue: cannot drain messages: %w", this.failure)
+				this.closed = true
+				close(this.stop)
+				gppQueueNotify(this.changed)
+				this.mu.Unlock()
+				<-this.workerDone
+				this.closeMu.Unlock()
+				_ = this.finishClose()
+				return err
+			}
+			this.mu.Unlock()
+			select {
+			case <-this.changed:
+				continue
+			case <-timer.C:
+				this.mu.Lock()
+				if len(this.items) == 0 {
+					this.mu.Unlock()
+					continue
+				}
+				this.closed = true
+				close(this.stop)
+				gppQueueNotify(this.changed)
+				this.mu.Unlock()
+				this.closeMu.Unlock()
+				go this.finishAfterStop()
+				return fmt.Errorf("queue: drain timed out after %s", timeout)
+			}
+		}
+	}
+
+	// Stop stops after the current Execute call and preserves pending messages.
+	func Stop() error {
+		this.closeMu.Lock()
+		defer this.closeMu.Unlock()
+		this.mu.Lock()
+		if !this.closed {
+			this.closing = true
+			this.closed = true
+			close(this.stop)
+			gppQueueNotify(this.changed)
+		}
+		this.mu.Unlock()
+		<-this.workerDone
+		return this.finishClose()
+	}
+
+	func finishClose() error {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		if this.log == nil {
+			return nil
+		}
+		syncErr := this.log.Sync()
+		closeErr := this.log.Close()
+		this.log = nil
+		if syncErr != nil {
+			return fmt.Errorf("queue: sync log on close: %w", syncErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("queue: close log: %w", closeErr)
+		}
+		return nil
+	}
+
+	func finishAfterStop() {
+		<-this.workerDone
+		_ = this.finishClose()
+	}
+
+	func consume() {
+		defer close(this.workerDone)
+		for {
+			stored, ok := this.take()
+			if !ok {
+				select {
+			case <-this.stop:
+					return
+			case <-this.notify:
+					continue
+			}
+			}
+			message, err := gppQueueRestore(stored)
+			if err != nil {
+				retry, recordErr := this.fail(stored.ID, err)
+				if recordErr != nil {
+					stdlog.Printf("queue: record failure for message %d: %v", stored.ID, recordErr)
+					if !gppQueuePause(this.stop) { return }
+					continue
+				}
+				if retry {
+					stdlog.Printf("queue: cannot restore message %d (%s); retrying: %v", stored.ID, stored.Type, err)
+					if !gppQueuePause(this.stop) { return }
+				} else {
+					stdlog.Printf("queue: message %d (%s) moved to dead letters: %v", stored.ID, stored.Type, err)
+				}
+				continue
+			}
+			if err := message.Execute(); err != nil {
+				retry, recordErr := this.fail(stored.ID, err)
+				if recordErr != nil {
+					stdlog.Printf("queue: record failure for message %d: %v", stored.ID, recordErr)
+					if !gppQueuePause(this.stop) { return }
+					continue
+				}
+				if retry {
+					stdlog.Printf("queue: Execute for message %d (%s) failed; retrying: %v", stored.ID, stored.Type, err)
+					if !gppQueuePause(this.stop) { return }
+				} else {
+					stdlog.Printf("queue: Execute for message %d (%s) failed; moved to dead letters: %v", stored.ID, stored.Type, err)
+				}
+				continue
+			}
+			if err := this.ack(stored.ID); err != nil {
+				stdlog.Printf("queue: acknowledge message %d failed: %v", stored.ID, err)
+				this.release(stored.ID)
+				if !gppQueuePause(this.stop) { return }
+				continue
+			}
+			select {
+			case <-this.stop:
+				return
+			default:
+			}
+		}
+	}
+
+	func take() (gppQueueStored, bool) {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		if this.closed || this.failure != nil {
+			return gppQueueStored{}, false
+		}
+		for len(this.pending) > 0 {
+			id := this.pending[0]
+			this.pending = this.pending[1:]
+			stored, exists := this.items[id]
+			if !exists || this.inFlight[id] {
+				continue
+			}
+			this.inFlight[id] = true
+			return stored, true
+		}
+		return gppQueueStored{}, false
+	}
+
+	func ack(id uint64) error {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		_, exists := this.items[id]
+		if !exists {
+			return nil
+		}
+		if this.failure != nil {
+			return fmt.Errorf("queue: log is unavailable: %w", this.failure)
+		}
+		event := gppQueueEvent{Version: 1, Kind: 2, ID: id}
+		if err := gppQueueAppend(this.log, event); err != nil {
+			this.failure = err
+			return err
+		}
+		delete(this.items, id)
+		delete(this.inFlight, id)
+		gppQueueNotify(this.changed)
+		return this.maybeCompact()
+	}
+
+	func fail(id uint64, executionErr error) (bool, error) {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		stored, exists := this.items[id]
+		if !exists {
+			delete(this.inFlight, id)
+			return false, nil
+		}
+		if this.failure != nil {
+			delete(this.inFlight, id)
+			return false, fmt.Errorf("queue: log is unavailable: %w", this.failure)
+		}
+		retry := stored.Retries < this.retries
+		kind := uint8(4)
+		if retry {
+			kind = 3
+			stored.Retries++
+		}
+		stored.LastError = executionErr.Error()
+		event := gppQueueEvent{Version: 1, Kind: kind, ID: id, Priority: stored.Priority, Retries: stored.Retries, LastError: stored.LastError, Type: stored.Type, Payload: stored.Payload}
+		if err := gppQueueAppend(this.log, event); err != nil {
+			this.failure = err
+			delete(this.inFlight, id)
+			gppQueueNotify(this.changed)
+			return false, err
+		}
+		delete(this.inFlight, id)
+		if retry {
+			this.items[id] = stored
+			this.pending = gppQueueInsertPending(this.pending, this.items, id)
+			gppQueueNotify(this.notify)
+		} else {
+			delete(this.items, id)
+			this.dead[id] = stored
+		}
+		gppQueueNotify(this.changed)
+		return retry, nil
+	}
+
+	func release(id uint64) bool {
+		this.mu.Lock()
+		defer this.mu.Unlock()
+		delete(this.inFlight, id)
+		gppQueueNotify(this.changed)
+		if _, exists := this.items[id]; exists && !this.closed {
+			this.pending = gppQueueInsertPending(this.pending, this.items, id)
+			gppQueueNotify(this.notify)
+			return true
+		}
+		return false
+	}
+
+	func maybeCompact() error {
+		info, err := this.log.Stat()
+		if err != nil {
+			return fmt.Errorf("queue: inspect log for compaction: %w", err)
+		}
+		if info.Size() < 16*1024*1024 {
+			return nil
+		}
+		liveSize := int64(0)
+		for _, item := range this.items {
+			liveSize += int64(len(item.Payload) + len(item.Type) + 128)
+		}
+		for _, item := range this.dead {
+			liveSize += int64(len(item.Payload) + len(item.Type) + len(item.LastError) + 128)
+		}
+		if info.Size() < liveSize*2+1024*1024 {
+			return nil
+		}
+		return this.compact()
+	}
+
+	func compact() error {
+		temporary := this.file + ".compact"
+		file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+		if err != nil {
+			return fmt.Errorf("queue: create compacted log: %w", err)
+		}
+		writeItem := func(item gppQueueStored) error {
+			event := gppQueueEvent{Version: 1, Kind: 1, ID: item.ID, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Type: item.Type, Payload: item.Payload}
+			frame, err := gppQueueFrame(event)
+			if err != nil {
+				return err
+			}
+			for len(frame) > 0 {
+				written, err := file.Write(frame)
+				if err != nil {
+					return err
+				}
+				if written == 0 {
+					return fmt.Errorf("queue: compact log: zero bytes written")
+				}
+				frame = frame[written:]
+			}
+			return nil
+		}
+		for _, id := range this.pending {
+			if item, exists := this.items[id]; exists && !this.inFlight[id] {
+				if err := writeItem(item); err != nil {
+					_ = file.Close()
+					_ = os.Remove(temporary)
+					return fmt.Errorf("queue: write compacted log: %w", err)
+				}
+			}
+		}
+		for id, item := range this.items {
+			if this.inFlight[id] {
+				if err := writeItem(item); err != nil {
+					_ = file.Close()
+					_ = os.Remove(temporary)
+					return fmt.Errorf("queue: write compacted log: %w", err)
+				}
+			}
+		}
+		for id, item := range this.dead {
+			event := gppQueueEvent{Version: 1, Kind: 4, ID: id, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Type: item.Type, Payload: item.Payload}
+			frame, err := gppQueueFrame(event)
+			if err != nil {
+				_ = file.Close()
+				_ = os.Remove(temporary)
+				return fmt.Errorf("queue: encode dead letter during compaction: %w", err)
+			}
+			for len(frame) > 0 {
+				written, err := file.Write(frame)
+				if err != nil {
+					_ = file.Close()
+					_ = os.Remove(temporary)
+					return fmt.Errorf("queue: write dead letter during compaction: %w", err)
+				}
+				if written == 0 {
+					_ = file.Close()
+					_ = os.Remove(temporary)
+					return fmt.Errorf("queue: compact dead letter: zero bytes written")
+				}
+				frame = frame[written:]
+			}
+		}
+		if err := file.Sync(); err != nil {
+			_ = file.Close()
+			_ = os.Remove(temporary)
+			return fmt.Errorf("queue: sync compacted log: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			_ = os.Remove(temporary)
+			return fmt.Errorf("queue: close compacted log: %w", err)
+		}
+		if err := os.Rename(temporary, this.file); err != nil {
+			_ = os.Remove(temporary)
+			return fmt.Errorf("queue: replace log with compacted log: %w", err)
+		}
+		directory, err := os.Open(filepath.Dir(this.file))
+		if err != nil {
+			this.failure = err
+			return fmt.Errorf("queue: open log directory after compaction: %w", err)
+		}
+		if err := directory.Sync(); err != nil {
+			_ = directory.Close()
+			this.failure = err
+			return fmt.Errorf("queue: sync log directory after compaction: %w", err)
+		}
+		_ = directory.Close()
+		replacement, err := os.OpenFile(this.file, os.O_RDWR|os.O_APPEND, 0600)
+		if err != nil {
+			this.failure = err
+			return fmt.Errorf("queue: reopen compacted log: %w", err)
+		}
+		if err := this.log.Close(); err != nil {
+			_ = replacement.Close()
+			this.failure = err
+			return fmt.Errorf("queue: close old log after compaction: %w", err)
+		}
+		this.log = replacement
+		this.needsStartupCompaction = false
+		return nil
+	}
+
+}
+
+// New opens app.queue, or the supplied file, and allows three retries by default.
+func New(file string = "app.queue", retries int = 3) (*Queue, error) {
+	return Queue.CreateWithRetries(file, retries)
+}
+
+func gppQueueIsMessageClass(class *GppClass, visiting map[*GppClass]bool) bool {
+	if class == nil || visiting[class] {
+		return false
+	}
+	if class == GppMessageClass {
+		return true
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+	for _, parent := range class.Parents {
+		if gppQueueIsMessageClass(parent, visiting) {
+			return true
+		}
+	}
+	return false
+}
+
+func gppQueueHasConcreteExecute(class *GppClass) bool {
+	for _, method := range class.Methods {
+		if method.Name == "Execute" && method.Owner != nil && method.Owner != GppMessageClass {
+			return true
+		}
+	}
+	return false
+}
+
+func gppQueueInsertPending(pending []uint64, items map[uint64]gppQueueStored, id uint64) []uint64 {
+	priority := items[id].Priority
+	index := len(pending)
+	for current, pendingID := range pending {
+		item := items[pendingID]
+		if priority > item.Priority || (priority == item.Priority && id < pendingID) {
+			index = current
+			break
+		}
+	}
+	pending = append(pending, 0)
+	copy(pending[index+1:], pending[index:])
+	pending[index] = id
+	return pending
+}
+
+func gppQueueRestore(stored gppQueueStored) (GppMessage, error) {
+	class := __gppClassByName(stored.Type)
+	if class == nil || class.DecodeGOB == nil {
+		return nil, fmt.Errorf("queue: serializable message class %q is unavailable", stored.Type)
+	}
+	value, err := class.DecodeGOB(stored.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("queue: restore message %d: %w", stored.ID, err)
+	}
+	message, ok := value.(GppMessage)
+	if !ok {
+		return nil, fmt.Errorf("queue: restored class %q is not a queue.Message", stored.Type)
+	}
+	return message, nil
+}
+
+func gppQueueAppend(file *os.File, event gppQueueEvent) error {
+	frame, err := gppQueueFrame(event)
+	if err != nil {
+		return err
+	}
+	for len(frame) > 0 {
+		written, err := file.Write(frame)
+		if err != nil {
+			return fmt.Errorf("queue: append log event: %w", err)
+		}
+		if written == 0 {
+			return fmt.Errorf("queue: append log event: zero bytes written")
+		}
+		frame = frame[written:]
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("queue: sync log event: %w", err)
+	}
+	return nil
+}
+
+func gppQueueFrame(event gppQueueEvent) ([]byte, error) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(event); err != nil {
+		return nil, fmt.Errorf("queue: encode log event: %w", err)
+	}
+	if payload.Len() == 0 || payload.Len() > 256*1024*1024 {
+		return nil, fmt.Errorf("queue: log event is too large")
+	}
+	frame := make([]byte, 4+payload.Len()+4)
+	binary.LittleEndian.PutUint32(frame[:4], uint32(payload.Len()))
+	copy(frame[4:], payload.Bytes())
+	binary.LittleEndian.PutUint32(frame[4+payload.Len():], crc32.ChecksumIEEE(payload.Bytes()))
+	return frame, nil
+}
+
+func gppQueueNotify(notify chan struct{}) {
+	select {
+	case notify <- struct{}{}:
+	default:
+	}
+}
+
+func gppQueuePause(stop chan struct{}) bool {
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-stop:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
