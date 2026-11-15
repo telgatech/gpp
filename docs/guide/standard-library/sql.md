@@ -12,11 +12,26 @@ Import `gpp/sql` to enable its database extension methods:
 import (
     "database/sql"
     gppsql "gpp/sql"
+    "log"
+    "os"
 )
 ```
 
 Keep this as a named import: GPP uses the package import to resolve the
 extension methods, so a blank import (`_`) does not make `db.Get[T]` available.
+
+SQL logging is opt-in. Wrap a database or transaction with `WithLogger` and
+use the returned value for operations you want logged:
+
+```gpp
+logger := log.New(os.Stdout, "", log.LstdFlags)
+loggedDB := gppsql.WithLogger(db, logger)
+count := gppsql.Get[int64](loggedDB, "SELECT COUNT(*) FROM employees")
+```
+
+The wrapper logs each SQL statement and its bound argument values before
+execution. Calls made directly on the original `db` or `tx` are not logged, and
+a nil logger produces no SQL log output.
 
 Then describe each query result at the call site:
 

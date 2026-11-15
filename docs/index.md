@@ -44,6 +44,11 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 </details>
 
 <details>
+<summary>What does GPP stand for?</summary>
+<p>GPP began life as an experimental Go preprocessor, which is where the name comes from. While it has outgrown its original goals, the name remains.</p>
+</details>
+
+<details>
 <summary>Is GPP an official Go project?</summary>
 <p>No. GPP is an independent project and is not affiliated with or endorsed by Google or the Go team.</p>
 </details>

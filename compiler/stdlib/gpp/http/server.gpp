@@ -1,6 +1,7 @@
 package gpp.http
 
 import (
+	"bufio"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -52,6 +53,54 @@ type gppHTTPRequestState struct {
 	FailureCode int
 	Failure     error
 	AfterHandled bool
+}
+
+type gppHTTPLoggingResponseWriter struct {
+	stdhttp.ResponseWriter
+	Status int
+	Bytes  int
+}
+
+func (writer *gppHTTPLoggingResponseWriter) WriteHeader(status int) {
+	if writer.Status != 0 {
+		return
+	}
+	writer.Status = status
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *gppHTTPLoggingResponseWriter) Write(data []byte) (int, error) {
+	if writer.Status == 0 {
+		writer.WriteHeader(stdhttp.StatusOK)
+	}
+	written, err := writer.ResponseWriter.Write(data)
+	writer.Bytes += written
+	return written, err
+}
+
+func (writer *gppHTTPLoggingResponseWriter) Unwrap() stdhttp.ResponseWriter {
+	return writer.ResponseWriter
+}
+
+func (writer *gppHTTPLoggingResponseWriter) Flush() {
+	if writer.Status == 0 {
+		writer.WriteHeader(stdhttp.StatusOK)
+	}
+	if flusher, ok := writer.ResponseWriter.(stdhttp.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (writer *gppHTTPLoggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := writer.ResponseWriter.(stdhttp.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("http: response writer does not support hijacking")
+	}
+	connection, buffered, err := hijacker.Hijack()
+	if err == nil && writer.Status == 0 {
+		writer.Status = stdhttp.StatusSwitchingProtocols
+	}
+	return connection, buffered, err
 }
 
 type gppHTTPStatusResponseWriter struct {
@@ -206,7 +255,26 @@ func gppCallHandle(app any, ctx *Context) error {
 func gppDispatchRequests(app any, routes stdhttp.Handler) stdhttp.Handler {
 	staticMounts := gppHTTPStaticMounts(app)
 	staticCacheControl := gppHTTPStringField(app, "PublicCacheControl")
+	logger := gppHTTPLogger(app)
+	combinedLogFormat := gppHTTPBoolField(app, "CombinedLogFormat")
 	return stdhttp.HandlerFunc(func(response stdhttp.ResponseWriter, request *stdhttp.Request) {
+		started := time.Now()
+		var loggedResponse *gppHTTPLoggingResponseWriter
+		if logger != nil {
+			loggedResponse = &gppHTTPLoggingResponseWriter{ResponseWriter: response}
+			response = loggedResponse
+			defer func() {
+				status := loggedResponse.Status
+				if status == 0 {
+					status = stdhttp.StatusOK
+				}
+				if combinedLogFormat {
+					logger.Print(gppHTTPCombinedAccessLine(request, loggedResponse, time.Now()))
+				} else {
+					logger.Printf("%s: %s %s status=%d bytes=%d duration=%s", gppHTTPServerLabel(app), request.Method, request.URL.RequestURI(), status, loggedResponse.Bytes, time.Since(started).Round(time.Millisecond))
+				}
+			}()
+		}
 		ctx := gppNewContext(response, request)
 		ctx.TemplateScope = gppTemplateScope(app)
 		templates, templateErr := gppHTTPTemplatesForRequest(app)
@@ -359,6 +427,70 @@ func gppHTTPServerLabel(app any) string {
 		return name
 	}
 	return "gpp/http"
+}
+
+func gppHTTPLogger(app any) *log.Logger {
+	value := reflect.ValueOf(app)
+	if !value.IsValid() {
+		return nil
+	}
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return nil
+	}
+	field := value.FieldByName("Logger")
+	if !field.IsValid() || !field.CanInterface() || (field.Kind() != reflect.Pointer && field.Kind() != reflect.Interface) || field.IsNil() {
+		return nil
+	}
+	logger, _ := field.Interface().(*log.Logger)
+	return logger
+}
+
+func gppHTTPCombinedAccessLine(request *stdhttp.Request, response *gppHTTPLoggingResponseWriter, timestamp time.Time) string {
+	remoteHost := "-"
+	if request != nil {
+		remoteHost = request.RemoteAddr
+		if host, _, err := net.SplitHostPort(remoteHost); err == nil {
+			remoteHost = host
+		}
+	}
+	username := "-"
+	if request != nil {
+		if user, _, ok := request.BasicAuth(); ok && user != "" {
+			username = user
+		}
+	}
+	status := stdhttp.StatusOK
+	bytes := 0
+	if response != nil {
+		if response.Status != 0 {
+			status = response.Status
+		}
+		bytes = response.Bytes
+	}
+	byteCount := "-"
+	if bytes > 0 {
+		byteCount = strconv.Itoa(bytes)
+	}
+	requestLine := "-"
+	referrer := "-"
+	userAgent := "-"
+	if request != nil {
+		requestLine = request.Method + " " + request.URL.RequestURI() + " " + request.Proto
+		if value := request.Referer(); value != "" {
+			referrer = value
+		}
+		if value := request.UserAgent(); value != "" {
+			userAgent = value
+		}
+	}
+	escape := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\r", "\\r", "\n", "\\n")
+	return fmt.Sprintf("%s - %s [%s] \"%s\" %d %s \"%s\" \"%s\"", remoteHost, username, timestamp.Format("02/Jan/2006:15:04:05 -0700"), escape.Replace(requestLine), status, byteCount, escape.Replace(referrer), escape.Replace(userAgent))
 }
 
 func gppHTTPStringField(app any, name string) string {
@@ -608,10 +740,20 @@ func gppErrorTemplate(app any) string {
 }
 
 func gppCallError(app any, ctx *Context, code int, cause error) {
-	if ctx != nil && ctx.SSE != nil && ctx.SSE.Started {
-		if cause != nil {
-			log.Printf("%s: handler error after SSE stream started: %v", gppHTTPServerLabel(app), cause)
+	if logger := gppHTTPLogger(app); logger != nil {
+		method := "?"
+		path := "?"
+		if ctx != nil && ctx.Request != nil {
+			method = ctx.Request.Method
+			path = ctx.Request.URL.RequestURI()
 		}
+		if cause != nil {
+			logger.Printf("%s: request failed: %s %s status=%d: %v", gppHTTPServerLabel(app), method, path, code, cause)
+		} else {
+			logger.Printf("%s: request failed: %s %s status=%d", gppHTTPServerLabel(app), method, path, code)
+		}
+	}
+	if ctx != nil && ctx.SSE != nil && ctx.SSE.Started {
 		return
 	}
 	handler := reflect.ValueOf(app).MethodByName("Error")
@@ -812,7 +954,9 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		ctx.Conn = connection
 		handler := reflect.ValueOf(router).MethodByName(methodName)
 		if !handler.IsValid() {
-			log.Printf("%s: websocket handler %s not found", gppHTTPServerLabel(app), methodName)
+			if logger := gppHTTPLogger(app); logger != nil {
+				logger.Printf("%s: websocket handler %s not found", gppHTTPServerLabel(app), methodName)
+			}
 			_ = connection.Close()
 			return
 		}
@@ -823,15 +967,21 @@ func gppWebSocketRouteHandler(router any, app any, methodName string, w stdhttp.
 		}
 		afterErr := gppCallHook(app, "AfterRequest", ctx)
 		if routeErr != nil {
-			log.Printf("%s: websocket handler %s failed: %v", gppHTTPServerLabel(app), methodName, routeErr)
+			if logger := gppHTTPLogger(app); logger != nil {
+				logger.Printf("%s: websocket handler %s failed: %v", gppHTTPServerLabel(app), methodName, routeErr)
+			}
 			if afterErr != nil {
-				log.Printf("%s: after-request hook failed after websocket handler %s: %v", gppHTTPServerLabel(app), methodName, afterErr)
+				if logger := gppHTTPLogger(app); logger != nil {
+					logger.Printf("%s: after-request hook failed after websocket handler %s: %v", gppHTTPServerLabel(app), methodName, afterErr)
+				}
 			}
 			_ = connection.Close()
 			return
 		}
 		if afterErr != nil {
-			log.Printf("%s: after-request hook failed after websocket handler %s: %v", gppHTTPServerLabel(app), methodName, afterErr)
+			if logger := gppHTTPLogger(app); logger != nil {
+				logger.Printf("%s: after-request hook failed after websocket handler %s: %v", gppHTTPServerLabel(app), methodName, afterErr)
+			}
 			_ = connection.Close()
 		}
 	})
@@ -1165,7 +1315,7 @@ func gppTemplateStampsChanged(previous, current map[string]gppTemplateStamp) boo
 	return false
 }
 
-func gppWatchTemplates(stop <-chan struct{}, done chan<- struct{}) {
+func gppWatchTemplates(stop <-chan struct{}, done chan<- struct{}, logger *log.Logger) {
 	defer close(done)
 	previous := gppTemplateStamps(tpl.ManagedSourcePaths())
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -1180,7 +1330,9 @@ func gppWatchTemplates(stop <-chan struct{}, done chan<- struct{}) {
 				continue
 			}
 			if err := tpl.Reload(); err != nil {
-				log.Printf("gpp template reload failed: %v", err)
+				if logger != nil {
+					logger.Printf("gpp template reload failed: %v", err)
+				}
 			}
 			previous = current
 		}
@@ -1212,8 +1364,12 @@ type gppHTTPErrorData struct {
 // Server runs an HTTP application with annotated routes, middleware hooks, and mounted routers.
 class Server {
 	HTTPServer *stdhttp.Server
-	// Name identifies this server in its logs. An empty name uses the default gpp/http label.
+	// Name identifies this server in its log messages.
 	Name string
+	// Logger receives request access lines and server failure details. Nil disables server logging.
+	Logger *log.Logger
+	// CombinedLogFormat writes access lines in Apache/Nginx Combined Log Format; false uses compact key-value lines.
+	CombinedLogFormat bool
 	// Templates is the html/template set used by Context.HTML. Parse named views into it before serving.
 	Templates *htmltemplate.Template
 	// TemplateFiles are parsed on every request so edits appear without restarting the server. Use Templates to reuse a pre-parsed set.
@@ -1450,16 +1606,18 @@ class Server {
 			return err
 		}
 		listenerURL := gppHTTPListenerURL(listener.Addr())
-		if name := strings.TrimSpace(this.Name); name != "" {
-			log.Printf("%s listening on %s", name, listenerURL)
-		} else {
-			log.Printf("gpp/http: listening on %s", listenerURL)
+		if logger := gppHTTPLogger(app); logger != nil {
+			if name := strings.TrimSpace(this.Name); name != "" {
+				logger.Printf("%s listening on %s", name, listenerURL)
+			} else {
+				logger.Printf("gpp/http: listening on %s", listenerURL)
+			}
 		}
 		if len(tpl.ManagedSourcePaths()) > 0 {
 			this.templateWatchStop = make(chan struct{})
 			this.templateWatchDone = make(chan struct{})
 			this.templateWatchOnce = &sync.Once{}
-			go gppWatchTemplates(this.templateWatchStop, this.templateWatchDone)
+			go gppWatchTemplates(this.templateWatchStop, this.templateWatchDone, gppHTTPLogger(app))
 		}
 		serveErr := <-done
 		this.stopTemplateWatcher()

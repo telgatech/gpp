@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
 	stdhttp "net/http"
 	"net/url"
@@ -376,6 +375,12 @@ func gppOAuthCallback(engine *gppOAuthEngine, app any, provider string, ctx *Con
 	return gppOAuthInvokeLogin(app, ctx, identity, exchanged.Token)
 }
 
+func gppOAuthLogFailure(app any, provider string, cause error) {
+	if logger := gppHTTPLogger(app); logger != nil {
+		logger.Printf("%s: OAuth provider %s failed: %v", gppHTTPServerLabel(app), provider, cause)
+	}
+}
+
 func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor any, prefix string, engine *gppOAuthEngine) error {
 	if engine == nil { return nil }
 	routes := gppOpenAPIRoutes(descriptor, prefix)
@@ -387,7 +392,7 @@ func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor any, pref
 		if err := gppRegisterGeneratedGET(mux, app, loginPath, func(ctx *Context) error { return gppOAuthLogin(engine, app, provider, ctx) }); err != nil { return err }
 		if err := gppRegisterGeneratedGET(mux, app, callbackPath, func(ctx *Context) error {
 			if err := gppOAuthCallback(engine, app, provider, ctx); err != nil {
-				log.Printf("gpp/http OAuth provider %s failed: %v", provider, err)
+				gppOAuthLogFailure(app, provider, err)
 				if hookErr := gppOAuthInvokeError(app, ctx, provider, err); hookErr != nil { err = hookErr }
 				if !ctx.Written { return ctx.Text(400, "OAuth authentication failed") }
 			}

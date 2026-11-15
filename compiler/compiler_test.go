@@ -618,6 +618,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
+	"os"
 	stdhttp "net/http"
 	"strings"
 	"time"
@@ -682,7 +684,7 @@ class App : http.Server @{http.IP("127.0.0.1")} {
 }
 
 func main() {
-    app := App()
+    app := App(Logger: log.New(os.Stdout, "", 0), CombinedLogFormat: true)
     done := make(chan error, 1)
     go func() { done <- app.Listen(0) }()
 
@@ -745,8 +747,105 @@ func main() {
 	if !strings.Contains(result, "gpp/http: listening on http://127.0.0.1:") {
 		t.Fatalf("server did not report its actual listener address:\n%s", output)
 	}
-	if !strings.Contains(result, "200 shared shared Go\n200 handled\n500 500\nbefore-listen,after-listen,before-request,handle,route,after-request,before-request,handle,after-request,before-request,handle,after-request,error,before-shutdown,after-shutdown\n") {
+	if !strings.Contains(result, `127.0.0.1 - - [`) || !strings.Contains(result, `"GET /hello/Go HTTP/1.1" 200`) {
+		t.Fatalf("server did not emit Combined Log Format request lines:\n%s", output)
+	}
+	if !strings.Contains(result, "gpp/http: request failed: GET /handle-error status=500: front controller failed") {
+		t.Fatalf("server did not log request failure details:\n%s", output)
+	}
+	if !strings.Contains(result, "200 shared shared Go\n") || !strings.Contains(result, "200 handled\n") || !strings.Contains(result, "500 500\n") || !strings.Contains(result, "before-listen,after-listen,before-request,handle,route,after-request,before-request,handle,after-request,before-request,handle,after-request,error,before-shutdown,after-shutdown\n") {
 		t.Fatalf("unexpected HTTP response:\n%s", output)
+	}
+}
+
+func TestCompileFilesLogsSQLAndEvaluatesArgumentsOnce(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+	"bytes"
+	"database/sql"
+	"fmt"
+	"log"
+	gppsql "gpp/sql"
+)
+
+type fakeExecutor struct {
+	calls int
+	queries int
+	queryRows int
+	value int
+	name string
+}
+
+func (executor *fakeExecutor) Exec(query string, args ...any) (sql.Result, error) {
+	executor.calls++
+	if len(args) > 0 { executor.value = args[0].(int) }
+	if len(args) > 1 { executor.name = args[1].(string) }
+	return nil, nil
+}
+
+func (executor *fakeExecutor) Query(query string, args ...any) (*sql.Rows, error) {
+	executor.queries++
+	return nil, nil
+}
+func (executor *fakeExecutor) QueryRow(query string, args ...any) *sql.Row {
+	executor.queryRows++
+	return nil
+}
+
+func countRows(executor *gppsql.LoggedExecutor) (int, error) {
+	return gppsql.Get[int](executor, "SELECT 1")
+}
+
+func main() {
+	var output bytes.Buffer
+	logger := log.New(&output, "", 0)
+	original := &fakeExecutor{}
+	logged := gppsql.WithLogger(original, logger)
+	evaluations := 0
+	nextValue := func() int { evaluations++; return 42 }
+	logged.Exec("UPDATE users SET age = ?, name = ?", nextValue(), "Ada")
+	if evaluations != 1 || original.calls != 1 || original.value != 42 || original.name != "Ada" {
+		panic("SQL argument was evaluated or executed an unexpected number of times")
+	}
+	if output.String() != "SQL: UPDATE users SET age = ?, name = ? args={42, \"Ada\"}\n" {
+		panic(output.String())
+	}
+	logged.Query("SELECT id FROM users WHERE age = ?", 42)
+	logged.QueryRow("SELECT name FROM users WHERE id = ?", 1)
+	if original.queries != 1 || original.queryRows != 1 {
+		panic("SQL query methods were not forwarded")
+	}
+	if output.String() != "SQL: UPDATE users SET age = ?, name = ? args={42, \"Ada\"}\nSQL: SELECT id FROM users WHERE age = ? args={42}\nSQL: SELECT name FROM users WHERE id = ? args={1}\n" {
+		panic(output.String())
+	}
+	quiet := gppsql.WithLogger(original, nil)
+	quiet.Exec("DELETE FROM users")
+	if output.String() != "SQL: UPDATE users SET age = ?, name = ? args={42, \"Ada\"}\nSQL: SELECT id FROM users WHERE age = ? args={42}\nSQL: SELECT name FROM users WHERE id = ? args={1}\n" {
+		panic("nil logger unexpectedly emitted SQL output")
+	}
+	fmt.Print(output.String())
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("SQL logging source did not compile: %v", err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache", "GOPROXY=off")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated SQL logging program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "SQL: UPDATE users SET age = ?, name = ? args={42, \"Ada\"}\nSQL: SELECT id FROM users WHERE age = ? args={42}\nSQL: SELECT name FROM users WHERE id = ? args={1}\n" {
+		t.Fatalf("unexpected SQL log output: %s", output)
 	}
 }
 

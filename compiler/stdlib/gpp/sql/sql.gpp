@@ -3,6 +3,7 @@ package gpp.sql
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	std "gpp/std"
@@ -12,6 +13,64 @@ type Executor interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
+}
+
+// LoggedExecutor forwards database operations and logs SQL statements and bound arguments when Logger is set.
+type LoggedExecutor struct {
+	Executor
+	Logger *log.Logger
+}
+
+func (executor *LoggedExecutor) logQueryArgs(query string, args []any) {
+	if executor != nil && executor.Logger != nil {
+		executor.Logger.Printf("SQL: %s args=%s", strings.TrimSpace(query), gppSQLFormatArgs(args))
+	}
+}
+
+func (executor *LoggedExecutor) Exec(query string, args ...any) (sql.Result, error) {
+	executor.logQueryArgs(query, args)
+	return executor.Executor.Exec(query, args...)
+}
+
+func (executor *LoggedExecutor) Query(query string, args ...any) (*sql.Rows, error) {
+	executor.logQueryArgs(query, args)
+	return executor.Executor.Query(query, args...)
+}
+
+func (executor *LoggedExecutor) QueryRow(query string, args ...any) *sql.Row {
+	executor.logQueryArgs(query, args)
+	return executor.Executor.QueryRow(query, args...)
+}
+
+// WithLogger wraps a database or transaction so gpp/sql operations log their SQL statements.
+func WithLogger(executor Executor, logger *log.Logger) *LoggedExecutor {
+	return &LoggedExecutor{Executor: executor, Logger: logger}
+}
+
+func gppSQLFormatArgs(args []any) string {
+	formatted := make([]string, len(args))
+	for index, argument := range args {
+		formatted[index] = fmt.Sprintf("%#v", argument)
+	}
+	return "{" + strings.Join(formatted, ", ") + "}"
+}
+
+// Get runs a typed query through any SQL executor, including a LoggedExecutor.
+func Get[T any](executor Executor, query string, args ...any) (T, error) {
+	var target T
+	if err := gppSQLGetQuery(executor, &target, query, args...); err != nil {
+		return target, err
+	}
+	return target, nil
+}
+
+// Select runs a typed query through any SQL executor, including a LoggedExecutor.
+func Select[T any](executor Executor, query string, args ...any) ([]T, error) {
+	var target []T
+	if err := gppSQLSelectQuery(executor, &target, query, args...); err != nil {
+		return target, err
+	}
+	return target, nil
 }
 
 type gppSQLRecordFieldProvider interface {
