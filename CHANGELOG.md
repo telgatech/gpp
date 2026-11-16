@@ -2,6 +2,7 @@
 
 ## 2026-11-16
 
+- Added boolean and nilable `||=` assignment support with formatter spacing.
 - Replaced reflection-based HTTP lifecycle hook dispatch with typed calls and fixed pointer type spacing in the formatter.
 - Added completions for imported Go package members and preserved existing call arguments.
 

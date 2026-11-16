@@ -19,6 +19,7 @@ The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
 - `assignments.gpp` — arithmetic, bitwise, and shift compound assignments.
+- `or_assignment.gpp` — `||=` defaults boolean values when false and pointer values when nil.
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its GPP
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.

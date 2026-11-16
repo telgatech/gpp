@@ -246,6 +246,7 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		bodyContext.CurrentParameterTypes = map[string]string{}
 	}
 	if bodyContext.CurrentClass != "" {
+		bodyContext.Overloads.CurrentClass = bodyContext.CurrentClass
 		bodyContext.CurrentParameterTypes["this"] = "*" + bodyContext.CurrentClass
 	}
 	for name, typeName := range context.GlobalValueTypes {
@@ -258,6 +259,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		bodyContext.CurrentParameterTypes[name] = typeName
 	}
 	for name, typeName := range enumValueTypesAST([]*BlockStmt{bodyAST}, bodyContext) {
+		bodyContext.CurrentParameterTypes[name] = typeName
+	}
+	for name, typeName := range coalesceValueTypes(bodyAST, bodyContext) {
 		bodyContext.CurrentParameterTypes[name] = typeName
 	}
 	introspectionKinds := map[string]int{}

@@ -346,6 +346,19 @@ func quux() struct { return struct(works: true, a: 1, b: 2) }
 	}
 }
 
+func TestFormatSourceSpacesLogicalOrAssignment(t *testing.T) {
+	source := `func main(){
+foo||=Foo()
+}`
+	want := `func main() {
+    foo ||= Foo()
+}
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("logical OR assignment was not formatted correctly:\n%s", got)
+	}
+}
+
 func TestFormatSourceFormatsInferredMapLiterals(t *testing.T) {
 	source := `func main(){
 values:=map(coffee:2.5, tea:1.75)

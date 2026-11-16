@@ -306,6 +306,70 @@ func main() { fmt.Println("main run", first.Value(), second.Value()) }
 	}
 }
 
+func TestCompileFilesLogicalOrAssignmentSupportsBooleansAndNil(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+import "fmt"
+
+var booleanDefaults int
+var pointerDefaults int
+
+func defaultBoolean() bool {
+    booleanDefaults++
+    return true
+}
+
+func defaultPointer() *int {
+    pointerDefaults++
+    value := 7
+    return &value
+}
+
+class Sample {
+    Ready bool
+    Value *int
+
+    func Configure(enabled bool) {
+        enabled ||= defaultBoolean()
+        this.Ready ||= defaultBoolean()
+        this.Value ||= defaultPointer()
+    }
+}
+
+func main() {
+    existingValue := 3
+    existing := Sample(Ready: true, Value: &existingValue)
+    existing.Configure(true)
+    if booleanDefaults != 0 || pointerDefaults != 0 {
+        fmt.Println("default evaluated eagerly")
+        return
+    }
+
+    missing := Sample()
+    missing.Configure(false)
+    fmt.Println(booleanDefaults, pointerDefaults, *missing.Value)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile logical OR assignment program: %v", err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("logical OR assignment program did not run: %v\n%s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "2 1 7" {
+		t.Fatalf("logical OR assignment evaluated incorrectly: %s", output)
+	}
+}
+
 func TestGeneratedInitializerHelpersDoNotUsePackageInitName(t *testing.T) {
 	file, err := ParseFile("initializer.gpp", `class Sample {
 	func init() {}

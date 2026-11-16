@@ -1259,6 +1259,117 @@ func lowerFunctionGoBlockNode(block *BlockStmt, context constructorContext, reth
 	return result, nil
 }
 
+func lowerOrAssignmentNode(statement *AssignmentStmt, context constructorContext) ([]ast.Stmt, error) {
+	if statement == nil || len(statement.Left) != 1 || len(statement.Right) != 1 {
+		return nil, sourceLineError(statement.Span(), fmt.Errorf("||= requires one assignable value on each side"))
+	}
+	left := statement.Left[0]
+	right := statement.Right[0]
+	targetType := orAssignmentTargetType(left, context)
+	mode, ok := orAssignmentMode(targetType, context)
+	if !ok {
+		typeText := "unknown"
+		if targetType != nil {
+			if resolved, err := typeNodeSource(targetType); err == nil {
+				typeText = resolved
+			}
+		}
+		return nil, sourceLineError(statement.Span(), fmt.Errorf("||= requires a bool or nilable left value, got %s", typeText))
+	}
+	leftExpression, err := goExprNode(left)
+	if err != nil {
+		return nil, sourceLineError(statement.Span(), err)
+	}
+	rightExpression, err := goExprNode(right)
+	if err != nil {
+		return nil, sourceLineError(statement.Span(), err)
+	}
+	if index, isIndex := left.(*IndexExpr); isIndex {
+		if _, isMap := coalesceExpressionTypeAST(index.Receiver, context, context.CurrentParameterTypes).(*MapType); isMap {
+			return lowerMapOrAssignmentNode(statement, index, leftExpression, rightExpression, mode)
+		}
+	}
+	name := orAssignmentTemporaryName(statement, "target")
+	target := func() ast.Expr { return &ast.StarExpr{X: ast.NewIdent(name)} }
+	initialize := &ast.AssignStmt{
+		Lhs: []ast.Expr{ast.NewIdent(name)},
+		Tok: token.DEFINE,
+		Rhs: []ast.Expr{&ast.UnaryExpr{Op: token.AND, X: leftExpression}},
+	}
+	condition := orAssignmentCondition(target(), mode)
+	assign := &ast.AssignStmt{Lhs: []ast.Expr{target()}, Tok: token.ASSIGN, Rhs: []ast.Expr{rightExpression}}
+	return []ast.Stmt{
+		initialize,
+		&ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: []ast.Stmt{assign}}},
+	}, nil
+}
+
+func lowerMapOrAssignmentNode(statement *AssignmentStmt, index *IndexExpr, left, right ast.Expr, mode string) ([]ast.Stmt, error) {
+	mapName := orAssignmentTemporaryName(statement, "map")
+	keyName := orAssignmentTemporaryName(statement, "key")
+	mapExpression, err := goExprNode(index.Receiver)
+	if err != nil {
+		return nil, sourceLineError(statement.Span(), err)
+	}
+	keyExpression, err := goExprNode(index.Index)
+	if err != nil {
+		return nil, sourceLineError(statement.Span(), err)
+	}
+	mapValue := func() ast.Expr { return ast.NewIdent(mapName) }
+	keyValue := func() ast.Expr { return ast.NewIdent(keyName) }
+	mapIndex := func() ast.Expr { return &ast.IndexExpr{X: mapValue(), Index: keyValue()} }
+	initializeMap := &ast.AssignStmt{Lhs: []ast.Expr{mapValue()}, Tok: token.DEFINE, Rhs: []ast.Expr{mapExpression}}
+	initializeKey := &ast.AssignStmt{Lhs: []ast.Expr{keyValue()}, Tok: token.DEFINE, Rhs: []ast.Expr{keyExpression}}
+	condition := orAssignmentCondition(mapIndex(), mode)
+	assign := &ast.AssignStmt{Lhs: []ast.Expr{mapIndex()}, Tok: token.ASSIGN, Rhs: []ast.Expr{right}}
+	return []ast.Stmt{
+		initializeMap,
+		initializeKey,
+		&ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: []ast.Stmt{assign}}},
+	}, nil
+}
+
+func orAssignmentCondition(left ast.Expr, mode string) ast.Expr {
+	if mode == "bool" {
+		return &ast.UnaryExpr{Op: token.NOT, X: left}
+	}
+	return &ast.BinaryExpr{X: left, Op: token.EQL, Y: ast.NewIdent("nil")}
+}
+
+func orAssignmentTemporaryName(statement *AssignmentStmt, suffix string) string {
+	return fmt.Sprintf("__gppOrAssign_%d_%s", statement.Span().Start, suffix)
+}
+
+func orAssignmentTargetType(expression ExprNode, context constructorContext) TypeNode {
+	overloads := context.Overloads
+	if overloads.CurrentClass == "" {
+		overloads.CurrentClass = context.CurrentClass
+	}
+	if typeName := overloadReceiverTypeKey(expression, context.CurrentParameterTypes, overloads); typeName != "" {
+		return parseTypeText(typeName)
+	}
+	return coalesceExpressionTypeAST(expression, context, context.CurrentParameterTypes)
+}
+
+func orAssignmentMode(typeNode TypeNode, context constructorContext) (string, bool) {
+	switch value := typeNode.(type) {
+	case *PointerType, *SliceType, *MapType, *ChannelType, *FunctionType, *InterfaceType:
+		return "nil", true
+	case *NamedType:
+		name := strings.Join(value.Parts, ".")
+		if name == "bool" {
+			return "bool", true
+		}
+		if name == "error" || name == "any" || name == "interface{}" || name == "unsafe.Pointer" {
+			return "nil", true
+		}
+		if _, class := context.Targets[name]; class {
+			return "nil", true
+		}
+	}
+	return "", false
+}
+
 func lowerFunctionGoStmtNode(statement Stmt, context constructorContext, rethrowName string) ([]ast.Stmt, error) {
 	if statement == nil {
 		return nil, nil
@@ -1267,6 +1378,17 @@ func lowerFunctionGoStmtNode(statement Stmt, context constructorContext, rethrow
 		return lowerExceptionExprNode(expression, context)
 	}
 	switch value := statement.(type) {
+	case *AssignmentStmt:
+		if value.Operator == "||=" {
+			if err := lowerExceptionStmtNodes(value, context); err != nil {
+				return nil, err
+			}
+			return lowerOrAssignmentNode(value, context)
+		}
+		if err := lowerExceptionStmtNodes(value, context); err != nil {
+			return nil, err
+		}
+		return goStmtNode(value, rethrowName)
 	case *TryStmt:
 		lowered, handled, err := lowerASTTryDirectNode(value, context, rethrowName)
 		if err != nil {
@@ -1707,6 +1829,17 @@ func lowerExceptionGoStmtNode(statement Stmt, context constructorContext, rethro
 		return nil, nil
 	}
 	switch value := statement.(type) {
+	case *AssignmentStmt:
+		if value.Operator == "||=" {
+			if err := lowerExceptionStmtNodes(value, context); err != nil {
+				return nil, err
+			}
+			return lowerOrAssignmentNode(value, context)
+		}
+		if err := lowerExceptionStmtNodes(value, context); err != nil {
+			return nil, err
+		}
+		return goExceptionStmtNode(value, rethrowName)
 	case *TryStmt:
 		lowered, handled, err := lowerASTTryDirectNode(value, context, rethrowName)
 		if err != nil {

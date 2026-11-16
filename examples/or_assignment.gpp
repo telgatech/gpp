@@ -1,0 +1,18 @@
+package main
+
+import "fmt"
+
+class Foo {}
+
+func main() {
+    var enabled bool
+    enabled ||= true
+
+    var count *int
+    count ||= new(int)
+
+    var foo *Foo
+    foo ||= Foo()
+
+    fmt.Println(enabled, count != nil, foo != nil)
+}

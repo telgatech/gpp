@@ -953,6 +953,26 @@ func spaceDefineAssignment(line string) string {
 			}
 			output.WriteByte(line[index])
 			index++
+		case '|':
+			if strings.HasPrefix(line[index:], "||=") {
+				if output.Len() > 0 {
+					current := output.String()
+					if last := current[len(current)-1]; last != ' ' && last != '\t' {
+						output.WriteByte(' ')
+					}
+				}
+				output.WriteString("||=")
+				index += len("||=")
+				for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+					index++
+				}
+				if index < len(line) && line[index] != ')' && line[index] != ']' && line[index] != '}' && line[index] != ',' && line[index] != ';' {
+					output.WriteByte(' ')
+				}
+				continue
+			}
+			output.WriteByte(line[index])
+			index++
 		default:
 			output.WriteByte(line[index])
 			index++
