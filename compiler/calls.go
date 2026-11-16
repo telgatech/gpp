@@ -566,6 +566,11 @@ func configureFunctionOverloads(overloads *overloadContext, signatures map[strin
 	}
 
 	for name, candidates := range signatures {
+		// Go permits multiple package init functions in one package. They are
+		// not overloads and should keep their special Go name unchanged.
+		if name == "init" {
+			continue
+		}
 		if len(candidates) < 2 {
 			continue
 		}

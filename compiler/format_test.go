@@ -270,6 +270,70 @@ type Speaker interface {
 	}
 }
 
+func TestFormatSourceKeepsPointerClassFieldTypesTogether(t *testing.T) {
+	source := `class Worker {
+q *queue.Queue
+}
+`
+	want := `class Worker {
+    q *queue.Queue
+}
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("pointer class field type was formatted incorrectly:\n%s", got)
+	}
+	formatted, err := FormatSourceFile("pointer_field.gpp", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(formatted) != want {
+		t.Fatalf("pointer class field type was formatted incorrectly from parsed source:\n%s", formatted)
+	}
+}
+
+func TestFormatSourceKeepsPointerVarTypesTogether(t *testing.T) {
+	source := `class Worker {}
+var(
+q *queue.Queue
+)
+`
+	want := `class Worker {}
+var(
+    q *queue.Queue
+)
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("pointer var type was formatted incorrectly:\n%s", got)
+	}
+	formatted, err := FormatSourceFile("pointer_var.gpp", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(formatted) != want {
+		t.Fatalf("pointer var type was formatted incorrectly from parsed source:\n%s", formatted)
+	}
+}
+
+func TestFormatSourceKeepsPointerVarTypesTogetherInsideFunction(t *testing.T) {
+	source := `class Worker {}
+func main(){
+var(
+q *queue.Queue
+)
+}
+`
+	want := `class Worker {}
+func main() {
+    var(
+        q *queue.Queue
+    )
+}
+`
+	if got := FormatSource(source); got != want {
+		t.Fatalf("pointer var type inside function was formatted incorrectly:\n%s", got)
+	}
+}
+
 func TestFormatSourceSpacesCommasAndInlineFunctionBlocks(t *testing.T) {
 	source := `func some() (int,int,int) {return 0,0,0}
 func quux() struct {return struct(works: true, a:1, b:2)}

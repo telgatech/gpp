@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-16
+
+- Replaced reflection-based HTTP lifecycle hook dispatch with typed calls and fixed pointer type spacing in the formatter.
+
 ## 2026-11-15
 
 - Added experimental durable work queues in `gpp/exp/queue`.

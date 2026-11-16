@@ -73,6 +73,8 @@ feature with comparisons and examples.
   directories in the program through source-level declarations.
 - **[Cron scheduling](docs/guide/standard-library/cron.md)** — Schedule
   annotated functions or dynamic jobs with explicit start and stop controls.
+- **[Experimental packages](docs/guide/standard-library/exp.md)** — Explore
+  experimental packages, including the HTTP client and durable work queue.
 - **[Suite-based tests](docs/features/testing.md)** — Organize tests into
   suites, methods, and annotations, then run them through `gpp test`.
 

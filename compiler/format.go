@@ -1,7 +1,9 @@
 package compiler
 
 import (
+	"go/ast"
 	gofmt "go/format"
+	gotoken "go/token"
 	"strings"
 )
 
@@ -10,7 +12,8 @@ import (
 // indentation and line endings without attempting to reprint opaque template,
 // string, or comment contents.
 func FormatSource(source string) string {
-	return formatSourceWithFile(nil, source)
+	file, _ := ParseFile("format.gpp", source)
+	return formatSourceWithFile(file, source)
 }
 
 // formatSourceWithFile formats a source buffer using the already parsed AST
@@ -30,6 +33,11 @@ func formatSourceWithFile(file *File, source string) string {
 	previousLineOpenedBlock := false
 	previousCodeLineBlank := false
 	templateLines, templateEnds := templateBodyLinesForFile(file, source, lines)
+	classFieldLines := classFieldLinesForFile(file)
+	varSpecLines := varSpecLinesForFile(file)
+	for line := range varSpecLinesForSource(lines) {
+		varSpecLines[line] = true
+	}
 
 	for index, line := range lines {
 		if strings.TrimSpace(line) == "" {
@@ -74,7 +82,15 @@ func formatSourceWithFile(file *File, source string) string {
 			continue
 		}
 
-		content := canonicalizeFormatLine(strings.TrimLeft(line, " \t"))
+		content := strings.TrimLeft(line, " \t")
+		if classFieldLines[index+1] {
+			content = canonicalizeClassFieldLine(content)
+		} else {
+			content = canonicalizeFormatLine(content)
+			if varSpecLines[index+1] {
+				content = canonicalizeVarSpecPointerSpacing(content)
+			}
+		}
 		startsWithBraceClose := formatLineStartsWithClose(content, &state)
 		leadingBraceCloses, leadingContinuationCloses := formatLeadingClosers(content)
 		if startsWithBraceClose {
@@ -367,9 +383,19 @@ func templateBodySpan(source string, start int) (int, int, int, bool) {
 }
 
 func canonicalizeFormatLine(line string) string {
+	return canonicalizeFormatLineInContext(line, false)
+}
+
+func canonicalizeClassFieldLine(line string) string {
+	return canonicalizeFormatLineInContext(line, true)
+}
+
+func canonicalizeFormatLineInContext(line string, classField bool) string {
 	line = collapseCodeWhitespace(line)
 	line = canonicalizeClassHeaderSpacing(line)
-	if formatted, ok := formatGoCompatibleStatement(line); ok {
+	if classField {
+		line = canonicalizeClassFieldPointerSpacing(line)
+	} else if formatted, ok := formatGoCompatibleStatement(line); ok {
 		line = formatted
 	} else if formatted, ok := formatGoCompatibleFunctionHeader(line); ok {
 		line = formatted
@@ -394,6 +420,141 @@ func canonicalizeFormatLine(line string) string {
 	line = canonicalizeCommaSpacing(line)
 	line = canonicalizeClosingParenSpacing(line)
 	return canonicalizeColonSpacing(line)
+}
+
+func canonicalizeClassFieldPointerSpacing(line string) string {
+	end := len(line)
+	if annotation := strings.Index(line, "@{"); annotation >= 0 && annotation < end {
+		end = annotation
+	}
+	if comment := strings.Index(line, "//"); comment >= 0 && comment < end {
+		end = comment
+	}
+
+	var output strings.Builder
+	output.Grow(len(line))
+	for index := 0; index < end; index++ {
+		output.WriteByte(line[index])
+		if line[index] == '*' {
+			for index+1 < end && (line[index+1] == ' ' || line[index+1] == '\t') {
+				index++
+			}
+		}
+	}
+	output.WriteString(line[end:])
+	return output.String()
+}
+
+func classFieldLinesForFile(file *File) map[int]bool {
+	lines := map[int]bool{}
+	if file == nil {
+		return lines
+	}
+	for _, declaration := range file.Decls {
+		class, ok := declaration.(*ClassDecl)
+		if !ok {
+			continue
+		}
+		for _, field := range class.Fields {
+			if field.SpanValue.Line > 0 {
+				lines[field.SpanValue.Line] = true
+			}
+		}
+	}
+	return lines
+}
+
+func varSpecLinesForFile(file *File) map[int]bool {
+	lines := map[int]bool{}
+	if file == nil {
+		return lines
+	}
+	for _, declaration := range file.Decls {
+		var declarations []ast.Decl
+		var fileSet *gotoken.FileSet
+		switch declaration := declaration.(type) {
+		case *GoDecl:
+			declarations, fileSet = declaration.Declarations, declaration.FileSet
+		case *MixedDecl:
+			declarations, fileSet = declaration.GoASTDecls, declaration.GoASTFileSet
+		}
+		if fileSet == nil {
+			continue
+		}
+		for _, declaration := range declarations {
+			ast.Inspect(declaration, func(node ast.Node) bool {
+				group, ok := node.(*ast.GenDecl)
+				if !ok || group.Tok != gotoken.VAR {
+					return true
+				}
+				for _, spec := range group.Specs {
+					value, ok := spec.(*ast.ValueSpec)
+					if !ok || value.Type == nil {
+						continue
+					}
+					line := fileSet.Position(value.Pos()).Line
+					if line > 0 {
+						lines[line] = true
+					}
+				}
+				return false
+			})
+		}
+	}
+	return lines
+}
+
+func varSpecLinesForSource(sourceLines []string) map[int]bool {
+	lines := map[int]bool{}
+	inVarBlock := false
+	for index, line := range sourceLines {
+		content := strings.TrimSpace(line)
+		if !inVarBlock {
+			if strings.HasPrefix(content, "var (") || strings.HasPrefix(content, "var(") {
+				inVarBlock = true
+			}
+			continue
+		}
+		if content == ")" || strings.HasPrefix(content, ") //") {
+			inVarBlock = false
+			continue
+		}
+		if content != "" && !strings.HasPrefix(content, "//") {
+			lines[index+1] = true
+		}
+	}
+	return lines
+}
+
+func canonicalizeVarSpecPointerSpacing(line string) string {
+	end := len(line)
+	if assignment := strings.IndexByte(line, '='); assignment >= 0 {
+		end = assignment
+	}
+	typeText := line[:end]
+	star := strings.IndexByte(typeText, '*')
+	if star < 0 || !isVarNameList(strings.TrimSpace(typeText[:star])) || star+1 >= len(typeText) || typeText[star+1] != ' ' {
+		return line
+	}
+	return canonicalizeClassFieldPointerSpacing(typeText) + line[end:]
+}
+
+func isVarNameList(names string) bool {
+	if names == "" {
+		return false
+	}
+	for _, name := range strings.Split(names, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" || !isTokenIdentStart(name[0]) {
+			return false
+		}
+		for index := 1; index < len(name); index++ {
+			if !isTokenIdentPart(name[index]) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func canonicalizeInlineBlockSpacing(line string) string {

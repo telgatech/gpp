@@ -152,7 +152,7 @@ func gppSwaggerMountPath(path string) string {
 	return path
 }
 
-func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor *GppClass, prefix string) error {
+func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app GppServer, descriptor *GppClass, prefix string) error {
 	var annotations GppAnnotations
 	if descriptor != nil { annotations = descriptor.Annotations }
 	hasOpenAPI := len(gppAnnotationArgs(annotations, "gpp.http.OpenAPI")) > 0
@@ -258,7 +258,7 @@ func gppRegisterOpenAPIRoutes(mux *stdhttp.ServeMux, app any, descriptor *GppCla
 	return nil
 }
 
-func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handler func(*Context) error) error {
+func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app GppServer, path string, handler func(*Context) error) error {
 	return gppRegisterMuxHandler(mux, "GET "+path, func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		if r.Method != stdhttp.MethodGet {
 			w.WriteHeader(stdhttp.StatusMethodNotAllowed)
@@ -266,7 +266,7 @@ func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handle
 		}
 		ctx, state := gppContextForRequest(w, r, app)
 		if state == nil {
-			if err := gppCallHook(app, "BeforeRequest", ctx); err != nil {
+			if err := app.BeforeRequest(ctx); err != nil {
 				gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 				return
 			}
@@ -279,7 +279,7 @@ func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app any, path string, handle
 			}
 			return
 		}
-		afterErr := gppCallHook(app, "AfterRequest", ctx)
+		afterErr := app.AfterRequest(ctx)
 		if routeErr != nil && !ctx.Written {
 			gppCallError(app, ctx, stdhttp.StatusInternalServerError, routeErr)
 			return

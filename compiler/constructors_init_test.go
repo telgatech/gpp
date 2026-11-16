@@ -234,6 +234,78 @@ func main() {
 	}
 }
 
+func TestCompileFilesRunsEachPackageInit(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	files := map[string]string{
+		"first/first_a.gpp": `package demo.first
+import "fmt"
+func init() { fmt.Println("first init A") }
+func Value() string { return "first" }
+`,
+		"first/first_b.gpp": `package demo.first
+import "fmt"
+func init() { fmt.Println("first init B") }
+`,
+		"second/second.gpp": `package demo.second
+import "fmt"
+func init() { fmt.Println("second init") }
+func Value() string { return "second" }
+`,
+		"main_init.gpp": `package main
+import "fmt"
+func init() { fmt.Println("main init") }
+`,
+		"main.gpp": `package main
+import (
+	"fmt"
+	demo.first
+	demo.second
+)
+func main() { fmt.Println("main run", first.Value(), second.Value()) }
+`,
+	}
+	paths := make([]string, 0, len(files))
+	for name, source := range files {
+		path := filepath.Join(inputDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	if err := CompileFilesWithOptions(paths, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile package initialization program: %v", err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated package initialization program did not run: %v\n%s", err, output)
+	}
+	for _, line := range []string{
+		"first init A",
+		"first init B",
+		"second init",
+		"main init",
+		"main run first second",
+	} {
+		if count := strings.Count(string(output), line); count != 1 {
+			t.Fatalf("expected package initializer output %q once, got %d times:\n%s", line, count, output)
+		}
+	}
+	mainRun := strings.Index(string(output), "main run first second")
+	for _, line := range []string{"first init A", "first init B", "second init", "main init"} {
+		if strings.Index(string(output), line) > mainRun {
+			t.Fatalf("package initializer %q ran after main:\n%s", line, output)
+		}
+	}
+}
+
 func TestGeneratedInitializerHelpersDoNotUsePackageInitName(t *testing.T) {
 	file, err := ParseFile("initializer.gpp", `class Sample {
 	func init() {}

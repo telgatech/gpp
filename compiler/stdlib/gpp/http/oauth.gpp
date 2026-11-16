@@ -365,7 +365,7 @@ func gppOAuthLogFailure(app any, provider string, cause error) {
 	}
 }
 
-func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app any, descriptor *GppClass, prefix string, engine *gppOAuthEngine) error {
+func gppRegisterOAuthRoutes(mux *stdhttp.ServeMux, app GppServer, descriptor *GppClass, prefix string, engine *gppOAuthEngine) error {
 	if engine == nil { return nil }
 	routes := gppOpenAPIRoutes(descriptor, prefix)
 	for name := range engine.Configs {
