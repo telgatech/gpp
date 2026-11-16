@@ -52,6 +52,22 @@ values := seen.Values()
 
 `Values` returns a new slice. Its ordering is unspecified.
 
+Set operations return new sets and leave both inputs unchanged:
+
+```gpp
+var allowed container.Set[string]
+allowed.Add("read")
+allowed.Add("write")
+
+var requested container.Set[string]
+requested.Add("write")
+requested.Add("admin")
+
+all := allowed.Union(requested)        // read, write, admin
+shared := allowed.Intersect(requested) // write
+missing := requested.Minus(allowed)    // admin
+```
+
 ## Ordered map
 
 `OrderedMap[K, V]` provides map lookup while keeping keys in insertion order.

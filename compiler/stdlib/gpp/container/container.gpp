@@ -47,6 +47,40 @@ class Set[T comparable] {
 		}
 		return values
 	}
+
+	// Union returns a new set containing values from either set.
+	func Union(other Set[T]) Set[T] {
+		var result Set[T]
+		for value := range this.items {
+			result.Add(value)
+		}
+		for value := range other.items {
+			result.Add(value)
+		}
+		return result
+	}
+
+	// Intersect returns a new set containing values present in both sets.
+	func Intersect(other Set[T]) Set[T] {
+		var result Set[T]
+		for value := range this.items {
+			if other.Contains(value) {
+				result.Add(value)
+			}
+		}
+		return result
+	}
+
+	// Minus returns a new set containing values in this set but not in other.
+	func Minus(other Set[T]) Set[T] {
+		var result Set[T]
+		for value := range this.items {
+			if !other.Contains(value) {
+				result.Add(value)
+			}
+		}
+		return result
+	}
 }
 
 // orderedMapEntry stores one insertion-ordered key/value pair.

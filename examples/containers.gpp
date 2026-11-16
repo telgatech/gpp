@@ -10,6 +10,13 @@ func main() {
 	tags.Add("typed")
 	tags.Add("go")
 	fmt.Println("set has go:", tags.Contains("go"), "size:", tags.Len())
+	var requested ctr.Set[string]
+	requested.Add("typed")
+	requested.Add("queue")
+	union := tags.Union(requested)
+	shared := tags.Intersect(requested)
+	onlyTags := tags.Minus(requested)
+	fmt.Println("set operation sizes:", union.Len(), shared.Len(), onlyTags.Len())
 
 	var undo ctr.Stack[string]
 	undo.Push("edit config")

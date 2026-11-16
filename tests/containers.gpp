@@ -1,0 +1,54 @@
+import (
+	"gpp/container"
+	"gpp/test"
+)
+
+class SetOperationsTest : test.Suite {
+	func UnionReturnsCombinedSetWithoutMutatingInputs() {
+		var left container.Set[int]
+		var right container.Set[int]
+		left.Add(1)
+		left.Add(2)
+		right.Add(2)
+		right.Add(3)
+
+		result := left.Union(right)
+		this.Equal(3, result.Len())
+		this.True(result.Contains(1))
+		this.True(result.Contains(2))
+		this.True(result.Contains(3))
+		this.Equal(2, left.Len())
+		this.Equal(2, right.Len())
+	}
+
+	func IntersectReturnsSharedValuesWithoutMutatingInputs() {
+		var left container.Set[int]
+		var right container.Set[int]
+		left.Add(1)
+		left.Add(2)
+		right.Add(2)
+		right.Add(3)
+
+		result := left.Intersect(right)
+		this.Equal(1, result.Len())
+		this.True(result.Contains(2))
+		this.Equal(2, left.Len())
+		this.Equal(2, right.Len())
+	}
+
+	func MinusReturnsValuesOnlyInLeftSetWithoutMutatingInputs() {
+		var left container.Set[int]
+		var right container.Set[int]
+		left.Add(1)
+		left.Add(2)
+		right.Add(2)
+		right.Add(3)
+
+		result := left.Minus(right)
+		this.Equal(1, result.Len())
+		this.True(result.Contains(1))
+		this.Equal(false, result.Contains(2))
+		this.Equal(2, left.Len())
+		this.Equal(2, right.Len())
+	}
+}

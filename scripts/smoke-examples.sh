@@ -79,6 +79,13 @@ echo "Running durable queue tests..."
 	exit 1
 }
 
+echo "Running container tests..."
+"$gpp" test tests/containers.gpp >"$temp_root/container-tests.log" 2>&1 || {
+	cat "$temp_root/container-tests.log"
+	echo "Container tests failed" >&2
+	exit 1
+}
+
 run_example packages examples/packages/people.gpp examples/packages/main.gpp
 run_example mixed-go-from-gpp examples/mixed/go_from_gpp
 run_example mixed-go-imports-gpp -module generated examples/mixed/go_imports_gpp
