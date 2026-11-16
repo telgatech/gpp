@@ -1189,6 +1189,44 @@ func use(widget Widget) { _ = widget. }
 	}
 }
 
+func TestImportedStandardLibraryPackageCompletion(t *testing.T) {
+	source := `package main
+import "os"
+func main() { _ = os.ReadFile("data") }
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("standard library completion sample should parse: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "main.gpp")
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{
+		files:       map[string]*fileState{path: state},
+		diagnostics: map[string][]Diagnostic{},
+	}
+	server := &server{workspace: workspace}
+	cursor := strings.Index(source, "os.ReadFile") + len("os.")
+	completions := server.completions(textDocumentPositionParams{
+		TextDocument: textDocumentIdentifier{URI: state.URI},
+		Position:     positionAtOffset(source, cursor),
+	})
+	items := completionLabels(completions)
+	for _, expected := range []string{"Open", "ReadFile", "Args", "ErrNotExist"} {
+		if !items[expected] {
+			t.Errorf("standard library package completion omitted %q: %#v", expected, items)
+		}
+	}
+	for _, item := range completions {
+		if item.Label == "ReadFile" {
+			if item.InsertText != "ReadFile" || item.InsertTextFormat != 1 || item.TextEdit == nil || item.TextEdit.NewText != "ReadFile" {
+				t.Fatalf("completion should preserve the existing call arguments: %#v", item)
+			}
+			return
+		}
+	}
+	t.Fatal("standard library package completion omitted ReadFile")
+}
+
 func TestNativeGoCompletionResolvesMembersOnSiblingPackageTypes(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\n\ngo 1.27\n"), 0644); err != nil {

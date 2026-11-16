@@ -3,6 +3,7 @@
 ## 2026-11-16
 
 - Replaced reflection-based HTTP lifecycle hook dispatch with typed calls and fixed pointer type spacing in the formatter.
+- Added completions for imported Go package members and preserved existing call arguments.
 
 ## 2026-11-15
 

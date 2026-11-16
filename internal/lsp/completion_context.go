@@ -102,6 +102,12 @@ func (s *server) contextualCompletions(state *fileState, offset int) []Completio
 			}
 		}
 		if packageName, packageDir, ok := s.importedPackageForQualifier(state, receiver); ok {
+			if packageName == "" && packageDir == "" {
+				for _, info := range s.nativeGoPackageMembersForQualifier(state, receiver) {
+					add(completionForSymbol(info.Symbol))
+				}
+				return sortedCompletionItems(items)
+			}
 			for _, info := range s.packageSymbols(packageName, packageDir) {
 				add(completionForSymbol(info.Symbol))
 			}

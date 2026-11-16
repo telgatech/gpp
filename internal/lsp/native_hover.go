@@ -1389,6 +1389,63 @@ func (s *server) nativeGoMembersForType(typeOfReceiver types.Type) []symbolInfo 
 	return result
 }
 
+func (s *server) nativeGoPackageMembersForQualifier(state *fileState, qualifier string) []symbolInfo {
+	if state == nil || state.File == nil || qualifier == "" {
+		return nil
+	}
+	for _, imported := range state.File.Imports {
+		if imported.LogicalPackage {
+			continue
+		}
+		pkg, err := importer.Default().Import(imported.Path)
+		if err != nil || pkg == nil {
+			continue
+		}
+		alias := imported.Alias
+		if alias == "" {
+			alias = pkg.Name()
+		}
+		if alias != qualifier {
+			continue
+		}
+		qualifierForType := func(referenced *types.Package) string {
+			if referenced == nil || referenced.Path() == pkg.Path() {
+				return ""
+			}
+			return referenced.Name()
+		}
+		var result []symbolInfo
+		for _, name := range pkg.Scope().Names() {
+			object := pkg.Scope().Lookup(name)
+			if object == nil || !object.Exported() {
+				continue
+			}
+			symbol := compiler.DocSymbol{
+				Name:      object.Name(),
+				FullName:  pkg.Name() + "." + object.Name(),
+				Package:   pkg.Name(),
+				Signature: types.TypeString(object.Type(), qualifierForType),
+				Doc:       nativeGoExternalDocumentation(object),
+				Exported:  true,
+			}
+			switch value := object.(type) {
+			case *types.Func:
+				symbol.Kind = compiler.DocFunction
+				symbol.Signature = nativeGoCompletionSignature(value.Name(), value.Type())
+			case *types.TypeName:
+				symbol.Kind = compiler.DocType
+			case *types.Const, *types.Var:
+				symbol.Kind = compiler.DocValue
+			default:
+				continue
+			}
+			result = append(result, symbolInfo{Symbol: symbol})
+		}
+		return result
+	}
+	return nil
+}
+
 func (s *server) nativeGoTypeForGPPExpression(state *fileState, method *compiler.Method, expression compiler.ExprNode, depth int) types.Type {
 	if expression == nil || depth > 64 {
 		return nil

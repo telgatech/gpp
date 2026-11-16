@@ -6764,6 +6764,10 @@ func (s *server) completions(params textDocumentPositionParams) []CompletionItem
 		if s.cancelled() {
 			return []CompletionItem{}
 		}
+		if items[index].InsertTextFormat == 2 && completionHasExistingCallArguments(state.Source, end) {
+			items[index].InsertText = items[index].Label
+			items[index].InsertTextFormat = 1
+		}
 		newText := items[index].InsertText
 		if newText == "" {
 			newText = items[index].Label
@@ -6772,6 +6776,18 @@ func (s *server) completions(params textDocumentPositionParams) []CompletionItem
 		items[index].Data = completionResolveData{URI: params.TextDocument.URI, Position: params.Position, Label: items[index].Label}
 	}
 	return items
+}
+
+func completionHasExistingCallArguments(source string, end int) bool {
+	for end < len(source) {
+		switch source[end] {
+		case ' ', '\t', '\r', '\n':
+			end++
+		default:
+			return source[end] == '('
+		}
+	}
+	return false
 }
 
 func completionState(state *fileState, offset int) *fileState {
