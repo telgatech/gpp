@@ -28,18 +28,21 @@ element does not require a type assertion.
 | `PriorityQueue[T]` | Repeatedly selecting the next item by priority | Comparator decides which item comes out first |
 
 The zero values of `Set`, `OrderedMap`, `Stack`, `Queue`, `Deque`, `List`, and
-`Ring` are ready to use. A `PriorityQueue` needs an ordering function and must
-be created with `NewPriorityQueue`.
+`Ring` are ready to use. A `PriorityQueue` needs an ordering function, so pass
+one when constructing it with `PriorityQueue[T](comparator)`.
 
 ## Set
 
 `Set[T comparable]` uses Go's built-in map storage. `Add` and `Remove` report
-whether they changed the set:
+whether they changed the set. `Add` accepts any number of values and returns
+true if at least one new value was added. Duplicate values are ignored.
+`Clear` empties the set, and the set can be reused afterward:
 
 ```gpp
-var seen container.Set[string]
+seen := container.Set[string]("request-42", "request-43", "request-42")
+seen.Add("request-44", "request-45")
 
-if seen.Add("request-42") {
+if seen.Add("request-46") {
     println("first time seen")
 }
 
@@ -48,6 +51,7 @@ if seen.Contains("request-42") {
 }
 
 values := seen.Values()
+seen.Clear()
 ```
 
 `Values` returns a new slice. Its ordering is unspecified.
@@ -98,17 +102,15 @@ snapshot with GPP's `for range` syntax.
 ## Stack and queue
 
 Use a stack for depth-first work and a queue for first-in, first-out work.
-Empty pops and peeks return the zero value and `false`:
+Pass initial values in insertion order when constructing either type. Empty
+pops and peeks return the zero value and `false`:
 
 ```gpp
-var tasks container.Queue[string]
-tasks.Enqueue("compile")
-tasks.Enqueue("package")
+tasks := container.Queue[string]("compile", "package")
 
 next, ok := tasks.Dequeue() // "compile", true
 
-var undo container.Stack[string]
-undo.Push("edit file")
+undo := container.Stack[string]("edit file")
 action, ok := undo.Pop() // "edit file", true
 ```
 
@@ -120,9 +122,7 @@ A deque supports operations at both ends. Push and pop operations are
 amortized O(1):
 
 ```gpp
-var recent container.Deque[string]
-recent.PushFront("current")
-recent.PushBack("older")
+recent := container.Deque[string]("current", "older")
 
 newest, hasNewest := recent.PopFront()
 oldest, hasOldest := recent.PopBack()
@@ -137,9 +137,7 @@ returns `(zero, false)` from `PopFront`, `PopBack`, `Front`, and `Back`.
 O(1). It does not expose node handles, which keeps its internal links private:
 
 ```gpp
-var history container.List[string]
-history.PushBack("created")
-history.PushBack("validated")
+history := container.List[string]("created", "validated")
 history.PushFront("received")
 
 steps := history.Values() // ["received", "created", "validated"]
@@ -156,10 +154,7 @@ should cycle through a set of values, such as a round-robin schedule. The zero
 value is ready to use. The first inserted value becomes current:
 
 ```gpp
-var schedule container.Ring[string]
-schedule.PushBack("compile")
-schedule.PushBack("test")
-schedule.PushBack("package")
+schedule := container.Ring[string]("compile", "test", "package")
 
 current, hasCurrent := schedule.Current() // "compile", true
 next, hasNext := schedule.Next()          // "test", true
@@ -179,13 +174,9 @@ priority. A less-than comparator creates a min-first queue; a greater-than
 comparator creates a max-first queue:
 
 ```gpp
-queue := container.NewPriorityQueue[int](func(left, right int) bool {
+queue := container.PriorityQueue[int](func(left, right int) bool {
     return left < right
-})
-
-queue.Push(8)
-queue.Push(3)
-queue.Push(5)
+}, 8, 3, 5)
 
 next, ok := queue.Pop() // 3, true
 ```

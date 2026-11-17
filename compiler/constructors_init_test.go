@@ -91,6 +91,65 @@ func TestConstructorInitializerLoweringPreservesErrorResult(t *testing.T) {
 	}
 }
 
+func TestClassConstructionUsesStaticNewFactory(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import "fmt"
+
+class Sample {
+	Value int
+
+	static func New(value int) *Sample {
+		sample := Sample(Value: value + 1)
+		return sample
+	}
+
+	static func New(value string) *Sample {
+		sample := Sample(Value: len(value))
+		return sample
+	}
+
+	static func New(value int, bonus int) *Sample {
+		sample := Sample(Value: value + bonus)
+		return sample
+	}
+}
+
+class Plain {
+	Value int
+}
+
+func main() {
+	fromFactory := Sample(4)
+	fromOverload := Sample("four")
+	fromTwoArguments := Sample(4, 3)
+	fromFields := Sample(Value: 9)
+	plain := Plain(12)
+	fmt.Println(fromFactory.Value, fromOverload.Value, fromTwoArguments.Value, fromFields.Value, plain.Value)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile factory construction program: %v", err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated factory construction program did not run: %v\n%s", err, output)
+	}
+	if got, want := strings.TrimSpace(string(output)), "5 4 7 9 12"; got != want {
+		t.Fatalf("unexpected factory construction output: got %q, want %q", got, want)
+	}
+}
+
 func TestPromotedCallRecognizesInitializerErrors(t *testing.T) {
 	file, err := ParseFile("initializer.gpp", `class Base {
 	func init() error { return nil }
@@ -331,6 +390,10 @@ class Sample {
     Ready bool
     Value *int
 
+    func init() {
+        this.Value ||= defaultPointer()
+    }
+
     func Configure(enabled bool) {
         enabled ||= defaultBoolean()
         this.Ready ||= defaultBoolean()
@@ -367,6 +430,34 @@ func main() {
 	}
 	if strings.TrimSpace(string(output)) != "2 1 7" {
 		t.Fatalf("logical OR assignment evaluated incorrectly: %s", output)
+	}
+}
+
+func TestCompileFilesLogicalOrAssignmentOnImportedBaseField(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+import (
+    stdlog "log"
+    "gpp/http"
+)
+
+class Server : http.Server {
+    func init() {
+        this.Logger ||= stdlog.Default()
+    }
+}
+
+func main() {
+    _ = Server()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile logical OR assignment on imported base field: %v", err)
 	}
 }
 

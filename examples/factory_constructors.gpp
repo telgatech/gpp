@@ -1,0 +1,29 @@
+import "fmt"
+
+class Sample {
+    Value int
+
+    static func New(value int) *Sample {
+        return Sample(Value: value + 1)
+    }
+
+    static func New(value string) *Sample {
+        return Sample(Value: len(value))
+    }
+
+    static func New(value int, bonus int) *Sample {
+        return Sample(Value: value + bonus)
+    }
+}
+
+func main() {
+    fromField := Sample(Value: 3)
+    fromString := Sample("four")
+    fromInteger := Sample(4)
+    fromTwoArguments := Sample(4, 2)
+
+    fmt.Println(fromField.Value)
+    fmt.Println(fromString.Value)
+    fmt.Println(fromInteger.Value)
+    fmt.Println(fromTwoArguments.Value)
+}

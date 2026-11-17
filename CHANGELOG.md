@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-17
+
+- Added `Type(...)` construction through overloaded static `New` factories.
+- Added seeded constructors for sequence containers and initial values for priority queues.
+
 ## 2026-11-16
 
 - Added non-mutating `Set.Union`, `Set.Intersect`, and `Set.Minus` operations to gpp/container Set.

@@ -58,6 +58,15 @@ class User {
 	}
 }
 
+func TestParseRejectsUnsupportedNullCoalescingAssignment(t *testing.T) {
+	_, err := ParseFile("unsupported-coalesce-assignment.gpp", `func main() {
+	value ??= fallback
+}`)
+	if err == nil {
+		t.Fatal("expected ??= to be rejected because it has no defined lowering")
+	}
+}
+
 func TestParseMethodBuildsTryCatchBodyAST(t *testing.T) {
 	file, err := ParseFile("try-body-ast.gpp", `
 class User {

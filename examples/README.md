@@ -23,6 +23,8 @@ The examples cover:
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its GPP
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.
+- `factory_constructors.gpp` — positional class construction routed to overloaded
+  static `New` factories, including factories with multiple arguments.
 - `generics.gpp` — generic `Stack[T]`, constrained `Index[K comparable, V]`,
   multi-parameter `Pair[A, B]`, explicit type arguments, and methods whose
   fields and signatures use those parameters; also generic free and static

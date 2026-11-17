@@ -4,15 +4,25 @@ package gpp.container
 class Set[T comparable] {
 	items map[T]bool
 
-	func Add(value T) bool {
-		if this.items == nil {
-			this.items = make(map[T]bool)
+	static func New[U comparable](values ...U) Set[U] {
+		var set Set[U]
+		set.Add(values...)
+		return set
+	}
+
+	func Add(values ...T) bool {
+		changed := false
+		for _, value := range values {
+			if this.items == nil {
+				this.items = make(map[T]bool)
+			}
+			if _, found := this.items[value]; found {
+				continue
+			}
+			this.items[value] = true
+			changed = true
 		}
-		if _, found := this.items[value]; found {
-			return false
-		}
-		this.items[value] = true
-		return true
+		return changed
 	}
 
 	func Remove(value T) bool {
@@ -222,6 +232,14 @@ class OrderedMap[K comparable, V any] {
 class Stack[T] {
 	items []T
 
+	static func New[U any](values ...U) Stack[U] {
+		var stack Stack[U]
+		for _, value := range values {
+			stack.Push(value)
+		}
+		return stack
+	}
+
 	func Push(value T) {
 		this.items = append(this.items, value)
 	}
@@ -267,6 +285,14 @@ class Deque[T] {
 	items []T
 	head int
 	size int
+
+	static func New[U any](values ...U) Deque[U] {
+		var deque Deque[U]
+		for _, value := range values {
+			deque.PushBack(value)
+		}
+		return deque
+	}
 
 	func grow() {
 		capacity := len(this.items)
@@ -372,6 +398,14 @@ class Deque[T] {
 class Queue[T] {
 	items Deque[T]
 
+	static func New[U any](values ...U) Queue[U] {
+		var queue Queue[U]
+		for _, value := range values {
+			queue.Enqueue(value)
+		}
+		return queue
+	}
+
 	func Enqueue(value T) {
 		this.items.PushBack(value)
 	}
@@ -411,6 +445,14 @@ class List[T] {
 	tail int
 	freeHead int
 	size int
+
+	static func New[U any](values ...U) List[U] {
+		var list List[U]
+		for _, value := range values {
+			list.PushBack(value)
+		}
+		return list
+	}
 
 	func allocate(value T, previous int, next int) int {
 		var node listNode[T]
@@ -552,6 +594,14 @@ class Ring[T] {
 	last *ringNode[T]
 	current *ringNode[T]
 	size int
+
+	static func New[U any](values ...U) Ring[U] {
+		var ring Ring[U]
+		for _, value := range values {
+			ring.PushBack(value)
+		}
+		return ring
+	}
 
 	func PushFront(value T) {
 		var node ringNode[T]
@@ -700,18 +750,21 @@ class Ring[T] {
 }
 
 // PriorityQueue is a typed binary heap ordered by its less function.
-// Construct it with NewPriorityQueue; its zero value is not usable.
+// Construct it with PriorityQueue[T](less); its zero value is not usable.
 class PriorityQueue[T] {
 	items []T
 	less func(T, T) bool
 
-	static func New[U any](less func(U, U) bool) *PriorityQueue[U] {
+	static func New[U any](less func(U, U) bool, values ...U) *PriorityQueue[U] {
 		if less == nil {
 			panic("gpp/container: priority queue comparator is nil")
 		}
 		var queue PriorityQueue[U]
 		queue.items = []U{}
 		queue.less = less
+		for _, value := range values {
+			queue.Push(value)
+		}
 		return &queue
 	}
 
@@ -790,6 +843,6 @@ class PriorityQueue[T] {
 	}
 }
 
-func NewPriorityQueue[T](less func(T, T) bool) *PriorityQueue[T] {
-	return PriorityQueue.New[T](less)
+func NewPriorityQueue[T](less func(T, T) bool, values ...T) *PriorityQueue[T] {
+	return PriorityQueue.New[T](less, values...)
 }

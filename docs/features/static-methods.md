@@ -60,6 +60,34 @@ Static methods have no implicit instance receiver. They are selected through
 the class name, and their behavior is statically resolved. See [static method
 rules](/reference/specifications/static-methods).
 
+## Use `New` for positional construction
+
+A static method named `New` can provide construction signatures for the class.
+Calling `Type(...)` selects the matching factory by argument types and count,
+so callers do not need to write `Type.New(...)`. When `New` exists, positional
+calls use its factories and do not fall back to assigning fields by order if
+no overload matches. Without a `New` factory, positional calls assign fields
+in declaration order. Named field construction always assigns fields directly.
+These factories are optional conveniences: types whose zero values are ready
+to use can still be declared with `var`.
+
+For example, [`factory_constructors.gpp`](https://github.com/telgatech/gpp/blob/main/examples/factory_constructors.gpp)
+demonstrates overloaded factories selected by argument type and count:
+
+```gpp
+class Sample {
+    Value int
+
+    static func New(value int) *Sample { return Sample(Value: value + 1) }
+    static func New(value string) *Sample { return Sample(Value: len(value)) }
+    static func New(value int, bonus int) *Sample { return Sample(Value: value + bonus) }
+}
+
+one := Sample(4)
+two := Sample("four")
+three := Sample(4, 3)
+```
+
 ## Use `self` for the calling class's type
 
 A base class can use `self` when a static method should create or

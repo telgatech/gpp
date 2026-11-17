@@ -312,6 +312,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		}
 		body, err := lowerFunctionGoBlockNode(bodyAST, bodyContext, "")
 		if err != nil {
+			if isSourceLineDiagnostic(err) {
+				return nil, true, err
+			}
 			return nil, false, nil
 		}
 		body, err = lowerExceptionABIBoundaryNode(body, method.ResultAST, method.ResultFieldsAST, bodyContext)
@@ -329,6 +332,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 	}
 	body, err := lowerFunctionGoBlockNode(bodyAST, bodyContext, "")
 	if err != nil {
+		if isSourceLineDiagnostic(err) {
+			return nil, true, err
+		}
 		return nil, false, nil
 	}
 	if astContainsExceptionRuntime(body) && directExceptionBoundaryRequired(body, method.ResultAST, method.ResultFieldsAST) {

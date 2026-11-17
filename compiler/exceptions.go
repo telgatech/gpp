@@ -1261,7 +1261,7 @@ func lowerFunctionGoBlockNode(block *BlockStmt, context constructorContext, reth
 
 func lowerOrAssignmentNode(statement *AssignmentStmt, context constructorContext) ([]ast.Stmt, error) {
 	if statement == nil || len(statement.Left) != 1 || len(statement.Right) != 1 {
-		return nil, sourceLineError(statement.Span(), fmt.Errorf("||= requires one assignable value on each side"))
+		return nil, orAssignmentError(statement, context, fmt.Errorf("||= requires one assignable value on each side"))
 	}
 	left := statement.Left[0]
 	right := statement.Right[0]
@@ -1274,19 +1274,19 @@ func lowerOrAssignmentNode(statement *AssignmentStmt, context constructorContext
 				typeText = resolved
 			}
 		}
-		return nil, sourceLineError(statement.Span(), fmt.Errorf("||= requires a bool or nilable left value, got %s", typeText))
+		return nil, orAssignmentError(statement, context, fmt.Errorf("||= requires a bool or nilable left value, got %s", typeText))
 	}
 	leftExpression, err := goExprNode(left)
 	if err != nil {
-		return nil, sourceLineError(statement.Span(), err)
+		return nil, orAssignmentError(statement, context, err)
 	}
 	rightExpression, err := goExprNode(right)
 	if err != nil {
-		return nil, sourceLineError(statement.Span(), err)
+		return nil, orAssignmentError(statement, context, err)
 	}
 	if index, isIndex := left.(*IndexExpr); isIndex {
 		if _, isMap := coalesceExpressionTypeAST(index.Receiver, context, context.CurrentParameterTypes).(*MapType); isMap {
-			return lowerMapOrAssignmentNode(statement, index, leftExpression, rightExpression, mode)
+			return lowerMapOrAssignmentNode(statement, index, rightExpression, mode, context)
 		}
 	}
 	name := orAssignmentTemporaryName(statement, "target")
@@ -1304,16 +1304,26 @@ func lowerOrAssignmentNode(statement *AssignmentStmt, context constructorContext
 	}, nil
 }
 
-func lowerMapOrAssignmentNode(statement *AssignmentStmt, index *IndexExpr, left, right ast.Expr, mode string) ([]ast.Stmt, error) {
+func orAssignmentError(statement *AssignmentStmt, context constructorContext, err error) error {
+	if statement == nil {
+		return err
+	}
+	if context.GeneratedFilePath != "" {
+		return diagnosticAt(context.GeneratedFilePath, statement.Span(), err)
+	}
+	return sourceLineError(statement.Span(), err)
+}
+
+func lowerMapOrAssignmentNode(statement *AssignmentStmt, index *IndexExpr, right ast.Expr, mode string, context constructorContext) ([]ast.Stmt, error) {
 	mapName := orAssignmentTemporaryName(statement, "map")
 	keyName := orAssignmentTemporaryName(statement, "key")
 	mapExpression, err := goExprNode(index.Receiver)
 	if err != nil {
-		return nil, sourceLineError(statement.Span(), err)
+		return nil, orAssignmentError(statement, context, err)
 	}
 	keyExpression, err := goExprNode(index.Index)
 	if err != nil {
-		return nil, sourceLineError(statement.Span(), err)
+		return nil, orAssignmentError(statement, context, err)
 	}
 	mapValue := func() ast.Expr { return ast.NewIdent(mapName) }
 	keyValue := func() ast.Expr { return ast.NewIdent(keyName) }

@@ -1041,14 +1041,6 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 	if !ok {
 		return namedStructConstructorExprNode(call, context)
 	}
-	class := target.Class
-	classes := classesForClass(context, class)
-	fields, err := constructorFieldsVisibleToClass(class, classes)
-	if err != nil {
-		return nil, true, err
-	}
-	fields = constructorFieldsVisibleToCaller(fields, context.CurrentClass)
-	root := &constructorASTLiteral{Values: map[string]ExprNode{}, Children: map[string]*constructorASTLiteral{}}
 	named := false
 	positional := false
 	for _, argument := range call.Arguments {
@@ -1058,6 +1050,33 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 	if named && positional {
 		return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot mix named and positional arguments in call to %s", name))
 	}
+	if !named && hasStaticFactory(context, target, "New") {
+		factoryCall := constructorFactoryCall(call)
+		factorySignatures := staticFactorySignatures(context, target, "New")
+		if len(factorySignatures) > 1 {
+			resolved, err := resolveConstructorFactoryOverload(factoryCall, target, factorySignatures, context)
+			if err != nil {
+				return nil, true, sourceLineError(call.Span(), err)
+			}
+			factoryCall = resolved
+		}
+		for index := range factoryCall.Arguments {
+			lowered, err := lowerExceptionExprNode(factoryCall.Arguments[index].Value, context)
+			if err != nil {
+				return nil, true, err
+			}
+			factoryCall.Arguments[index].Value = lowered
+		}
+		return factoryCall, true, nil
+	}
+	class := target.Class
+	classes := classesForClass(context, class)
+	fields, err := constructorFieldsVisibleToClass(class, classes)
+	if err != nil {
+		return nil, true, err
+	}
+	fields = constructorFieldsVisibleToCaller(fields, context.CurrentClass)
+	root := &constructorASTLiteral{Values: map[string]ExprNode{}, Children: map[string]*constructorASTLiteral{}}
 	if !named && len(call.Arguments) != len(fields) && len(call.Arguments) != 0 {
 		return nil, true, sourceLineError(call.Span(), fmt.Errorf("%s constructor expects %d arguments, got %d", name, len(fields), len(call.Arguments)))
 	}
@@ -1097,6 +1116,111 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		return instance, true, nil
 	}
 	return constructorInitializationExpr(name, instance, initializers), true, nil
+}
+
+func hasStaticFactory(context constructorContext, target constructorTarget, methodName string) bool {
+	return len(staticFactorySignatures(context, target, methodName)) > 0
+}
+
+func staticFactorySignatures(context constructorContext, target constructorTarget, methodName string) []callableSignature {
+	if target.Class == nil {
+		return nil
+	}
+	classKey := target.Class.Name
+	if target.Qualifier != "" {
+		classKey = target.Qualifier + "." + classKey
+	}
+	return context.StaticMethodSignatures[classKey][methodName]
+}
+
+func resolveConstructorFactoryOverload(call *CallExpr, target constructorTarget, signatures []callableSignature, context constructorContext) (*CallExpr, error) {
+	argumentSources := make([]string, 0, len(call.Arguments))
+	for _, argument := range call.Arguments {
+		source, err := expressionNodeSource(argument.Value)
+		if err != nil {
+			return nil, err
+		}
+		argumentSources = append(argumentSources, source)
+	}
+	className := target.Class.Name
+	if target.Qualifier != "" {
+		className = target.Qualifier + "." + className
+	}
+	goName, resolvedSources, err := resolveStaticMethodCall(className, "New", argumentSources, signatures, context)
+	if err != nil {
+		return nil, err
+	}
+	var signature callableSignature
+	for _, candidate := range signatures {
+		if candidate.GoName == goName {
+			signature = candidate
+			break
+		}
+	}
+	if signature.GoName == "" {
+		return nil, fmt.Errorf("cannot resolve static factory %s.New", className)
+	}
+
+	callee := call.Callee
+	var typeArguments []ExprNode
+	switch value := callee.(type) {
+	case *IndexExpr:
+		callee = value.Receiver
+		typeArguments = []ExprNode{value.Index}
+	case *IndexListExpr:
+		callee = value.Receiver
+		typeArguments = append(typeArguments, value.Indices...)
+	}
+	callee = staticCallCalleeForSignature(callee, signature, context)
+	if signature.StaticSelf {
+		callee, err = bindStaticSelfCall(callee, call.Callee)
+		if err != nil {
+			return nil, err
+		}
+	}
+	switch len(typeArguments) {
+	case 0:
+	case 1:
+		callee = &IndexExpr{Receiver: callee, Index: typeArguments[0], SpanValue: call.Callee.Span()}
+	default:
+		callee = &IndexListExpr{Receiver: callee, Indices: typeArguments, SpanValue: call.Callee.Span()}
+	}
+
+	arguments := make([]CallArg, 0, len(resolvedSources))
+	for _, source := range resolvedSources {
+		tokens, err := LexSource("constructor factory argument", source)
+		if err != nil {
+			return nil, err
+		}
+		value, err := ParseExpressionTokens(tokens)
+		if err != nil {
+			return nil, err
+		}
+		arguments = append(arguments, CallArg{Value: value})
+	}
+	return &CallExpr{Callee: callee, Arguments: arguments, SpanValue: call.SpanValue}, nil
+}
+
+func constructorFactoryCall(call *CallExpr) *CallExpr {
+	receiver := call.Callee
+	var typeArguments []ExprNode
+	switch value := call.Callee.(type) {
+	case *IndexExpr:
+		receiver = value.Receiver
+		typeArguments = []ExprNode{value.Index}
+	case *IndexListExpr:
+		receiver = value.Receiver
+		typeArguments = append(typeArguments, value.Indices...)
+	}
+	callee := ExprNode(&SelectorExpr{Receiver: receiver, Name: "New", SpanValue: call.Callee.Span()})
+	switch len(typeArguments) {
+	case 0:
+	case 1:
+		callee = &IndexExpr{Receiver: callee, Index: typeArguments[0], SpanValue: call.Callee.Span()}
+	default:
+		callee = &IndexListExpr{Receiver: callee, Indices: typeArguments, SpanValue: call.Callee.Span()}
+	}
+	return &CallExpr{Callee: callee, Arguments: append([]CallArg(nil), call.Arguments...), SpanValue: call.SpanValue}
 }
 
 func namedStructConstructorExprNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {

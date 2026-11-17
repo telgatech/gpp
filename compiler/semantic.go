@@ -1270,8 +1270,44 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		}
 		context.ImportedPackageTypes[alias] = types
 	}
+	mergeImportedParentFieldTypes(&context, localClasses)
 
 	return context, nil
+}
+
+// mergeImportedParentFieldTypes adds imported inherited fields to each local
+// class's shared field-type metadata. This keeps receiver type inference
+// consistent for every expression and statement lowering path.
+func mergeImportedParentFieldTypes(context *constructorContext, localClasses map[string]*ClassDecl) {
+	if context == nil {
+		return
+	}
+	for className, class := range localClasses {
+		if class == nil {
+			continue
+		}
+		fieldTypes := context.Overloads.ClassFieldTypes[className]
+		if fieldTypes == nil {
+			fieldTypes = map[string]string{}
+		}
+		for _, parentName := range classParentNames(class) {
+			parentTypes := context.Overloads.ClassFieldTypes[parentName]
+			parentClass := (*ClassDecl)(nil)
+			if parent, found := context.Targets[parentName]; found {
+				parentClass = parent.Class
+			}
+			for fieldName, typeName := range parentTypes {
+				if parentClass != nil && !classMemberVisibleToSubclass(parentClass, fieldName) {
+					continue
+				}
+				if _, exists := fieldTypes[fieldName]; !exists {
+					fieldTypes[fieldName] = typeName
+				}
+			}
+		}
+		context.Overloads.ClassFieldTypes[className] = fieldTypes
+		context.Overloads.ClassFieldTypes["__gpp_"+className] = fieldTypes
+	}
 }
 
 func namedStructConstructors(files []*File) map[string][]constructorField {

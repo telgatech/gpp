@@ -5,50 +5,36 @@ import (
 )
 
 func main() {
-	var tags ctr.Set[string]
-	tags.Add("go")
-	tags.Add("typed")
-	tags.Add("go")
+	tags := ctr.Set[string]("go", "typed", "go")
 	fmt.Println("set has go:", tags.Contains("go"), "size:", tags.Len())
-	var requested ctr.Set[string]
-	requested.Add("typed")
-	requested.Add("queue")
+	requested := ctr.Set[string]("typed", "queue")
 	union := tags.Union(requested)
 	shared := tags.Intersect(requested)
 	onlyTags := tags.Minus(requested)
 	fmt.Println("set operation sizes:", union.Len(), shared.Len(), onlyTags.Len())
+	tags.Clear()
+	fmt.Println("set after clear:", tags.IsEmpty())
 
-	var undo ctr.Stack[string]
-	undo.Push("edit config")
-	undo.Push("add route")
+	undo := ctr.Stack[string]("edit config", "add route")
 	lastAction, hasAction := undo.Pop()
 	fmt.Println("stack:", lastAction, hasAction)
 
-	var jobs ctr.Queue[string]
-	jobs.Enqueue("compile")
-	jobs.Enqueue("package")
+	jobs := ctr.Queue[string]("compile", "package")
 	firstJob, hasJob := jobs.Dequeue()
 	fmt.Println("queue:", firstJob, hasJob)
 
-	var recent ctr.Deque[string]
-	recent.PushFront("newest")
-	recent.PushBack("oldest")
+	recent := ctr.Deque[string]("newest", "oldest")
 	newest, hasNewest := recent.PopFront()
 	oldest, hasOldest := recent.PopBack()
 	fmt.Println("deque:", newest, hasNewest, oldest, hasOldest)
 
-	var history ctr.List[string]
-	history.PushBack("created")
-	history.PushBack("validated")
+	history := ctr.List[string]("created", "validated")
 	history.PushFront("received")
 	fmt.Println("list:", history.Values())
 
-	priorities := ctr.NewPriorityQueue[int](func(left, right int) bool {
+	priorities := ctr.PriorityQueue[int](func(left, right int) bool {
 		return left < right
-	})
-	priorities.Push(8)
-	priorities.Push(3)
-	priorities.Push(5)
+	}, 8, 3, 5)
 	firstPriority, hasPriority := priorities.Pop()
 	fmt.Println("priority queue:", firstPriority, hasPriority)
 
@@ -60,10 +46,7 @@ func main() {
 	settings.Set("timeout", 20)
 	fmt.Println("ordered map:", settings.Keys(), settings.Values())
 
-	var schedule ctr.Ring[string]
-	schedule.PushBack("compile")
-	schedule.PushBack("test")
-	schedule.PushBack("package")
+	schedule := ctr.Ring[string]("compile", "test", "package")
 	current, hasCurrent := schedule.Current()
 	next, hasNext := schedule.Next()
 	wrapped, hasWrapped := schedule.Move(1)

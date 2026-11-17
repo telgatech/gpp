@@ -1996,6 +1996,11 @@ func resolveStaticMethodCall(
 		args      []string
 	}
 	for _, signature := range signatures {
+		variadicIndex := variadicParameterIndex(signature)
+		if len(args) < requiredParameterCount(signature) ||
+			(variadicIndex < 0 && len(args) > len(signature.Parameters)) {
+			continue
+		}
 		resolved, _, err := resolveCallableCall(
 			methodName,
 			args,

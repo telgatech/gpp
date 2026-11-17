@@ -216,6 +216,35 @@ fmt.Println(first.Greeting())
 fmt.Println(second.Greeting())
 ```
 
+A class can provide static `New` factories for positional construction. When a
+class has overloads, `Type(...)` selects the matching factory by argument types
+and count:
+
+```go
+class User {
+    Name string
+    Age int
+
+    static func New(name string) *User {
+        return User(Name: name)
+    }
+
+    static func New(name string, age int) *User {
+        return User(Name: name, Age: age)
+    }
+}
+
+guest := User("Guest")
+ada := User("Ada", 36)
+```
+
+When a class declares `New`, positional calls use its factories; they do not
+fall back to assigning fields by order if no factory matches. Without a `New`
+factory, positional calls assign fields in declaration order. Named field
+construction always assigns fields directly. Factories are optional
+conveniences, and types whose zero values are ready to use can still be
+declared with `var`.
+
 This pointer result is specific to classes. Constructor-style calls for named
 structs return struct values; see [named struct construction](./structs#declare-and-construct-named-structs).
 

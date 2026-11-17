@@ -68,7 +68,7 @@ var gppKeywords = map[string]bool{
 func IsKeyword(word string) bool { return gppKeywords[word] }
 
 var gppOperators = []string{
-	"<<=", ">>=", "&^=", "...", "||=", "??=", "===", "!==",
+	"<<=", ">>=", "&^=", "...", "||=", "===", "!==",
 	":=", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.",
 	"++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 	"<<", ">>", "<-", "&^", "::",
@@ -188,6 +188,11 @@ func LexSource(filename, source string) ([]Token, error) {
 			}
 			add(TokenNumber, start, index)
 			continue
+		}
+
+		if strings.HasPrefix(source[index:], "??=") {
+			position := span(index, index+3)
+			return nil, fmt.Errorf("%s:%d:%d: unsupported operator ??=", filename, position.Line, position.Column)
 		}
 
 		matchedOperator := ""

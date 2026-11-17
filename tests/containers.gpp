@@ -4,6 +4,34 @@ import (
 )
 
 class SetOperationsTest : test.Suite {
+	func AddAcceptsMultipleValues() {
+		var values container.Set[int]
+		this.Equal(true, values.Add(1, 2, 2))
+		this.Equal(2, values.Len())
+		this.Equal(false, values.Add(1, 2))
+		this.Equal(true, values.Add(3, 4))
+		this.Equal(4, values.Len())
+	}
+
+	func NewCreatesPopulatedSet() {
+		values := container.Set.New(1, 2, 2)
+		this.Equal(2, values.Len())
+		this.True(values.Contains(1))
+		this.True(values.Contains(2))
+	}
+
+	func ClearEmptiesSetAndAllowsReuse() {
+		values := container.Set[int](1, 2)
+		values.Clear()
+		this.Equal(0, values.Len())
+		this.True(values.IsEmpty())
+
+		this.True(values.Add(3))
+		this.True(values.Contains(3))
+		values.Clear()
+		this.True(values.IsEmpty())
+	}
+
 	func UnionReturnsCombinedSetWithoutMutatingInputs() {
 		var left container.Set[int]
 		var right container.Set[int]
@@ -50,5 +78,50 @@ class SetOperationsTest : test.Suite {
 		this.Equal(false, result.Contains(2))
 		this.Equal(2, left.Len())
 		this.Equal(2, right.Len())
+	}
+}
+
+class SeededContainerTest : test.Suite {
+	func SequenceFactoriesPreserveInsertionOrder() {
+		stack := container.Stack[int](1, 2, 3)
+		stackTop, hasStackTop := stack.Pop()
+		this.True(hasStackTop)
+		this.Equal(3, stackTop)
+
+		queue := container.Queue[int](1, 2, 3)
+		queueFront, hasQueueFront := queue.Dequeue()
+		this.True(hasQueueFront)
+		this.Equal(1, queueFront)
+
+		deque := container.Deque[int](1, 2, 3)
+		dequeFront, hasDequeFront := deque.PopFront()
+		dequeBack, hasDequeBack := deque.PopBack()
+		this.True(hasDequeFront)
+		this.True(hasDequeBack)
+		this.Equal(1, dequeFront)
+		this.Equal(3, dequeBack)
+
+		list := container.List[int](1, 2, 3)
+		this.Equal(3, list.Len())
+		firstListValue, hasListValue := list.Front()
+		this.True(hasListValue)
+		this.Equal(1, firstListValue)
+
+		ring := container.Ring[int](1, 2, 3)
+		this.Equal(3, ring.Len())
+		this.Equal(1, ring.Values()[0])
+	}
+
+	func PriorityQueueFactoryAcceptsInitialValues() {
+		queue := container.PriorityQueue[int](func(left, right int) bool {
+			return left < right
+		}, 8, 3, 5)
+
+		first, hasFirst := queue.Pop()
+		second, hasSecond := queue.Pop()
+		this.True(hasFirst)
+		this.True(hasSecond)
+		this.Equal(3, first)
+		this.Equal(5, second)
 	}
 }
