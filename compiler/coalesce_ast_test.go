@@ -26,7 +26,7 @@ func TestTransformErrorCoalescingUsesBodyAST(t *testing.T) {
 	}
 }
 
-func TestTransformErrorCoalescingUsesSafeAccessPresence(t *testing.T) {
+func TestTransformErrorCoalescingTreatsSafeAccessNilAsSuccessfulValue(t *testing.T) {
 	person := &ClassDecl{
 		Name:   "Person",
 		Fields: []Field{{Name: "Name", TypeAST: parseTypeText("string")}},
@@ -48,8 +48,8 @@ func Read(person *Person) string {
 	if !handled || strings.Contains(transformed, "??") || strings.Contains(transformed, "?.") {
 		t.Fatalf("expected safe access coalescing to lower, handled=%v output=%s", handled, transformed)
 	}
-	if !strings.Contains(transformed, `__gppSafeCoalesce[string](person == nil`) {
-		t.Fatalf("expected nil-aware coalescing helper, got: %s", transformed)
+	if !strings.Contains(transformed, `__gppCoalesce[string]`) {
+		t.Fatalf("expected error-only coalescing helper, got: %s", transformed)
 	}
 }
 

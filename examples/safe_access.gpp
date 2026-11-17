@@ -16,11 +16,9 @@ func main() {
     fmt.Println(person?.Name)
     fmt.Println(person?.Speak())
 
-    // combine with fallback
-    fmt.Println(person?.Name ?? "Unknown")
-    fmt.Println(person?.Speak() ?? "Hello, stranger")
-
     person = &Person{Name: "Ada"}
-    fmt.Println(person?.Name ?? "Unknown")
-    fmt.Println(person?.Manager?.Name ?? "No manager")
+    fmt.Println(person?.Name)
+
+    var manager *Person
+    fmt.Println(manager?.Name)
 }

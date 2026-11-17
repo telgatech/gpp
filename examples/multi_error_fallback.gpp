@@ -1,0 +1,15 @@
+import "fmt"
+
+func Dimensions() (int, int, error) {
+	return 0, 0, fmt.Errorf("dimensions unavailable")
+}
+
+func CachedDimensions() (int, int, error) {
+	return 640, 480, nil
+}
+
+func main() {
+	defaultX, defaultY := Dimensions() ?? 0, 1
+	x, y := Dimensions() ?? CachedDimensions() ?? 0, 1
+	fmt.Println("fallback:", defaultX, defaultY, "cached:", x, y)
+}

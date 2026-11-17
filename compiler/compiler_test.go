@@ -2266,7 +2266,7 @@ func main() {
 	}
 }
 
-func TestCompileFilesSupportsSafeAccessCoalescing(t *testing.T) {
+func TestCompileFilesSafeAccessReturnsZeroValueForNilReceiver(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
@@ -2288,24 +2288,17 @@ class Person {
     }
 }
 
-var fallbackCalls int
-
-func fallback() string {
-    fallbackCalls++
-    return "Unknown"
-}
-
 func main() {
     var person *Person
-    fmt.Println(person?.Name ?? fallback())
-    fmt.Println(person?.Greeting() ?? "Hello, stranger")
+    fmt.Println(person?.Name)
+    fmt.Println(person?.Greeting())
 
     person = &Person{Name: ""}
-    fmt.Println(person?.Name ?? fallback())
+    fmt.Println(person?.Name)
 
     person = &Person{Name: "Ada"}
-    fmt.Println(person?.Manager?.Name ?? "No manager")
-    fmt.Println(fallbackCalls)
+    var manager *Manager
+    fmt.Println(manager?.Name)
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
@@ -2319,10 +2312,10 @@ func main() {
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("generated nil-safe coalescing program did not run: %v\n%s", err, output)
+		t.Fatalf("generated safe-access program did not run: %v\n%s", err, output)
 	}
-	if string(output) != "Unknown\nHello, stranger\n\nNo manager\n1\n" {
-		t.Fatalf("unexpected nil-safe coalescing output: %q", output)
+	if string(output) != "\n\n\n\n" {
+		t.Fatalf("unexpected nil safe-access output: %q", output)
 	}
 }
 
@@ -2385,7 +2378,7 @@ func main() {
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "invalid memory address or nil pointer dereference") || strings.Contains(string(output), "Unknown") {
-		t.Fatalf("ordinary nil dereference was not preserved by ??; error=%v output=%s", err, output)
+		t.Fatalf("?? unexpectedly recovered an ordinary nil dereference; error=%v output=%s", err, output)
 	}
 }
 

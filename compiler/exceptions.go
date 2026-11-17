@@ -58,11 +58,30 @@ func __gppCoalesce[T any](left func() T, fallback func() T) (result T) {
 	return left()
 }
 
-func __gppSafeCoalesce[T any](isNil bool, access func() T, fallback func() T) T {
-	if isNil {
-		return fallback()
-	}
-	return __gppCoalesce(access, fallback)
+func __gppCoalesce2[A any, B any](left func() (A, B), fallback func() (A, B)) (first A, second B) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(__gppThrownError); ok {
+				first, second = fallback()
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	return left()
+}
+
+func __gppCoalesce3[A any, B any, C any](left func() (A, B, C), fallback func() (A, B, C)) (first A, second B, third C) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(__gppThrownError); ok {
+				first, second, third = fallback()
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	return left()
 }
 
 func __gppUnwrap[T any](value T, err error) T {
@@ -2052,6 +2071,12 @@ func lowerExceptionStmtNodes(statement Stmt, context constructorContext) error {
 		value.Expression, err = lower(value.Expression)
 		return err
 	case *DeclarationStmt:
+		if lowered, handled, err := lowerMultiCoalesceAssignmentNode(len(value.Names), value.Values, context, context.CurrentParameterTypes); err != nil {
+			return err
+		} else if handled {
+			value.Values = []ExprNode{lowered}
+			return nil
+		}
 		for index := range value.Values {
 			lowered, err := lower(value.Values[index])
 			if err != nil {
@@ -2061,6 +2086,14 @@ func lowerExceptionStmtNodes(statement Stmt, context constructorContext) error {
 		}
 		return nil
 	case *AssignmentStmt:
+		if value.Operator == "=" || value.Operator == ":=" {
+			if lowered, handled, err := lowerMultiCoalesceAssignmentNode(len(value.Left), value.Right, context, context.CurrentParameterTypes); err != nil {
+				return err
+			} else if handled {
+				value.Right = []ExprNode{lowered}
+				return nil
+			}
+		}
 		for index := range value.Left {
 			lowered, err := lower(value.Left[index])
 			if err != nil {

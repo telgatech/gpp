@@ -24,6 +24,8 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Regular expressions](./regular-expressions)
 - [Safe access](./safe-access)
 - [Lazy error fallback](./error-fallback)
+- [Conditional expressions](./conditional-expressions)
+- [Operators](./operators)
 - [Annotations and introspection](./annotations)
 
 ## Application features
@@ -40,7 +42,6 @@ compares it with the Go approach where useful, and then shows how to apply it.
 ## Go workflow and tools
 
 - [Go compatibility](./packages)
-- [Go assignment operators](/guide/language#go-compatible-assignment-operators)
 - [Mixed Go and GPP builds](./mixed-go)
 - [Project CLI](./project-cli)
 - [Formatter](./formatter)

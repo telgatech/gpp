@@ -1,0 +1,49 @@
+import (
+    "fmt"
+)
+
+class Feature {
+    Name string
+}
+
+func Dimensions() (int, int, error) {
+    return 0, 0, fmt.Errorf("dimensions unavailable")
+}
+
+func GetFeature() *Feature {
+    return nil
+}
+
+func main() {
+    count := 10
+    count += 2 // add
+    count -= 1 // subtract
+    count *= 3 // multiply
+    count /= 2 // divide
+    count %= 7 // remainder
+    count++ // increment
+    count-- // decrement
+
+    mask, bits := 0b0011, 0b1100
+    bits |= mask // bitwise OR
+    bits &= 0b1110 // bitwise AND
+    bits ^= 0b0100 // bitwise XOR
+    bits <<= 1 // shift left
+    bits >>= 1 // shift right
+    bits &^= 0b0010 // bit clear
+
+    var enabled bool
+    enabled ||= true // initialize if false
+    enabled ||= false // an already true value stays true
+    status := enabled ? "enabled" : "disabled" // choose a value with a ternary expression
+
+    var feature *Feature
+    feature ||= Feature(Name: "ready") // initialize if nil
+
+    featureWithFallback := GetFeature()
+    featureWithFallback ||= Feature(Name: "fallback")
+    width, height := Dimensions() ?? 1, 2 // use matching fallbacks for multiple results
+
+    fmt.Println("count:", count, "bits:", bits)
+    fmt.Println("enabled:", enabled, status, "feature:", feature.Name, "dimensions:", width, height, "nil default:", featureWithFallback.Name)
+}

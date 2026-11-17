@@ -8,172 +8,251 @@ import (
 )
 
 type coalesceASTCandidate struct {
-	typed *BinaryExpr
-	block *BlockStmt
-	start int
-	end   int
-	depth int
+	typed     *BinaryExpr
+	block     *BlockStmt
+	start     int
+	end       int
+	editEnd   int
+	depth     int
+	values    []TypeNode
+	fallbacks []ExprNode
 }
 
-type safeCoalesceLowering struct {
-	resultType TypeNode
-	isNil      ExprNode
-	access     ExprNode
+func multiCoalesceAssignment(blocks []*BlockStmt, candidate *coalesceASTCandidate, context constructorContext) ([]TypeNode, []ExprNode, int, bool) {
+	if candidate == nil || candidate.typed == nil {
+		return nil, nil, 0, false
+	}
+	for _, block := range blocks {
+		if result, fallbacks, end, found := multiCoalesceInBlock(block, candidate.typed, context); found {
+			return result, fallbacks, end, true
+		}
+	}
+	return nil, nil, 0, false
 }
 
-// safeCoalescePlan recognizes an explicit safe member access on the left of
-// ?? and builds the nil condition separately from the value expression. This
-// keeps standalone ?. zero-value semantics while letting the paired ?? use
-// the fallback only when a safe receiver was nil.
-func safeCoalescePlan(expression ExprNode, context constructorContext, valueTypes map[string]string) (*safeCoalesceLowering, bool, error) {
-	for {
-		parenthesized, ok := expression.(*ParenthesizedExpr)
-		if !ok {
-			break
+func multiCoalesceInBlock(block *BlockStmt, expression *BinaryExpr, context constructorContext) ([]TypeNode, []ExprNode, int, bool) {
+	if block == nil {
+		return nil, nil, 0, false
+	}
+	for _, statement := range block.Statements {
+		var leftCount int
+		var values []ExprNode
+		switch value := statement.(type) {
+		case *DeclarationStmt:
+			leftCount, values = len(value.Names), value.Values
+		case *AssignmentStmt:
+			leftCount, values = len(value.Left), value.Right
 		}
-		expression = parenthesized.Inner
-	}
-	var call *CallExpr
-	if candidate, ok := expression.(*CallExpr); ok {
-		if selector, ok := candidate.Callee.(*SelectorExpr); ok && selector.Safe {
-			call = candidate
-			expression = selector
-		}
-	}
-	selector, ok := expression.(*SelectorExpr)
-	if !ok || !selector.Safe {
-		return nil, false, nil
-	}
-	if !safeCoalesceChainRoot(selector.Receiver) {
-		return nil, false, fmt.Errorf("safe access coalescing requires an identifier-based safe access chain")
-	}
-	var guards []ExprNode
-	if err := collectSafeCoalesceGuards(selector.Receiver, context, valueTypes, &guards); err != nil {
-		return nil, false, err
-	}
-	receiverType := coalesceExpressionTypeAST(selector.Receiver, context, valueTypes)
-	typeName := coalesceTypeName(receiverType)
-	target, found := context.Targets[typeName]
-	if !found {
-		return nil, false, fmt.Errorf("safe access receiver has no known class type")
-	}
-	receiverText, err := typeNodeSource(receiverType)
-	if err != nil {
-		return nil, false, err
-	}
-	if !safeReceiverCanBeNil(receiverText, target) {
-		return nil, false, fmt.Errorf("safe access receiver must be a pointer or interface")
-	}
-	memberType, isMethod, err := safeMemberTypeNode(target.Class, target.Classes, selector.Name, map[*ClassDecl]bool{})
-	if err != nil {
-		return nil, false, err
-	}
-	if memberType == nil {
-		return nil, false, fmt.Errorf("class %s has no member %s", target.Class.Name, selector.Name)
-	}
-	if isMethod != (call != nil) {
-		if isMethod {
-			return nil, false, fmt.Errorf("safe method access %s?.%s requires a call", expressionNodeSelectorReceiver(selector), selector.Name)
-		}
-		return nil, false, fmt.Errorf("safe field access %s?.%s is not callable", expressionNodeSelectorReceiver(selector), selector.Name)
-	}
-	guards = append(guards, &BinaryExpr{Left: safeOrdinaryExpr(selector.Receiver), Operator: "==", Right: &LiteralExpr{Text: "nil", Kind: TokenKeyword}})
-	var isNil ExprNode
-	for _, guard := range guards {
-		if isNil == nil {
-			isNil = guard
-		} else {
-			isNil = &BinaryExpr{Left: isNil, Operator: "||", Right: guard}
-		}
-	}
-	var access ExprNode = &SelectorExpr{Receiver: safeOrdinaryExpr(selector.Receiver), Name: selector.Name}
-	var resultType TypeNode = memberType
-	if call != nil {
-		args := make([]CallArg, len(call.Arguments))
-		for index, argument := range call.Arguments {
-			if argument.Name != "" {
-				return nil, false, sourceLineError(call.Span(), fmt.Errorf("named arguments are not supported for safe method access"))
+		if len(values) > 1 && values[0] == expression && leftCount == len(values) {
+			attempts := multiCoalesceAttempts(expression.Left)
+			valueTypes := coalesceValueTypes(block, context)
+			resultTypes, valid := multiCoalesceAttemptTypes(attempts, leftCount, context, valueTypes)
+			if valid {
+				fallbacks := []ExprNode{expression.Right}
+				fallbacks = append(fallbacks, values[1:]...)
+				return resultTypes, fallbacks, values[len(values)-1].Span().End, true
 			}
-			args[index] = CallArg{Value: argument.Value}
 		}
-		access = &CallExpr{Callee: access, Arguments: args}
+		if childBlocks := coalesceChildBlocks(statement); len(childBlocks) > 0 {
+			for _, child := range childBlocks {
+				if result, fallbacks, end, found := multiCoalesceInBlock(child, expression, context); found {
+					return result, fallbacks, end, true
+				}
+			}
+		}
 	}
-	return &safeCoalesceLowering{resultType: resultType, isNil: isNil, access: access}, true, nil
+	return nil, nil, 0, false
 }
 
-func safeCoalesceChainRoot(expression ExprNode) bool {
-	switch value := expression.(type) {
-	case *NameExpr:
-		return true
-	case *ParenthesizedExpr:
-		return safeCoalesceChainRoot(value.Inner)
-	case *SelectorExpr:
-		return value.Safe && safeCoalesceChainRoot(value.Receiver)
-	default:
-		return false
+func multiCoalesceAttempts(expression ExprNode) []ExprNode {
+	if binary, ok := expression.(*BinaryExpr); ok && binary.Operator == "??" {
+		attempts := multiCoalesceAttempts(binary.Left)
+		return append(attempts, binary.Right)
 	}
+	return []ExprNode{expression}
 }
 
-func collectSafeCoalesceGuards(expression ExprNode, context constructorContext, valueTypes map[string]string, guards *[]ExprNode) error {
-	switch value := expression.(type) {
-	case *ParenthesizedExpr:
-		return collectSafeCoalesceGuards(value.Inner, context, valueTypes, guards)
-	case *SelectorExpr:
-		if !value.Safe {
-			return nil
+func multiCoalesceAttemptTypes(attempts []ExprNode, resultCount int, context constructorContext, valueTypes map[string]string) ([]TypeNode, bool) {
+	if len(attempts) == 0 {
+		return nil, false
+	}
+	var resultTypes []TypeNode
+	for _, attempt := range attempts {
+		call, ok := attempt.(*CallExpr)
+		if !ok {
+			return nil, false
 		}
-		if err := collectSafeCoalesceGuards(value.Receiver, context, valueTypes, guards); err != nil {
-			return err
+		tuple, ok := coalesceCallFullResultTypeAST(call, context, valueTypes).(*TupleType)
+		if !ok || len(tuple.Elements) != resultCount+1 || !isErrorTypeNode(tuple.Elements[len(tuple.Elements)-1]) {
+			return nil, false
 		}
-		receiverType := coalesceExpressionTypeAST(value.Receiver, context, valueTypes)
-		typeName := coalesceTypeName(receiverType)
-		target, found := context.Targets[typeName]
-		if !found {
-			return fmt.Errorf("safe access receiver has no known class type")
+		current := tuple.Elements[:len(tuple.Elements)-1]
+		if resultTypes == nil {
+			resultTypes = current
+			continue
 		}
-		receiverText, err := typeNodeSource(receiverType)
-		if err != nil {
-			return err
+		for index := range current {
+			want, wantErr := typeNodeSource(resultTypes[index])
+			got, gotErr := typeNodeSource(current[index])
+			if wantErr != nil || gotErr != nil || want != got {
+				return nil, false
+			}
 		}
-		if !safeReceiverCanBeNil(receiverText, target) {
-			return fmt.Errorf("safe access receiver must be a pointer or interface")
+	}
+	return resultTypes, len(resultTypes) == resultCount
+}
+
+func coalesceChildBlocks(statement Stmt) []*BlockStmt {
+	switch value := statement.(type) {
+	case *BlockStmt:
+		return []*BlockStmt{value}
+	case *TokenStmt:
+		blocks := []*BlockStmt{value.Body}
+		for _, child := range value.Children {
+			blocks = append(blocks, coalesceChildBlocks(child)...)
 		}
-		*guards = append(*guards, &BinaryExpr{Left: safeOrdinaryExpr(value.Receiver), Operator: "==", Right: &LiteralExpr{Text: "nil", Kind: TokenKeyword}})
+		return blocks
+	case *IfStmt:
+		return []*BlockStmt{value.Body, value.Else}
+	case *ForStmt:
+		return []*BlockStmt{value.Body}
+	case *TryStmt:
+		blocks := []*BlockStmt{value.Body, value.Finally}
+		for _, clause := range value.Catches {
+			blocks = append(blocks, clause.Body)
+		}
+		return blocks
+	case *SwitchStmt:
+		return []*BlockStmt{value.Body}
+	case *CaseStmt:
+		return []*BlockStmt{value.Clause.Body}
 	}
 	return nil
 }
 
-func safeOrdinaryExpr(expression ExprNode) ExprNode {
-	switch value := expression.(type) {
-	case *ParenthesizedExpr:
-		value.Inner = safeOrdinaryExpr(value.Inner)
+func coalesceCallFullResultTypeAST(call *CallExpr, context constructorContext, valueTypes map[string]string) TypeNode {
+	if call == nil {
+		return nil
+	}
+	var candidates []callableSignature
+	switch callee := call.Callee.(type) {
+	case *NameExpr:
+		candidates = context.FunctionSignatures[callee.Name]
 	case *SelectorExpr:
-		value.Receiver = safeOrdinaryExpr(value.Receiver)
-		value.Safe = false
-	case *CallExpr:
-		value.Callee = safeOrdinaryExpr(value.Callee)
-		for index := range value.Arguments {
-			value.Arguments[index].Value = safeOrdinaryExpr(value.Arguments[index].Value)
+		receiver := coalesceTypeName(coalesceExpressionTypeAST(callee.Receiver, context, valueTypes))
+		if _, isClass := context.Targets[receiver]; isClass {
+			candidates = context.StaticMethodSignatures[receiver][callee.Name]
+		} else {
+			candidates = context.ClassMethodSignatures[receiver][callee.Name]
+			if packageName, ok := callee.Receiver.(*NameExpr); ok {
+				candidates = append(candidates, context.ImportedFunctionSignatures[packageName.Name][callee.Name]...)
+			}
 		}
 	}
-	return expression
+	for _, candidate := range candidates {
+		if len(call.Arguments) >= requiredParameterCount(candidate) && len(call.Arguments) <= len(candidate.Parameters) {
+			return candidate.ResultAST
+		}
+	}
+	return nil
 }
 
-func expressionNodeSelectorReceiver(selector *SelectorExpr) string {
-	if selector == nil {
-		return "receiver"
+func lowerMultiCoalesce(expression *BinaryExpr, resultTypes []TypeNode, fallbacks []ExprNode, context constructorContext) (string, error) {
+	if len(resultTypes) != len(fallbacks) || len(resultTypes) < 2 || len(resultTypes) > 3 {
+		return "", fmt.Errorf("multi-result ?? requires 2 or 3 matching fallback values")
 	}
-	text, err := expressionNodeSource(selector.Receiver)
-	if err != nil || text == "" {
-		return "receiver"
+	typeNames := make([]string, len(resultTypes))
+	for index, resultType := range resultTypes {
+		name, err := typeNodeSource(resultType)
+		if err != nil {
+			return "", err
+		}
+		typeNames[index] = name
 	}
-	return text
+	tupleType := "(" + strings.Join(typeNames, ", ") + ")"
+	fallbackTexts := make([]string, len(fallbacks))
+	var err error
+	for index, fallback := range fallbacks {
+		fallbackTexts[index], err = expressionNodeSource(fallback)
+		if err != nil {
+			return "", err
+		}
+	}
+	attempts := multiCoalesceAttempts(expression.Left)
+	var build func(int) (string, error)
+	build = func(index int) (string, error) {
+		if index == len(attempts) {
+			return fmt.Sprintf("func() %s { return %s }()", tupleType, strings.Join(fallbackTexts, ", ")), nil
+		}
+		left, sourceErr := expressionNodeSource(attempts[index])
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		if _, ok := attempts[index].(*CallExpr); !ok {
+			return "", fmt.Errorf("multi-result ?? fallback attempts must be function calls")
+		}
+		left = fmt.Sprintf("__gppUnwrap%d(%s)", len(resultTypes), left)
+		fallback, sourceErr := build(index + 1)
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		name := fmt.Sprintf("__gppCoalesce%d[%s]", len(resultTypes), strings.Join(typeNames, ", "))
+		return fmt.Sprintf("%s(func() %s { return %s }, func() %s { return %s })", name, tupleType, left, tupleType, fallback), nil
+	}
+	return build(0)
+}
+
+func lowerMultiCoalesceAssignmentNode(leftCount int, values []ExprNode, context constructorContext, valueTypes map[string]string) (ExprNode, bool, error) {
+	if len(values) < 2 || len(values) != leftCount {
+		return nil, false, nil
+	}
+	outer, ok := values[0].(*BinaryExpr)
+	if !ok || outer.Operator != "??" {
+		return nil, false, nil
+	}
+	attempts := multiCoalesceAttempts(outer.Left)
+	resultTypes, valid := multiCoalesceAttemptTypes(attempts, leftCount, context, valueTypes)
+	if !valid {
+		return nil, false, nil
+	}
+	fallbacks := []ExprNode{outer.Right}
+	fallbacks = append(fallbacks, values[1:]...)
+	if len(resultTypes) != len(fallbacks) {
+		return nil, false, nil
+	}
+	return lowerMultiCoalesceNode(attempts, 0, resultTypes, fallbacks), true, nil
+}
+
+func lowerMultiCoalesceNode(attempts []ExprNode, index int, resultTypes []TypeNode, fallbacks []ExprNode) ExprNode {
+	functionType := &FunctionType{Results: resultTypes}
+	if index == len(attempts) {
+		return &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: fallbacks}}}}
+	}
+	call := attempts[index].(*CallExpr)
+	unwrap := &CallExpr{
+		Callee:    &NameExpr{Name: fmt.Sprintf("__gppUnwrap%d", len(resultTypes))},
+		Arguments: []CallArg{{Value: call}},
+	}
+	left := &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{unwrap}}}}}
+	var fallbackBody ExprNode
+	if index+1 == len(attempts) {
+		fallbackBody = &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: fallbacks}}}}
+	} else {
+		inner := lowerMultiCoalesceNode(attempts, index+1, resultTypes, fallbacks)
+		fallbackBody = &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{inner}}}}}
+	}
+	indices := make([]ExprNode, len(resultTypes))
+	for typeIndex, resultType := range resultTypes {
+		indices[typeIndex] = &TypeExpr{Type: resultType}
+	}
+	callee := &IndexListExpr{Receiver: &NameExpr{Name: fmt.Sprintf("__gppCoalesce%d", len(resultTypes))}, Indices: indices}
+	return &CallExpr{Callee: callee, Arguments: []CallArg{{Value: left}, {Value: fallbackBody}}}
 }
 
 // transformErrorCoalescing lowers A ?? B to a generic helper call. Ordinary
-// operands fall back after a GPP thrown error; explicit safe-access operands
-// also fall back after a nil receiver check. In both cases fallback evaluation
-// remains lazy and errors from the fallback are not swallowed by the operator.
+// operands fall back after a GPP thrown error or nil result for nilable left
+// types; explicit safe-access operands also check nil receivers. Fallback
+// evaluation remains lazy, and errors from the fallback are not swallowed.
 func transformErrorCoalescing(src string, context constructorContext) (string, error) {
 	for strings.Contains(src, "??") {
 		transformed, handled, err := transformErrorCoalescingAST(src, context)
@@ -201,6 +280,7 @@ func transformErrorCoalescingAST(src string, context constructorContext) (string
 		return src, false, nil
 	}
 	blocks := []*BlockStmt{}
+	blockContexts := map[*BlockStmt]constructorContext{}
 	// Prefer top-level function bodies when the input is a declaration region.
 	// ParseBodyAST intentionally accepts unknown declaration-shaped text as a
 	// token fallback, which would otherwise hide the structured function AST.
@@ -209,10 +289,14 @@ func transformErrorCoalescingAST(src string, context constructorContext) (string
 		for _, function := range functions {
 			if function != nil && function.Method.BodyAST != nil {
 				blocks = append(blocks, function.Method.BodyAST)
+				functionContext := context
+				functionContext.CurrentParameterTypes = parameterTypeMapFromNodes(function.Method.ParameterAST)
+				blockContexts[function.Method.BodyAST] = functionContext
 			}
 		}
 	} else if block, parseErr := ParseBodyAST(tokens); parseErr == nil {
 		blocks = append(blocks, block)
+		blockContexts[block] = context
 	}
 	if len(blocks) == 0 {
 		return src, false, nil
@@ -234,6 +318,14 @@ func transformErrorCoalescingAST(src string, context constructorContext) (string
 				start: span.Start,
 				end:   span.End,
 			})
+		}
+	}
+	for index := range candidates {
+		candidateContext := blockContexts[candidates[index].block]
+		if resultTypes, fallbacks, end, found := multiCoalesceAssignment(blocks, &candidates[index], candidateContext); found {
+			candidates[index].values = resultTypes
+			candidates[index].fallbacks = fallbacks
+			candidates[index].editEnd = end
 		}
 	}
 	if len(candidates) == 0 {
@@ -263,8 +355,15 @@ func transformErrorCoalescingAST(src string, context constructorContext) (string
 		if candidate.depth != 0 {
 			continue
 		}
-		valueTypes := coalesceValueTypes(candidate.block, context)
-		replacement, lowerErr := lowerCoalesceExpression(candidate.typed, context, valueTypes)
+		candidateContext := blockContexts[candidate.block]
+		valueTypes := coalesceValueTypes(candidate.block, candidateContext)
+		var replacement string
+		var lowerErr error
+		if len(candidate.values) > 1 {
+			replacement, lowerErr = lowerMultiCoalesce(candidate.typed, candidate.values, candidate.fallbacks, candidateContext)
+		} else {
+			replacement, lowerErr = lowerCoalesceExpression(candidate.typed, candidateContext, valueTypes)
+		}
 		if lowerErr != nil {
 			if strings.Contains(lowerErr.Error(), "could not infer") {
 				return src, false, nil
@@ -274,7 +373,11 @@ func transformErrorCoalescingAST(src string, context constructorContext) (string
 		if candidate.start < 0 || candidate.end > len(src) || candidate.start > candidate.end {
 			return src, false, nil
 		}
-		edits = append(edits, edit{start: candidate.start, end: candidate.end, text: replacement})
+		editEnd := candidate.editEnd
+		if editEnd == 0 {
+			editEnd = candidate.end
+		}
+		edits = append(edits, edit{start: candidate.start, end: editEnd, text: replacement})
 	}
 	if len(edits) == 0 {
 		return src, false, nil
@@ -289,36 +392,13 @@ func transformErrorCoalescingAST(src string, context constructorContext) (string
 func lowerCoalesceExpression(expression ExprNode, context constructorContext, valueTypes map[string]string) (string, error) {
 	binary, ok := expression.(*BinaryExpr)
 	if !ok || binary.Operator != "??" {
+		if lowered, handled, err := lowerSafeCoalesceOperand(expression, context, valueTypes); handled {
+			if err != nil {
+				return "", err
+			}
+			return expressionNodeSource(lowered)
+		}
 		return expressionNodeSource(expression)
-	}
-	if plan, found, planErr := safeCoalescePlan(binary.Left, context, valueTypes); planErr != nil {
-		return "", planErr
-	} else if found {
-		resultType, typeErr := typeNodeSource(plan.resultType)
-		if typeErr != nil {
-			return "", typeErr
-		}
-		isNil, sourceErr := expressionNodeSource(plan.isNil)
-		if sourceErr != nil {
-			return "", sourceErr
-		}
-		access, sourceErr := expressionNodeSource(plan.access)
-		if sourceErr != nil {
-			return "", sourceErr
-		}
-		right, sourceErr := lowerCoalesceExpression(binary.Right, context, valueTypes)
-		if sourceErr != nil {
-			return "", sourceErr
-		}
-		access, sourceErr = promoteCoalesceOperand(access, resultType, context)
-		if sourceErr != nil {
-			return "", sourceErr
-		}
-		right, sourceErr = promoteCoalesceOperand(right, resultType, context)
-		if sourceErr != nil {
-			return "", sourceErr
-		}
-		return fmt.Sprintf("__gppSafeCoalesce[%s](%s, func() %s { return %s }, func() %s { return %s })", resultType, isNil, resultType, access, resultType, right), nil
 	}
 	left, err := lowerCoalesceExpression(binary.Left, context, valueTypes)
 	if err != nil {
@@ -366,40 +446,10 @@ func lowerCoalesceExpression(expression ExprNode, context constructorContext, va
 func lowerCoalesceExpressionNode(expression ExprNode, context constructorContext, valueTypes map[string]string) (ExprNode, error) {
 	binary, ok := expression.(*BinaryExpr)
 	if !ok || binary.Operator != "??" {
+		if lowered, handled, err := lowerSafeCoalesceOperand(expression, context, valueTypes); handled {
+			return lowered, err
+		}
 		return lowerExceptionExprNode(expression, context)
-	}
-	if plan, found, planErr := safeCoalescePlan(binary.Left, context, valueTypes); planErr != nil {
-		return nil, planErr
-	} else if found {
-		rightType := coalesceExpressionTypeAST(binary.Right, context, valueTypes)
-		if rightType == nil {
-			return nil, fmt.Errorf("could not infer the value type for ??")
-		}
-		access, err := lowerCoalesceOperandNode(plan.access, context, valueTypes)
-		if err != nil {
-			return nil, err
-		}
-		fallback, err := lowerCoalesceExpressionNode(binary.Right, context, valueTypes)
-		if err != nil {
-			return nil, err
-		}
-		fallback, err = lowerCoalesceOperandNode(fallback, context, valueTypes)
-		if err != nil {
-			return nil, err
-		}
-		functionType := &FunctionType{Results: []TypeNode{plan.resultType}}
-		callee := &IndexExpr{
-			Receiver: &NameExpr{Name: "__gppSafeCoalesce"},
-			Index:    &TypeExpr{Type: plan.resultType},
-		}
-		return &CallExpr{
-			Callee: callee,
-			Arguments: []CallArg{
-				{Value: plan.isNil},
-				{Value: &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{access}}}}}},
-				{Value: &FunctionLiteralExpr{Type: functionType, Body: &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{fallback}}}}}},
-			},
-		}, nil
 	}
 	left, err := lowerCoalesceExpressionNode(binary.Left, context, valueTypes)
 	if err != nil {
@@ -462,6 +512,47 @@ func promoteCoalesceOperand(source, resultType string, context constructorContex
 		return strings.TrimSpace(strings.TrimPrefix(transformed, "return ")), nil
 	}
 	return transformed, nil
+}
+
+func lowerSafeCoalesceOperand(expression ExprNode, context constructorContext, valueTypes map[string]string) (ExprNode, bool, error) {
+	var selector *SelectorExpr
+	var call *CallExpr
+	switch value := expression.(type) {
+	case *SelectorExpr:
+		if value.Safe {
+			selector = value
+		}
+	case *CallExpr:
+		if candidate, ok := value.Callee.(*SelectorExpr); ok && candidate.Safe {
+			selector = candidate
+			call = value
+		}
+	}
+	if selector == nil {
+		return nil, false, nil
+	}
+	if len(valueTypes) != 0 {
+		parameterTypes := make(map[string]string, len(context.CurrentParameterTypes)+len(valueTypes))
+		for name, typeName := range context.CurrentParameterTypes {
+			parameterTypes[name] = typeName
+		}
+		for name, typeName := range valueTypes {
+			parameterTypes[name] = typeName
+		}
+		context.CurrentParameterTypes = parameterTypes
+	}
+	if receiver, ok := selector.Receiver.(*NameExpr); ok {
+		if receiverType := coalesceExpressionTypeAST(selector.Receiver, context, valueTypes); receiverType != nil {
+			if typeName, err := typeNodeSource(receiverType); err == nil && typeName != "" {
+				if context.CurrentParameterTypes == nil {
+					context.CurrentParameterTypes = map[string]string{}
+				}
+				context.CurrentParameterTypes[receiver.Name] = typeName
+			}
+		}
+	}
+	lowered, err := lowerSafeAccessExprNode(selector, call, context)
+	return lowered, true, err
 }
 
 func lowerCoalesceOperandNode(expression ExprNode, context constructorContext, valueTypes map[string]string) (ExprNode, error) {
@@ -710,7 +801,7 @@ func coalesceExpressionTypeNode(expression ExprNode, context constructorContext,
 			return coalesceExpressionTypeNode(ternaryBranchValue(value.Arguments[2].Value), context, valueTypes)
 		}
 		if index, ok := value.Callee.(*IndexExpr); ok {
-			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" {
 				if typeExpression, ok := index.Index.(*TypeExpr); ok {
 					typeName, _ = typeNodeSource(typeExpression.Type)
 					return typeName
@@ -839,14 +930,14 @@ func coalesceExpressionTypeAST(expression ExprNode, context constructorContext, 
 			return coalesceExpressionTypeAST(ternaryBranchValue(value.Arguments[2].Value), context, valueTypes)
 		}
 		if index, ok := value.Callee.(*IndexExpr); ok {
-			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" {
 				if typeExpression, ok := index.Index.(*TypeExpr); ok {
 					return typeExpression.Type
 				}
 			}
 		}
 		if index, ok := value.Callee.(*IndexListExpr); ok {
-			if receiver, ok := index.Receiver.(*NameExpr); ok && (receiver.Name == "__gppCoalesce" || receiver.Name == "__gppSafeCoalesce") && len(index.Indices) > 0 {
+			if receiver, ok := index.Receiver.(*NameExpr); ok && receiver.Name == "__gppCoalesce" && len(index.Indices) > 0 {
 				if typeExpression, ok := index.Indices[0].(*TypeExpr); ok {
 					return typeExpression.Type
 				}

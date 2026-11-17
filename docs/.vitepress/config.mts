@@ -58,6 +58,7 @@ export default defineConfig({
             { text: 'Safe access', link: '/features/safe-access' },
             { text: 'Lazy error fallback', link: '/features/error-fallback' },
             { text: 'Conditional expressions', link: '/features/conditional-expressions' },
+            { text: 'Operators', link: '/features/operators' },
             { text: 'Annotations and introspection', link: '/features/annotations' }
           ]
         },
@@ -151,7 +152,14 @@ export default defineConfig({
       { icon: 'github', link: 'https://github.com/telgatech/gpp' }
     ],
     search: {
-      provider: 'local'
+      provider: 'local',
+      options: {
+        miniSearch: {
+          options: {
+            tokenize: (text: string) => text.match(/\?\?|[\p{L}\p{N}_]+/gu) ?? []
+          }
+        }
+      }
     },
     footer: {
       message: 'Built with <a href="https://vitepress.dev/">VitePress</a>',

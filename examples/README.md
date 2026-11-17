@@ -20,6 +20,8 @@ The examples cover:
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
 - `assignments.gpp` — arithmetic, bitwise, and shift compound assignments.
 - `or_assignment.gpp` — `||=` defaults boolean values when false and pointer values when nil.
+- `operators.gpp` — compound assignments, increment/decrement, boolean/nil `||=`, ternary expressions, and multi-result error fallback with `??`.
+- `multi_error_fallback.gpp` — chained error fallback for functions returning multiple values.
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its GPP
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.
@@ -83,8 +85,8 @@ The examples cover:
   pages, SQLite model, API routes, OpenAPI document, and cleanup job. It uses
   package-level functions instead of app/store types, and `modernc.org/sqlite`;
   see the file header for run instructions.
-- `expr_catch.gpp` — expression-level error fallback with lazy fallback
-  evaluation and chained `??` operators.
+- `expr_catch.gpp` — error-only `??` fallbacks, chaining, and a successful nil
+  result that passes through without evaluating the fallback.
 - `testing.gpp` — `test.Suite` lifecycle, inherited assertion helpers, suite,
   tag, and priority discovery through `gpp test`.
 - `embed.gpp` — source-level file and directory embedding with rooted `fs.FS`

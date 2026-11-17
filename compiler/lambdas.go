@@ -353,8 +353,22 @@ func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode
 }
 
 func ternaryBranchValue(expression ExprNode) ExprNode {
-	if branch, ok := expression.(*LambdaExpr); ok {
+	switch branch := expression.(type) {
+	case *LambdaExpr:
 		return branch.Body
+	case *FunctionLiteralExpr:
+		if branch.Body != nil {
+			for _, statement := range branch.Body.Statements {
+				switch value := statement.(type) {
+				case *ReturnStmt:
+					if len(value.Values) > 0 {
+						return value.Values[0]
+					}
+				case *ExpressionStmt:
+					return value.Expression
+				}
+			}
+		}
 	}
 	return expression
 }

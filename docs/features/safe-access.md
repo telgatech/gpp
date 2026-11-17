@@ -32,26 +32,12 @@ name := user?.Name
 greeting := user?.Greeting()
 ```
 
-Add `??` when nil should select a specific fallback instead:
-
-```go
-var user *User
-name := user?.Name ?? "Unknown"
-```
-
-The fallback is used only when a safe receiver is nil. A present user's empty
-name remains empty. Safe field accesses can be chained before `??`; if any safe
-receiver in the chain is nil, the fallback is evaluated:
-
-```go
-managerName := user?.Manager?.Name ?? "No manager"
-```
-
-The fallback is lazy. Ordinary `user.Name` remains an ordinary Go selector and
-a nil dereference still panics; `??` does not recover that panic.
+`??` handles errors from an operation; it does not use a fallback for a nil
+receiver. A nil safe receiver produces the member's zero value. Use `||=` to
+assign a default when a variable is nil, or use an explicit nil check when an
+expression needs a different value.
 
 Safe access starts from an identifier with a supported nullable class pointer
-or generated class interface type. A chained safe field path can be used with
-`??` as shown above. Safe access does not change ordinary dereference
+or generated class interface type. Safe access does not change ordinary dereference
 semantics or infer that every access should be safe. See the [safe access
 rules](/reference/specifications/base).

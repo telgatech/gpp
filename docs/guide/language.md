@@ -112,32 +112,12 @@ raw := client.Get("/users/1")
 user := client.Get[User]("/users/1")
 ```
 
-## Go-compatible assignment operators
+## Operators
 
-GPP supports Go's compound assignment operators and increment/decrement
-statements:
-
-```go
-count := 0
-count += 2
-count -= 1
-count *= 3
-count /= 2
-count %= 4
-bits &= mask
-bits |= flag
-bits ^= toggle
-bits <<= 1
-bits >>= 1
-bits &^= mask
-count++
-count--
-```
-
-The full set is `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`,
-and `&^=`. They follow Go's operand and type rules; bitwise and shift forms
-apply to integer values. `++` and `--` are standalone statements, as they are
-in Go.
+GPP includes Go's standard operators, compound assignments, and postfix
+increment/decrement statements, plus `||=` for conditional defaults and `??`
+for error fallback. See the [Operators feature guide](/features/operators) for
+the supported forms and examples.
 
 ## Anonymous structs and enums
 
@@ -164,15 +144,14 @@ common application code compact:
 ```go
 message := "Hello {{user.Name}}"
 active := users.Any(user => user.Active)
-label := user?.Profile?.DisplayName ?? "anonymous"
-name := user?.Name ?? "Unknown"
+label := user?.Profile?.DisplayName
+name := user?.Name
 price := strconv.ParseFloat(rawPrice, 64) ?? 0.0
 ```
 
 The `??` operator is lazy: the fallback is evaluated only when the preceding
-operation returns an error or an explicit safe access encounters a nil
-receiver. A present field containing its zero value does not trigger the
-fallback.
+operation raises a GPP error. Successful values, including nil, pass through
+unchanged.
 
 Ordinary `.` and explicit Go error handling keep their normal meaning. Safe
 access and fallback are opt-in, which makes the compatibility boundary easy to

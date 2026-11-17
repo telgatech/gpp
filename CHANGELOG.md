@@ -5,6 +5,8 @@
 - Added `Type(...)` construction through overloaded static `New` factories.
 - Added seeded constructors for sequence containers and initial values for priority queues.
 - Kept HTTP startup addresses visible when `Server.Logger` is nil while suppressing request logs.
+- Made `??` error-only with matching multi-value fallbacks; fixed ternary expressions combined with `||=`.
+- Added an Operators feature guide, expanded operator examples, and made `??` searchable in the documentation.
 
 ## 2026-11-16
 

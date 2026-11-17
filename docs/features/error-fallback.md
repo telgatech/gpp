@@ -1,9 +1,9 @@
-# Lazy error and nil fallback
+# Lazy error fallback
 
-The `??` operator supplies a fallback when an operation returns an error or an
-explicit safe access (`?.`) encounters a nil receiver. Its right side is
-evaluated only when the left side needs a fallback, which keeps defaults close
-to the operation that needs them. It does not recover arbitrary Go panics.
+The `??` operator supplies a fallback only when the left side raises a GPP
+error. Successful values, including nil, pass through unchanged. Its right
+side is evaluated only after an error. It does not recover arbitrary Go
+panics.
 
 ## Compare explicit error handling
 
@@ -26,13 +26,26 @@ The operator is best when the fallback is a straightforward default. If the
 caller needs to inspect or report the error, capture it explicitly or use
 [`try/catch`](/features/exceptions).
 
-## Compute a nullable fallback only when needed
+## Compute an error fallback only when needed
 
 The fallback expression is lazy, so an expensive or stateful alternative does
 not run when the primary value exists:
 
 ```go
 user := FindUser(id) ?? GuestUser()
+```
+
+If `FindUser` succeeds and returns a nil user with no error, `user` remains nil;
+`??` does not treat a successful nil result as an error.
+
+## Handle multiple return values
+
+When a call returns values followed by an error, provide a matching fallback
+value for each result. A successful call passes through all its values:
+
+```go
+width, height := Dimensions() ?? 0, 1
+cachedWidth, cachedHeight := Dimensions() ?? CachedDimensions() ?? 0, 1
 ```
 
 This concise form is intended for simple fallback paths. Use explicit
