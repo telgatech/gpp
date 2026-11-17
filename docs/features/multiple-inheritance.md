@@ -1,10 +1,8 @@
 # Multiple inheritance
 
-Application classes often combine several independent concerns. An invoice
-may need an identity, audit timestamps, and soft deletion; a user account may
-need identity, permissions, and audit history. Copying each concern's fields
-and methods into every class duplicates logic. GPP lets a class inherit from
-several parents so those capabilities can be defined once and reused.
+An application class can combine independent capabilities. A dog, for example,
+can reuse animal behavior and pet ownership data. GPP lets each capability be
+defined once and inherited together.
 
 ## Compare Go embedding with GPP multiple inheritance
 
@@ -14,42 +12,50 @@ polymorphism:
 
 ::: code-group
 ```go [GPP]
-class Identified {
-    ID int
+class Animal {
+    Name string
+
+    func Kind() string {
+        return "animal"
+    }
 }
 
-class AuditTrail {
-    CreatedAt time.Time
-    UpdatedAt time.Time
+class Pet {
+    Owner string
 }
 
-class Invoice : Identified, AuditTrail {
-    Number string
+class Dog : Animal, Pet {
+    func Kind() string {
+        return "dog"
+    }
 }
 ```
 
 ```go [Go]
-type Identified struct {
-    ID int
+type Animal struct {
+    Name string
 }
 
-type AuditTrail struct {
-    CreatedAt time.Time
-    UpdatedAt time.Time
+func (Animal) Kind() string { return "animal" }
+
+type Pet struct {
+    Owner string
 }
 
-type Invoice struct {
-    Identified
-    AuditTrail
-    Number string
+type Dog struct {
+    Animal
+    Pet
 }
+
+func (Dog) Kind() string { return "dog" }
 ```
 :::
 
-The Go form is concise for composing data. GPP lets the child class reuse
-parent methods as well as fields and participate in its class inheritance and
-polymorphic dispatch model. Choose interfaces when a type only needs to satisfy
-a behavior contract and does not need the parent's implementation or state.
+This reuses the `Animal` and `Dog` types from the [polymorphism example](/features/polymorphism).
+Both forms compose the parent's fields and methods; GPP also treats `Dog` as a
+derived `Animal` for class-based polymorphic dispatch. Choose interfaces when
+a type only needs to satisfy a behavior contract and does not need the parent's
+implementation or state.
 
 ## Build a class from reusable capabilities
 

@@ -1254,7 +1254,7 @@ class Server {
 	HTTPServer *stdhttp.Server
 	// Name identifies this server in its log messages.
 	Name string
-	// Logger receives request access lines and server failure details. Nil disables server logging.
+	// Logger receives request access lines and server failure details. Nil prints only the startup message.
 	Logger *log.Logger
 	// CombinedLogFormat writes access lines in Apache/Nginx Combined Log Format; false uses compact key-value lines.
 	CombinedLogFormat bool
@@ -1487,6 +1487,10 @@ class Server {
 			} else {
 				logger.Printf("gpp/http: listening on %s", listenerURL)
 			}
+		} else if name := strings.TrimSpace(this.Name); name != "" {
+			fmt.Printf("%s listening on %s\n", name, listenerURL)
+		} else {
+			fmt.Printf("gpp/http: listening on %s\n", listenerURL)
 		}
 		if len(tpl.ManagedSourcePaths()) > 0 {
 			this.templateWatchStop = make(chan struct{})

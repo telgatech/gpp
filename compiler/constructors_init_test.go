@@ -150,6 +150,36 @@ func main() {
 	}
 }
 
+func TestClassConstructionRequiresMatchingNewFactory(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+class User {
+	Name string
+
+	static func New(name string) *User {
+		return User(Name: name)
+	}
+
+	static func New(name string, age int) *User {
+		return User(Name: name)
+	}
+}
+
+func main() {
+	_ = User()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err == nil || !strings.Contains(err.Error(), "no matching static method User.New") {
+		t.Fatalf("expected User() to require a matching New factory, got %v", err)
+	}
+}
+
 func TestPromotedCallRecognizesInitializerErrors(t *testing.T) {
 	file, err := ParseFile("initializer.gpp", `class Base {
 	func init() error { return nil }

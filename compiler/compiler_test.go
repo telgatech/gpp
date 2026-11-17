@@ -758,6 +758,74 @@ func main() {
 	}
 }
 
+func TestCompileFilesHTTPServerWithoutLoggerOnlyPrintsStartup(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import (
+	"context"
+	"fmt"
+	stdhttp "net/http"
+	"time"
+	http "gpp/http"
+)
+
+class App : http.Server @{http.IP("127.0.0.1")} {
+	func Ping(ctx *http.Context) error @{http.GET("/ping")} {
+		return ctx.Text("pong")
+	}
+}
+
+func main() {
+	app := App()
+	done := make(chan error, 1)
+	go func() { done <- app.Listen(0) }()
+
+	var response *stdhttp.Response
+	for response == nil {
+		select {
+		case err := <-done:
+			if err != nil { fmt.Println("SKIP:", err); return }
+		default:
+		}
+		if app.HTTPServer != nil {
+			response, _ = stdhttp.Get("http://" + app.HTTPServer.Addr + "/ping")
+		}
+		if response == nil { time.Sleep(time.Millisecond) }
+	}
+	response.Body.Close()
+	if err := app.Shutdown(context.Background()); err != nil { panic(err) }
+	if err := <-done; err != nil && err != stdhttp.ErrServerClosed { panic(err) }
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated HTTP server without a logger did not run: %v\n%s", err, output)
+	}
+	if strings.HasPrefix(string(output), "SKIP:") {
+		t.Skipf("loopback sockets unavailable: %s", output)
+	}
+	result := string(output)
+	if !strings.Contains(result, "gpp/http: listening on http://127.0.0.1:") {
+		t.Fatalf("server did not print its startup address without a logger:\n%s", output)
+	}
+	if strings.Contains(result, "GET /ping status=") || strings.Contains(result, "GET /ping HTTP/1.1") {
+		t.Fatalf("server printed a request log without a logger:\n%s", output)
+	}
+}
+
 func TestCompileFilesLogsSQLAndEvaluatesArgumentsOnce(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

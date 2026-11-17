@@ -4,6 +4,7 @@
 
 - Added `Type(...)` construction through overloaded static `New` factories.
 - Added seeded constructors for sequence containers and initial values for priority queues.
+- Kept HTTP startup addresses visible when `Server.Logger` is nil while suppressing request logs.
 
 ## 2026-11-16
 

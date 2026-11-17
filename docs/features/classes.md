@@ -216,9 +216,9 @@ fmt.Println(first.Greeting())
 fmt.Println(second.Greeting())
 ```
 
-A class can provide static `New` factories for positional construction. When a
-class has overloads, `Type(...)` selects the matching factory by argument types
-and count:
+A class can define static `New` methods as constructors for positional calls.
+When a class has overloads, `Type(...)` selects the matching constructor by
+argument types and count:
 
 ```go
 class User {
@@ -243,7 +243,8 @@ fall back to assigning fields by order if no factory matches. Without a `New`
 factory, positional calls assign fields in declaration order. Named field
 construction always assigns fields directly. Factories are optional
 conveniences, and types whose zero values are ready to use can still be
-declared with `var`.
+declared with `var`. If every `New` overload requires arguments, `Type()` has
+no match; add a zero-argument `New()` overload to support it.
 
 This pointer result is specific to classes. Constructor-style calls for named
 structs return struct values; see [named struct construction](./structs#declare-and-construct-named-structs).

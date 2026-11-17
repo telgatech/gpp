@@ -14,7 +14,7 @@ operation discoverable beside the class it creates:
 class User {
     Name string
 
-    static func Guest() User {
+    static func Guest() *User {
         return User(Name: "Guest")
     }
 }
@@ -25,8 +25,8 @@ guest := User.Guest()
 ```go [Go]
 type User struct{ Name string }
 
-func GuestUser() User {
-    return User{Name: "Guest"}
+func GuestUser() *User {
+    return &User{Name: "Guest"}
 }
 
 guest := GuestUser()
@@ -43,11 +43,11 @@ class User {
     Name string
     Active bool
 
-    static func Guest() User {
+    static func Guest() *User {
         return User(Name: "Guest", Active: true)
     }
 
-    static func FromName(name string) User {
+    static func FromName(name string) *User {
         return User(Name: name, Active: true)
     }
 }
@@ -62,14 +62,13 @@ rules](/reference/specifications/static-methods).
 
 ## Use `New` for positional construction
 
-A static method named `New` can provide construction signatures for the class.
-Calling `Type(...)` selects the matching factory by argument types and count,
-so callers do not need to write `Type.New(...)`. When `New` exists, positional
-calls use its factories and do not fall back to assigning fields by order if
-no overload matches. Without a `New` factory, positional calls assign fields
-in declaration order. Named field construction always assigns fields directly.
-These factories are optional conveniences: types whose zero values are ready
-to use can still be declared with `var`.
+Static methods named `New` act as constructors for positional class calls.
+Calling `Type(...)` selects the matching `New` overload by argument types and
+count. When `New` exists, positional calls use its overloads and do not fall
+back to assigning fields by order if none matches. Without a `New` method,
+positional calls assign fields in declaration order. Named field construction
+always assigns fields directly. These constructor methods are optional:
+classes whose zero values are ready to use can still be declared with `var`.
 
 For example, [`factory_constructors.gpp`](https://github.com/telgatech/gpp/blob/main/examples/factory_constructors.gpp)
 demonstrates overloaded factories selected by argument type and count:
