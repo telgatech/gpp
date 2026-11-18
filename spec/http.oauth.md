@@ -874,8 +874,9 @@ Recommended:
 func _oauthLogin(
     ctx *http.Context,
     identity http.OAuthIdentity,
-) {
+) error {
     ...
+    return nil
 }
 ```
 
@@ -889,7 +890,7 @@ class App : http.Server @{
     func _oauthLogin(
         ctx *http.Context,
         identity http.OAuthIdentity,
-    ) {
+    ) error {
 
         user := DB.FindOrCreate(
             identity.Provider,
@@ -899,6 +900,7 @@ class App : http.Server @{
 
         ctx.Session.Set("user_id", user.ID)
         ctx.Redirect("/")
+        return nil
     }
 }
 ```
@@ -925,15 +927,17 @@ what authorization role the user receives
 
 # 39. Token-Aware Hook
 
-Applications needing provider API access may use an overloaded hook:
+Applications needing provider API access can implement the separate
+`_oauthLoginWithToken` hook. It is called in place of `_oauthLogin`:
 
 ```gpp
-func _oauthLogin(
+func _oauthLoginWithToken(
     ctx *http.Context,
     identity http.OAuthIdentity,
     token http.OAuthToken,
-) {
+) error {
     ...
+    return nil
 }
 ```
 
@@ -969,7 +973,7 @@ _oauthLogin(ctx, identity)
 
 and never receive provider tokens.
 
-Only applications requiring provider API access should implement the token-bearing overload.
+Only applications requiring provider API access should implement `_oauthLoginWithToken`.
 
 ---
 
@@ -1303,7 +1307,7 @@ class App : http.Server @{
     func _oauthLogin(
         ctx *http.Context,
         identity http.OAuthIdentity,
-    ) {
+    ) error {
         user := DB.FindOrCreate(
             identity.Provider,
             identity.ID,
@@ -1312,6 +1316,7 @@ class App : http.Server @{
 
         ctx.Session.Set("user_id", user.ID)
         ctx.Redirect("/")
+        return nil
     }
 }
 ```

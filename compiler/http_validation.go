@@ -183,15 +183,19 @@ func gppOAuthValidNameForCompiler(name string) bool {
 
 func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 	for _, method := range class.Methods {
-		if method.Name != "_oauthLogin" && method.Name != "_oauthError" {
+		if method.Name != "_oauthLogin" && method.Name != "_oauthLoginWithToken" && method.Name != "_oauthError" {
 			continue
 		}
 		parameters, err := parameterInfosForMethod(method)
 		if err != nil {
 			return methodDiagnosticf(class, &method, "%s has invalid parameters: %w", method.Name, err)
 		}
-		if methodResultSource(method) != "" && strings.TrimSpace(methodResultSource(method)) != "error" {
-			return methodDiagnosticf(class, &method, "%s may return only error", method.Name)
+		result := strings.TrimSpace(methodResultSource(method))
+		if method.Name == "_oauthError" && result != "" {
+			return methodDiagnosticf(class, &method, "_oauthError must not return a value")
+		}
+		if method.Name != "_oauthError" && result != "error" {
+			return methodDiagnosticf(class, &method, "%s must return error", method.Name)
 		}
 		if method.Name == "_oauthError" {
 			if len(parameters) != 3 || !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || normalizeHTTPHookType(parameters[1].typeText()) != "string" || normalizeHTTPHookType(parameters[2].typeText()) != "error" {
@@ -199,14 +203,17 @@ func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 			}
 			continue
 		}
-		if len(parameters) != 2 && len(parameters) != 3 {
-			return methodDiagnosticf(class, &method, "_oauthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])")
+		if method.Name == "_oauthLogin" && len(parameters) != 2 {
+			return methodDiagnosticf(class, &method, "_oauthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity) error")
 		}
-		if !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].typeText(), "OAuthIdentity", false, true) {
-			return methodDiagnosticf(class, &method, "_oauthLogin has invalid signature")
+		if method.Name == "_oauthLoginWithToken" && len(parameters) != 3 {
+			return methodDiagnosticf(class, &method, "_oauthLoginWithToken must have signature (ctx *http.Context, identity http.OAuthIdentity, token http.OAuthToken) error")
 		}
-		if len(parameters) == 3 && !httpOAuthTypeMatches(pkg, parameters[2].typeText(), "OAuthToken", false, true) {
-			return methodDiagnosticf(class, &method, "_oauthLogin token parameter must be http.OAuthToken")
+		if !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].typeText(), "OAuthIdentity", false, false) {
+			return methodDiagnosticf(class, &method, "%s has invalid signature", method.Name)
+		}
+		if method.Name == "_oauthLoginWithToken" && !httpOAuthTypeMatches(pkg, parameters[2].typeText(), "OAuthToken", false, false) {
+			return methodDiagnosticf(class, &method, "_oauthLoginWithToken token parameter must be http.OAuthToken")
 		}
 	}
 	return nil

@@ -1332,9 +1332,9 @@ class Server {
 		return nil
 	}
 
-	func _oauthLogin(ctx *Context, identity *OAuthIdentity) @{std.Hook} {}
+	func _oauthLogin(ctx *Context, identity OAuthIdentity) error @{std.Hook} { return nil }
 
-	func _oauthLogin(ctx *Context, identity *OAuthIdentity, token *OAuthToken) @{std.Hook} {}
+	func _oauthLoginWithToken(ctx *Context, identity OAuthIdentity, token OAuthToken) error @{std.Hook} { return nil }
 
 	func _oauthError(ctx *Context, provider string, err error) @{std.Hook} {}
 

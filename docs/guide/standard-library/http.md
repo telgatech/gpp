@@ -421,11 +421,12 @@ For a built-in provider, the annotation supplies the provider's issuer and defau
 class App : http.Server @{
 	http.OAuth(http.OAuthProvider.Google)
 } {
-	func _oauthLogin(ctx *http.Context, identity http.OAuthIdentity) {
+	func _oauthLogin(ctx *http.Context, identity http.OAuthIdentity) error {
 		user := findOrCreateUser(identity.Provider, identity.ID, identity.Email)
 		session := createSession(user)
 		setSessionCookie(ctx.Response, session)
 		ctx.Redirect("/", 302)
+		return nil
 	}
 
 	func _oauthError(ctx *http.Context, provider string, err error) {
@@ -440,7 +441,7 @@ The provider configuration automatically reserves these routes:
 | Route | What happens |
 | --- | --- |
 | `GET /auth/google` | Starts login, creates temporary state and PKCE values, adds an OIDC nonce when needed, and redirects the browser to Google. |
-| `GET /auth/google/callback` | Checks the returned state, exchanges the authorization code, validates tokens and identity data, then calls `_oauthLogin`. |
+| `GET /auth/google/callback` | Checks the returned state, exchanges the authorization code, validates tokens and identity data, then calls `_oauthLogin` or `_oauthLoginWithToken`. |
 
 The runtime also handles provider metadata discovery and callback URL construction. Its state cookie is temporary and protected with `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. Set both credential variables for the selected provider in the service environment; the app reports a configuration error if either is missing.
 
@@ -469,7 +470,7 @@ class App : http.Server @{
 } {}
 ```
 
-The `_oauthLogin` hook receives the normalized identity (and has a token-aware overload when the app needs provider tokens); `_oauthError` is the place to log or customize a failed login response. The library handles the protocol plumbing, while the application still decides whether the person maps to a local account, whether to create or link that account, how to establish its session, and what permissions the user receives. OAuth sign-in alone does not protect unrelated routes; apply application authorization through your session middleware or handler checks.
+The `_oauthLogin` hook receives the normalized identity. Apps that need provider credentials can implement `_oauthLoginWithToken` instead; the framework calls that hook in place of `_oauthLogin`. `_oauthError` is the place to log or customize a failed login response. The library handles the protocol plumbing, while the application still decides whether the person maps to a local account, whether to create or link that account, how to establish its session, and what permissions the user receives. OAuth sign-in alone does not protect unrelated routes; apply application authorization through your session middleware or handler checks.
 
 ## Templates and error pages
 

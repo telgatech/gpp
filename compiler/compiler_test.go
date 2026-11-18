@@ -1596,10 +1596,34 @@ class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
 import http "gpp/http"
 
 class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
-	func _oauthLogin(ctx *http.Context, identity string) {}
+	func _oauthLogin(ctx *http.Context, identity string) error { return nil }
 }
 `,
 			message: "_oauthLogin has invalid signature",
+		},
+		{
+			name: "oauth login hook must return error",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
+	func _oauthLogin(ctx *http.Context, identity http.OAuthIdentity) {}
+}
+`,
+			message: "_oauthLogin must return error",
+		},
+		{
+			name: "oauth token hook has a distinct signature",
+			source: `package main
+
+import http "gpp/http"
+
+class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
+	func _oauthLoginWithToken(ctx *http.Context, identity http.OAuthIdentity) error { return nil }
+}
+`,
+			message: "_oauthLoginWithToken must have signature",
 		},
 	}
 	for _, test := range tests {
@@ -1682,6 +1706,53 @@ func main() {
 		if !strings.Contains(got, want) {
 			t.Fatalf("cross-package template output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestCompileFilesBuildsTypedTokenAwareOAuthHook(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import (
+	"fmt"
+	http "gpp/http"
+)
+
+class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
+	func _oauthLoginWithToken(ctx *http.Context, identity http.OAuthIdentity, token http.OAuthToken) error {
+		return nil
+	}
+}
+
+func main() {
+	app := App()
+	class := app.GppRuntimeClass()
+	for _, method := range class.Methods {
+		if method.Name == "_oauthLoginWithToken" && method.Owner == class {
+			fmt.Println("token hook registered")
+			return
+		}
+	}
+	panic("token-aware OAuth hook metadata is missing")
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile token-aware OAuth hook: %v", err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated token-aware OAuth hook program did not run: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "token hook registered") {
+		t.Fatalf("generated token-aware OAuth hook was not registered:\n%s", output)
 	}
 }
 

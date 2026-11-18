@@ -8,6 +8,7 @@
 - Added reusable `orm.ValidationError` with multiple messages per field.
 - Added `http.BindError` so handlers can distinguish request binding failures from application and database errors.
 - Made HTTP, ORM, queue execution, and test setup/teardown hooks protected methods called by their frameworks.
+- Replaced reflective OAuth login-hook dispatch with typed protected hooks for identity-only and token-aware login.
 
 ## 2026-11-17
 

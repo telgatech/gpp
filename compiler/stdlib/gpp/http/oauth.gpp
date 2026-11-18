@@ -15,7 +15,6 @@ import (
 	stdhttp "net/http"
 	"net/url"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -344,7 +343,7 @@ func gppOAuthUsesOIDC(config *gppOAuthConfig, metadata gppOAuthMetadata) bool {
 	return false
 }
 
-func gppOAuthCallback(engine *gppOAuthEngine, app any, provider string, ctx *Context) error {
+func gppOAuthCallback(engine *gppOAuthEngine, app GppServer, provider string, ctx *Context) error {
 	config := engine.Configs[provider]; if config == nil { return fmt.Errorf("unknown OAuth provider %s", provider) }
 	stateValue := ctx.Request.URL.Query().Get("state")
 	cookie, cookieErr := ctx.Request.Cookie("gpp_oauth_state_" + provider)
@@ -462,25 +461,23 @@ func gppOAuthStringClaim(claims map[string]any, key string) string { value, ok :
 func gppOAuthFirstClaim(claims map[string]any, keys ...string) string { for _, key := range keys { if value := gppOAuthStringClaim(claims, key); value != "" { return value } }; return "" }
 func gppOAuthBoolClaim(claims map[string]any, key string) bool { value, ok := claims[key]; if !ok { return false }; if result, ok := value.(bool); ok { return result }; return fmt.Sprint(value) == "true" }
 
-func gppOAuthInvokeLogin(app any, ctx *Context, identity *OAuthIdentity, token *OAuthToken) error {
-	value := reflect.ValueOf(app)
-	for _, candidate := range []struct { Name string; Values []any }{{Name: "GppProtected_oauthLogin", Values: []any{ctx, identity}}, {Name: "GppProtected_oauthLogin", Values: []any{ctx, identity, token}}, {Name: "GppProtected_oauthLogin__gpp_3", Values: []any{ctx, identity, token}}, {Name: "GppProtected_oauthLogin__gpp_2", Values: []any{ctx, identity}}} {
-		method := value.MethodByName(candidate.Name); if !method.IsValid() || method.Type().NumIn() != len(candidate.Values) { continue }
-		arguments := []reflect.Value{}; compatible := true
-		for index, item := range candidate.Values { argument, ok := gppOAuthReflectArgument(item, method.Type().In(index)); if !ok { compatible = false; break }; arguments = append(arguments, argument) }
-		if !compatible { continue }
-		result := method.Call(arguments); return gppErrorResult(result)
+func gppOAuthInvokeLogin(app GppServer, ctx *Context, identity *OAuthIdentity, token *OAuthToken) error {
+	if gppOAuthHasTokenLoginHook(app.GppRuntimeClass()) {
+		return app.GppProtected_oauthLoginWithToken(ctx, *identity, *token)
 	}
-	return nil
+	return app.GppProtected_oauthLogin(ctx, *identity)
 }
 
-func gppOAuthReflectArgument(value any, expected reflect.Type) (reflect.Value, bool) {
-	actual := reflect.ValueOf(value)
-	if !actual.IsValid() { return reflect.Zero(expected), expected != nil }
-	if actual.Type().AssignableTo(expected) { return actual, true }
-	if actual.Kind() == reflect.Pointer && actual.Elem().IsValid() && actual.Elem().Type().AssignableTo(expected) { return actual.Elem(), true }
-	if expected.Kind() == reflect.Pointer && actual.Type().AssignableTo(expected) { return actual, true }
-	return reflect.Value{}, false
+func gppOAuthHasTokenLoginHook(class *GppClass) bool {
+	if class == nil {
+		return false
+	}
+	for _, method := range class.Methods {
+		if method.Name == "_oauthLoginWithToken" && method.Owner != nil && method.Owner != GppServerClass {
+			return true
+		}
+	}
+	return false
 }
 
 func gppOAuthInvokeError(app GppServer, ctx *Context, provider string, cause error) error {
