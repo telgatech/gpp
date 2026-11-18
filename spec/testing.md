@@ -235,8 +235,8 @@ Framework methods are excluded from test discovery.
 At minimum:
 
 ```go
-Setup()
-Teardown()
+_setup()
+_teardown()
 ```
 
 are lifecycle methods rather than test cases.
@@ -296,11 +296,11 @@ Example:
 class DatabaseSuite : test.Suite {
     DB *sql.DB
 
-    func Setup() {
+    func _setup() {
         DB = OpenTestDB()
     }
 
-    func Teardown() {
+    func _teardown() {
         DB.Close()
     }
 
@@ -337,8 +337,8 @@ If GPP later supports abstract classes, abstract suites must never be instantiat
 `test.Suite` provides overridable:
 
 ```go
-func Setup()
-func Teardown()
+func _setup()
+func _teardown()
 ```
 
 Default implementations do nothing.
@@ -350,14 +350,14 @@ create fresh suite instance
         ↓
 attach current *testing.T
         ↓
-Setup()
+_setup()
         ↓
 test case
         ↓
-Teardown()
+_teardown()
 ```
 
-`Teardown()` should run even when the test fails or throws, where safely possible.
+`_teardown()` should run even when the test fails or throws, where safely possible.
 
 ---
 
@@ -373,7 +373,7 @@ Example:
 class CounterTest : test.Suite {
     Value int
 
-    func Setup() {
+    func _setup() {
         Value = 0
     }
 
@@ -394,18 +394,18 @@ class CounterTest : test.Suite {
 
 # Setup Failure
 
-If `Setup()` fails:
+If `_setup()` fails:
 
 * the test body does not run
 * the case fails
-* `Teardown()` should still run where practical
+* `_teardown()` should still run where practical
 * setup failure remains the primary failure
 
 ---
 
 # Teardown Failure
 
-If the test succeeds but `Teardown()` fails, the test fails.
+If the test succeeds but `_teardown()` fails, the test fails.
 
 If both test and teardown fail:
 
@@ -430,8 +430,8 @@ in v1.
 Initial lifecycle remains intentionally small:
 
 ```go
-Setup()
-Teardown()
+_setup()
+_teardown()
 ```
 
 ---
@@ -1773,9 +1773,9 @@ func TestUserTest_Create(t *testing.T) {
 
     runGppSuiteCase(
         t,
-        suite.Setup,
+        suite.GppProtected_setup,
         suite.Create,
-        suite.Teardown,
+        suite.GppProtected_teardown,
     )
 }
 ```

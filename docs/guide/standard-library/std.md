@@ -28,17 +28,16 @@ application code calling it as part of the normal API:
 import std "gpp/std"
 
 class Model {
-    func BeforeSave() error @{std.Hook} {
+    func _beforeSave() error @{std.Hook} {
         return nil
     }
 }
 ```
 
 The language server omits annotated methods from completion suggestions,
-including inherited member suggestions. A hook can be overridden, but ordinary
-GPP code can call it only from the class that first declares it; an override
-does not transfer that permission to a child. This keeps lifecycle timing under
-the declaring class's control. Framework dispatch through internal interfaces
-or runtime hook lookup remains allowed, and normal method dispatch still selects
-an override. Annotations belong to the declaration, so annotate an override as
-well when it should also be hidden from completions.
+including inherited member suggestions. The leading underscore makes this hook
+protected, so the declaring class and subclasses can override it while ordinary
+callers cannot invoke it. `std.Hook` marks it for framework dispatch and hides
+it from completions; it does not change access by itself. Annotations belong to
+the declaration, so annotate an override as well when it should also be hidden
+from completions.

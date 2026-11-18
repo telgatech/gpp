@@ -172,6 +172,24 @@ Both types already provide the required methods.
 
 # Model Base Class
 
+Provide a reusable error for model hooks that report field validation failures:
+
+```gpp
+class ValidationError {
+    Errors map[string][]string
+
+    func Add(field string, message string)
+    func IsEmpty() bool
+    func Error() string
+}
+```
+
+`Errors` maps field names to lists of validation messages. Each call to `Add`
+appends a message for that field. `Add` initializes the map when needed, and
+`IsEmpty` reports whether validation has found any failures.
+`_validate` can return one `orm.ValidationError` containing all errors found in
+a validation pass.
+
 Provide:
 
 ```go
@@ -189,31 +207,31 @@ class Model {
     func Update(exec SQLExecutor) error
     func Destroy(exec SQLExecutor) error
 
-    func Validate(exec SQLExecutor) error {
+    func _validate(exec SQLExecutor) error {
         return nil
     }
 
-    func BeforeCreate(exec SQLExecutor) error {
+    func _beforeCreate(exec SQLExecutor) error {
         return nil
     }
 
-    func AfterCreate(exec SQLExecutor) error {
+    func _afterCreate(exec SQLExecutor) error {
         return nil
     }
 
-    func BeforeUpdate(exec SQLExecutor) error {
+    func _beforeUpdate(exec SQLExecutor) error {
         return nil
     }
 
-    func AfterUpdate(exec SQLExecutor) error {
+    func _afterUpdate(exec SQLExecutor) error {
         return nil
     }
 
-    func BeforeDelete(exec SQLExecutor) error {
+    func _beforeDelete(exec SQLExecutor) error {
         return nil
     }
 
-    func AfterDelete(exec SQLExecutor) error {
+    func _afterDelete(exec SQLExecutor) error {
         return nil
     }
 }
@@ -247,8 +265,8 @@ so it can be set positionally. It requires a declared primary key; invalid
 limits return an error. It supports sequential traversal, not arbitrary page
 jumps.
 
-`Destroy` deletes the receiver by primary key and runs `BeforeDelete` and
-`AfterDelete` around the SQL operation. `Truncate` removes every row from the
+`Destroy` deletes the receiver by primary key and runs `_beforeDelete` and
+`_afterDelete` around the SQL operation. `Truncate` removes every row from the
 model table without running per-instance hooks. It uses `DELETE FROM` so the
 operation works across supported SQL drivers; it does not reset generated
 identity or sequence values.
@@ -267,14 +285,14 @@ Order:
 
 ```text
 Validate
-BeforeCreate
+_beforeCreate
 SQL INSERT
-AfterCreate
+_afterCreate
 ```
 
 If any step returns an error, immediately return that error.
 
-`AfterCreate` only runs when the SQL INSERT succeeds.
+`_afterCreate` only runs when the SQL INSERT succeeds.
 
 ---
 
@@ -284,14 +302,14 @@ Order:
 
 ```text
 Validate
-BeforeUpdate
+_beforeUpdate
 SQL UPDATE
-AfterUpdate
+_afterUpdate
 ```
 
 If any step returns an error, immediately return that error.
 
-`AfterUpdate` only runs when the SQL UPDATE succeeds.
+`_afterUpdate` only runs when the SQL UPDATE succeeds.
 
 ---
 
@@ -300,9 +318,9 @@ If any step returns an error, immediately return that error.
 Order:
 
 ```text
-BeforeDelete
+_beforeDelete
 SQL DELETE
-AfterDelete
+_afterDelete
 ```
 
 The current implementation does not call `Validate` before deletion.
@@ -351,8 +369,8 @@ Because `Employee` derives from `Model`, it may be passed polymorphically while 
 Execute:
 
 ```go
-entity.Validate(this)
-entity.BeforeCreate(this)
+entity._validate(this)
+entity._beforeCreate(this)
 ```
 
 before generating/executing SQL.
@@ -362,7 +380,7 @@ If either returns an error, return immediately.
 After successful SQL execution:
 
 ```go
-return entity.AfterCreate(this)
+return entity._afterCreate(this)
 ```
 
 ---
@@ -436,9 +454,9 @@ Lifecycle:
 
 ```text
 Validate
-BeforeUpdate
+_beforeUpdate
 SQL UPDATE
-AfterUpdate
+_afterUpdate
 ```
 
 ---
@@ -513,7 +531,7 @@ Return SQL errors directly.
 Then call:
 
 ```go
-entity.AfterUpdate(this)
+entity._afterUpdate(this)
 ```
 
 ---
@@ -529,9 +547,9 @@ func Destroy(exec SQLExecutor) error
 Lifecycle:
 
 ```text
-BeforeDelete
+_beforeDelete
 SQL DELETE
-AfterDelete
+_afterDelete
 ```
 
 ---
@@ -574,7 +592,7 @@ this.Exec(query, primaryValue)
 After success:
 
 ```go
-return entity.AfterDelete(this)
+return entity._afterDelete(this)
 ```
 
 ---
@@ -659,11 +677,11 @@ Example:
 
 ```go
 class Employee : Model {
-    func Validate(exec SQLExecutor) error {
+    func _validate(exec SQLExecutor) error {
         ...
     }
 
-    func BeforeCreate(exec SQLExecutor) error {
+    func _beforeCreate(exec SQLExecutor) error {
         ...
     }
 }
@@ -679,9 +697,9 @@ must result in:
 
 ```text
 Employee.Validate
-Employee.BeforeCreate
+Employee._beforeCreate
 SQL INSERT using Employee metadata
-Employee.AfterCreate
+Employee._afterCreate
 ```
 
 where overridden.
@@ -722,7 +740,7 @@ Lifecycle hooks receive the actual executor.
 Inside a hook:
 
 ```go
-func BeforeCreate(exec SQLExecutor) error {
+func _beforeCreate(exec SQLExecutor) error {
     _, err := exec.Exec(...)
     return err
 }
@@ -753,7 +771,7 @@ class Employee : orm.Model @{
         orm.Column("email")
     }
 
-    func Validate(exec orm.SQLExecutor) error {
+    func _validate(exec orm.SQLExecutor) error {
         if strings.TrimSpace(this.Name) == "" {
             return fmt.Errorf("employee name is required")
         }
@@ -765,7 +783,7 @@ class Employee : orm.Model @{
         return nil
     }
 
-    func BeforeCreate(exec orm.SQLExecutor) error {
+    func _beforeCreate(exec orm.SQLExecutor) error {
         this.Email = strings.ToLower(
             strings.TrimSpace(this.Email),
         )
@@ -971,9 +989,9 @@ Verify:
 
 ```text
 Validate
-BeforeCreate
+_beforeCreate
 INSERT
-AfterCreate
+_afterCreate
 ```
 
 order.
@@ -987,17 +1005,17 @@ Verify concrete model fields are used.
 If `Validate` returns an error:
 
 * no SQL INSERT
-* no BeforeCreate
-* no AfterCreate
+* no _beforeCreate
+* no _afterCreate
 
 ---
 
-## BeforeCreate failure
+## _beforeCreate failure
 
-If `BeforeCreate` returns an error:
+If `_beforeCreate` returns an error:
 
 * no INSERT
-* no AfterCreate
+* no _afterCreate
 
 ---
 
@@ -1016,8 +1034,8 @@ Verify:
 Verify:
 
 * PK is used in WHERE
-* BeforeDelete runs before SQL
-* AfterDelete runs after SQL
+* _beforeDelete runs before SQL
+* _afterDelete runs after SQL
 * instance `Destroy` runs the documented delete hooks around SQL DELETE
 
 ---

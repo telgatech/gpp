@@ -12,7 +12,7 @@ The design should preserve these principles:
 * `Listen(port)` remains the main blocking server entry point; port `0` asks the OS for an available port.
 * graceful shutdown on `SIGINT` / `SIGTERM` works by default.
 * shutdown infrastructure is separate from application startup hooks.
-* overriding `BeforeListen()` must not disable default signal handling.
+* overriding `_beforeListen()` must not disable default signal handling.
 * applications may override shutdown setup deliberately.
 * request hooks provide a simple place for application-wide request setup, logging, context values, and cleanup.
 * all hooks are ordinary polymorphic GPP methods.
@@ -30,27 +30,27 @@ class Server {
         ...
     }
 
-    func BeforeListen() error {
+    func _beforeListen() error {
         return nil
     }
 
-    func AfterListen() error {
+    func _afterListen() error {
         return nil
     }
 
-    func BeforeShutdown() error {
+    func _beforeShutdown() error {
         return nil
     }
 
-    func AfterShutdown() error {
+    func _afterShutdown() error {
         return nil
     }
 
-    func BeforeRequest(ctx *Context) error {
+    func _beforeRequest(ctx *Context) error {
         return nil
     }
 
-    func AfterRequest(ctx *Context) error {
+    func _afterRequest(ctx *Context) error {
         return nil
     }
 
@@ -73,14 +73,14 @@ The lifecycle methods are:
 ```text
 SetupShutdownHandler
 
-BeforeListen
-AfterListen
+_beforeListen
+_afterListen
 
-BeforeRequest
-AfterRequest
+_beforeRequest
+_afterRequest
 
-BeforeShutdown
-AfterShutdown
+_beforeShutdown
+_afterShutdown
 ```
 
 ---
@@ -93,13 +93,13 @@ The methods have different responsibilities.
 SetupShutdownHandler
     server infrastructure
 
-BeforeListen / AfterListen
+_beforeListen / _afterListen
     application startup
 
-BeforeRequest / AfterRequest
+_beforeRequest / _afterRequest
     application-wide request lifecycle
 
-BeforeShutdown / AfterShutdown
+_beforeShutdown / _afterShutdown
     application shutdown
 ```
 
@@ -159,16 +159,16 @@ Observable behavior should remain equivalent.
 Do not place default signal handling inside:
 
 ```go
-BeforeListen()
+_beforeListen()
 ```
 
-Applications will commonly override `BeforeListen()`.
+Applications will commonly override `_beforeListen()`.
 
 Example:
 
 ```go
 class App : http.Server {
-    func BeforeListen() error {
+    func _beforeListen() error {
         return this.StartWorkers()
     }
 }
@@ -185,7 +185,7 @@ SetupShutdownHandler
 must be independent from:
 
 ```text
-BeforeListen
+_beforeListen
 ```
 
 ---
@@ -207,11 +207,11 @@ prepare listener
 ↓
 SetupShutdownHandler()
 ↓
-BeforeListen()
+_beforeListen()
 ↓
 begin serving
 ↓
-AfterListen()
+_afterListen()
 ↓
 block while serving
 ↓
@@ -292,12 +292,12 @@ Shutdown itself must remain safe if triggered more than once.
 
 ---
 
-# BeforeListen
+# _beforeListen
 
 Default:
 
 ```go
-func BeforeListen() error {
+func _beforeListen() error {
     return nil
 }
 ```
@@ -325,19 +325,19 @@ Typical uses:
 Example:
 
 ```go
-func BeforeListen() error {
+func _beforeListen() error {
     return this.Workers.Start()
 }
 ```
 
 ---
 
-# AfterListen
+# _afterListen
 
 Default:
 
 ```go
-func AfterListen() error {
+func _afterListen() error {
     return nil
 }
 ```
@@ -359,7 +359,7 @@ Typical uses:
 * update readiness state
 * start tasks that require the listener to already exist
 
-If `AfterListen()` returns an error, the server should initiate shutdown and return the error.
+If `_afterListen()` returns an error, the server should initiate shutdown and return the error.
 
 ---
 
@@ -370,29 +370,29 @@ Every routed request should pass through:
 ```text
 create Context
 ↓
-BeforeRequest(ctx)
+_beforeRequest(ctx)
 ↓
 route handler
 ↓
-AfterRequest(ctx)
+_afterRequest(ctx)
 ```
 
 The exact same `Context` instance must be passed to:
 
 ```text
-BeforeRequest
+_beforeRequest
 route handler
-AfterRequest
+_afterRequest
 ```
 
 ---
 
-# BeforeRequest
+# _beforeRequest
 
 Default:
 
 ```go
-func BeforeRequest(ctx *Context) error {
+func _beforeRequest(ctx *Context) error {
     return nil
 }
 ```
@@ -413,7 +413,7 @@ Typical uses:
 Example:
 
 ```go
-func BeforeRequest(ctx *http.Context) error {
+func _beforeRequest(ctx *http.Context) error {
     ctx.Set("started", time.Now())
     ctx.Set("requestId", uuid.NewString())
 
@@ -423,29 +423,29 @@ func BeforeRequest(ctx *http.Context) error {
 
 ---
 
-# BeforeRequest Failure
+# _beforeRequest Failure
 
 If:
 
 ```go
-BeforeRequest(ctx)
+_beforeRequest(ctx)
 ```
 
 returns an error:
 
 * the route handler must not run
 * the error should be sent through the server's normal error handling
-* `AfterRequest()` should not run
+* `_afterRequest()` should not run
 
 Reason:
 
-`AfterRequest()` represents teardown corresponding to a successfully completed request setup phase.
+`_afterRequest()` represents teardown corresponding to a successfully completed request setup phase.
 
 ---
 
 # Route Handler
 
-After successful `BeforeRequest()`:
+After successful `_beforeRequest()`:
 
 ```go
 err := route(ctx)
@@ -456,16 +456,16 @@ The route may:
 * succeed
 * return an error
 
-`AfterRequest()` must run in either case.
+`_afterRequest()` must run in either case.
 
 ---
 
-# AfterRequest
+# _afterRequest
 
 Default:
 
 ```go
-func AfterRequest(ctx *Context) error {
+func _afterRequest(ctx *Context) error {
     return nil
 }
 ```
@@ -487,7 +487,7 @@ Typical uses:
 Example:
 
 ```go
-func AfterRequest(ctx *http.Context) error {
+func _afterRequest(ctx *http.Context) error {
     started := ctx.Get("started").(time.Time)
 
     fmt.Println(
@@ -509,11 +509,11 @@ Successful request:
 ```text
 Context created
 ↓
-BeforeRequest
+_beforeRequest
 ↓
 route handler
 ↓
-AfterRequest
+_afterRequest
 ↓
 response complete
 ```
@@ -523,45 +523,45 @@ Route-handler error:
 ```text
 Context created
 ↓
-BeforeRequest
+_beforeRequest
 ↓
 route handler returns error
 ↓
-AfterRequest
+_afterRequest
 ↓
 error handling
 ```
 
-BeforeRequest error:
+_beforeRequest error:
 
 ```text
 Context created
 ↓
-BeforeRequest returns error
+_beforeRequest returns error
 ↓
 route handler skipped
 ↓
-AfterRequest skipped
+_afterRequest skipped
 ↓
 error handling
 ```
 
 ---
 
-# AfterRequest Reliability
+# _afterRequest Reliability
 
-The implementation should structure request dispatch so `AfterRequest()` runs reliably after a successful `BeforeRequest()`.
+The implementation should structure request dispatch so `_afterRequest()` runs reliably after a successful `_beforeRequest()`.
 
 Conceptually:
 
 ```go
-if err := this.BeforeRequest(ctx); err != nil {
+if err := this._beforeRequest(ctx); err != nil {
     return this.HandleError(ctx, err)
 }
 
 routeErr := route(ctx)
 
-afterErr := this.AfterRequest(ctx)
+afterErr := this._afterRequest(ctx)
 
 if routeErr != nil {
     return this.HandleError(ctx, routeErr)
@@ -584,16 +584,16 @@ If both:
 
 ```text
 route handler
-AfterRequest
+_afterRequest
 ```
 
 return errors, preserve the route error as the primary error for v1.
 
 Do not introduce complex aggregate error handling solely for this feature.
 
-The `AfterRequest` error may be logged or otherwise surfaced as appropriate.
+The `_afterRequest` error may be logged or otherwise surfaced as appropriate.
 
-If the route succeeds and only `AfterRequest()` fails, handle the `AfterRequest()` error normally.
+If the route succeeds and only `_afterRequest()` fails, handle the `_afterRequest()` error normally.
 
 ---
 
@@ -639,11 +639,11 @@ incoming request
 ↓
 new Context
 ↓
-BeforeRequest
+_beforeRequest
 ↓
 handler
 ↓
-AfterRequest
+_afterRequest
 ↓
 Context discarded
 ```
@@ -656,13 +656,13 @@ Do not reuse a Context between unrelated requests unless a future implementation
 
 ```go
 class App : http.Server {
-    func BeforeRequest(ctx *http.Context) error {
+    func _beforeRequest(ctx *http.Context) error {
         ctx.Set("startedAt", time.Now())
 
         return nil
     }
 
-    func AfterRequest(ctx *http.Context) error {
+    func _afterRequest(ctx *http.Context) error {
         started := ctx.Get("startedAt").(time.Time)
 
         fmt.Println(
@@ -675,7 +675,7 @@ class App : http.Server {
 }
 ```
 
-The route may also access values created by `BeforeRequest()`:
+The route may also access values created by `_beforeRequest()`:
 
 ```go
 func Home(ctx *http.Context) error @{http.GET("/")} {
@@ -689,7 +689,7 @@ func Home(ctx *http.Context) error @{http.GET("/")} {
 
 # Middleware Relationship
 
-`BeforeRequest()` and `AfterRequest()` do not eliminate middleware.
+`_beforeRequest()` and `_afterRequest()` do not eliminate middleware.
 
 Use request hooks for simple application-wide lifecycle behavior.
 
@@ -726,12 +726,12 @@ Both mechanisms may coexist.
 
 ---
 
-# BeforeShutdown
+# _beforeShutdown
 
 Default:
 
 ```go
-func BeforeShutdown() error {
+func _beforeShutdown() error {
     return nil
 }
 ```
@@ -751,12 +751,12 @@ A returned error should not normally prevent shutdown from continuing.
 
 ---
 
-# AfterShutdown
+# _afterShutdown
 
 Default:
 
 ```go
-func AfterShutdown() error {
+func _afterShutdown() error {
     return nil
 }
 ```
@@ -783,11 +783,11 @@ func Shutdown(ctx context.Context) error
 Recommended sequence:
 
 ```text
-BeforeShutdown
+_beforeShutdown
 ↓
 underlying http.Server.Shutdown(ctx)
 ↓
-AfterShutdown
+_afterShutdown
 ```
 
 `Shutdown()` may be triggered by:
@@ -903,14 +903,14 @@ For one server lifecycle:
 ```text
 SetupShutdownHandler    once
 
-BeforeListen            once
-AfterListen             at most once
+_beforeListen            once
+_afterListen             at most once
 
-BeforeRequest           once per routed request
-AfterRequest            at most once per routed request
+_beforeRequest           once per routed request
+_afterRequest            at most once per routed request
 
-BeforeShutdown          at most once
-AfterShutdown           at most once
+_beforeShutdown          at most once
+_afterShutdown           at most once
 ```
 
 ---
@@ -920,38 +920,38 @@ AfterShutdown           at most once
 If route discovery, validation, or listener preparation fails before startup:
 
 ```text
-BeforeListen
-AfterListen
+_beforeListen
+_afterListen
 ```
 
 must not run.
 
-If `BeforeListen()` returns an error:
+If `_beforeListen()` returns an error:
 
 * serving must not begin
-* `AfterListen()` must not run
+* `_afterListen()` must not run
 
 If serving fails to start successfully:
 
-* `AfterListen()` must not run
+* `_afterListen()` must not run
 
 Signal resources should be cleaned up where appropriate.
 
 ---
 
-# AfterListen Timing Requirement
+# _afterListen Timing Requirement
 
 Do not implement:
 
 ```go
 err := httpServer.Serve(listener)
 
-this.AfterListen()
+this._afterListen()
 ```
 
-because this would invoke `AfterListen()` after the server exits.
+because this would invoke `_afterListen()` after the server exits.
 
-Startup must be structured so `AfterListen()` executes once the server has actually entered the serving state.
+Startup must be structured so `_afterListen()` executes once the server has actually entered the serving state.
 
 ---
 
@@ -963,11 +963,11 @@ Example:
 
 ```go
 class App : http.Server {
-    func BeforeRequest(ctx *http.Context) error {
+    func _beforeRequest(ctx *http.Context) error {
         ...
     }
 
-    func AfterRequest(ctx *http.Context) error {
+    func _afterRequest(ctx *http.Context) error {
         ...
     }
 }
@@ -976,8 +976,8 @@ class App : http.Server {
 Inherited `Server` request dispatch must invoke:
 
 ```text
-App.BeforeRequest
-App.AfterRequest
+App._beforeRequest
+App._afterRequest
 ```
 
 through normal runtime dispatch.
@@ -1036,8 +1036,8 @@ class App : http.Server {
 Lifecycle hooks may also call their base implementation:
 
 ```go
-func BeforeRequest(ctx *http.Context) error {
-    if err := super.BeforeRequest(ctx); err != nil {
+func _beforeRequest(ctx *http.Context) error {
+    if err := super._beforeRequest(ctx); err != nil {
         return err
     }
 
@@ -1063,23 +1063,23 @@ import (
 class App : http.Server @{
     http.IP("0.0.0.0"),
 } {
-    func BeforeListen() error {
+    func _beforeListen() error {
         fmt.Println("starting application")
         return nil
     }
 
-    func AfterListen() error {
+    func _afterListen() error {
         fmt.Println("server ready")
         return nil
     }
 
-    func BeforeRequest(ctx *http.Context) error {
+    func _beforeRequest(ctx *http.Context) error {
         ctx.Set("started", time.Now())
 
         return nil
     }
 
-    func AfterRequest(ctx *http.Context) error {
+    func _afterRequest(ctx *http.Context) error {
         started := ctx.Get("started").(time.Time)
 
         fmt.Println(
@@ -1097,12 +1097,12 @@ class App : http.Server @{
         return ctx.Text("hello")
     }
 
-    func BeforeShutdown() error {
+    func _beforeShutdown() error {
         fmt.Println("shutting down")
         return nil
     }
 
-    func AfterShutdown() error {
+    func _afterShutdown() error {
         fmt.Println("shutdown complete")
         return nil
     }
@@ -1122,9 +1122,9 @@ starting application
 server ready
 
 GET /...
-BeforeRequest
+_beforeRequest
 Home
-AfterRequest
+_afterRequest
 
 ...
 
@@ -1203,9 +1203,9 @@ and invokes graceful shutdown.
 
 ---
 
-## BeforeListen override
+## _beforeListen override
 
-Override `BeforeListen()` without calling `super`.
+Override `_beforeListen()` without calling `super`.
 
 Verify default shutdown signal handling still exists.
 
@@ -1224,9 +1224,9 @@ Verify built-in signal behavior is replaced.
 Verify:
 
 ```text
-BeforeRequest
+_beforeRequest
 route
-AfterRequest
+_afterRequest
 ```
 
 for successful requests.
@@ -1238,27 +1238,27 @@ for successful requests.
 Verify:
 
 ```text
-BeforeRequest
+_beforeRequest
 route returns error
-AfterRequest
+_afterRequest
 error handler
 ```
 
 ---
 
-## BeforeRequest failure
+## _beforeRequest failure
 
 Verify:
 
 ```text
-BeforeRequest returns error
+_beforeRequest returns error
 ```
 
 causes:
 
 ```text
 route skipped
-AfterRequest skipped
+_afterRequest skipped
 ```
 
 ---
@@ -1268,14 +1268,14 @@ AfterRequest skipped
 Verify values set in:
 
 ```go
-BeforeRequest(ctx)
+_beforeRequest(ctx)
 ```
 
 are visible from:
 
 ```text
 route handler
-AfterRequest
+_afterRequest
 ```
 
 using the same Context instance.
@@ -1301,9 +1301,9 @@ Verify inherited Server request dispatch calls the App implementations.
 Verify:
 
 ```text
-BeforeShutdown
+_beforeShutdown
 underlying shutdown
-AfterShutdown
+_afterShutdown
 ```
 
 ---
@@ -1329,14 +1329,14 @@ The compiler must not specially recognize:
 ```text
 SetupShutdownHandler
 
-BeforeListen
-AfterListen
+_beforeListen
+_afterListen
 
-BeforeRequest
-AfterRequest
+_beforeRequest
+_afterRequest
 
-BeforeShutdown
-AfterShutdown
+_beforeShutdown
+_afterShutdown
 ```
 
 They are ordinary methods implemented by `gpp/http.Server`.
@@ -1365,7 +1365,7 @@ The intended model is:
                            |
             +--------------+--------------+
             |                             |
-  SetupShutdownHandler              BeforeListen
+  SetupShutdownHandler              _beforeListen
      infrastructure               application startup
             |                             |
             +------------- serve ---------+
@@ -1374,21 +1374,21 @@ The intended model is:
                            |
                     create Context
                            |
-                    BeforeRequest
+                    _beforeRequest
                            |
                       route method
                            |
-                    AfterRequest
+                    _afterRequest
                            |
                         repeat
                            |
                    shutdown trigger
                            |
-                   BeforeShutdown
+                   _beforeShutdown
                            |
               graceful net/http shutdown
                            |
-                   AfterShutdown
+                   _afterShutdown
 ```
 
 The request hooks provide a convenient application-wide setup/teardown mechanism, while middleware remains available for more composable HTTP behavior.

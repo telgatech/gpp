@@ -424,10 +424,21 @@ func main() {
 		"\xff".ToValidUTF8("?") != "?" {
 		panic("string rune transform extension failed")
 	}
-	if "42".ToInt() != 42 || "bad".ToInt() != 0 || "bad".ToInt(fallback: -1) != -1 ||
-		"42".ToInt64() != 42 || "42".ToUint64() != 42 ||
-		"1.5".ToFloat32() != 1.5 || "1.5".ToFloat64() != 1.5 ||
-		!"true".ToBool() || "invalid".ToBool() || "invalid".ToBool(fallback: true) != true {
+	parsedInt := "42".ToInt() ?? -1
+	invalidInt := "bad".ToInt() ?? -1
+	parsedInt64 := "42".ToInt64() ?? -1
+	invalidInt64 := "bad".ToInt64() ?? -1
+	parsedUint64 := "42".ToUint64() ?? 0
+	invalidUint64 := "bad".ToUint64() ?? 0
+	parsedFloat32 := "1.5".ToFloat32() ?? 0
+	invalidFloat32 := "bad".ToFloat32() ?? 0
+	parsedFloat64 := "1.5".ToFloat64() ?? 0
+	invalidFloat64 := "bad".ToFloat64() ?? 0
+	parsedBool := "true".ToBool() ?? false
+	invalidBool := "invalid".ToBool() ?? true
+	if parsedInt != 42 || invalidInt != -1 || parsedInt64 != 42 || invalidInt64 != -1 ||
+		parsedUint64 != 42 || invalidUint64 != 0 || parsedFloat32 != 1.5 || invalidFloat32 != 0 ||
+		parsedFloat64 != 1.5 || invalidFloat64 != 0 || !parsedBool || !invalidBool {
 		panic("string conversion extension failed")
 	}
 	intValue := -42
@@ -629,23 +640,23 @@ import (
 var events []string
 
 class App : http.Server @{http.IP("127.0.0.1")} {
-    func BeforeListen() error {
+    func _beforeListen() error {
         events = append(events, "before-listen")
         return nil
     }
 
-    func AfterListen() error {
+    func _afterListen() error {
         events = append(events, "after-listen")
         return nil
     }
 
-    func BeforeRequest(ctx *http.Context) error {
+    func _beforeRequest(ctx *http.Context) error {
         events = append(events, "before-request")
         ctx.Set("marker", "shared")
         return nil
     }
 
-    func Handle(ctx *http.Context) error {
+    func _handle(ctx *http.Context) error {
         events = append(events, "handle")
         ctx.Set("front-controller", "shared")
         if ctx.Request.URL.Path == "/handled" {
@@ -662,22 +673,22 @@ class App : http.Server @{http.IP("127.0.0.1")} {
         return ctx.Text(fmt.Sprintf("%s %s %s", ctx.Get("marker"), ctx.Get("front-controller"), ctx.Param("name")))
     }
 
-    func AfterRequest(ctx *http.Context) error {
+    func _afterRequest(ctx *http.Context) error {
         events = append(events, "after-request")
         return nil
     }
 
-    func Error(ctx *http.Context, code int, cause error) error {
+    func _error(ctx *http.Context, code int, cause error) error {
         events = append(events, "error")
         return ctx.Text(code, fmt.Sprint(code))
     }
 
-    func BeforeShutdown() error {
+    func _beforeShutdown() error {
         events = append(events, "before-shutdown")
         return nil
     }
 
-    func AfterShutdown() error {
+    func _afterShutdown() error {
         events = append(events, "after-shutdown")
         return nil
     }
@@ -990,6 +1001,7 @@ func main() {
 	badContext := newContext("POST", "/bad", "application/json", "{\"name\":\"bad\",\"age\":\"not an integer\"}")
 	_, bindErr := badContext.Bind[struct(name: string, age: int)]()
 	if bindErr == nil { panic("expected invalid record field to return an error") }
+	if fmt.Sprintf("%T", bindErr) != "*http.BindError" { panic(fmt.Sprintf("expected BindError, got %T", bindErr)) }
 
 	fmt.Println("generic HTTP binding passed")
 }
@@ -1584,10 +1596,10 @@ class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
 import http "gpp/http"
 
 class App : http.Server @{http.OAuth(http.OAuthProvider.Google)} {
-	func OAuthLogin(ctx *http.Context, identity string) {}
+	func _oauthLogin(ctx *http.Context, identity string) {}
 }
 `,
-			message: "OAuthLogin has invalid signature",
+			message: "_oauthLogin has invalid signature",
 		},
 	}
 	for _, test := range tests {
@@ -1712,7 +1724,7 @@ template ErrorPage(data any) {
 }
 
 class App : http.Server @{http.IP("127.0.0.1")} {
-    func ErrorTemplate() string {
+    func _errorTemplate() string {
         return "ErrorPage"
     }
 
@@ -2075,7 +2087,7 @@ class Context {}
 `,
 				"server.gpp": `package api
 class Server {
-    func Handle(ctx *Context) error { return nil }
+    func _handle(ctx *Context) error { return nil }
 }
 `,
 				"common.gpp": `package common
@@ -2096,7 +2108,7 @@ class Context {}
 `,
 				"api/server.gpp": `package api
 class Server {
-    func Handle(ctx *Context) error { return nil }
+    func _handle(ctx *Context) error { return nil }
 }
 `,
 				"common/server.gpp": `package common
@@ -2117,7 +2129,7 @@ class Context {}
 `,
 				"internal/api/server.gpp": `package internal.api
 class Server {
-    func Handle(ctx *Context) error { return nil }
+    func _handle(ctx *Context) error { return nil }
 }
 `,
 				"internal/common/server.gpp": `package internal.common
@@ -2545,10 +2557,12 @@ import (
 	"fmt"
 )
 
+var notFound error = sql.ErrNoRows
+
 func find() error {
 	try {
-		throw sql.ErrNoRows
-	} catch sql.ErrNoRows {
+		throw notFound
+	} catch notFound {
 		return nil
 	}
 	return fmt.Errorf("not caught: %w", errors.New("unexpected"))
@@ -2573,6 +2587,60 @@ func main() {
 	}
 	if strings.TrimSpace(string(output)) != "true" {
 		t.Fatalf("error-value catch did not handle sql.ErrNoRows and return nil: %s", output)
+	}
+}
+
+func TestCompileFilesCatchesMixedErrorTypesAndValues(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"strconv"
+)
+
+func parseValue(input string) string {
+	try {
+		value := input.ToInt64()
+		return fmt.Sprint(value)
+	} catch strconv.NumError, sql.ErrNoRows {
+		return "invalid"
+	}
+}
+
+func missingValue() string {
+	try {
+		throw sql.ErrNoRows
+	} catch strconv.NumError, sql.ErrNoRows {
+		return "missing"
+	}
+}
+
+func main() {
+	fmt.Println(parseValue("invalid"))
+	fmt.Println(missingValue())
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated mixed catch program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "invalid\nmissing\n" {
+		t.Fatalf("mixed catch did not handle both the type and sentinel value:\n%s", output)
 	}
 }
 
@@ -3074,6 +3142,103 @@ func main() {}
 	}
 }
 
+func TestCompileFilesRunsProtectedORMHooksInLifecycleOrder(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `
+package main
+
+import (
+    "database/sql"
+    "errors"
+    "fmt"
+    "strings"
+    orm "gpp/orm"
+)
+
+var events []string
+
+type hookTestExecutor struct{}
+type hookTestResult struct{}
+
+func (hookTestExecutor) Exec(query string, args ...any) (sql.Result, error) {
+    switch {
+    case strings.HasPrefix(query, "INSERT"):
+        events = append(events, "sql-insert")
+    case strings.HasPrefix(query, "UPDATE"):
+        events = append(events, "sql-update")
+    case strings.HasPrefix(query, "DELETE"):
+        events = append(events, "sql-delete")
+    }
+    return hookTestResult{}, nil
+}
+
+func (hookTestExecutor) Query(query string, args ...any) (*sql.Rows, error) { return nil, nil }
+func (hookTestExecutor) QueryRow(query string, args ...any) *sql.Row { return nil }
+func (hookTestResult) LastInsertId() (int64, error) { return 1, nil }
+func (hookTestResult) RowsAffected() (int64, error) { return 1, nil }
+
+class Todo : orm.Model {
+    Id int64 @{orm.PK}
+    Name string
+
+    func _validate(exec orm.SQLExecutor) error {
+        events = append(events, "validate")
+        if this.Name == "" { return errors.New("name required") }
+        return nil
+    }
+    func _beforeCreate(exec orm.SQLExecutor) error { events = append(events, "before-create"); return nil }
+    func _afterCreate(exec orm.SQLExecutor) error { events = append(events, "after-create"); return nil }
+    func _beforeUpdate(exec orm.SQLExecutor) error { events = append(events, "before-update"); return nil }
+    func _afterUpdate(exec orm.SQLExecutor) error { events = append(events, "after-update"); return nil }
+    func _beforeDelete(exec orm.SQLExecutor) error { events = append(events, "before-delete"); return nil }
+    func _afterDelete(exec orm.SQLExecutor) error { events = append(events, "after-delete"); return nil }
+}
+
+func main() {
+    validation := orm.ValidationError()
+    validation.Add("title", "is required")
+    validation.Add("title", "must be at least 3 characters")
+    if len(validation.Errors["title"]) != 2 || validation.IsEmpty() {
+        panic("validation errors should retain multiple messages per field")
+    }
+
+    exec := hookTestExecutor{}
+    invalid := Todo()
+    try {
+        invalid.Insert(exec)
+    } catch err {
+        if err.Error() != "name required" { panic(err) }
+        events = append(events, "rejected")
+    }
+
+    todo := Todo(Id: 1, Name: "test")
+    todo.Insert(exec)
+    todo.Update(exec)
+    todo.Destroy(exec)
+    fmt.Println(strings.Join(events, ","))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("protected ORM hooks did not run: %v\n%s", err, output)
+	}
+	want := "validate,rejected,validate,before-create,sql-insert,after-create,validate,before-update,sql-update,after-update,before-delete,sql-delete,after-delete\n"
+	if string(output) != want {
+		t.Fatalf("unexpected protected ORM hook sequence:\n got: %s\nwant: %s", output, want)
+	}
+}
+
 func TestCompileFilesResolvesClassesAcrossDottedPackageFiles(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -3376,8 +3541,8 @@ func Second() bool {
 		}
 		count += strings.Count(string(data), "func GppPreludeExt___T_Any_")
 	}
-	if count != 1 {
-		t.Fatalf("expected one generated prelude helper for the package, got %d", count)
+	if count != 2 {
+		t.Fatalf("expected one generated helper per Any overload for the package, got %d", count)
 	}
 }
 

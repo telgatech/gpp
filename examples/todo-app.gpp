@@ -8,13 +8,10 @@ package main
 import (
     "context"
     "database/sql"
-    stdjson "encoding/json"
-    "errors"
     "fmt"
     "log"
     stdhttp "net/http"
     "strconv"
-    "strings"
     "time"
     _ "modernc.org/sqlite"
     cron "gpp/cron"
@@ -25,29 +22,36 @@ import (
 
 var db *sql.DB
 
-
 // The ORM derives table "todo" and snake_case columns by default. The commented
 // annotations show how to override those defaults.
 class Todo : orm.Model /* @{orm.Table("todos")} */ {
-    Id int64 /* @{orm.Column("id"), orm.PK} */
-    Title string /* @{orm.Column("title")} */
-    Completed bool /* @{orm.Column("completed")} */
-    CreatedAt int64 /* @{orm.Column("created_at")} */
-    CompletedAt int64 /* @{orm.Column("completed_at")} */
+    Id int64 /*@{orm.Column("id"), orm.PK} */
+    Title string /*@{orm.Column("title")} */
+    Completed bool /*@{orm.Column("completed")} */
+    CreatedAt int64 /*@{orm.Column("created_at")} */
+    CompletedAt int64 /*@{orm.Column("completed_at")} */
 
-    func Validate(exec orm.SQLExecutor) error {
+    // orm.Model hook _validate runs before inserts and updates. Collect
+    // field errors here to reject invalid state before the ORM writes it.
+    func _validate(exec orm.SQLExecutor) error {
+        validation := orm.ValidationError()
         if this.Title.IsBlank() {
-            return fmt.Errorf("todo title is required")
+            validation.Add("title", "is required")
         }
-        return nil
+        return validation.IsEmpty() ? nil : validation
     }
 
-    func BeforeCreate(exec orm.SQLExecutor) error {
+    // orm.Model hook _beforeCreate runs after validation and before the INSERT. Normalize
+    // fields or set defaults here. See docs for other supported hooks.
+    func _beforeCreate(exec orm.SQLExecutor) error {
         this.Title = this.Title.TrimSpace()
         return nil
     }
 
     func Complete(exec orm.SQLExecutor) error {
+        if this.Completed {
+            return nil
+        }
         this.Completed = true
         this.CompletedAt = time.Now().Unix()
         return this.Update(exec)
@@ -58,19 +62,6 @@ class Todo : orm.Model /* @{orm.Table("todos")} */ {
         this.CompletedAt = 0
         return this.Update(exec)
     }
-
-}
-
-class CreateTodoRequest {
-    Title string
-}
-
-class TodoList {
-    Items []*Todo
-}
-
-class APIError {
-    Error string
 }
 
 template TodoHome(todos []*Todo) @{tpl.Path("/")} {
@@ -128,7 +119,6 @@ template TodoHome(todos []*Todo) @{tpl.Path("/")} {
     </html>
 }
 
-
 extend *sql.DB, *sql.Tx {
     func Todos() ([]*Todo, error) {
         return Todo.All(this)
@@ -145,7 +135,6 @@ extend *sql.DB, *sql.Tx {
     func CreateTodo(todo *Todo) error {
         return todo.Insert(this)
     }
-
 }
 
 func PruneCompletedTodos(ctx context.Context) error @{cron.Every(time.Minute)} {
@@ -159,23 +148,10 @@ func PruneCompletedTodos(ctx context.Context) error @{cron.Every(time.Minute)} {
     todos := Todo.Select(db, "completed = $1 AND completed_at < $2 AND completed_at > 0", true, cutoff)
 
     todos.Each(todo => todo.Destroy(db))
-    if len(todos) > 0 {
+    if todos.Any() {
         log.Printf("todo-app: pruned %d completed todos", len(todos))
     }
     return nil
-}
-
-func atExit() {
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-    defer cancel()
-    if err := cron.StopWithContext(ctx); err != nil {
-        log.Println("todo-app: stop cron:", err)
-    }
-    if db != nil {
-        if err := db.Close(); err != nil {
-            log.Println("todo-app: close database:", err)
-        }
-    }
 }
 
 class TodoApp : http.Server @{
@@ -183,10 +159,6 @@ class TodoApp : http.Server @{
     http.OpenAPI("/api/openapi.json"),
     http.Swagger("/api/swagger")
 } {
-    func parseTodoID(raw string) (int64, error) {
-        return strconv.ParseInt(raw, 10, 64)
-    }
-
     func Home(ctx *http.Context) error @{ http.GET("/")} {
         todos := db.Todos()
         return ctx.HTML(200, todos)
@@ -195,13 +167,15 @@ class TodoApp : http.Server @{
     func CreateTodoFromForm(ctx *http.Context) error @{
         http.POST("/todos")
     } {
-        if err := ctx.Request.ParseForm(); err != nil {
-            return err
-        }
-        title := strings.TrimSpace(ctx.Request.FormValue("title"))
-        if title != "" {
-            todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
+        ctx.Request.ParseForm()
+        title := ctx.Request.FormValue("title")
+        todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
+        try {
             db.CreateTodo(todo)
+        } catch orm.ValidationError err {
+            log.Printf("todo-app: reject todo: %v", err)
+            ctx.Redirect("/", 303)
+            return nil
         }
         ctx.Redirect("/", 303)
         return nil
@@ -210,20 +184,13 @@ class TodoApp : http.Server @{
     func CompleteTodoFromForm(ctx *http.Context) error @{
         http.POST("/todos/{id}/complete")
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return err
-        }
-        var todo *Todo
         try {
-            todo = db.FindTodo(id)
-        } catch sql.ErrNoRows {
+            id := ctx.Param("id").ToInt64()
+            todo := db.FindTodo(id)
+            todo.Complete(db)
+        } catch strconv.NumError, sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
-        }
-        if !todo.Completed {
-            todo.Complete(db)
         }
         ctx.Redirect("/", 303)
         return nil
@@ -232,15 +199,11 @@ class TodoApp : http.Server @{
     func DeleteTodoFromForm(ctx *http.Context) error @{
         http.POST("/todos/{id}/delete")
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return err
-        }
         try {
+            id := ctx.Param("id").ToInt64()
             todo := db.FindTodo(id)
             todo.Destroy(db)
-        } catch sql.ErrNoRows {
+        } catch strconv.NumError, sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
         }
@@ -251,15 +214,11 @@ class TodoApp : http.Server @{
     func ReopenTodoFromForm(ctx *http.Context) error @{
         http.POST("/todos/{id}/reopen")
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return err
-        }
         try {
+            id := ctx.Param("id").ToInt64()
             todo := db.FindTodo(id)
             todo.Activate(db)
-        } catch sql.ErrNoRows {
+        } catch strconv.NumError, sql.ErrNoRows {
             ctx.Redirect("/", 303)
             return nil
         }
@@ -275,7 +234,7 @@ class TodoApp : http.Server @{
         http.ResponseBody(200, "Todo list", "application/json", struct(Items: []Todo{}))
     } {
         todos := db.Todos()
-        return ctx.JSON(TodoList{Items: todos})
+        return ctx.JSON(struct(Items: todos))
     }
 
     func CompletedTodos(ctx *http.Context) error @{
@@ -286,7 +245,7 @@ class TodoApp : http.Server @{
         http.ResponseBody(200, "Completed todo list", "application/json", struct(Items: []*Todo{Todo(Id: 1, Title: "Write the next GPP example", Completed: true, CreatedAt: 1735689600, CompletedAt: 1735689700)}))
     } {
         todos := db.CompletedTodos()
-        return ctx.JSON(TodoList{Items: todos})
+        return ctx.JSON(struct(Items: todos))
     }
 
     func CreateTodo(ctx *http.Context) error @{
@@ -296,20 +255,25 @@ class TodoApp : http.Server @{
         http.Tags("Todos"),
         http.RequestBody("application/json", "The todo title to create", struct(Title: "Write the next GPP example")),
         http.ResponseBody(201, "Todo created", "application/json", struct(Id: 1, Title: "Write the next GPP example", Completed: false, CreatedAt: 1735689600, CompletedAt: 0)),
-        http.ResponseBody(400, "The request body is invalid or the title is empty", "application/json", struct(Error: "todo title is required"))
+        http.ResponseBody(400, "The request body is invalid or validation failed", "application/json", struct(Error: "validation failed", FieldErrors: map[string][]string{})),
+        http.ResponseBody(500, "The todo could not be saved", "application/json", struct(Error: "could not save todo"))
     } {
-        request := CreateTodoRequest()
-        body := stdhttp.MaxBytesReader(ctx.Response, ctx.Request.Body, 1<<20)
-        if err := stdjson.NewDecoder(body).Decode(&request); err != nil {
-            return ctx.JSON(400, APIError{Error: "invalid JSON request body"})
+        try {
+            request := ctx.Bind[struct{ Title string }]()
+            todo := Todo(Id: time.Now().UnixNano(), Title: request.Title, Completed: false, CreatedAt: time.Now().Unix())
+            db.CreateTodo(todo)
+            return ctx.JSON(201, todo)
+        } catch orm.ValidationError err {
+            var fieldErrors map[string][]string
+            fieldErrors = err.Errors
+            return ctx.JSON(400, struct(Error: "validation failed", FieldErrors: fieldErrors))
+        } catch http.BindError err {
+            log.Printf("todo-app: bind create todo: %v", err)
+            return ctx.JSON(400, struct(Error: "invalid JSON request body"))
+        } catch err {
+            log.Printf("todo-app: save todo: %v", err)
+            return ctx.JSON(500, struct(Error: "could not save todo"))
         }
-        title := strings.TrimSpace(request.Title)
-        if title == "" {
-            return ctx.JSON(400, APIError{Error: "todo title is required"})
-        }
-        todo := Todo(Id: time.Now().UnixNano(), Title: title, Completed: false, CreatedAt: time.Now().Unix())
-        db.CreateTodo(todo)
-        return ctx.JSON(201, todo)
     }
 
     func GetTodo(ctx *http.Context) error @{
@@ -321,18 +285,15 @@ class TodoApp : http.Server @{
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
-        }
-        var todo *Todo
         try {
-            todo = db.FindTodo(id)
+            id := ctx.Param("id").ToInt64()
+            todo := db.FindTodo(id)
+            return ctx.JSON(todo)
+        } catch strconv.NumError {
+            return ctx.JSON(400, struct(Error: "invalid todo ID"))
         } catch sql.ErrNoRows {
-            return ctx.JSON(404, APIError{Error: "todo not found"})
+            return ctx.JSON(404, struct(Error: "todo not found"))
         }
-        return ctx.JSON(todo)
     }
 
     func CompleteTodo(ctx *http.Context) error @{
@@ -344,21 +305,16 @@ class TodoApp : http.Server @{
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
-        }
-        var todo *Todo
         try {
-            todo = db.FindTodo(id)
-            if !todo.Completed {
-                todo.Complete(db)
-            }
+            id := ctx.Param("id").ToInt64()
+            todo := db.FindTodo(id)
+            todo.Complete(db)
+            return ctx.JSON(todo)
+        } catch strconv.NumError {
+            return ctx.JSON(400, struct(Error: "invalid todo ID"))
         } catch sql.ErrNoRows {
-            return ctx.JSON(404, APIError{Error: "todo not found"})
+            return ctx.JSON(404, struct(Error: "todo not found"))
         }
-        return ctx.JSON(todo)
     }
 
     func ReopenTodo(ctx *http.Context) error @{
@@ -370,17 +326,15 @@ class TodoApp : http.Server @{
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
-        }
         try {
+            id := ctx.Param("id").ToInt64()
             todo := db.FindTodo(id)
             todo.Activate(db)
             return ctx.JSON(todo)
+        } catch strconv.NumError {
+            return ctx.JSON(400, struct(Error: "invalid todo ID"))
         } catch sql.ErrNoRows {
-            return ctx.JSON(404, APIError{Error: "todo not found"})
+            return ctx.JSON(404, struct(Error: "todo not found"))
         }
     }
 
@@ -393,18 +347,34 @@ class TodoApp : http.Server @{
         http.ResponseBody(400, "The ID is not a number", "application/json", struct(Error: "invalid todo ID")),
         http.ResponseBody(404, "No todo has this ID", "application/json", struct(Error: "todo not found"))
     } {
-        var id int64
-        id, err := this.parseTodoID(ctx.Param("id"))
-        if err != nil {
-            return ctx.JSON(400, APIError{Error: "invalid todo ID"})
-        }
         try {
+            id := ctx.Param("id").ToInt64()
             todo := db.FindTodo(id)
             todo.Destroy(db)
+        } catch strconv.NumError {
+            return ctx.JSON(400, struct(Error: "invalid todo ID"))
         } catch sql.ErrNoRows {
-            return ctx.JSON(404, APIError{Error: "todo not found"})
+            return ctx.JSON(404, struct(Error: "todo not found"))
         }
         return ctx.Text(204, "")
+    }
+
+    func _beforeShutdown() error {
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+        try {
+            cron.StopWithContext(ctx)
+        } catch err {
+            log.Println("todo-app: stop cron:", err)
+        }
+        if db != nil {
+            try {
+                db.Close()
+            } catch err {
+                log.Println("todo-app: close database:", err)
+            }
+        }
+        return nil
     }
 }
 

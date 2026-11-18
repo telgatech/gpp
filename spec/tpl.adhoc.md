@@ -721,7 +721,7 @@ This enables useful runtime patterns.
 For example:
 
 ```gpp id="e54cu1"
-template := server.ErrorTemplate(err)
+template := server._errorTemplate(err)
 
 tpl.Execute(w, template, data)
 ```

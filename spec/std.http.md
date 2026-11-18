@@ -324,7 +324,7 @@ App().Listen(0)
 If Unix is not specified, Listen(port) must bind a TCP listener on the
 supplied port. A port value of 0 allows the operating system to assign an
 available ephemeral port. The bound address must be available through Server.HTTPServer.Addr
-before BeforeListen() runs. After the listener is ready, log its clickable
+before _beforeListen() runs. After the listener is ready, log its clickable
 `http://` URL for TCP listeners, including the actual assigned port; Unix-domain
 listeners should log their socket path without an HTTP scheme. If a TCP listener
 is bound to all interfaces, log `localhost` as the clickable host instead of an
@@ -339,7 +339,7 @@ generated routes are tried. This allows `Handle` to serve requests procedurally
 without declaring annotated routes, while also allowing routes to act as
 fallbacks. Returning an error stops dispatch and sends it through the server
 error handler. The same Context is passed to the selected route, and
-`BeforeRequest` and `AfterRequest` run once around the request.
+`_beforeRequest` and `_afterRequest` run once around the request.
 
 For ordinary HTTP route methods, the first parameter is `*http.Context`.
 Additional parameters must each have exactly one request-binding annotation:

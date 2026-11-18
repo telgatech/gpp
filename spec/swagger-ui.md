@@ -652,8 +652,8 @@ Swagger requests should participate in the normal `http.Server` lifecycle.
 This includes:
 
 ```text
-BeforeRequest
-AfterRequest
+_beforeRequest
+_afterRequest
 request logging
 metrics
 tracing

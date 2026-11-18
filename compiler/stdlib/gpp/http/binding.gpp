@@ -18,6 +18,13 @@ type gppHTTPRecordFieldProvider interface {
 	GppRecordField(index int) any
 }
 
+func gppWrapBindError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return BindError(Cause: err)
+}
+
 func gppBindRequestAs[T any](request *stdhttp.Request, response stdhttp.ResponseWriter) (T, error) {
 	var result T
 	resultValue := reflect.ValueOf(&result).Elem()

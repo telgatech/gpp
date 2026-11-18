@@ -38,7 +38,16 @@ func lambdaFunctionTypesForCall(call *CallExpr, index int, context constructorCo
 			valueTypes[name] = typeName
 		}
 		otherBranch := 3 - index
-		result := coalesceExpressionTypeAST(ternaryBranchValue(call.Arguments[otherBranch].Value), context, valueTypes)
+		result := ternaryContextResultType(call, context, valueTypes)
+		if result == nil {
+			result = parseTypeText(coalesceExpressionTypeNode(ternaryBranchValue(call.Arguments[otherBranch].Value), context, valueTypes))
+		}
+		if result == nil {
+			result = parseTypeText(coalesceExpressionTypeNode(ternaryBranchValue(call.Arguments[index].Value), context, valueTypes))
+		}
+		if result == nil {
+			result = context.CurrentResultAST
+		}
 		if result != nil {
 			return []*FunctionType{{Results: []TypeNode{result}}}
 		}
@@ -257,7 +266,15 @@ func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode
 		if name.Name == "true" || name.Name == "false" {
 			return lambdaNamedType("bool")
 		}
+		if name.Name == "nil" {
+			return lambdaNamedType("nil")
+		}
 		return parameters[name.Name]
+	}
+	if _, ok := expression.(*UnaryExpr); ok {
+		if inferred := coalesceExpressionTypeNode(expression, context, context.CurrentParameterTypes); inferred != "" {
+			return parseTypeText(inferred)
+		}
 	}
 	if literal, ok := expression.(*LiteralExpr); ok {
 		switch literal.Kind {
@@ -350,6 +367,57 @@ func lambdaExpressionTypeAST(expression ExprNode, parameters map[string]TypeNode
 		return parseTypeText(strings.TrimSpace(inferred))
 	}
 	return nil
+}
+
+func ternaryContextResultType(call *CallExpr, context constructorContext, valueTypes map[string]string) TypeNode {
+	if call == nil || context.CurrentResultAST == nil || len(call.Arguments) != 3 {
+		return nil
+	}
+	trueBranch := ternaryBranchValue(call.Arguments[1].Value)
+	falseBranch := ternaryBranchValue(call.Arguments[2].Value)
+	if !isNilExpression(trueBranch) && !isNilExpression(falseBranch) {
+		return nil
+	}
+	expected, err := typeNodeSource(context.CurrentResultAST)
+	if err != nil || !isNilableGoType(expected) {
+		return nil
+	}
+	for _, branch := range []ExprNode{trueBranch, falseBranch} {
+		if isNilExpression(branch) {
+			continue
+		}
+		actual := strings.TrimSpace(coalesceExpressionTypeNode(branch, context, valueTypes))
+		if actual == "" || actual == expected || expected == "any" {
+			continue
+		}
+		if expected == "error" && lambdaTypeImplementsError(actual, context) {
+			continue
+		}
+		if isAssignableStaticType(actual, expected, context) {
+			continue
+		}
+		return nil
+	}
+	return context.CurrentResultAST
+}
+
+func isNilExpression(expression ExprNode) bool {
+	switch value := expression.(type) {
+	case *NameExpr:
+		return value.Name == "nil"
+	case *LiteralExpr:
+		return value.Text == "nil"
+	default:
+		return false
+	}
+}
+
+func lambdaTypeImplementsError(typeName string, context constructorContext) bool {
+	typeName = strings.TrimPrefix(strings.TrimSpace(typeName), "*")
+	if target, ok := context.Targets[typeName]; ok {
+		return classHasErrorMethod(target.Class, context, map[*ClassDecl]bool{})
+	}
+	return false
 }
 
 func ternaryBranchValue(expression ExprNode) ExprNode {
@@ -1168,11 +1236,18 @@ func lambdaExpectedTypesForCallAST(call *CallExpr, index int, context constructo
 	switch function := call.Callee.(type) {
 	case *NameExpr:
 		if function.Name == "__gppTernary" && len(call.Arguments) == 3 && (index == 1 || index == 2) {
-			otherBranch := 3 - index
-			if resultType := coalesceExpressionTypeAST(ternaryBranchValue(call.Arguments[otherBranch].Value), context, valueTypes); resultType != nil {
+			if resultType := ternaryContextResultType(call, context, valueTypes); resultType != nil {
 				if resultTypeName, err := typeNodeSource(resultType); err == nil && strings.TrimSpace(resultTypeName) != "" {
 					return []string{"func() " + strings.TrimSpace(resultTypeName)}
 				}
+			}
+			otherBranch := 3 - index
+			resultTypeName := strings.TrimSpace(coalesceExpressionTypeNode(ternaryBranchValue(call.Arguments[otherBranch].Value), context, valueTypes))
+			if resultTypeName == "" {
+				resultTypeName = strings.TrimSpace(coalesceExpressionTypeNode(ternaryBranchValue(call.Arguments[index].Value), context, valueTypes))
+			}
+			if resultTypeName != "" {
+				return []string{"func() " + resultTypeName}
 			}
 		}
 		for _, signature := range context.FunctionSignatures[function.Name] {
@@ -1684,7 +1759,16 @@ func lambdaResultMatches(actual, expected string, context constructorContext) bo
 	if expected == "" {
 		return actual == ""
 	}
+	if actual == "nil" {
+		return isNilableGoType(expected)
+	}
 	if actual == "" {
+		return true
+	}
+	if expected == "any" {
+		return true
+	}
+	if expected == "error" && lambdaTypeImplementsError(actual, context) {
 		return true
 	}
 	return actual == expected || isAssignableStaticType(actual, expected, context)

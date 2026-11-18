@@ -35,11 +35,11 @@ class AdminRoutes @{http.Mountable, http.Prefix("/v1")} {
 }
 
 class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAPI, http.Swagger} {
-    func ErrorTemplate() string {
+    func _errorTemplate() string {
         return "ErrorPage"
     }
 
-    func BeforeRequest(ctx *http.Context) error {
+    func _beforeRequest(ctx *http.Context) error {
         ctx.Set("request-source", "GPP")
         return nil
     }
@@ -111,16 +111,16 @@ class App : http.Server @{http.IP("127.0.0.1"), http.Prefix("/api"), http.OpenAP
         return ctx.HTML(200, "GPP HTTP", "Page")
     }
 
-    func AfterRequest(ctx *http.Context) error {
+    func _afterRequest(ctx *http.Context) error {
         return nil
     }
 
-    func BeforeShutdown() error {
+    func _beforeShutdown() error {
         fmt.Println("server shutting down")
         return nil
     }
 
-    func AfterShutdown() error {
+    func _afterShutdown() error {
         fmt.Println("server stopped")
         return nil
     }

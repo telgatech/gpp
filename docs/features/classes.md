@@ -191,6 +191,29 @@ while showing protected members inside descendant classes. Constructor
 argument completions follow the constructor rules below and include inherited
 protected fields accepted by the child constructor.
 
+A protected method can serve as a subclass extension point. Callers use the
+public method; a child overrides the protected method to change its behavior:
+
+```gpp
+class Greeting {
+    func Message() string {
+        return this._message()
+    }
+
+    func _message() string {
+        return "Hello"
+    }
+}
+
+class PersonalizedGreeting : Greeting {
+    func _message() string {
+        return "Hello, Ada"
+    }
+}
+
+fmt.Println(PersonalizedGreeting().Message()) // Hello, Ada
+```
+
 Visibility controls member access and inheritance. Constructor arguments are a
 separate access path: callers can pass public and protected fields accepted by
 the constructor; private fields can be passed only from a method of the class

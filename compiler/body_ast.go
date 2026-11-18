@@ -1264,7 +1264,7 @@ func astCatchClause(statement *statementDraft) CatchClause {
 		return clause
 	}
 	last := clean[len(clean)-1]
-	if len(clean) > 1 && (last.Kind == TokenIdentifier || last.Kind == TokenKeyword) && clean[len(clean)-2].Text != "," {
+	if len(clean) > 1 && (last.Kind == TokenIdentifier || last.Kind == TokenKeyword) && clean[len(clean)-2].Text != "," && clean[len(clean)-2].Text != "." {
 		candidate := clean[:len(clean)-1]
 		isMultiType := topLevelToken(candidate, ",") >= 0
 		if isMultiType {

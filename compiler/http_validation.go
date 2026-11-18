@@ -183,7 +183,7 @@ func gppOAuthValidNameForCompiler(name string) bool {
 
 func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 	for _, method := range class.Methods {
-		if method.Name != "OAuthLogin" && method.Name != "OAuthError" {
+		if method.Name != "_oauthLogin" && method.Name != "_oauthError" {
 			continue
 		}
 		parameters, err := parameterInfosForMethod(method)
@@ -193,20 +193,20 @@ func validateHTTPOAuthHooks(pkg *PackageSymbols, class *ClassDecl) error {
 		if methodResultSource(method) != "" && strings.TrimSpace(methodResultSource(method)) != "error" {
 			return methodDiagnosticf(class, &method, "%s may return only error", method.Name)
 		}
-		if method.Name == "OAuthError" {
+		if method.Name == "_oauthError" {
 			if len(parameters) != 3 || !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || normalizeHTTPHookType(parameters[1].typeText()) != "string" || normalizeHTTPHookType(parameters[2].typeText()) != "error" {
-				return methodDiagnosticf(class, &method, "OAuthError must have signature (ctx *http.Context, provider string, err error)")
+				return methodDiagnosticf(class, &method, "_oauthError must have signature (ctx *http.Context, provider string, err error)")
 			}
 			continue
 		}
 		if len(parameters) != 2 && len(parameters) != 3 {
-			return methodDiagnosticf(class, &method, "OAuthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])")
+			return methodDiagnosticf(class, &method, "_oauthLogin must have signature (ctx *http.Context, identity http.OAuthIdentity[, token http.OAuthToken])")
 		}
 		if !httpOAuthTypeMatches(pkg, parameters[0].typeText(), "Context", true, false) || !httpOAuthTypeMatches(pkg, parameters[1].typeText(), "OAuthIdentity", false, true) {
-			return methodDiagnosticf(class, &method, "OAuthLogin has invalid signature")
+			return methodDiagnosticf(class, &method, "_oauthLogin has invalid signature")
 		}
 		if len(parameters) == 3 && !httpOAuthTypeMatches(pkg, parameters[2].typeText(), "OAuthToken", false, true) {
-			return methodDiagnosticf(class, &method, "OAuthLogin token parameter must be http.OAuthToken")
+			return methodDiagnosticf(class, &method, "_oauthLogin token parameter must be http.OAuthToken")
 		}
 	}
 	return nil

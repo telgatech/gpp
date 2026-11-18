@@ -932,9 +932,9 @@ func emitTestWrappers(selection testSelectionResult, output string) error {
 			fmt.Fprintf(&source, "func %s(t *testing.T) {\n", functionName)
 			fmt.Fprintf(&source, "\tsuite := &%s{}\n", testCase.Suite)
 			source.WriteString("\tsuite.Attach(t)\n")
-			source.WriteString("\t__gppRunSuiteCase(t, suite.Setup, suite.")
+			source.WriteString("\t__gppRunSuiteCase(t, suite.GppProtected_setup, suite.")
 			source.WriteString(testCase.Method)
-			source.WriteString(", suite.Teardown)\n}\n\n")
+			source.WriteString(", suite.GppProtected_teardown)\n}\n\n")
 		}
 		if err := os.WriteFile(filepath.Join(directory, "gpp_suites_test.go"), []byte(source.String()), 0644); err != nil {
 			return err

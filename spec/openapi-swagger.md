@@ -1400,8 +1400,8 @@ Global server middleware may still apply.
 Generated documentation requests should participate in normal:
 
 ```gpp
-BeforeRequest
-AfterRequest
+_beforeRequest
+_afterRequest
 ```
 
 hooks.

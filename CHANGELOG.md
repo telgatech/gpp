@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-18
+
+- Improved the Todo example’s validation, error handling, and API responses to use new language capabilities.
+- Added FAQ guidance for reporting experimental bugs and regressions.
+- Added `Any()` for slices to check whether they contain elements.
+- Added reusable `orm.ValidationError` with multiple messages per field.
+- Added `http.BindError` so handlers can distinguish request binding failures from application and database errors.
+- Made HTTP, ORM, queue execution, and test setup/teardown hooks protected methods called by their frameworks.
+
 ## 2026-11-17
 
 - Added `Type(...)` construction through overloaded static `New` factories.
@@ -106,7 +115,7 @@
 - Added `ctx.HTML` for HTML responses from named, path-matched, or inline templates; `ctx.Template` remains as an obsolete alias.
 - Added class `init()` hooks that run after constructor fields are populated, in base-to-derived order; initializer errors participate in normal error promotion.
 - Added the generic return-value form `ctx.Bind[T]()` alongside the existing destination-based binding. It supports GPP classes, Go structs, and structural records, including pointer result types; query, JSON, and form input are selected from the request method and content type.
-- Added `http.Server.Handle(ctx) error` as a procedural handler; a response skips route dispatch, while an unwritten response falls through to annotated routes (if any).
+- Added `http.Server._handle(ctx) error` as a procedural handler; a response skips route dispatch, while an unwritten response falls through to annotated routes (if any).
 - Added `http.Server.PublicDir` for root static files and made `http.Files` mounts run before procedural handlers and routes. Both prefer `index.html` then `index.htm`, disable directory listings by default, and use a five-minute cache policy with gzip for compressible responses.
 - Simplified `http.Context.Template` to one call with optional status, data, and key arguments; an omitted key uses the request path.
 - Split generic typed SQL queries into the new `gpp/sql` package; model mapping and model operations remain in `gpp/orm`.

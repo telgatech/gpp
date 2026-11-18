@@ -871,7 +871,7 @@ Applications handle successful login through a virtual server method.
 Recommended:
 
 ```gpp
-func OAuthLogin(
+func _oauthLogin(
     ctx *http.Context,
     identity http.OAuthIdentity,
 ) {
@@ -886,7 +886,7 @@ class App : http.Server @{
     http.OAuth(http.OAuthProvider.Google)
 } {
 
-    func OAuthLogin(
+    func _oauthLogin(
         ctx *http.Context,
         identity http.OAuthIdentity,
     ) {
@@ -928,7 +928,7 @@ what authorization role the user receives
 Applications needing provider API access may use an overloaded hook:
 
 ```gpp
-func OAuthLogin(
+func _oauthLogin(
     ctx *http.Context,
     identity http.OAuthIdentity,
     token http.OAuthToken,
@@ -964,7 +964,7 @@ The provider token is separate from identity information.
 Ordinary social-login applications should use:
 
 ```gpp
-OAuthLogin(ctx, identity)
+_oauthLogin(ctx, identity)
 ```
 
 and never receive provider tokens.
@@ -1008,7 +1008,7 @@ PKCE verifier
 Applications may override:
 
 ```gpp
-func OAuthError(
+func _oauthError(
     ctx *http.Context,
     provider string,
     err error,
@@ -1150,8 +1150,8 @@ This prevents circular authentication such as requiring login to access `/auth/g
 Generated OAuth routes may still participate in:
 
 ```gpp
-BeforeRequest
-AfterRequest
+_beforeRequest
+_afterRequest
 ```
 
 unless explicitly excluded by server policy.
@@ -1300,7 +1300,7 @@ class App : http.Server @{
     http.OAuth(http.OAuthProvider.Google)
 } {
 
-    func OAuthLogin(
+    func _oauthLogin(
         ctx *http.Context,
         identity http.OAuthIdentity,
     ) {
@@ -1572,7 +1572,7 @@ explicit name + URL + env names + scopes
              ↓
        OAuthIdentity
              ↓
-       App.OAuthLogin
+       App._oauthLogin
 ```
 
 The core rules are:

@@ -43,7 +43,7 @@ class App : http.Server {
         return ctx.Text("Hello " + ctx.Param("name"))
     }
 
-    func BeforeRequest(ctx *http.Context) error {
+    func _beforeRequest(ctx *http.Context) error {
         return nil
     }
 }
@@ -55,14 +55,14 @@ and [lifecycle guide](/reference/specifications/std.http.lifecycle).
 
 ## Handle requests before route dispatch
 
-`http.Server` provides a default `Handle(ctx)` method that returns `nil`, so
+`http.Server` provides a default `_handle(ctx)` method that returns `nil`, so
 existing annotated routes work unchanged. Override it for a procedural handler
 that can respond to requests directly; annotated routes remain available as
 fallbacks:
 
 ```go
 class App : http.Server {
-    func Handle(ctx *http.Context) error {
+    func _handle(ctx *http.Context) error {
         if ctx.Request.URL.Path == "/healthz" {
             return ctx.Text("ok")
         }
@@ -71,10 +71,10 @@ class App : http.Server {
 }
 ```
 
-`Handle` runs before annotated routes on every request. If it writes a response,
+`_handle` runs before annotated routes on every request. If it writes a response,
 route dispatch stops; if it returns without writing, the server tries the
 annotated routes. Return an error to use the server's normal error handler. This
-lets an application use `Handle` as its only handler or mix it with annotated
+lets an application use `_handle` as its only handler or mix it with annotated
 routes as fallbacks. The same context reaches a selected route, and request
 hooks run once around the whole request.
 

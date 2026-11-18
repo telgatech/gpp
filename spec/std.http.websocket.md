@@ -85,14 +85,14 @@ it. No shared hub is created automatically.
 
 ## Request and server hooks
 
-`BeforeRequest` runs before the WebSocket handshake. If it returns an error,
+`_beforeRequest` runs before the WebSocket handshake. If it returns an error,
 the handshake is not attempted and the regular HTTP error handler is used.
-`AfterRequest` runs after the WebSocket handler returns. The request lifecycle
+`_afterRequest` runs after the WebSocket handler returns. The request lifecycle
 therefore covers the full duration of the connection handler.
 
 Once the upgrade succeeds, handler errors cannot be returned as HTTP responses.
 The server logs the error and closes the WebSocket connection. Errors from
-`AfterRequest` are handled the same way. A failed handshake does not invoke the
+`_afterRequest` are handled the same way. A failed handshake does not invoke the
 WebSocket handler.
 
 The initial implementation does not maintain a registry of upgraded

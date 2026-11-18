@@ -464,7 +464,7 @@ func gppOAuthBoolClaim(claims map[string]any, key string) bool { value, ok := cl
 
 func gppOAuthInvokeLogin(app any, ctx *Context, identity *OAuthIdentity, token *OAuthToken) error {
 	value := reflect.ValueOf(app)
-	for _, candidate := range []struct { Name string; Values []any }{{Name: "OAuthLogin", Values: []any{ctx, identity}}, {Name: "OAuthLogin", Values: []any{ctx, identity, token}}, {Name: "OAuthLogin__gpp_3", Values: []any{ctx, identity, token}}, {Name: "OAuthLogin__gpp_2", Values: []any{ctx, identity}}} {
+	for _, candidate := range []struct { Name string; Values []any }{{Name: "GppProtected_oauthLogin", Values: []any{ctx, identity}}, {Name: "GppProtected_oauthLogin", Values: []any{ctx, identity, token}}, {Name: "GppProtected_oauthLogin__gpp_3", Values: []any{ctx, identity, token}}, {Name: "GppProtected_oauthLogin__gpp_2", Values: []any{ctx, identity}}} {
 		method := value.MethodByName(candidate.Name); if !method.IsValid() || method.Type().NumIn() != len(candidate.Values) { continue }
 		arguments := []reflect.Value{}; compatible := true
 		for index, item := range candidate.Values { argument, ok := gppOAuthReflectArgument(item, method.Type().In(index)); if !ok { compatible = false; break }; arguments = append(arguments, argument) }
@@ -483,9 +483,7 @@ func gppOAuthReflectArgument(value any, expected reflect.Type) (reflect.Value, b
 	return reflect.Value{}, false
 }
 
-func gppOAuthInvokeError(app any, ctx *Context, provider string, cause error) error {
-	method := reflect.ValueOf(app).MethodByName("OAuthError")
-	if !method.IsValid() || method.Type().NumIn() != 3 { return nil }
-	result := method.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(provider), reflect.ValueOf(cause)})
-	return gppErrorResult(result)
+func gppOAuthInvokeError(app GppServer, ctx *Context, provider string, cause error) error {
+	app.GppProtected_oauthError(ctx, provider, cause)
+	return nil
 }

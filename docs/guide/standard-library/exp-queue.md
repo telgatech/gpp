@@ -8,7 +8,8 @@ Do not open the same queue file from multiple processes or queue instances.
 
 ## Define and push messages
 
-Derive message classes from `queue.Message` and implement `Execute() error`.
+Derive message classes from `queue.Message` and implement the protected
+`_execute() error` hook. The queue calls it when the message is ready to run.
 `Priority` defaults to `0`; larger values run first, and messages at equal
 priority run in insertion order:
 
@@ -23,7 +24,7 @@ class EmailMessage : queue.Message {
     Recipient string
     Subject string
 
-    func Execute() error {
+    func _execute() error {
         fmt.Println("sending", this.Subject, "to", this.Recipient)
         return nil
     }
@@ -32,7 +33,7 @@ class EmailMessage : queue.Message {
 class BuildReportMessage : queue.Message {
     Build string
 
-    func Execute() error {
+    func _execute() error {
         fmt.Println("publishing build report", this.Build)
         return nil
     }
@@ -62,13 +63,13 @@ the size threshold also triggers compaction when it is exceeded.
 
 `Drain(timeout)` stops accepting new messages and waits for queued work to
 finish. If it times out, it returns an error and signals the worker to stop
-after its current `Execute` call; cleanup may finish after `Drain` returns, and
+after its current message execution; cleanup may finish after `Drain` returns, and
 unprocessed messages remain durable for the next run. `Stop()` stops after the
-current `Execute` call and waits for shutdown to finish, leaving pending
+current message execution and waits for shutdown to finish, leaving pending
 messages in the queue file.
 
-Failed `Execute` calls are retried, so `Drain` can time out if a message keeps
-failing. Delivery is at least once; make `Execute` safe to run again if the
+Failed message executions are retried, so `Drain` can time out if a message keeps
+failing. Delivery is at least once; make `_execute` safe to run again if the
 process stops before an acknowledgement is recorded. The queue is not shared
 between processes; use one open queue instance per file.
 

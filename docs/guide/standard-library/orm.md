@@ -112,11 +112,47 @@ func SaveChanges(db *sql.DB, employee *Employee, account *Account) {
 }
 ```
 
-The package also supports validation and lifecycle hooks on models. Use hooks when a model needs to validate or react to create, update, or delete operations; use explicit SQL for joins, reporting queries, and database-specific behavior.
+## Model lifecycle hooks
 
-Hooks receive the active `SQLExecutor`, which can be either a database connection
-or a transaction. Call `event.Insert(exec)` to insert another model from a
-hook while keeping that write on the same connection or transaction.
+`orm.Model` provides protected hook methods for model-specific persistence
+behavior. Override them in a model class; the ORM calls them automatically
+through `Insert`, `Update`, and `Destroy`. Application code calls those
+persistence methods rather than invoking hooks directly.
+
+```gpp
+class Todo : orm.Model {
+    Title string
+
+    func _validate(exec orm.SQLExecutor) error {
+        validation := orm.ValidationError()
+        if this.Title.IsBlank() {
+            validation.Add("title", "is required")
+        }
+        if !validation.IsEmpty() {
+            return validation
+        }
+        return nil
+    }
+
+    func _beforeCreate(exec orm.SQLExecutor) error {
+        this.Title = this.Title.TrimSpace()
+        return nil
+    }
+}
+```
+
+`_validate` runs before inserts and updates. `_beforeCreate` and `_afterCreate`
+run before and after insertion; `_beforeUpdate` and `_afterUpdate` run around
+updates; `_beforeDelete` and `_afterDelete` run around deletion. An error from a
+hook stops the operation and is propagated to the caller.
+
+`orm.ValidationError` carries a list of messages for each field in its
+`Errors` map. Repeated calls to `Add(field, message)` append messages, so one
+field can report more than one failure in a validation pass.
+
+Hooks receive the active `SQLExecutor`, which can be either a database
+connection or a transaction. A hook can use it for related writes on that same
+connection or transaction.
 
 ## Further reading
 

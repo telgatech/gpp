@@ -117,6 +117,7 @@ func __gppDiscard3[A any, B any, C any](first A, second B, third C, err error) {
 type catchClause struct {
 	typeNodes  []TypeNode
 	value      string
+	values     []string
 	errorAlias string
 	variable   string
 	line       int
@@ -400,20 +401,39 @@ func validateASTCatchClauses(statement *TryStmt, context constructorContext) err
 		return fmt.Errorf("try statement is nil")
 	}
 	for _, clause := range statement.Catches {
-		types := clause.Types
+		types := append([]TypeNode(nil), clause.Types...)
+		values := []string{}
 		if clause.Value != "" {
 			if isCatchTypeName(clause.Value, context) {
 				types = []TypeNode{parseTypeText(clause.Value)}
 			} else if isCatchErrorValue(clause.Value, context) {
-				continue
+				values = append(values, clause.Value)
 			} else {
 				return fmt.Errorf("invalid catch error value %s", clause.Value)
 			}
 		}
-		if len(types) == 0 && clause.Binding != "" && isCatchTypeName(clause.Binding, context) {
-			types = []TypeNode{parseTypeText(clause.Binding)}
+		resolvedTypes := make([]TypeNode, 0, len(types))
+		for _, typeNode := range types {
+			name, err := typeNodeSource(typeNode)
+			if err != nil {
+				return err
+			}
+			name = strings.TrimSpace(name)
+			if isCatchTypeName(name, context) {
+				resolvedTypes = append(resolvedTypes, typeNode)
+			} else if isCatchErrorValue(name, context) {
+				values = append(values, name)
+			} else {
+				return fmt.Errorf("invalid catch type %s", name)
+			}
 		}
-		if len(types) == 0 {
+		types = resolvedTypes
+		if len(types) == 0 && len(values) == 0 && clause.Binding != "" && isCatchTypeName(clause.Binding, context) {
+			types = []TypeNode{parseTypeText(clause.Binding)}
+		} else if len(types) == 0 && len(values) == 0 && clause.Binding != "" && isCatchErrorValue(clause.Binding, context) {
+			values = append(values, clause.Binding)
+		}
+		if len(types) == 0 && len(values) == 0 {
 			types = []TypeNode{parseTypeText("error")}
 		}
 		seen := map[string]bool{}
@@ -480,6 +500,9 @@ func nativeCatchNamedType(name string, context constructorContext) (types.Type, 
 
 func isCatchErrorValue(name string, context constructorContext) bool {
 	parts := strings.Split(strings.TrimSpace(name), ".")
+	if len(parts) == 1 {
+		return context.GlobalValueTypes != nil && strings.TrimSpace(context.GlobalValueTypes[parts[0]]) == "error"
+	}
 	if len(parts) != 2 || context.AvailableImports == nil {
 		return false
 	}
@@ -610,6 +633,8 @@ func lowerASTTryDirectNode(statement *TryStmt, context constructorContext, rethr
 		if len(types) == 0 && variable != "" && isCatchTypeName(variable, context) {
 			types = append(types, parseTypeText(variable))
 			variable = ""
+		} else if len(types) == 0 && variable != "" && isCatchErrorValue(variable, context) {
+			return nil, false, nil
 		}
 		if len(types) == 0 {
 			types = []TypeNode{parseTypeText("error")}
@@ -716,23 +741,40 @@ func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]ca
 	}
 	clauses := make([]catchClause, 0, len(statement.Catches))
 	for _, parsed := range statement.Catches {
-		types := append([]TypeNode(nil), parsed.Types...)
+		types := []TypeNode{}
+		values := []string{}
 		variable := parsed.Binding
-		value := ""
+		for _, typeNode := range parsed.Types {
+			name, typeErr := typeNodeSource(typeNode)
+			if typeErr != nil {
+				return nil, typeErr
+			}
+			name = strings.TrimSpace(name)
+			if isCatchTypeName(name, context) {
+				types = append(types, typeNode)
+			} else if isCatchErrorValue(name, context) {
+				values = append(values, name)
+			} else {
+				return nil, fmt.Errorf("invalid catch type %s", name)
+			}
+		}
 		if parsed.Value != "" {
 			if isCatchTypeName(parsed.Value, context) {
 				types = append(types, parseTypeText(parsed.Value))
 			} else if isCatchErrorValue(parsed.Value, context) {
-				value = parsed.Value
+				values = append(values, parsed.Value)
 			} else {
 				return nil, fmt.Errorf("invalid catch error value %s", parsed.Value)
 			}
 		}
-		if len(types) == 0 && variable != "" && isCatchTypeName(variable, context) {
+		if len(types) == 0 && len(values) == 0 && variable != "" && isCatchTypeName(variable, context) {
 			types = append(types, parseTypeText(variable))
 			variable = ""
+		} else if len(types) == 0 && len(values) == 0 && variable != "" && isCatchErrorValue(variable, context) {
+			values = append(values, variable)
+			variable = ""
 		}
-		if len(types) == 0 && value == "" {
+		if len(types) == 0 && len(values) == 0 {
 			types = []TypeNode{parseTypeText("error")}
 		}
 		for _, typeNode := range types {
@@ -752,7 +794,7 @@ func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]ca
 			return nil, bodyErr
 		}
 		errorAlias := ""
-		if value != "" {
+		if len(values) > 0 {
 			errorAlias = "errors"
 			for alias, importPath := range context.AvailableImports {
 				if importPath == "errors" {
@@ -761,7 +803,7 @@ func exceptionCatchClauses(statement *TryStmt, context constructorContext) ([]ca
 				}
 			}
 		}
-		clauses = append(clauses, catchClause{typeNodes: types, value: value, errorAlias: errorAlias, variable: variable, line: parsed.Span().Line, body: body})
+		clauses = append(clauses, catchClause{typeNodes: types, values: values, errorAlias: errorAlias, variable: variable, line: parsed.Span().Line, body: body})
 	}
 	return clauses, nil
 }
@@ -2052,6 +2094,17 @@ func lowerExceptionBlockNodes(block *BlockStmt, context constructorContext) erro
 	if block == nil {
 		return nil
 	}
+	localTypes := coalesceValueTypes(block, context)
+	if len(localTypes) > 0 {
+		parameterTypes := make(map[string]string, len(context.CurrentParameterTypes)+len(localTypes))
+		for name, typeName := range context.CurrentParameterTypes {
+			parameterTypes[name] = typeName
+		}
+		for name, typeName := range localTypes {
+			parameterTypes[name] = typeName
+		}
+		context.CurrentParameterTypes = parameterTypes
+	}
 	for _, statement := range block.Statements {
 		if err := lowerExceptionStmtNodes(statement, context); err != nil {
 			return err
@@ -3083,7 +3136,7 @@ func lowerTryASTNode(tryBlock *ast.BlockStmt, clauses []catchClause, finallyBloc
 func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, context constructorContext) (ast.Stmt, error) {
 	hasValueCatch := false
 	for _, clause := range clauses {
-		if clause.value != "" {
+		if len(clause.values) > 0 || clause.value != "" {
 			hasValueCatch = true
 			break
 		}
@@ -3097,18 +3150,38 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 			if clause.body != nil {
 				caseBody = append(caseBody, clause.body.List...)
 			}
-			if clause.value != "" {
-				value, err := parser.ParseExpr(clause.value)
-				if err != nil {
-					return nil, err
+			values := append([]string(nil), clause.values...)
+			if len(values) == 0 && clause.value != "" {
+				values = append(values, clause.value)
+			}
+			if len(values) > 0 {
+				var valueCondition ast.Expr
+				for _, valueName := range values {
+					value, err := parser.ParseExpr(valueName)
+					if err != nil {
+						return nil, err
+					}
+					matches := call(selector(identifier(clause.errorAlias), "Is"), thrownError, value)
+					if valueCondition == nil {
+						valueCondition = matches
+					} else {
+						valueCondition = &ast.BinaryExpr{X: valueCondition, Op: token.LOR, Y: matches}
+					}
 				}
 				condition := &ast.BinaryExpr{
 					X:  &ast.BinaryExpr{X: thrownError, Op: token.NEQ, Y: identifier("nil")},
 					Op: token.LAND,
-					Y:  call(selector(identifier(clause.errorAlias), "Is"), thrownError, value),
+					Y:  valueCondition,
 				}
 				condition = &ast.BinaryExpr{X: &ast.UnaryExpr{Op: token.NOT, X: handled}, Op: token.LAND, Y: condition}
-				statements = append(statements, &ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: caseBody}})
+				valueBody := append([]ast.Stmt(nil), caseBody...)
+				if clause.variable != "" {
+					binding := &ast.AssignStmt{Lhs: []ast.Expr{identifier(clause.variable)}, Tok: token.DEFINE, Rhs: []ast.Expr{thrownError}}
+					valueBody = append([]ast.Stmt{binding}, valueBody...)
+				}
+				statements = append(statements, &ast.IfStmt{Cond: condition, Body: &ast.BlockStmt{List: valueBody}})
+			}
+			if len(clause.typeNodes) == 0 {
 				continue
 			}
 			typeCases := make([]ast.Expr, 0, len(clause.typeNodes)*2)
@@ -3122,7 +3195,7 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 			catchName := identifier(fmt.Sprintf("__gppCaught%d", index))
 			if clause.variable != "" {
 				value := ast.Expr(catchName)
-				if len(clause.typeNodes) > 1 {
+				if len(clause.typeNodes) > 1 || len(values) > 0 {
 					value = call(identifier("error"), catchName)
 				}
 				binding := ast.Stmt(&ast.AssignStmt{
@@ -3133,6 +3206,10 @@ func lowerCatchSwitch(thrownError, handled ast.Expr, clauses []catchClause, cont
 				} else {
 					caseBody = append([]ast.Stmt{binding}, caseBody...)
 				}
+			} else {
+				caseBody = append([]ast.Stmt{&ast.AssignStmt{
+					Lhs: []ast.Expr{identifier("_")}, Tok: token.ASSIGN, Rhs: []ast.Expr{catchName},
+				}}, caseBody...)
 			}
 			switchStatement := &ast.TypeSwitchStmt{
 				Assign: &ast.AssignStmt{

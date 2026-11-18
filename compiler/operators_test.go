@@ -7,6 +7,13 @@ import (
 	"testing"
 )
 
+func TestFileHasTernaryRecognizesLoweredCall(t *testing.T) {
+	file := &File{Source: "package main\nfunc main() { __gppTernary(true, func() int { return 1 }, func() int { return 0 }) }\n"}
+	if !fileHasTernary(file) {
+		t.Fatal("lowered ternary call should trigger the runtime helper")
+	}
+}
+
 func TestCompileFilesArithmeticBitwiseLogicalAndComparisonOperators(t *testing.T) {
 	output := compileAndRunOperatorFixture(t, `package main
 
@@ -123,6 +130,47 @@ func labelThenDefault(enabled bool) string {
 	return label + ":" + (enabled ? "on" : "off")
 }
 
+func chooseNumber(useFirst bool) int {
+	return useFirst ? 2 + 3 : 5 * 2
+}
+
+func chooseBoolean(value bool) bool {
+	return value ? true : false
+}
+
+func parenthesizedCondition(active bool, score int) string {
+	return (active && score > 0) ? ("active") : ("inactive")
+}
+
+func assignTernaryResult(score int) string {
+	result := "low"
+	result = score >= 10 ? "high" : "low"
+	return result
+}
+
+class OperationError {
+	Message string
+
+	func Error() string {
+		return this.Message
+	}
+}
+
+func errorTernary(empty bool) error {
+	failure := OperationError(Message: "operation failed")
+	return empty ? nil : failure
+}
+
+func nilTernaryBranch(isEmpty bool) *int {
+	value := 7
+	return isEmpty ? nil : &value
+}
+
+func nilTernaryElse(isPresent bool) *int {
+	value := 8
+	return isPresent ? &value : nil
+}
+
 func trueBranch() string {
 	trueBranchCalls++
 	return "true branch"
@@ -149,19 +197,31 @@ func main() {
 	secondary := nestedLabel(false, true)
 	none := nestedLabel(false, false)
 	reordered := labelThenDefault(false)
+	chosenNumber := chooseNumber(true)
+	otherNumber := chooseNumber(false)
+	chosenBoolean := chooseBoolean(true)
+	parenthesized := parenthesizedCondition(true, 1)
+	assigned := assignTernaryResult(10)
+	emptyError := errorTernary(true)
+	nonemptyError := errorTernary(false)
 	selected := true ? trueBranch() : falseBranch()
 	unselected := false ? trueBranch() : falseBranch()
 
 	worker := Worker()
 	firstStatus := worker.Status()
 	secondStatus := worker.Status()
+	empty := nilTernaryBranch(true)
+	present := nilTernaryElse(true)
 
 	fmt.Println(first, second, secondary, none, reordered)
+	fmt.Println(chosenNumber, otherNumber, chosenBoolean, parenthesized, assignTernaryResult(0), assigned)
+	fmt.Println(emptyError == nil, nonemptyError.Error())
 	fmt.Println(selected, unselected, trueBranchCalls, falseBranchCalls)
 	fmt.Println(firstStatus, secondStatus, defaultCalls)
+	fmt.Println(empty == nil, *present)
 }
 `)
-	if output != "on on secondary none off:on\ntrue branch false branch 1 1\nready ready 3\n" {
+	if output != "on on secondary none off:on\n5 10 true active low high\ntrue operation failed\ntrue branch false branch 1 1\nready ready 3\ntrue 8\n" {
 		t.Fatalf("unexpected ternary/operator results across functions: %q", output)
 	}
 }

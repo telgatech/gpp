@@ -387,7 +387,8 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	}
 
 	declarationsPrefix := localRuntimeImports + embedDefinitions + templateDefinitions
-	if fileHasTernary(file) && (context.Ternary == nil || !context.Ternary.RuntimeEmitted) {
+	if (fileHasTernary(file) || fileHasTernary(&File{Source: body})) &&
+		(context.Ternary == nil || !context.Ternary.RuntimeEmitted) {
 		declarationsPrefix += ternaryRuntimeDefinitions()
 		if context.Ternary != nil {
 			context.Ternary.RuntimeEmitted = true
@@ -557,7 +558,7 @@ func fileHasTernary(file *File) bool {
 		return false
 	}
 	for _, token := range tokens {
-		if token.Text == "?" && token.Kind == TokenPunctuation {
+		if token.Text == "__gppTernary" || token.Text == "?" && token.Kind == TokenPunctuation {
 			return true
 		}
 	}

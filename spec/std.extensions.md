@@ -280,12 +280,12 @@ String parsing and scalar formatting are also available through the prelude:
 
 ```gpp
 extend string {
-    func ToInt(fallback int = 0) int
-    func ToInt64(fallback int64 = 0) int64
-    func ToUint64(fallback uint64 = 0) uint64
-    func ToFloat32(fallback float32 = 0) float32
-    func ToFloat64(fallback float64 = 0) float64
-    func ToBool(fallback bool = false) bool
+    func ToInt() (int, error)
+    func ToInt64() (int64, error)
+    func ToUint64() (uint64, error)
+    func ToFloat32() (float32, error)
+    func ToFloat64() (float64, error)
+    func ToBool() (bool, error)
 }
 
 extend int { func String() string }

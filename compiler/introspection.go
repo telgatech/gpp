@@ -768,7 +768,7 @@ func isNilableGoType(typeName string) bool {
 	return strings.HasPrefix(name, "*") || strings.HasPrefix(name, "[]") ||
 		strings.HasPrefix(name, "map[") || strings.HasPrefix(name, "chan ") ||
 		strings.HasPrefix(name, "func(") || strings.HasPrefix(name, "interface{") ||
-		name == "any"
+		name == "any" || name == "error"
 }
 
 type introspectionExprKind int

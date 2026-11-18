@@ -1,6 +1,29 @@
 package gpp.orm
 
-import std "gpp/std"
+import (
+	"fmt"
+	std "gpp/std"
+)
+
+class ValidationError {
+	// Errors maps each invalid field name to its validation messages.
+	Errors map[string][]string
+
+	func Add(field string, message string) {
+		if this.Errors == nil {
+			this.Errors = map[string][]string{}
+		}
+		this.Errors[field] = append(this.Errors[field], message)
+	}
+
+	func IsEmpty() bool {
+		return len(this.Errors) == 0
+	}
+
+	func Error() string {
+		return fmt.Sprintf("orm: validation failed: %v", this.Errors)
+	}
+}
 
 class Model {
 	static func Get(exec SQLExecutor, where string, args ...any) (*self, error) {
@@ -37,68 +60,68 @@ class Model {
 
 	func Destroy(exec SQLExecutor) error {
 		entity := gppORMDynamicObject(this).(gppORMHooks)
-		if err := entity.BeforeDelete(exec); err != nil {
+		if err := entity.GppProtected_beforeDelete(exec); err != nil {
 			return err
 		}
 		if err := gppORMDelete(exec, entity); err != nil {
 			return err
 		}
-		return entity.AfterDelete(exec)
+		return entity.GppProtected_afterDelete(exec)
 	}
 
 	func Insert(exec SQLExecutor) error {
 		entity := gppORMDynamicObject(this).(gppORMHooks)
-		if err := entity.Validate(exec); err != nil {
+		if err := entity.GppProtected_validate(exec); err != nil {
 			return err
 		}
-		if err := entity.BeforeCreate(exec); err != nil {
+		if err := entity.GppProtected_beforeCreate(exec); err != nil {
 			return err
 		}
 		if err := gppORMInsert(exec, entity); err != nil {
 			return err
 		}
-		return entity.AfterCreate(exec)
+		return entity.GppProtected_afterCreate(exec)
 	}
 
 	func Update(exec SQLExecutor) error {
 		entity := gppORMDynamicObject(this).(gppORMHooks)
-		if err := entity.Validate(exec); err != nil {
+		if err := entity.GppProtected_validate(exec); err != nil {
 			return err
 		}
-		if err := entity.BeforeUpdate(exec); err != nil {
+		if err := entity.GppProtected_beforeUpdate(exec); err != nil {
 			return err
 		}
 		if err := gppORMUpdate(exec, entity); err != nil {
 			return err
 		}
-		return entity.AfterUpdate(exec)
+		return entity.GppProtected_afterUpdate(exec)
 	}
 
-	func Validate(exec SQLExecutor) error @{std.Hook} {
+	func _validate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeCreate(exec SQLExecutor) error @{std.Hook} {
+	func _beforeCreate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterCreate(exec SQLExecutor) error @{std.Hook} {
+	func _afterCreate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeUpdate(exec SQLExecutor) error @{std.Hook} {
+	func _beforeUpdate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterUpdate(exec SQLExecutor) error @{std.Hook} {
+	func _afterUpdate(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func BeforeDelete(exec SQLExecutor) error @{std.Hook} {
+	func _beforeDelete(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 
-	func AfterDelete(exec SQLExecutor) error @{std.Hook} {
+	func _afterDelete(exec SQLExecutor) error @{std.Hook} {
 		return nil
 	}
 }

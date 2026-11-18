@@ -5,7 +5,7 @@
 
 A [superset of Go](spec/compat.md) that provides modern features while staying true to the spirit of Go language.
 
-GPP is distributed under the [BSD 3-Clause license](LICENSE), the same license used by Go. Bundled third-party components may have separate licenses; see their notices.
+For those curious about the name, GPP is short for Go Preprocessor. The name is also a playful nod to “Go++,” echoing how C++ grew from C. GPP is distributed under the [BSD 3-Clause License](LICENSE), the same license as Go. Bundled third-party components may have separate licenses; see their notices.
 
 ## What's implemented?
 
@@ -39,7 +39,8 @@ feature with comparisons and examples.
 - **[Extension methods](docs/features/extensions.md)** — Add compile-time
   methods to existing types, including several types in one extension block.
 - **[String interpolation](docs/features/interpolation.md)** — Embed values in
-  quoted or raw strings, with formatting and `String()` support.
+  double-quoted strings, with formatting and `String()` support. Raw strings
+  retain their literal Go behavior.
 - **[Regular expressions](docs/features/regular-expressions.md)** — Compile
   and use regular expressions through concise prelude helpers.
 - **[Safe access](docs/features/safe-access.md)** — Use `?.` to access members

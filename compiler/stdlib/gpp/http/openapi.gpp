@@ -266,7 +266,7 @@ func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app GppServer, path string, 
 		}
 		ctx, state := gppContextForRequest(w, r, app)
 		if state == nil {
-			if err := app.BeforeRequest(ctx); err != nil {
+			if err := app.GppProtected_beforeRequest(ctx); err != nil {
 				gppCallError(app, ctx, stdhttp.StatusInternalServerError, err)
 				return
 			}
@@ -279,7 +279,7 @@ func gppRegisterGeneratedGET(mux *stdhttp.ServeMux, app GppServer, path string, 
 			}
 			return
 		}
-		afterErr := app.AfterRequest(ctx)
+		afterErr := app.GppProtected_afterRequest(ctx)
 		if routeErr != nil && !ctx.Written {
 			gppCallError(app, ctx, stdhttp.StatusInternalServerError, routeErr)
 			return

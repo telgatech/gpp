@@ -11,7 +11,7 @@ import "time"
 
 class Message {
     Priority int
-    func Execute() error
+    func _execute() error
 }
 
 class Queue {
@@ -49,11 +49,12 @@ multiple processes or multiple queue instances at the same time.
 `queue.New` starts the worker automatically. Push messages as needed. Call
 `Drain(timeout)` to stop accepting new work, wait for the queue to empty, and
 close it. If the timeout expires, `Drain` returns an error and signals the
-worker to stop after its current `Execute` call; cleanup may finish after
+worker to stop after its current message execution; cleanup may finish after
 `Drain` returns, and pending messages remain durable for the next queue
-instance. Call `Stop()` to stop after the current `Execute` call and wait for
-that shutdown to finish. Each message subclass implements `Execute() error`;
-the worker calls `Execute` and acknowledges it automatically on success. A
+instance. Call `Stop()` to stop after the current message execution and wait for
+that shutdown to finish. Each message subclass implements the protected
+`_execute() error` hook; the worker calls it and acknowledges the message
+automatically on success. A
 larger `Priority` value runs before a smaller one; equal priorities run FIFO.
 An omitted `Priority` defaults to `0`. `queue.Message` is serializable, and
 subclasses inherit that behavior. The compiler generates
@@ -68,7 +69,7 @@ class EmailMessage : queue.Message {
     Recipient string
     Subject string
 
-    func Execute() error {
+    func _execute() error {
         // Perform the work described by this message.
         return nil
     }
@@ -80,8 +81,8 @@ q.Drain(30 * time.Second)
 ```
 
 `Push` serializes the message, appends a framed Gob event with a checksum, and
-syncs it to disk before returning. Successful `Execute` calls append and sync
-an acknowledgement event. A failed `Execute` is logged and retried after a
+syncs it to disk before returning. Successful message executions append and sync
+an acknowledgement event. A failed execution is logged and retried after a
 short delay. `retries` is the number of additional attempts after the first;
 after those attempts fail, the message is moved to the durable dead-letter set.
 `Drain` waits for active messages to complete or become dead letters.
@@ -97,8 +98,8 @@ entry includes its stable `ID`, retry count, last error, and original concrete
 message in `Message`. Use `Remove(entry)` to delete one entry or `Purge()` to
 delete all dead-letter entries. Both removals are recorded durably.
 
-Delivery is at least once, so `Execute` should tolerate duplicates.
-`Stop()` stops the worker after its current `Execute` call and leaves
+Delivery is at least once, so `_execute` should tolerate duplicates.
+`Stop()` stops the worker after its current message execution and leaves
 pending work in the log for the next queue instance.
 
 Serializable message fields follow the `encoding.Serializable` GOB rules.

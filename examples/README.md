@@ -18,9 +18,10 @@ gpp run examples/hello.gpp
 The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
+- `classes.gpp` — a public method using a protected method that a child class overrides.
 - `assignments.gpp` — arithmetic, bitwise, and shift compound assignments.
 - `or_assignment.gpp` — `||=` defaults boolean values when false and pointer values when nil.
-- `operators.gpp` — compound assignments, increment/decrement, boolean/nil `||=`, ternary expressions, and multi-result error fallback with `??`.
+- `operators.gpp` — compound assignments, increment/decrement, boolean/nil `||=`, ternary expressions, safe access, and multi-result error fallback with `??`.
 - `multi_error_fallback.gpp` — chained error fallback for functions returning multiple values.
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its GPP
   logical name; the compiler supplies the generated Go path internally.

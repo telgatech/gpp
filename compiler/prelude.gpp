@@ -83,6 +83,10 @@ class Pair[A, B] {
 		return false
 	}
 
+	func Any() bool {
+		return len(this) != 0
+	}
+
 	func All(fn func(T) bool) bool {
 		for _, value := range this {
 			if !fn(value) {
@@ -593,52 +597,32 @@ extend string {
 		return strings.Map(mapping, this)
 	}
 
-	func ToInt(fallback int = 0) int {
-		value, err := strconv.Atoi(this)
-		if err != nil {
-			return fallback
-		}
-		return value
+	func ToInt() (int, error) {
+		return strconv.Atoi(this)
 	}
 
-	func ToInt64(fallback int64 = 0) int64 {
-		value, err := strconv.ParseInt(this, 10, 64)
-		if err != nil {
-			return fallback
-		}
-		return value
+	func ToInt64() (int64, error) {
+		return strconv.ParseInt(this, 10, 64)
 	}
 
-	func ToUint64(fallback uint64 = 0) uint64 {
-		value, err := strconv.ParseUint(this, 10, 64)
-		if err != nil {
-			return fallback
-		}
-		return value
+	func ToUint64() (uint64, error) {
+		return strconv.ParseUint(this, 10, 64)
 	}
 
-	func ToFloat32(fallback float32 = 0) float32 {
+	func ToFloat32() (float32, error) {
 		value, err := strconv.ParseFloat(this, 32)
 		if err != nil {
-			return fallback
+			return 0, err
 		}
-		return float32(value)
+		return float32(value), nil
 	}
 
-	func ToFloat64(fallback float64 = 0) float64 {
-		value, err := strconv.ParseFloat(this, 64)
-		if err != nil {
-			return fallback
-		}
-		return value
+	func ToFloat64() (float64, error) {
+		return strconv.ParseFloat(this, 64)
 	}
 
-	func ToBool(fallback bool = false) bool {
-		value, err := strconv.ParseBool(this)
-		if err != nil {
-			return fallback
-		}
-		return value
+	func ToBool() (bool, error) {
+		return strconv.ParseBool(this)
 	}
 }
 

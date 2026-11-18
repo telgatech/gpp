@@ -39,6 +39,10 @@ func main() {
 	fmt.Println(total, runningTotals, passed, failed, flattened, groups, paired, labels)
 
 	users := []*User{User("Cara", true), User("Bob", false), User("Ada", true)}
+	emptyUsers := []*User{}
+	if !users.Any() || emptyUsers.Any() {
+		panic("Any() should report whether a slice has elements")
+	}
 	active := users.Filter(user => user.Active)
 	found, ok := users.Find(user => user.Name == "Bob")
 	users.SortBy(user => user.Name)

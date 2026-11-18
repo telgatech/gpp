@@ -988,7 +988,7 @@ Example:
 App
     Home
     User
-    OAuthLogin
+    _oauthLogin
 
 User
     ID

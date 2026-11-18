@@ -1,31 +1,31 @@
 import (
-	"fmt"
-	"time"
-	queue "gpp/exp/queue"
+    "fmt"
+    "time"
+    queue "gpp/exp/queue"
 )
 
 class EmailMessage : queue.Message {
-	Recipient string
-	Subject string
+    Recipient string
+    Subject string
 
-	func Execute() error {
-		fmt.Println("sending", this.Subject, "to", this.Recipient)
-		return nil
-	}
+    func _execute() error {
+        fmt.Println("sending", this.Subject, "to", this.Recipient)
+        return nil
+    }
 }
 
 class BuildReportMessage : queue.Message {
-	Build string
+    Build string
 
-	func Execute() error {
-		fmt.Println("publishing build report", this.Build)
-		return nil
-	}
+    func _execute() error {
+        fmt.Println("publishing build report", this.Build)
+        return nil
+    }
 }
 
 func main() {
-	q := queue.New()
-	q.Push(BuildReportMessage(Priority: 10, Build: "v2.4.0"))
-	q.Push(EmailMessage(Priority: 1, Recipient: "dev@example.com", Subject: "Build complete"))
-	q.Drain(30 * time.Second)
+    q := queue.New()
+    q.Push(BuildReportMessage(Priority: 10, Build: "v2.4.0"))
+    q.Push(EmailMessage(Priority: 1, Recipient: "dev@example.com", Subject: "Build complete"))
+    q.Drain(30 * time.Second)
 }

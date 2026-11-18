@@ -1,0 +1,29 @@
+package main
+
+import "fmt"
+
+class Greeting {
+    Name string
+
+    func Message() string {
+        return this._message() + ", " + this.Name
+    }
+
+    func _message() string {
+        return "Hello"
+    }
+}
+
+class PersonalizedGreeting : Greeting {
+    func _message() string {
+        return "Welcome"
+    }
+}
+
+func main() {
+    greeting := Greeting(Name: "Ada")
+    personalized := PersonalizedGreeting(Name: "Ada")
+
+    fmt.Println(greeting.Message())
+    fmt.Println(personalized.Message())
+}

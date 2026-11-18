@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// validateHookCallsFromMethod enforces that ordinary source calls to a hook
-// are made from the class that declares that hook. Framework dispatch remains
-// possible through its internal interfaces and generated/runtime dispatchers.
+// validateHookCallsFromMethod keeps public hooks private to their declaring
+// class. Protected hooks use normal subclass visibility; framework dispatch
+// reaches them through generated bridge methods.
 func validateHookCallsFromMethod(caller *ClassDecl, callerMethod *Method, classes map[string]*ClassDecl) error {
 	if caller == nil || callerMethod == nil || callerMethod.BodyAST == nil {
 		return nil
@@ -45,6 +45,9 @@ func validateHookCallsFromMethod(caller *ClassDecl, callerMethod *Method, classe
 		if hook == nil || declaringClass == nil || declaringClass == caller {
 			return
 		}
+		if memberVisibility(hook.Name) == memberProtected && classIsSubclassOf(caller, declaringClass, classes) {
+			return
+		}
 		validationErr = diagnosticAt(
 			caller.SourceFile,
 			completeSpan(call.Span(), callerMethod.Span().Line),
@@ -52,6 +55,27 @@ func validateHookCallsFromMethod(caller *ClassDecl, callerMethod *Method, classe
 		)
 	})
 	return validationErr
+}
+
+func classIsSubclassOf(class, parent *ClassDecl, classes map[string]*ClassDecl) bool {
+	if class == nil || parent == nil || class == parent {
+		return false
+	}
+	seen := map[*ClassDecl]bool{}
+	var visit func(*ClassDecl) bool
+	visit = func(current *ClassDecl) bool {
+		if current == nil || seen[current] {
+			return false
+		}
+		seen[current] = true
+		for _, parentName := range classParentNames(current) {
+			if parentName == parent.Name || visit(classes[parentName]) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(class)
 }
 
 func validateHookCallsFromFunction(function *FunctionDecl, context constructorContext) error {

@@ -39,11 +39,15 @@ func main() {
 
     var feature *Feature
     feature ||= Feature(Name: "ready") // initialize if nil
+    safeName := feature?.Name // safe access on a non-nil pointer
+
+    var missingFeature *Feature
+    missingName := missingFeature?.Name // nil safe access returns the zero value
 
     featureWithFallback := GetFeature()
     featureWithFallback ||= Feature(Name: "fallback")
     width, height := Dimensions() ?? 1, 2 // use matching fallbacks for multiple results
 
     fmt.Println("count:", count, "bits:", bits)
-    fmt.Println("enabled:", enabled, status, "feature:", feature.Name, "dimensions:", width, height, "nil default:", featureWithFallback.Name)
+    fmt.Println("enabled:", enabled, status, "feature:", feature.Name, "safe access:", safeName, missingName, "dimensions:", width, height, "nil default:", featureWithFallback.Name)
 }

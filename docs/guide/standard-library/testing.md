@@ -18,7 +18,7 @@ import "gpp/test"
 class UserTest : test.Suite @{test.Tag("users")} {
 	Name string
 
-	func Setup() {
+	func _setup() {
 		this.Name = "Ada"
 	}
 

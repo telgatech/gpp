@@ -233,6 +233,20 @@ try {
 GPP matches the value with `errors.Is`, so wrapped sentinel errors still
 match. Other errors remain unhandled and propagate normally.
 
+A catch can combine error types and sentinel values when they share the same
+response:
+
+```go
+try {
+    id := ctx.Param("id").ToInt64()
+    todo := Todo.Get(db, "id = $1", id)
+    return ctx.JSON(todo)
+} catch strconv.NumError, sql.ErrNoRows {
+    ctx.Redirect("/", 303)
+    return nil
+}
+```
+
 ## Throw, catch several types, and clean up
 
 Use `throw` to propagate an error value intentionally. A catch can match one or

@@ -87,9 +87,9 @@ return server.ListenAndServe()
 ```
 :::
 
-`Listen(port)` creates the listener and runs the server. Pass `0` to let the operating system choose an available port; the assigned port is available as `this.HTTPServer.Addr` in lifecycle hooks such as `AfterListen()`. Set the optional `Logger` field to a `*log.Logger` to receive request access lines, failure details, template reload errors, and the startup message. When `Logger` is nil, the server prints only its startup message to standard output; request and failure logs are suppressed, and the Go global logger is not used. By default, access lines use a compact key-value format such as `API: GET /users status=200 bytes=42 duration=3ms`. Set `CombinedLogFormat: true` to use Apache/Nginx Combined Log Format instead. Set the optional `Name` field to prefix compact log messages; Combined Log Format access lines omit the name so they remain compatible with log parsers. Configure the supplied logger without a prefix or flags for parser-ready Combined Log Format output. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the startup message uses `http://localhost:8080` instead of an unspecified wildcard address.
+`Listen(port)` creates the listener and runs the server. Pass `0` to let the operating system choose an available port; the assigned port is available as `this.HTTPServer.Addr` in lifecycle hooks such as `_afterListen()`. Set the optional `Logger` field to a `*log.Logger` to receive request access lines, failure details, template reload errors, and the startup message. When `Logger` is nil, the server prints only its startup message to standard output; request and failure logs are suppressed, and the Go global logger is not used. By default, access lines use a compact key-value format such as `API: GET /users status=200 bytes=42 duration=3ms`. Set `CombinedLogFormat: true` to use Apache/Nginx Combined Log Format instead. Set the optional `Name` field to prefix compact log messages; Combined Log Format access lines omit the name so they remain compatible with log parsers. Configure the supplied logger without a prefix or flags for parser-ready Combined Log Format output. If the listener is bound to every interface (`:8080` or `0.0.0.0:8080`), the startup message uses `http://localhost:8080` instead of an unspecified wildcard address.
 
-Static files are checked before `Handle(ctx)` and route dispatch, regardless of whether they come from `PublicDir` or an `http.Files` annotation. A matching GET or HEAD file is served first; directory requests serve `index.html`, or `index.htm` when `index.html` is absent. Directory listings are disabled by default, so a directory without an index falls through to the handler and then registered routes. Set `DirListing: true` on the server or on an `http.Files` annotation to enable listings for that mount. Static responses use `Cache-Control: public, max-age=300` by default, retain `FileServer` conditional caching, and use gzip for compressible content when requested. Range responses are not compressed.
+Static files are checked before `_handle(ctx)` and route dispatch, regardless of whether they come from `PublicDir` or an `http.Files` annotation. A matching GET or HEAD file is served first; directory requests serve `index.html`, or `index.htm` when `index.html` is absent. Directory listings are disabled by default, so a directory without an index falls through to the handler and then registered routes. Set `DirListing: true` on the server or on an `http.Files` annotation to enable listings for that mount. Static responses use `Cache-Control: public, max-age=300` by default, retain `FileServer` conditional caching, and use gzip for compressible content when requested. Range responses are not compressed.
 
 Set the inherited `PublicDir` field to serve a directory from `/` without route annotations:
 
@@ -315,7 +315,7 @@ app.Listen(0)
 
 `http.Mountable` is a marker annotation; the class does not need to inherit from a router base type. Each mount address sends requests to the same class instance. A leading slash mounts by path; a hostname mounts by the request host, and `host/path` combines both. For the example above, the route is available at `/api/admin/v1/status` and at `admin.example.com/api/v1/status` when the server also has `http.Prefix("/api")`. Host mounts select requests by hostname; configure the listener port on `http.Server` as usual. Pass several addresses to expose a mountable class at local and deployed entry points.
 
-The server's `BeforeRequest`, `AfterRequest`, and `Error` hooks also apply to mounted routes. `http.Prefix` on the server is prepended before the mount path and the mounted class's own prefix. Mounting must happen before `Listen` or `Serve`; conflicting route patterns are reported as errors when the server is prepared. OpenAPI currently describes routes declared directly on the server class, not mounted classes.
+The server's `_beforeRequest`, `_afterRequest`, and `Error` hooks also apply to mounted routes. `http.Prefix` on the server is prepended before the mount path and the mounted class's own prefix. Mounting must happen before `Listen` or `Serve`; conflicting route patterns are reported as errors when the server is prepared. OpenAPI currently describes routes declared directly on the server class, not mounted classes.
 
 ## Bind a request body into a class
 
@@ -348,6 +348,21 @@ class App : http.Server {
 
 `Context.Bind` chooses query binding for `GET` and `HEAD`, JSON binding for JSON request bodies, and form binding for URL encoded or multipart form bodies. JSON and form bodies are limited to 1 MiB. Use `BindQuery`, `BindJSON`, or `BindForm` when a handler should select the source explicitly. Native Go struct targets can use `query:"..."` and `form:"..."` tags; both also honor `json:"..."` as a fallback. GPP class fields use the lower-camel field name. Repeated values bind to slice fields. Binding errors are returned to the handler, and application validation remains explicit.
 
+Binding failures are wrapped in `http.BindError`, which keeps the original error available through `Unwrap`. Catch it separately from persistence or application errors when they need different responses:
+
+```gpp
+try {
+    input := ctx.Bind[CreateUserRequest]()
+    SaveUser(input)
+} catch http.BindError err {
+    log.Printf("invalid request: %v", err)
+    return ctx.JSON(400, struct(Message: "invalid request body"))
+} catch err {
+    log.Printf("save user: %v", err)
+    return ctx.JSON(500, struct(Message: "could not save user"))
+}
+```
+
 For a query endpoint, bind directly into a request class:
 
 ```gpp
@@ -367,27 +382,27 @@ func SearchUsers(ctx *http.Context) error @{http.GET("/users")} {
 
 ## Shared request behavior and middleware
 
-For common app-wide work, the server calls `BeforeRequest(ctx)` before request handling and `AfterRequest(ctx)` after the request is handled. The inherited `Handle(ctx)` method runs before route dispatch and returns `nil` by default. Override it for a procedural handler: if it writes a response, annotated routes are skipped; if it returns without writing, routes are tried. Return an error to invoke the server's error handler. `Handle` can be the app's only handler or work with annotated routes as fallbacks. These hooks are useful for metrics, auditing, and application checks:
+For common app-wide work, the server calls `_beforeRequest(ctx)` before request handling and `_afterRequest(ctx)` after the request is handled. The inherited `_handle(ctx)` method runs before route dispatch and returns `nil` by default. Override it for a procedural handler: if it writes a response, annotated routes are skipped; if it returns without writing, routes are tried. Return an error to invoke the server's error handler. `_handle` can be the app's only handler or work with annotated routes as fallbacks. These hooks are useful for metrics, auditing, and application checks:
 
 ```go
 class App : http.Server {
-	func BeforeRequest(ctx *http.Context) error {
+	func _beforeRequest(ctx *http.Context) error {
 		ctx.Set("request-id", newRequestID())
 		return nil
 	}
 
-	func AfterRequest(ctx *http.Context) error {
+	func _afterRequest(ctx *http.Context) error {
 		logRequest(ctx.Get("request-id"), ctx.Status)
 		return nil
 	}
 }
 ```
 
-Existing Go middleware remains usable. `BeforeListen()` runs after the underlying `HTTPServer` and its handler have been prepared, so it can wrap the handler with a standard middleware stack:
+Existing Go middleware remains usable. `_beforeListen()` runs after the underlying `HTTPServer` and its handler have been prepared, so it can wrap the handler with a standard middleware stack:
 
 ```go
 class App : http.Server {
-	func BeforeListen() error {
+	func _beforeListen() error {
 		this.HTTPServer.Handler = Logging(Recover(this.HTTPServer.Handler))
 		return nil
 	}
@@ -406,14 +421,14 @@ For a built-in provider, the annotation supplies the provider's issuer and defau
 class App : http.Server @{
 	http.OAuth(http.OAuthProvider.Google)
 } {
-	func OAuthLogin(ctx *http.Context, identity http.OAuthIdentity) {
+	func _oauthLogin(ctx *http.Context, identity http.OAuthIdentity) {
 		user := findOrCreateUser(identity.Provider, identity.ID, identity.Email)
 		session := createSession(user)
 		setSessionCookie(ctx.Response, session)
 		ctx.Redirect("/", 302)
 	}
 
-	func OAuthError(ctx *http.Context, provider string, err error) {
+	func _oauthError(ctx *http.Context, provider string, err error) {
 		logOAuthFailure(provider, err)
 		ctx.Redirect("/login?failed=1", 302)
 	}
@@ -425,7 +440,7 @@ The provider configuration automatically reserves these routes:
 | Route | What happens |
 | --- | --- |
 | `GET /auth/google` | Starts login, creates temporary state and PKCE values, adds an OIDC nonce when needed, and redirects the browser to Google. |
-| `GET /auth/google/callback` | Checks the returned state, exchanges the authorization code, validates tokens and identity data, then calls `OAuthLogin`. |
+| `GET /auth/google/callback` | Checks the returned state, exchanges the authorization code, validates tokens and identity data, then calls `_oauthLogin`. |
 
 The runtime also handles provider metadata discovery and callback URL construction. Its state cookie is temporary and protected with `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. Set both credential variables for the selected provider in the service environment; the app reports a configuration error if either is missing.
 
@@ -454,7 +469,7 @@ class App : http.Server @{
 } {}
 ```
 
-The `OAuthLogin` hook receives the normalized identity (and has a token-aware overload when the app needs provider tokens); `OAuthError` is the place to log or customize a failed login response. The library handles the protocol plumbing, while the application still decides whether the person maps to a local account, whether to create or link that account, how to establish its session, and what permissions the user receives. OAuth sign-in alone does not protect unrelated routes; apply application authorization through your session middleware or handler checks.
+The `_oauthLogin` hook receives the normalized identity (and has a token-aware overload when the app needs provider tokens); `_oauthError` is the place to log or customize a failed login response. The library handles the protocol plumbing, while the application still decides whether the person maps to a local account, whether to create or link that account, how to establish its session, and what permissions the user receives. OAuth sign-in alone does not protect unrelated routes; apply application authorization through your session middleware or handler checks.
 
 ## Templates and error pages
 
@@ -510,7 +525,7 @@ class App : http.Server {
 }
 ```
 
-`ctx.HTML` takes optional `status`, `data`, and `key` arguments in that order. Status defaults to 200, data defaults to `nil`, and an omitted key uses the current request path. With a standard `Templates` set, the path can match a named `{id}` pattern; with `Templates` unset, it can match a GPP `tpl.Path` declaration. `ctx.HTML(404, data, "NotFound")` selects a named template and status, and `ctx.HTML(201)` sets a status without passing data. `ctx.Template` remains an obsolete alias for `ctx.HTML`. `ErrorTemplate()` selects the template used for server-generated error pages and must name a template in the configured set when `Templates` is set. For GPP URL-bound templates and generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed GPP template source files are present, the server lifecycle starts a watcher that reloads them after edits.
+`ctx.HTML` takes optional `status`, `data`, and `key` arguments in that order. Status defaults to 200, data defaults to `nil`, and an omitted key uses the current request path. With a standard `Templates` set, the path can match a named `{id}` pattern; with `Templates` unset, it can match a GPP `tpl.Path` declaration. `ctx.HTML(404, data, "NotFound")` selects a named template and status, and `ctx.HTML(201)` sets a status without passing data. `ctx.Template` remains an obsolete alias for `ctx.HTML`. `_errorTemplate()` selects the template used for server-generated error pages and must name a template in the configured set when `Templates` is set. For GPP URL-bound templates and generated `tpl.Name` functions, see the [template guide](/guide/standard-library/templates). When managed GPP template source files are present, the server lifecycle starts a watcher that reloads them after edits.
 
 ## HTTPS and deployment boundaries
 
@@ -530,16 +545,16 @@ This keeps certificate provisioning and rotation explicit while still letting th
 
 ## Graceful termination
 
-The server installs SIGINT and SIGTERM handling and begins a bounded graceful shutdown when either signal arrives. It calls `BeforeShutdown`, drains requests through Go's `http.Server.Shutdown`, then calls `AfterShutdown`. Override the hooks for readiness changes, worker cleanup, or final logging; override `Shutdown(ctx)` only when the application needs a different shutdown trigger or policy.
+The server installs SIGINT and SIGTERM handling and begins a bounded graceful shutdown when either signal arrives. It calls `_beforeShutdown`, drains requests through Go's `http.Server.Shutdown`, then calls `_afterShutdown`. Override the hooks for readiness changes, worker cleanup, or final logging; override `Shutdown(ctx)` only when the application needs a different shutdown trigger or policy.
 
 ```go
 class App : http.Server {
-	func BeforeShutdown() error {
+	func _beforeShutdown() error {
 		markNotReady()
 		return nil
 	}
 
-	func AfterShutdown() error {
+	func _afterShutdown() error {
 		flushTelemetry()
 		return nil
 	}

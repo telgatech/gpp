@@ -7,11 +7,11 @@ type SQLExecutor interface {
 }
 
 type gppORMHooks interface {
-	Validate(exec SQLExecutor) error
-	BeforeCreate(exec SQLExecutor) error
-	AfterCreate(exec SQLExecutor) error
-	BeforeUpdate(exec SQLExecutor) error
-	AfterUpdate(exec SQLExecutor) error
-	BeforeDelete(exec SQLExecutor) error
-	AfterDelete(exec SQLExecutor) error
+	GppProtected_validate(exec SQLExecutor) error
+	GppProtected_beforeCreate(exec SQLExecutor) error
+	GppProtected_afterCreate(exec SQLExecutor) error
+	GppProtected_beforeUpdate(exec SQLExecutor) error
+	GppProtected_afterUpdate(exec SQLExecutor) error
+	GppProtected_beforeDelete(exec SQLExecutor) error
+	GppProtected_afterDelete(exec SQLExecutor) error
 }

@@ -4,7 +4,7 @@
 
 This addendum defines:
 
-1. `http.Server.ErrorTemplate()`;
+1. `http.Server._errorTemplate()`;
 2. default server error-page handling;
 3. status-aware `Context.JSON`;
 4. status-aware `Context.Text`;
@@ -38,12 +38,12 @@ No receiver-bound or class-level template semantics are introduced.
 
 ---
 
-# 2. `Server.ErrorTemplate`
+# 2. `Server._errorTemplate`
 
 `http.Server` provides an overridable virtual method:
 
 ```gpp
-func ErrorTemplate() string
+func _errorTemplate() string
 ```
 
 The default implementation returns built-in template source owned by `gpp/http`.
@@ -52,7 +52,7 @@ Conceptually:
 
 ```gpp
 class Server {
-    func ErrorTemplate() string {
+    func _errorTemplate() string {
         return defaultErrorTemplate
     }
 }
@@ -62,7 +62,7 @@ Because GPP methods are polymorphic by default, a derived server may override it
 
 ```gpp
 class App : http.Server {
-    func ErrorTemplate() string {
+    func _errorTemplate() string {
         return "ErrorPage"
     }
 }
@@ -72,9 +72,9 @@ No special template override mechanism is required.
 
 ---
 
-# 3. What `ErrorTemplate()` Returns
+# 3. What `_errorTemplate()` Returns
 
-`ErrorTemplate()` returns the value passed to:
+`_errorTemplate()` returns the value passed to:
 
 ```gpp
 tpl.Execute(...)
@@ -91,7 +91,7 @@ literal html/template source
 Example registered template:
 
 ```gpp
-func ErrorTemplate() string {
+func _errorTemplate() string {
     return "ErrorPage"
 }
 ```
@@ -99,7 +99,7 @@ func ErrorTemplate() string {
 Example inline source:
 
 ```gpp
-func ErrorTemplate() string {
+func _errorTemplate() string {
     return `
         <h1>{{.Code}} {{.Message}}</h1>
     `
@@ -111,7 +111,7 @@ The server does not need to distinguish between the two.
 It simply executes:
 
 ```gpp
-tpl.Execute(w, this.ErrorTemplate(), data)
+tpl.Execute(w, this._errorTemplate(), data)
 ```
 
 ---
@@ -156,7 +156,7 @@ For example:
 ctx.HTML(
     404,
     data,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
@@ -196,7 +196,7 @@ and execute:
 ctx.HTML(
     code,
     data,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
@@ -302,7 +302,7 @@ and:
 
 ```gpp
 class App : http.Server {
-    func ErrorTemplate() string {
+    func _errorTemplate() string {
         return "ErrorPage"
     }
 }
@@ -314,18 +314,18 @@ A named class may also be used if preferred.
 
 ---
 
-# 10. Why `ErrorTemplate()` Takes No Status
+# 10. Why `_errorTemplate()` Takes No Status
 
 The canonical signature remains:
 
 ```gpp
-func ErrorTemplate() string
+func _errorTemplate() string
 ```
 
 not:
 
 ```gpp
-func ErrorTemplate(code int) string
+func _errorTemplate(code int) string
 ```
 
 The status code is normally part of the supplied template data:
@@ -374,7 +374,7 @@ The error handler constructs suitable data and executes:
 ctx.HTML(
     404,
     data,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
@@ -451,11 +451,11 @@ If:
 ctx.HTML(
     code,
     data,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
-fails, the server must not invoke `ErrorTemplate()` again.
+fails, the server must not invoke `_errorTemplate()` again.
 
 Instead it falls back to a minimal hardcoded response:
 
@@ -468,7 +468,7 @@ Canonical chain:
 ```text
 request error
     ↓
-ErrorTemplate()
+_errorTemplate()
     ↓
 template execution
     ↓
@@ -490,7 +490,7 @@ var buf bytes.Buffer
 
 tpl.Execute(
     &buf,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
     data,
 )
 
@@ -813,7 +813,7 @@ Response helpers set `ctx.Status` when committing their response.
 This is useful for:
 
 ```gpp
-AfterRequest(ctx)
+_afterRequest(ctx)
 ```
 
 logging, metrics, and diagnostics.
@@ -981,7 +981,7 @@ and:
 ctx.HTML(
     404,
     data,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
@@ -1009,7 +1009,7 @@ ctx.HTML(
     struct(
         Code: 404,
     ),
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
@@ -1019,7 +1019,7 @@ or even:
 ctx.HTML(
     404,
     404,
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 
@@ -1042,7 +1042,7 @@ if the custom template expects a plain integer:
 Conceptually:
 
 ```gpp
-func Error(
+func _error(
     ctx *Context,
     code int,
     err error,
@@ -1056,7 +1056,7 @@ func Error(
     ctx.HTML(
         code,
         data,
-        this.ErrorTemplate(),
+        this._errorTemplate(),
     )
 }
 ```
@@ -1087,7 +1087,7 @@ route missing?
          ├─ no → normal response
          └─ yes
               ↓
-             Error(ctx, 500, err)
+             _error(ctx, 500, err)
 ```
 
 ---
@@ -1095,11 +1095,11 @@ route missing?
 # 37. Error Response Flow
 
 ```text
-Error(ctx, code, err)
+_error(ctx, code, err)
     ↓
 construct template data
     ↓
-this.ErrorTemplate()
+this._errorTemplate()
     ↓
 ctx.HTML(code, data, keyOrSource)
     ↓
@@ -1142,7 +1142,7 @@ tpl.Execute
 Final ownership is:
 
 ```text
-Server.ErrorTemplate()
+Server._errorTemplate()
     chooses the error template source/name
 
 Server
@@ -1165,7 +1165,7 @@ struct/class supplied as data
 `http.Server`:
 
 ```gpp
-func ErrorTemplate() string
+func _errorTemplate() string
 ```
 
 `http.Context`:
@@ -1193,7 +1193,7 @@ Example error-page override:
 
 ```gpp
 class App : http.Server {
-    func ErrorTemplate() string {
+    func _errorTemplate() string {
         return "ErrorPage"
     }
 }
@@ -1221,7 +1221,7 @@ ctx.HTML(
         Message: "Page not found",
         Path:    ctx.Request.URL.Path,
     ),
-    this.ErrorTemplate(),
+    this._errorTemplate(),
 )
 ```
 

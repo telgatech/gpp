@@ -14,6 +14,22 @@ import (
 	tpl "gpp/tpl"
 )
 
+// BindError wraps a request binding failure while preserving its cause.
+class BindError {
+	Cause error
+
+	func Error() string {
+		if this.Cause == nil {
+			return "http: request binding failed"
+		}
+		return "http: request binding failed: " + this.Cause.Error()
+	}
+
+	func Unwrap() error {
+		return this.Cause
+	}
+}
+
 // Context provides request data and response helpers to an HTTP handler.
 class Context {
 	Response stdhttp.ResponseWriter
@@ -52,21 +68,21 @@ class Context {
 
 	// Bind decodes the request body according to its Content-Type.
 	func Bind(target any) error {
-		return gppBindRequest(this.Request, this.Response, target)
+		return gppWrapBindError(gppBindRequest(this.Request, this.Response, target))
 	}
 
 	func BindQuery(target any) error {
-		return gppBindValues(this.Request.URL.Query(), target, "query")
+		return gppWrapBindError(gppBindValues(this.Request.URL.Query(), target, "query"))
 	}
 
 	// BindJSON decodes a JSON request body into target.
 	func BindJSON(target any) error {
-		return gppBindJSON(this.Request, this.Response, target)
+		return gppWrapBindError(gppBindJSON(this.Request, this.Response, target))
 	}
 
 	// BindForm decodes form fields into target.
 	func BindForm(target any) error {
-		return gppBindForm(this.Request, this.Response, target)
+		return gppWrapBindError(gppBindForm(this.Request, this.Response, target))
 	}
 
 	func commit(status int, contentType string, body []byte) error {
@@ -289,7 +305,8 @@ func gppHTTPVaryAccept(header stdhttp.Header) {
 
 extend *Context {
 	func Bind[T any]() (T, error) {
-		return gppBindRequestAs[T](this.Request, this.Response)
+	value, err := gppBindRequestAs[T](this.Request, this.Response)
+		return value, gppWrapBindError(err)
 	}
 }
 

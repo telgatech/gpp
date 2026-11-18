@@ -138,6 +138,11 @@ func coalesceCallFullResultTypeAST(call *CallExpr, context constructorContext, v
 	switch callee := call.Callee.(type) {
 	case *NameExpr:
 		candidates = context.FunctionSignatures[callee.Name]
+		for _, extension := range coalesceExtensions(context) {
+			if extension.GoName == callee.Name {
+				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: methodResultTypeNode(extension.Method)})
+			}
+		}
 	case *SelectorExpr:
 		receiver := coalesceTypeName(coalesceExpressionTypeAST(callee.Receiver, context, valueTypes))
 		if _, isClass := context.Targets[receiver]; isClass {
@@ -155,6 +160,10 @@ func coalesceCallFullResultTypeAST(call *CallExpr, context constructorContext, v
 		}
 	}
 	return nil
+}
+
+func coalesceExtensions(context constructorContext) []extensionMethod {
+	return append(append([]extensionMethod(nil), context.Extensions...), context.PreludeExtensions...)
 }
 
 func lowerMultiCoalesce(expression *BinaryExpr, resultTypes []TypeNode, fallbacks []ExprNode, context constructorContext) (string, error) {
@@ -794,6 +803,9 @@ func coalesceExpressionTypeNode(expression ExprNode, context constructorContext,
 			}
 		}
 	case *CallExpr:
+		if name, _, ok := constructorTargetForCallee(value.Callee, context); ok {
+			return "*" + name
+		}
 		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "__gppTernary" && len(value.Arguments) == 3 {
 			if branchType := coalesceExpressionTypeNode(ternaryBranchValue(value.Arguments[1].Value), context, valueTypes); branchType != "" {
 				return branchType
@@ -923,6 +935,14 @@ func coalesceExpressionTypeAST(expression ExprNode, context constructorContext, 
 			}
 		}
 	case *CallExpr:
+		if name, _, ok := constructorTargetForCallee(value.Callee, context); ok {
+			return &PointerType{Element: parseTypeText(name)}
+		}
+		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "__gppUnwrap" && len(value.Arguments) == 1 {
+			if call, ok := value.Arguments[0].Value.(*CallExpr); ok {
+				return firstCoalesceResultTypeAST(coalesceCallFullResultTypeAST(call, context, valueTypes))
+			}
+		}
 		if name, ok := value.Callee.(*NameExpr); ok && name.Name == "__gppTernary" && len(value.Arguments) == 3 {
 			if branchType := coalesceExpressionTypeAST(ternaryBranchValue(value.Arguments[1].Value), context, valueTypes); branchType != nil {
 				return branchType
@@ -956,6 +976,11 @@ func coalesceCallResultTypeAST(call *CallExpr, context constructorContext, value
 	switch callee := call.Callee.(type) {
 	case *NameExpr:
 		candidates = context.FunctionSignatures[callee.Name]
+		for _, extension := range coalesceExtensions(context) {
+			if extension.GoName == callee.Name {
+				candidates = append(candidates, callableSignature{Parameters: extensionCallParameters(extension), ResultAST: methodResultTypeNode(extension.Method)})
+			}
+		}
 	case *SelectorExpr:
 		receiverName := coalesceTypeName(coalesceExpressionTypeAST(callee.Receiver, context, valueTypes))
 		if _, isClass := context.Targets[receiverName]; isClass {
@@ -964,7 +989,7 @@ func coalesceCallResultTypeAST(call *CallExpr, context constructorContext, value
 			candidates = context.ClassMethodSignatures[receiverName][callee.Name]
 		}
 		if len(candidates) == 0 {
-			for _, extension := range context.Extensions {
+			for _, extension := range coalesceExtensions(context) {
 				if extension.Method.Name == callee.Name && extensionTargetMatches(extension.Target, extension.ReceiverType, receiverName, context) {
 					return firstCoalesceResultTypeAST(methodResultTypeNode(extension.Method))
 				}
@@ -1010,6 +1035,11 @@ func coalesceCallResultType(call *CallExpr, context constructorContext, valueTyp
 	switch callee := call.Callee.(type) {
 	case *NameExpr:
 		candidates = context.FunctionSignatures[callee.Name]
+		for _, extension := range coalesceExtensions(context) {
+			if extension.GoName == callee.Name {
+				return methodResultSource(extension.Method)
+			}
+		}
 	case *SelectorExpr:
 		receiverType := strings.TrimPrefix(strings.TrimSpace(coalesceExpressionTypeNode(callee.Receiver, context, valueTypes)), "*")
 		if _, isClass := context.Targets[receiverType]; isClass {

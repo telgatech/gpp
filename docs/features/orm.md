@@ -136,9 +136,14 @@ employee.Update(tx)
 tx.Commit()
 ```
 
-Model hooks such as validation and before/after create or update keep
-persistence rules near the model. Use direct SQL for specialized or
+Protected model hooks such as `_validate`, `_beforeCreate`, and `_afterCreate`
+keep persistence rules near the model. The ORM dispatches them automatically
+from `Insert`, `Update`, and `Destroy`; see the [ORM guide](/guide/standard-library/orm)
+for hook order and examples. Use direct SQL for specialized or
 performance-sensitive queries. See the [ORM specification](/reference/specifications/std.orm).
+
+Use `orm.ValidationError` from `_validate` to return field-specific lists of
+messages through its `Errors` map, `Add(field, message)`, and `IsEmpty()` methods.
 
 ## Full SQL queries
 

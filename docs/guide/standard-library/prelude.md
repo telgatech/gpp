@@ -130,6 +130,15 @@ Runs an action with no result for every element in order. Use this form for side
 users.Each(user => println(user.Name))
 ```
 
+#### `Any() bool`
+
+Reports whether the slice contains at least one element. A nil or empty slice
+returns `false`.
+
+```go
+if people.Any() { /* show people */ }
+```
+
 #### `Any(predicate) bool`
 
 Returns `true` as soon as the predicate matches an element. Returns `false` for an empty slice.
@@ -678,15 +687,15 @@ asciiUpper := "abc".Map(character => character - 32)
 
 ### String and scalar conversions
 
-String parsing helpers return a caller-provided fallback when parsing fails.
-The fallback defaults to the destination type's zero value. Parsing uses
-decimal notation for integers.
+String conversion helpers return `(value, error)` like Go's `strconv` package.
+Use `??` to choose a fallback for invalid input, or let the error propagate.
+Integer parsing uses decimal notation.
 
 ```go
-count := "42".ToInt()                 // 42; invalid input returns 0
-count := input.ToInt(fallback: -1)     // invalid input returns -1
-ratio := input.ToFloat64(fallback: 1)  // invalid input returns 1
-enabled := input.ToBool(fallback: false)
+count := "42".ToInt() ?? 0
+count := input.ToInt() ?? -1
+ratio := input.ToFloat64() ?? 1
+enabled := input.ToBool() ?? false
 ```
 
 Available string methods are `ToInt`, `ToInt64`, `ToUint64`, `ToFloat32`,

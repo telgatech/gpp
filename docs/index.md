@@ -45,7 +45,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>What does GPP stand for?</summary>
-<p>GPP began life as an experimental Go preprocessor, which is where the name comes from. While it has outgrown its original goals, the name remains.</p>
+<p>GPP is short for Go Preprocessor. The name is also a playful nod to “Go++,” echoing how C++ grew from C.</p>
 </details>
 
 <details>
@@ -66,6 +66,12 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 <details>
 <summary>Is GPP ready for production?</summary>
 <p>GPP is still an experiment and has not yet received broad community review. Until then, please don’t adopt it casually for production systems.</p>
+</details>
+
+
+<details>
+<summary>I swear this worked yesterday. Why is it broken today?</summary>
+<p>That’s frustrating, and we’re sorry. GPP is still an early release, and we’re moving quickly while we work out the right language and API surface. This can cause regressions; as features settle and are locked down, breaking changes should become less frequent. First, install the latest version and try again—a recent fix may already have resolved it. If it still fails, report it through <a href="https://github.com/telgatech/gpp/issues">GitHub Issues</a> with your current GPP version, the last version that worked, a small reproducer, and the full error output.</p>
 </details>
 
 <details>
