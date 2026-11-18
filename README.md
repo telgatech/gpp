@@ -5,7 +5,7 @@
 
 A [superset of Go](spec/compat.md) that provides modern features while staying true to the spirit of Go language.
 
-For those curious about the name, GPP is short for Go Preprocessor. The name is also a playful nod to “Go++,” echoing how C++ grew from C. GPP is distributed under the [BSD 3-Clause License](LICENSE), the same license as Go. Bundled third-party components may have separate licenses; see their notices.
+GPP is a playful nod to “Go++,” echoing how C++ grew from C. GPP is distributed under the [BSD 3-Clause License](LICENSE), the same license as Go. Bundled third-party components may have separate licenses; see their notices.
 
 ## What's implemented?
 

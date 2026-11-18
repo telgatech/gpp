@@ -45,7 +45,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>What does GPP stand for?</summary>
-<p>GPP is short for Go Preprocessor. The name is also a playful nod to “Go++,” echoing how C++ grew from C.</p>
+<p>GPP is a playful nod to “Go++,” echoing how C++ grew from C.</p>
 </details>
 
 <details>
