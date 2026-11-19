@@ -136,6 +136,36 @@ value is the normal representation for JSON, SQL, and other boundaries. That
 keeps a readable GPP name separate from a wire value that may need to remain
 stable.
 
+## Exhaustive enum switches
+
+When a `switch` tag has an enum type, GPP requires a case for every declared
+member. Add a `default` case when you want an explicit catch-all instead. The
+compiler reports which members are missing, so adding a new enum member points
+you to switches that need updating:
+
+```go
+enum Status string {
+    Pending
+    Active
+    Complete
+}
+
+func describe(status Status) string {
+    switch status {
+    case Status.Pending:
+        return "waiting"
+    case Status.Active:
+        return "in progress"
+    case Status.Complete:
+        return "finished"
+    }
+    return ""
+}
+```
+
+This uses ordinary Go `switch` syntax; no separate pattern-matching construct
+is needed.
+
 ## Validate values at boundaries
 
 External input must be checked before it becomes an enum. Each enum provides

@@ -1396,11 +1396,11 @@ That is a sum type / tagged union feature and is outside the enum specification.
 
 ---
 
-# No Pattern Matching Requirement
+# Exhaustive Enum Switches
 
-Enums do not require a new pattern matching construct.
-
-Ordinary control flow remains sufficient:
+Enums do not require a new pattern matching construct. Ordinary `switch`
+statements provide control flow, and the compiler checks their coverage when
+the switch tag has an enum type:
 
 ```go
 switch status {
@@ -1411,26 +1411,10 @@ case Status.Active:
 }
 ```
 
-GPP may improve exhaustiveness diagnostics later, but that is not required for v1.
-
----
-
-# Exhaustiveness Diagnostics
-
-Because the compiler knows the complete enum member set, it may optionally warn when a switch over an enum omits members.
-
-Example:
-
-```go
-switch status {
-case Status.Pending:
-case Status.Active:
-}
-```
-
-when `Status.Suspended` exists.
-
-This is a tooling/compiler enhancement, not required core semantics.
+Every declared member must appear in a case, unless the switch has a `default`
+case. Missing members are a compile-time error and are listed in the
+diagnostic. A `default` is an explicit catch-all and makes the switch
+exhaustive, including for values that do not match a declared member.
 
 ---
 

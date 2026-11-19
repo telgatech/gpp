@@ -3,6 +3,7 @@ package compiler
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // DiagnosticError carries a source location separately from the diagnostic
@@ -22,11 +23,13 @@ type RelatedDiagnostic struct {
 	Message string
 }
 
-// DiagnosticErrors groups independent source diagnostics while preserving the
-// first diagnostic as the ordinary error string used by command-line builds.
+// DiagnosticErrors groups independent source diagnostics. Error returns the
+// first message for ordinary error handling; FormatError renders the full set.
 type DiagnosticErrors struct {
 	Errors []error
 }
+
+const maxReportedDiagnostics = 10
 
 func (diagnostics DiagnosticErrors) Error() string {
 	if len(diagnostics.Errors) == 0 {
@@ -150,7 +153,40 @@ func FormatError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var diagnostics DiagnosticErrors
+	if errors.As(err, &diagnostics) {
+		limit := len(diagnostics.Errors)
+		if limit > maxReportedDiagnostics {
+			limit = maxReportedDiagnostics
+		}
+		messages := make([]string, 0, limit+1)
+		for _, diagnostic := range diagnostics.Errors[:limit] {
+			messages = append(messages, diagnostic.Error())
+		}
+		if len(diagnostics.Errors) >= maxReportedDiagnostics {
+			messages = append(messages, tooManyDiagnosticsMessage(diagnostics.Errors[limit-1]))
+		}
+		return strings.Join(messages, "\n")
+	}
 	return err.Error()
+}
+
+func tooManyDiagnosticsMessage(diagnostic error) string {
+	position, ok := PositionOfDiagnostic(diagnostic)
+	if !ok {
+		return "too many errors"
+	}
+	location := position.File
+	if position.Span.Line > 0 {
+		location += fmt.Sprintf(":%d", position.Span.Line)
+	}
+	if position.Span.Column > 0 {
+		location += fmt.Sprintf(":%d", position.Span.Column)
+	}
+	if location == "" {
+		return "too many errors"
+	}
+	return location + ": too many errors"
 }
 
 func completeSpan(span Span, fallbackLine int) Span {

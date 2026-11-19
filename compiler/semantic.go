@@ -403,6 +403,9 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 			if file.Package != pkg.Name {
 				continue
 			}
+			if err := validateFileEnumSwitches(file, pkg, model, modulePath); err != nil {
+				diagnostics = append(diagnostics, DiagnosticsOf(err)...)
+			}
 			if err := validateFileMemberVisibility(model, pkg, file); err != nil {
 				diagnostics = append(diagnostics, err)
 			}

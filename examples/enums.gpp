@@ -23,9 +23,22 @@ enum (
     }
 )
 
+// Every Status member must be handled here, or the switch needs a default case.
+func printStatus(status Status) {
+    switch status {
+    case Status.Pending:
+        fmt.Println("pending")
+    case Status.Active:
+        fmt.Println("active")
+    case Status.Disabled:
+        fmt.Println("disabled")
+    }
+}
+
 func main() {
     try {
         status := Status.Active
+        printStatus(status)
         fmt.Println(status == Status.Active, status.name, status.value)
         autoStatus := Status.From(7)
         fmt.Println(autoStatus.name)

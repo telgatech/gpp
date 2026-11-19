@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-19
+
+- Added compile-time enum switch exhaustiveness checks with diagnostics listing missing cases.
+- Added source diagnostics for invalid enum member selectors.
+- Improved compiler diagnostic reporting to match that of Go: one per line, capped at 10 errors.
+
 ## 2026-11-18
 
 - Improved the Todo example’s validation, error handling, and API responses to use new language capabilities.

@@ -1,11 +1,21 @@
-# GPP
+<div align="center">
+  <img src="docs/public/gpp_monogram.png" alt="GPP logo" width="96">
+  <h1>GPP</h1>
+  <p><strong>A superset of Go with modern language features.</strong><br>
+  Keep Go packages, generated Go code, and the familiar toolchain.</p>
+  <p>
+    <a href="https://github.com/telgatech/gpp/actions/workflows/ci.yml"><img src="https://github.com/telgatech/gpp/actions/workflows/ci.yml/badge.svg" alt="Build and smoke tests"></a>
+    <a href="https://github.com/telgatech/gpp/actions/workflows/docs.yml"><img src="https://github.com/telgatech/gpp/actions/workflows/docs.yml/badge.svg" alt="Documentation deployment"></a>
+    <img src="https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go" alt="Go 1.27 or newer">
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/telgatech/gpp" alt="BSD 3-Clause License"></a>
+  </p>
+</div>
 
 > **Notice:** GPP is an independent open source project and is not affiliated
 > with or endorsed by Google or the Go project.
 
-A [superset of Go](spec/compat.md) that provides modern features while staying true to the spirit of Go language.
 
-GPP is a playful nod to “Go++,” echoing how C++ grew from C. GPP is distributed under the [BSD 3-Clause License](LICENSE), the same license as Go. Bundled third-party components may have separate licenses; see their notices.
+GPP is a playful nod to Go++ echoing how C++ grew from C. GPP is distributed under the [BSD 3-Clause License](LICENSE), the same license as Go. Bundled third-party components may have separate licenses; see their notices.
 
 ## What's implemented?
 
@@ -103,7 +113,7 @@ support for diagnostics, completion, and navigation.
 
 The editor view below shows the [`Todo` model in the full example](examples/todo-app.gpp).
 
-![GPP syntax highlighting in Visual Studio Code, showing the Todo model from the todo app example](docs/public/vscode-highlighting.svg)
+![GPP syntax highlighting in Visual Studio Code, showing Todo ORM validation and lifecycle hooks](docs/public/vscode_highlighting.png)
 
 ## Install and build
 
