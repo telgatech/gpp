@@ -29,7 +29,7 @@ element does not require a type assertion.
 
 The zero values of `Set`, `OrderedMap`, `Stack`, `Queue`, `Deque`, `List`, and
 `Ring` are ready to use. A `PriorityQueue` needs an ordering function, so pass
-one when constructing it with `PriorityQueue[T](comparator)`.
+one when constructing it with `NewPriorityQueue[T](comparator)`.
 
 ## Set
 
@@ -39,7 +39,8 @@ true if at least one new value was added. Duplicate values are ignored.
 `Clear` empties the set, and the set can be reused afterward:
 
 ```gpp
-seen := container.Set[string]("request-42", "request-43", "request-42")
+var seen container.Set[string]
+seen.Add("request-42", "request-43", "request-42")
 seen.Add("request-44", "request-45")
 
 if seen.Add("request-46") {
@@ -102,15 +103,18 @@ snapshot with GPP's `for range` syntax.
 ## Stack and queue
 
 Use a stack for depth-first work and a queue for first-in, first-out work.
-Pass initial values in insertion order when constructing either type. Empty
-pops and peeks return the zero value and `false`:
+Push or enqueue values in insertion order. Empty pops and peeks return the zero
+value and `false`:
 
 ```gpp
-tasks := container.Queue[string]("compile", "package")
+var tasks container.Queue[string]
+tasks.Enqueue("compile")
+tasks.Enqueue("package")
 
 next, ok := tasks.Dequeue() // "compile", true
 
-undo := container.Stack[string]("edit file")
+var undo container.Stack[string]
+undo.Push("edit file")
 action, ok := undo.Pop() // "edit file", true
 ```
 
@@ -122,7 +126,9 @@ A deque supports operations at both ends. Push and pop operations are
 amortized O(1):
 
 ```gpp
-recent := container.Deque[string]("current", "older")
+var recent container.Deque[string]
+recent.PushBack("current")
+recent.PushBack("older")
 
 newest, hasNewest := recent.PopFront()
 oldest, hasOldest := recent.PopBack()
@@ -137,7 +143,9 @@ returns `(zero, false)` from `PopFront`, `PopBack`, `Front`, and `Back`.
 O(1). It does not expose node handles, which keeps its internal links private:
 
 ```gpp
-history := container.List[string]("created", "validated")
+var history container.List[string]
+history.PushBack("created")
+history.PushBack("validated")
 history.PushFront("received")
 
 steps := history.Values() // ["received", "created", "validated"]
@@ -154,7 +162,10 @@ should cycle through a set of values, such as a round-robin schedule. The zero
 value is ready to use. The first inserted value becomes current:
 
 ```gpp
-schedule := container.Ring[string]("compile", "test", "package")
+var schedule container.Ring[string]
+schedule.PushBack("compile")
+schedule.PushBack("test")
+schedule.PushBack("package")
 
 current, hasCurrent := schedule.Current() // "compile", true
 next, hasNext := schedule.Next()          // "test", true
@@ -174,9 +185,12 @@ priority. A less-than comparator creates a min-first queue; a greater-than
 comparator creates a max-first queue:
 
 ```gpp
-queue := container.PriorityQueue[int](func(left, right int) bool {
+queue := container.NewPriorityQueue[int](func(left, right int) bool {
     return left < right
-}, 8, 3, 5)
+})
+queue.Push(8)
+queue.Push(3)
+queue.Push(5)
 
 next, ok := queue.Pop() // 3, true
 ```

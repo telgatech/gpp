@@ -51,7 +51,7 @@ class UploadFile {
 }
 ```
 
-`Client(BaseURL: "https://api.example.com/v1", Timeout: 10 * time.Second)`
+`Client(baseURL: "https://api.example.com/v1", timeout: 10 * time.Second)`
 creates a client with its own cookie jar, a path-prefixed base URL, and a total
 request timeout. Relative request paths resolve under the base path; absolute
 URLs bypass it. `Client()` leaves the base URL empty and timeout at zero,

@@ -32,7 +32,9 @@ class Client {
 	client *stdhttp.Client
 	baseURL *url.URL
 
-	func init() error {
+	func init(baseURL string = "", timeout time.Duration = 0) error {
+		this.BaseURL = baseURL
+		this.Timeout = timeout
 		if this.BaseURL != "" {
 			baseURL, err := gppHTTPParseBaseURL(this.BaseURL)
 			if err != nil {

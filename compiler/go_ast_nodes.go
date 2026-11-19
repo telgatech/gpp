@@ -1050,177 +1050,210 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 	if named && positional {
 		return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot mix named and positional arguments in call to %s", name))
 	}
-	if !named && hasStaticFactory(context, target, "New") {
-		factoryCall := constructorFactoryCall(call)
-		factorySignatures := staticFactorySignatures(context, target, "New")
-		if len(factorySignatures) > 1 {
-			resolved, err := resolveConstructorFactoryOverload(factoryCall, target, factorySignatures, context)
-			if err != nil {
-				return nil, true, sourceLineError(call.Span(), err)
-			}
-			factoryCall = resolved
-		}
-		for index := range factoryCall.Arguments {
-			lowered, err := lowerExceptionExprNode(factoryCall.Arguments[index].Value, context)
-			if err != nil {
-				return nil, true, err
-			}
-			factoryCall.Arguments[index].Value = lowered
-		}
-		return factoryCall, true, nil
-	}
 	class := target.Class
 	classes := classesForClass(context, class)
-	fields, err := constructorFieldsVisibleToClass(class, classes)
-	if err != nil {
-		return nil, true, err
-	}
-	fields = constructorFieldsVisibleToCaller(fields, context.CurrentClass)
-	root := &constructorASTLiteral{Values: map[string]ExprNode{}, Children: map[string]*constructorASTLiteral{}}
-	if !named && len(call.Arguments) != len(fields) && len(call.Arguments) != 0 {
-		return nil, true, sourceLineError(call.Span(), fmt.Errorf("%s constructor expects %d arguments, got %d", name, len(fields), len(call.Arguments)))
-	}
-	for index, argument := range call.Arguments {
-		field := constructorField{}
-		if named {
-			field, err = resolveConstructorField(fields, argument.Name)
-			if err != nil {
-				span := argument.NameSpan
-				if span.Line == 0 {
-					span = call.Span()
-				}
-				return nil, true, sourceLineError(span, fmt.Errorf("%s constructor: %w", name, err))
+	initializers := classInitializers(class)
+	var selectedInitializer *Method
+	var initializerArguments []ExprNode
+	if len(initializers) > 0 {
+		resolved, method, resolveErr := resolveClassInitializerCall(call, target, initializers, context)
+		if resolveErr != nil {
+			return nil, true, sourceLineError(call.Span(), resolveErr)
+		}
+		selectedInitializer = method
+		for _, source := range resolved {
+			argument, parseErr := parseStaticArgumentNode(source)
+			if parseErr != nil {
+				return nil, true, parseErr
 			}
-		} else {
-			field = fields[index]
+			lowered, lowerErr := lowerExceptionExprNode(argument, context)
+			if lowerErr != nil {
+				return nil, true, lowerErr
+			}
+			initializerArguments = append(initializerArguments, lowered)
 		}
-		value, valueErr := lowerExceptionExprNode(argument.Value, context)
-		if valueErr != nil {
-			return nil, true, valueErr
+		named = false
+	}
+	root := &constructorASTLiteral{Values: map[string]ExprNode{}, Children: map[string]*constructorASTLiteral{}}
+	if selectedInitializer == nil {
+		fields, fieldErr := constructorFieldsVisibleToClass(class, classes)
+		if fieldErr != nil {
+			return nil, true, fieldErr
 		}
-		if base, dispatch := dispatchTargetForTypeName(field.Type, context); dispatch {
-			if concreteName, concreteOK := expressionTypeName(value); concreteOK {
-				if concrete, exists := context.Targets[concreteName]; exists && sameConstructorPackage(base, concrete) && (concrete.Class == base.Class || classInherits(concrete.Class, base.Class, concrete.Classes, map[*ClassDecl]bool{})) {
-					if _, pointer := value.(*UnaryExpr); !pointer {
-						value = &UnaryExpr{Operator: "&", Operand: value}
+		fields = constructorFieldsVisibleToCaller(fields, context.CurrentClass)
+		if !named && len(call.Arguments) != len(fields) && len(call.Arguments) != 0 {
+			return nil, true, sourceLineError(call.Span(), fmt.Errorf("%s constructor expects %d arguments, got %d", name, len(fields), len(call.Arguments)))
+		}
+		for index, argument := range call.Arguments {
+			field := constructorField{}
+			if named {
+				field, fieldErr = resolveConstructorField(fields, argument.Name)
+				if fieldErr != nil {
+					span := argument.NameSpan
+					if span.Line == 0 {
+						span = call.Span()
+					}
+					return nil, true, sourceLineError(span, fmt.Errorf("%s constructor: %w", name, fieldErr))
+				}
+			} else {
+				field = fields[index]
+			}
+			value, valueErr := lowerExceptionExprNode(argument.Value, context)
+			if valueErr != nil {
+				return nil, true, valueErr
+			}
+			if base, dispatch := dispatchTargetForTypeName(field.Type, context); dispatch {
+				if concreteName, concreteOK := expressionTypeName(value); concreteOK {
+					if concrete, exists := context.Targets[concreteName]; exists && sameConstructorPackage(base, concrete) && (concrete.Class == base.Class || classInherits(concrete.Class, base.Class, concrete.Classes, map[*ClassDecl]bool{})) {
+						if _, pointer := value.(*UnaryExpr); !pointer {
+							value = &UnaryExpr{Operator: "&", Operand: value}
+						}
 					}
 				}
 			}
+			setConstructorASTValue(root, field.Path, field.Name, value)
 		}
-		setConstructorASTValue(root, field.Path, field.Name, value)
 	}
 	value := constructorASTLiteralExpr(name, class, root, classes, target.Qualifier)
 	instance := &UnaryExpr{Operator: "&", Operand: value}
-	initializers := constructorInitializers(class, classes, nil, map[*ClassDecl]bool{})
-	if len(initializers) == 0 {
+	var constructorInitializers []constructorInitializer
+	if selectedInitializer != nil {
+		initializer := constructorInitializerFromMethod(*selectedInitializer, nil, initializerArguments)
+		initializer.ReturnsErr = initializer.ReturnsErr || initializerChainMayFail(class, *selectedInitializer, classes, context, map[*ClassDecl]bool{})
+		constructorInitializers = append(constructorInitializers, initializer)
+	} else {
+		parentInitializers, initErr := constructorParentInitializers(class, classes, nil, map[*ClassDecl]bool{}, context)
+		if initErr != nil {
+			return nil, true, sourceLineError(call.Span(), initErr)
+		}
+		constructorInitializers = parentInitializers
+	}
+	if len(constructorInitializers) == 0 {
 		return instance, true, nil
 	}
-	return constructorInitializationExpr(name, instance, initializers), true, nil
+	return constructorInitializationExpr(name, instance, constructorInitializers), true, nil
 }
 
-func hasStaticFactory(context constructorContext, target constructorTarget, methodName string) bool {
-	return len(staticFactorySignatures(context, target, methodName)) > 0
-}
-
-func staticFactorySignatures(context constructorContext, target constructorTarget, methodName string) []callableSignature {
-	if target.Class == nil {
-		return nil
+func constructorCallMayReturnError(call *CallExpr, target constructorTarget, context constructorContext) bool {
+	if call == nil || target.Class == nil {
+		return false
 	}
-	classKey := target.Class.Name
-	if target.Qualifier != "" {
-		classKey = target.Qualifier + "." + classKey
+	class := target.Class
+	classes := classesForClass(context, class)
+	if initializers := classInitializers(class); len(initializers) > 0 {
+		_, selected, err := resolveClassInitializerCall(call, target, initializers, context)
+		return err != nil || initializerChainMayFail(class, *selected, classes, context, map[*ClassDecl]bool{})
 	}
-	return context.StaticMethodSignatures[classKey][methodName]
+	initializers, err := constructorParentInitializers(class, classes, nil, map[*ClassDecl]bool{}, context)
+	if err != nil {
+		return true
+	}
+	for _, initializer := range initializers {
+		if initializer.ReturnsErr {
+			return true
+		}
+	}
+	return false
 }
 
-func resolveConstructorFactoryOverload(call *CallExpr, target constructorTarget, signatures []callableSignature, context constructorContext) (*CallExpr, error) {
-	argumentSources := make([]string, 0, len(call.Arguments))
+// lowerThisInitializerStatement resolves this(...) against the current class's
+// initializer overloads. Constructor delegation is a statement because the
+// current initializer continues after the delegated initializer returns.
+func lowerThisInitializerStatement(expression ExprNode, context constructorContext) (Stmt, bool, error) {
+	call, ok := expression.(*CallExpr)
+	if !ok || context.CurrentMethod != "init" {
+		return nil, false, nil
+	}
+	callee, ok := call.Callee.(*NameExpr)
+	if !ok || callee.Name != "this" {
+		return nil, false, nil
+	}
+	target, ok := context.Targets[context.CurrentClass]
+	if !ok || target.Class == nil {
+		return nil, true, sourceLineError(call.Span(), fmt.Errorf("cannot resolve this(...) outside a class initializer"))
+	}
+	methods := classInitializers(target.Class)
+	resolved, method, err := resolveClassInitializerCall(call, target, methods, context)
+	if err != nil {
+		return nil, true, sourceLineError(call.Span(), err)
+	}
+	arguments := make([]CallArg, 0, len(resolved))
+	for _, source := range resolved {
+		argument, parseErr := parseStaticArgumentNode(source)
+		if parseErr != nil {
+			return nil, true, parseErr
+		}
+		argument, parseErr = lowerExceptionExprNode(argument, context)
+		if parseErr != nil {
+			return nil, true, parseErr
+		}
+		arguments = append(arguments, CallArg{Value: argument})
+	}
+	call = &CallExpr{
+		Callee:    &SelectorExpr{Receiver: &NameExpr{Name: "this"}, Name: constructorInitializerHelperName(*method)},
+		Arguments: arguments,
+		SpanValue: call.Span(),
+	}
+	if !initializerChainMayFail(target.Class, *method, classesForClass(context, target.Class), context, map[*ClassDecl]bool{}) {
+		return &ExpressionStmt{Expression: call, SpanValue: expression.Span()}, true, nil
+	}
+	currentResult := ""
+	if context.CurrentResultAST != nil {
+		currentResult, _ = typeNodeSource(context.CurrentResultAST)
+	}
+	if strings.TrimSpace(currentResult) != "error" {
+		return &ExpressionStmt{
+			Expression: &CallExpr{Callee: &NameExpr{Name: "__gppThrow"}, Arguments: []CallArg{{Value: call}}},
+			SpanValue:  expression.Span(),
+		}, true, nil
+	}
+	errName := "__gpp_delegatedInitErr"
+	return &IfStmt{
+		Init: &AssignmentExpr{
+			Left:     []ExprNode{&NameExpr{Name: errName}},
+			Operator: ":=",
+			Right:    []ExprNode{call},
+		},
+		Condition: &BinaryExpr{Left: &NameExpr{Name: errName}, Operator: "!=", Right: &NameExpr{Name: "nil"}},
+		Body:      &BlockStmt{Statements: []Stmt{&ReturnStmt{Values: []ExprNode{&NameExpr{Name: errName}}}}},
+		SpanValue: expression.Span(),
+	}, true, nil
+}
+
+func resolveClassInitializerCall(call *CallExpr, target constructorTarget, methods []*Method, context constructorContext) ([]string, *Method, error) {
+	signatures := make([]callableSignature, 0, len(methods))
+	for _, method := range methods {
+		parameters, err := parameterInfosForMethod(*method)
+		if err != nil {
+			return nil, nil, err
+		}
+		signatures = append(signatures, callableSignature{Name: "init", GoName: methodOutputName(*method), Parameters: parameters})
+	}
+	arguments := make([]string, 0, len(call.Arguments))
 	for _, argument := range call.Arguments {
 		source, err := expressionNodeSource(argument.Value)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		argumentSources = append(argumentSources, source)
+		if argument.Name != "" {
+			source = argument.Name + ": " + source
+		}
+		arguments = append(arguments, source)
 	}
 	className := target.Class.Name
 	if target.Qualifier != "" {
 		className = target.Qualifier + "." + className
 	}
-	goName, resolvedSources, err := resolveStaticMethodCall(className, "New", argumentSources, signatures, context)
+	goName, resolved, err := resolveStaticMethodCall(className, "init", arguments, signatures, context)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("%s constructor: %w", target.Class.Name, err)
 	}
-	var signature callableSignature
-	for _, candidate := range signatures {
-		if candidate.GoName == goName {
-			signature = candidate
-			break
+	for _, method := range methods {
+		if methodOutputName(*method) == goName {
+			return resolved, method, nil
 		}
 	}
-	if signature.GoName == "" {
-		return nil, fmt.Errorf("cannot resolve static factory %s.New", className)
-	}
-
-	callee := call.Callee
-	var typeArguments []ExprNode
-	switch value := callee.(type) {
-	case *IndexExpr:
-		callee = value.Receiver
-		typeArguments = []ExprNode{value.Index}
-	case *IndexListExpr:
-		callee = value.Receiver
-		typeArguments = append(typeArguments, value.Indices...)
-	}
-	callee = staticCallCalleeForSignature(callee, signature, context)
-	if signature.StaticSelf {
-		callee, err = bindStaticSelfCall(callee, call.Callee)
-		if err != nil {
-			return nil, err
-		}
-	}
-	switch len(typeArguments) {
-	case 0:
-	case 1:
-		callee = &IndexExpr{Receiver: callee, Index: typeArguments[0], SpanValue: call.Callee.Span()}
-	default:
-		callee = &IndexListExpr{Receiver: callee, Indices: typeArguments, SpanValue: call.Callee.Span()}
-	}
-
-	arguments := make([]CallArg, 0, len(resolvedSources))
-	for _, source := range resolvedSources {
-		tokens, err := LexSource("constructor factory argument", source)
-		if err != nil {
-			return nil, err
-		}
-		value, err := ParseExpressionTokens(tokens)
-		if err != nil {
-			return nil, err
-		}
-		arguments = append(arguments, CallArg{Value: value})
-	}
-	return &CallExpr{Callee: callee, Arguments: arguments, SpanValue: call.SpanValue}, nil
-}
-
-func constructorFactoryCall(call *CallExpr) *CallExpr {
-	receiver := call.Callee
-	var typeArguments []ExprNode
-	switch value := call.Callee.(type) {
-	case *IndexExpr:
-		receiver = value.Receiver
-		typeArguments = []ExprNode{value.Index}
-	case *IndexListExpr:
-		receiver = value.Receiver
-		typeArguments = append(typeArguments, value.Indices...)
-	}
-	callee := ExprNode(&SelectorExpr{Receiver: receiver, Name: "New", SpanValue: call.Callee.Span()})
-	switch len(typeArguments) {
-	case 0:
-	case 1:
-		callee = &IndexExpr{Receiver: callee, Index: typeArguments[0], SpanValue: call.Callee.Span()}
-	default:
-		callee = &IndexListExpr{Receiver: callee, Indices: typeArguments, SpanValue: call.Callee.Span()}
-	}
-	return &CallExpr{Callee: callee, Arguments: append([]CallArg(nil), call.Arguments...), SpanValue: call.SpanValue}
+	return nil, nil, fmt.Errorf("cannot resolve %s initializer", target.Class.Name)
 }
 
 func namedStructConstructorExprNode(call *CallExpr, context constructorContext) (ExprNode, bool, error) {
@@ -1259,27 +1292,135 @@ func namedStructConstructorExprNode(call *CallExpr, context constructorContext) 
 
 type constructorInitializer struct {
 	Path       []string
+	Helper     string
+	Arguments  []ExprNode
 	ReturnsErr bool
 }
 
-func constructorInitializers(class *ClassDecl, classes map[string]*ClassDecl, path []string, visiting map[*ClassDecl]bool) []constructorInitializer {
+func constructorParentInitializers(class *ClassDecl, classes map[string]*ClassDecl, path []string, visiting map[*ClassDecl]bool, context constructorContext) ([]constructorInitializer, error) {
 	if class == nil || visiting[class] {
-		return nil
+		return nil, nil
 	}
 	visiting[class] = true
 	defer delete(visiting, class)
 	var result []constructorInitializer
 	for _, parentName := range classParentNames(class) {
 		parent := classes[parentName]
-		result = append(result, constructorInitializers(parent, classes, append(append([]string(nil), path...), classParentFieldName(parentName)), visiting)...)
+		parentPath := append(append([]string(nil), path...), classParentFieldName(parentName))
+		parentMethods := classInitializers(parent)
+		if len(parentMethods) == 0 {
+			parentInitializers, err := constructorParentInitializers(parent, classes, parentPath, visiting, context)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, parentInitializers...)
+			continue
+		}
+		var defaultInitializer *Method
+		var defaultParameters []parameterInfo
+		for _, method := range parentMethods {
+			parameters, parseErr := parameterInfosForMethod(*method)
+			if parseErr == nil && len(parameters) == 0 {
+				defaultInitializer = method
+				defaultParameters = nil
+				break
+			}
+			if parseErr == nil && requiredParameterCount(callableSignature{Parameters: parameters}) == 0 {
+				if defaultInitializer != nil {
+					return nil, fmt.Errorf("base class %s has ambiguous zero-argument init constructors", parentName)
+				}
+				defaultInitializer = method
+				defaultParameters = parameters
+			}
+		}
+		if defaultInitializer == nil {
+			return nil, fmt.Errorf("base class %s has no zero-argument init constructor", parentName)
+		}
+		var resultArgs []ExprNode
+		if len(defaultParameters) > 0 {
+			for _, parameter := range defaultParameters {
+				argument, parseErr := parseStaticArgumentNode(parameter.defaultText())
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				argument, parseErr = lowerExceptionExprNode(argument, context)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				resultArgs = append(resultArgs, argument)
+			}
+		}
+		initializer := constructorInitializerFromMethod(*defaultInitializer, parentPath, resultArgs)
+		initializer.ReturnsErr = initializerChainMayFail(parent, *defaultInitializer, classes, context, map[*ClassDecl]bool{})
+		result = append(result, initializer)
 	}
-	if initializer := classInitializer(class); initializer != nil {
-		result = append(result, constructorInitializer{
-			Path:       append([]string(nil), path...),
-			ReturnsErr: strings.TrimSpace(methodResultSource(*initializer)) != "",
-		})
+	return result, nil
+}
+
+func constructorInitializerFromMethod(method Method, path []string, arguments []ExprNode) constructorInitializer {
+	return constructorInitializer{
+		Path:       append([]string(nil), path...),
+		Helper:     constructorInitializerHelperName(method),
+		Arguments:  arguments,
+		ReturnsErr: strings.TrimSpace(methodResultSource(method)) != "",
 	}
-	return result
+}
+
+func initializerChainMayFail(class *ClassDecl, initializer Method, classes map[string]*ClassDecl, context constructorContext, visiting map[*ClassDecl]bool) bool {
+	if class == nil {
+		return false
+	}
+	if strings.TrimSpace(methodResultSource(initializer)) != "" {
+		return true
+	}
+	context.CurrentClass = class.Name
+	context.CurrentMethod = "init"
+	context.CurrentParameterTypes = parameterTypeMapFromNodes(initializer.ParameterAST)
+	if delegated := initializerDelegationCall(initializer); delegated != nil {
+		target := constructorTarget{Class: class, Classes: classes}
+		_, selected, err := resolveClassInitializerCall(delegated, target, classInitializers(class), context)
+		return err != nil || initializerChainMayFail(class, *selected, classes, context, visiting)
+	}
+	if visiting[class] {
+		return false
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+	calls, err := initializerParentCalls(class, initializer, classes, context)
+	if err != nil {
+		return true
+	}
+	for _, call := range calls {
+		parent := classes[call.path[len(call.path)-1]]
+		for _, candidate := range classInitializers(parent) {
+			if constructorInitializerHelperName(*candidate) != call.helper {
+				continue
+			}
+			if initializerChainMayFail(parent, *candidate, classes, context, visiting) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func initializerDelegationCall(initializer Method) *CallExpr {
+	if initializer.BodyAST == nil || len(initializer.BodyAST.Statements) == 0 {
+		return nil
+	}
+	expression, ok := initializer.BodyAST.Statements[0].(*ExpressionStmt)
+	if !ok {
+		return nil
+	}
+	call, ok := expression.Expression.(*CallExpr)
+	if !ok {
+		return nil
+	}
+	name, ok := call.Callee.(*NameExpr)
+	if ok && name.Name == "this" {
+		return call
+	}
+	return nil
 }
 
 func constructorInitializationExpr(typeName string, instance ExprNode, initializers []constructorInitializer) ExprNode {
@@ -1297,8 +1438,11 @@ func constructorInitializationExpr(typeName string, instance ExprNode, initializ
 		for _, part := range initializer.Path {
 			call = &SelectorExpr{Receiver: call, Name: part}
 		}
-		call = &SelectorExpr{Receiver: call, Name: "GppInitialize"}
-		call = &CallExpr{Callee: call}
+		call = &SelectorExpr{Receiver: call, Name: initializer.Helper}
+		call = &CallExpr{Callee: call, Arguments: make([]CallArg, len(initializer.Arguments))}
+		for index, argument := range initializer.Arguments {
+			call.(*CallExpr).Arguments[index] = CallArg{Value: argument}
+		}
 		if initializer.ReturnsErr {
 			statements = append(statements, &IfStmt{
 				Init: &AssignmentExpr{

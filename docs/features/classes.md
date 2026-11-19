@@ -239,21 +239,21 @@ fmt.Println(first.Greeting())
 fmt.Println(second.Greeting())
 ```
 
-A class can define static `New` methods as constructors for positional calls.
-When a class has overloads, `Type(...)` selects the matching constructor by
-argument types and count:
+A class may define one or more instance `init` methods. These are constructor
+overloads selected by argument types and count:
 
 ```go
 class User {
     Name string
     Age int
 
-    static func New(name string) *User {
-        return User(Name: name)
+    func init(name string) {
+        this.Name = name
     }
 
-    static func New(name string, age int) *User {
-        return User(Name: name, Age: age)
+    func init(name string, age int) {
+        this.Name = name
+        this.Age = age
     }
 }
 
@@ -261,13 +261,23 @@ guest := User("Guest")
 ada := User("Ada", 36)
 ```
 
-When a class declares `New`, positional calls use its factories; they do not
-fall back to assigning fields by order if no factory matches. Without a `New`
-factory, positional calls assign fields in declaration order. Named field
-construction always assigns fields directly. Factories are optional
-conveniences, and types whose zero values are ready to use can still be
-declared with `var`. If every `New` overload requires arguments, `Type()` has
-no match; add a zero-argument `New()` overload to support it.
+When a class declares any `init` method, every `Type(...)` call must match one
+of those overloads. Construction does not fall back to assigning fields when
+no overload matches, and field names cannot be passed as constructor
+arguments. Instead, constructor calls may pass initializer parameters by
+position or by their parameter names:
+
+```go
+ada := User("Ada", 36)
+alsoAda := User(age: 36, name: "Ada")
+```
+
+The same forms work with `this(...)`, `super(...)`, and
+`super[Parent](...)`; names refer to the selected initializer's parameters,
+not its fields. A call cannot mix positional and named arguments. This lets a
+class control which values callers can provide. If a class declares no
+`init`, `Type(...)` assigns fields by position or name as shown above. Classes
+that do not need custom initialization can still be declared with `var`.
 
 This pointer result is specific to classes. Constructor-style calls for named
 structs return struct values; see [named struct construction](./structs#declare-and-construct-named-structs).
@@ -286,13 +296,14 @@ user := User{
 }
 ```
 
-Named construction can set inherited public and protected fields too. Private
-fields stay with their declaring class and are not constructor arguments on
-child classes. A leading underscore marks a protected member: descendants can
-use it, while ordinary callers cannot. For example, `this._reset()` inside a
-derived class is valid; `server._reset()` in an ordinary function is not,
-even when `server` has the derived type. See [Access: public, private, and
-protected](#access-public-private-and-protected) for examples.
+For classes without `init`, named construction can set inherited public and
+protected fields too. Private fields stay with their declaring class and are
+not constructor arguments on child classes. A leading underscore marks a
+protected member: descendants can use it, while ordinary callers cannot. For
+example, `this._reset()` inside a derived class is valid; `server._reset()` in
+an ordinary function is not, even when `server` has the derived type. See
+[Access: public, private, and protected](#access-public-private-and-protected)
+for examples.
 If multiple parents expose a field with the same name, qualify it with the
 parent name:
 
@@ -311,53 +322,77 @@ user := User(
 )
 ```
 
-## Constructor hook: `init()`
+## Constructors: `init(...)`
 
-Classes may declare an instance method named `init()` for setup after
-constructor fields are assigned. Use it to normalize values or check
-invariants:
+Go commonly uses `NewUser(...)` functions to allocate and validate values. In
+GPP, an `init` method is a constructor: it defines how a class instance and
+its parent classes are initialized. `Type(...)` allocates the object and calls
+the matching initializer. Its arguments match the initializer's parameters;
+they are not assigned to fields automatically. Pass arguments positionally in
+parameter order or by parameter name. Do not mix the two forms in one call.
 
-```go
-class Person {
+This follows the runnable
+[classes example](https://github.com/telgatech/gpp/blob/main/examples/classes.gpp):
+
+```gpp
+class Greeting {
     Name string
 
-    func init() {
-        this.Name = strings.TrimSpace(this.Name)
+    func init(name string) {
+        this.Name = name
+    }
+
+    func Message() string {
+        return this._message() + ", " + this.Name
     }
 }
 
-person := Person(" Ada ") // init runs after Name has been assigned
-```
+class PersonalizedGreeting : Greeting {
+    Prefix string
 
-An `init()` method may return an `error` when the values are invalid.
-Construction then returns `(*Person, error)`. If the caller omits the trailing
-error, GPP promotes it to an exception:
+    func init(name string, prefix string) {
+        super(name)
+        this.Prefix = prefix
+    }
 
-```go
-class Person {
-    Name string
-
-    func init() error {
-        if this.Name == "" {
-            return errors.New("name is required")
-        }
-        return nil
+    func _message() string {
+        return this.Prefix
     }
 }
 
-person := Person(inputName) // a non-nil init error is promoted
+class Locale {
+    Language string
+    func init(language string) { this.Language = language }
+}
+
+class LocalizedGreeting : PersonalizedGreeting, Locale {
+    func init(name string, prefix string, language string) {
+        super[PersonalizedGreeting](name, prefix)
+        super[Locale](language)
+    }
+}
+
+greeting := Greeting("Ada")
+personalized := PersonalizedGreeting(prefix: "Welcome", name: "Ada")
+localized := LocalizedGreeting("Ada", "Welcome", "en")
 ```
 
-The hook applies to GPP constructor-style calls such as `Person(...)`.
-Ordinary Go composite literals such as `Person{Name: inputName}` remain
-unchanged and bypass it. An initializer takes no parameters and returns either
-nothing or one error-compatible result. A class may declare only one `init()`.
+`init` can be overloaded; a construction call must match an overload. Named
+arguments refer to parameter names, as in `PersonalizedGreeting` above. If a
+class has no `init`, `Type(...)` instead initializes fields by position or
+name. Ordinary Go composite literals such as `Greeting{Name: "Ada"}` remain
+unchanged and bypass initializers.
 
-When classes inherit from other classes, initialization runs base-first and
-left-to-right through the parent declarations. Each initializer sees the fully
-allocated object with constructor fields populated. The first error stops the
-remaining initializers. See the [constructor specification](/reference/specifications/constructors)
-for the exact rules.
+Parent initializers run base-first and then in parent declaration order. A
+single parent is selected with `super(...)`; with multiple parents, name the
+parent as in `super[Locale](language)`. A parent with a zero-argument init is
+called automatically if omitted. Use `this(...)` as the first statement to
+delegate to another initializer in the same class. These calls also accept
+named parameters. An initializer does not need an `error` result for fallible
+calls: uncaptured errors propagate as exceptions. Declare `error` only when
+the caller should capture the constructor error or handle it with `??`. See the
+[constructor specification](/reference/specifications/constructors) for the
+complete rules.
 
 ## When a builder pattern helps
 
@@ -375,11 +410,10 @@ request := NewRequestBuilder().
     Build()
 ```
 
-`Build()` can validate combinations of options and return an error. An
-`init()` hook could still protect class invariants across construction paths;
-a builder is useful on its own when incremental setup is the main need. This
-example shows the familiar builder pattern, not a built-in GPP API. It can
-already be implemented using ordinary classes and methods.
+`Build()` can validate combinations of options and return an error before it
+calls the class constructor. This example shows the familiar builder pattern,
+not a built-in GPP API. It can already be implemented using ordinary classes
+and methods.
 
 ## Put creation rules beside the type
 

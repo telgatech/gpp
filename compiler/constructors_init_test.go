@@ -15,11 +15,6 @@ func TestResolveProgramValidatesClassInitializers(t *testing.T) {
 		want string
 	}{
 		{
-			name: "parameters",
-			src:  `class Sample { func init(value int) {} }`,
-			want: "initializer `init` cannot have parameters",
-		},
-		{
 			name: "static",
 			src:  `class Sample { static func init() {} }`,
 			want: "initializer `init` cannot be static",
@@ -27,12 +22,7 @@ func TestResolveProgramValidatesClassInitializers(t *testing.T) {
 		{
 			name: "invalid result",
 			src:  `class Sample { func init() int { return 1 } }`,
-			want: "must return no values or a trailing error",
-		},
-		{
-			name: "duplicate",
-			src:  `class Sample { func init() {} func init() error { return nil } }`,
-			want: "may declare only one initializer",
+			want: "must return no values or error",
 		},
 	}
 
@@ -50,7 +40,7 @@ func TestResolveProgramValidatesClassInitializers(t *testing.T) {
 	}
 }
 
-func TestResolveProgramAcceptsClassErrorInitializerResult(t *testing.T) {
+func TestResolveProgramRejectsClassErrorInitializerResult(t *testing.T) {
 	file, err := ParseFile("initializer.gpp", `class InitError {
 	func Error() string { return "init failed" }
 }
@@ -60,8 +50,8 @@ class Sample {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ResolveProgram(&Program{Files: []*File{file}}); err != nil {
-		t.Fatalf("expected an error-compatible class result to be accepted: %v", err)
+	if _, err := ResolveProgram(&Program{Files: []*File{file}}); err == nil || !strings.Contains(err.Error(), "must return no values or error") {
+		t.Fatalf("expected class error results to be rejected in favor of the error interface, got %v", err)
 	}
 }
 
@@ -70,8 +60,9 @@ func TestConstructorInitializerLoweringPreservesErrorResult(t *testing.T) {
 		Name:   "Base",
 		Fields: []Field{{Name: "Name", TypeAST: parseTypeText("string")}},
 		Methods: []Method{{
-			Name:      "init",
-			ResultAST: parseTypeText("error"),
+			Name:         "init",
+			ParameterAST: []ParameterNode{{Name: "name", Type: parseTypeText("string")}},
+			ResultAST:    parseTypeText("error"),
 		}},
 	}
 	context := localConstructorContext(map[string]*ClassDecl{"Base": base})
@@ -84,14 +75,14 @@ func TestConstructorInitializerLoweringPreservesErrorResult(t *testing.T) {
 	if !handled {
 		t.Fatal("expected constructor call to be lowered")
 	}
-	for _, expected := range []string{"func() (*Base, error)", "__gpp_instance := &Base{Name: \"value\"}", "GppInitialize()", "return nil, __gpp_initErr"} {
+	for _, expected := range []string{"func() (*Base, error)", "__gpp_instance := &Base{}", "GppInitialize(\"value\")", "return nil, __gpp_initErr"} {
 		if !strings.Contains(transformed, expected) {
 			t.Fatalf("expected lowered constructor to contain %q, got:\n%s", expected, transformed)
 		}
 	}
 }
 
-func TestClassConstructionUsesStaticNewFactory(t *testing.T) {
+func TestClassConstructionUsesMatchingInitOverload(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
@@ -102,19 +93,16 @@ import "fmt"
 class Sample {
 	Value int
 
-	static func New(value int) *Sample {
-		sample := Sample(Value: value + 1)
-		return sample
+	func init(value int) {
+		this.Value = value + 1
 	}
 
-	static func New(value string) *Sample {
-		sample := Sample(Value: len(value))
-		return sample
+	func init(value string) {
+		this.Value = len(value)
 	}
 
-	static func New(value int, bonus int) *Sample {
-		sample := Sample(Value: value + bonus)
-		return sample
+	func init(value int, bonus int) {
+		this.Value = value + bonus
 	}
 }
 
@@ -126,16 +114,15 @@ func main() {
 	fromFactory := Sample(4)
 	fromOverload := Sample("four")
 	fromTwoArguments := Sample(4, 3)
-	fromFields := Sample(Value: 9)
 	plain := Plain(12)
-	fmt.Println(fromFactory.Value, fromOverload.Value, fromTwoArguments.Value, fromFields.Value, plain.Value)
+	fmt.Println(fromFactory.Value, fromOverload.Value, fromTwoArguments.Value, plain.Value)
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
-		t.Fatalf("compile factory construction program: %v", err)
+		t.Fatalf("compile overloaded initializer program: %v", err)
 	}
 
 	command := exec.Command("go", "run", ".")
@@ -143,14 +130,14 @@ func main() {
 	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("generated factory construction program did not run: %v\n%s", err, output)
+		t.Fatalf("generated initializer program did not run: %v\n%s", err, output)
 	}
-	if got, want := strings.TrimSpace(string(output)), "5 4 7 9 12"; got != want {
+	if got, want := strings.TrimSpace(string(output)), "5 4 7 12"; got != want {
 		t.Fatalf("unexpected factory construction output: got %q, want %q", got, want)
 	}
 }
 
-func TestClassConstructionRequiresMatchingNewFactory(t *testing.T) {
+func TestClassConstructionRequiresMatchingInitOverload(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
 	sourcePath := filepath.Join(inputDir, "main.gpp")
@@ -159,12 +146,12 @@ func TestClassConstructionRequiresMatchingNewFactory(t *testing.T) {
 class User {
 	Name string
 
-	static func New(name string) *User {
-		return User(Name: name)
+	func init(name string) {
+		this.Name = name
 	}
 
-	static func New(name string, age int) *User {
-		return User(Name: name)
+	func init(name string, age int) {
+		this.Name = name
 	}
 }
 
@@ -175,8 +162,8 @@ func main() {
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err == nil || !strings.Contains(err.Error(), "no matching static method User.New") {
-		t.Fatalf("expected User() to require a matching New factory, got %v", err)
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err == nil || !strings.Contains(err.Error(), "no matching") {
+		t.Fatalf("expected User() to require a matching init overload, got %v", err)
 	}
 }
 
@@ -225,14 +212,15 @@ import (
 class Base {
 	Name string
 
-	func init() {
-		fmt.Println("base", this.Name)
-		this.Name += "-base"
+	func init(name string) {
+		this.Name = name + "-base"
+		fmt.Println("base", name)
 	}
 }
 
 class Middle: Base {
-	func init() error {
+	func init(name string) error {
+		super(name)
 		fmt.Println("middle", this.Name)
 		if this.Name == "bad-base" {
 			return errors.New("middle rejected value")
@@ -242,7 +230,8 @@ class Middle: Base {
 }
 
 class Child: Middle {
-	func init() {
+	func init(name string) {
+		super(name)
 		fmt.Println("child", this.Name)
 	}
 }
@@ -257,6 +246,18 @@ class Right {
 
 class Combined: Left, Right {
 	func init() { fmt.Println("combined") }
+}
+
+class Delegated {
+	Value int
+
+	func init(value int) {
+		this(value, 1)
+	}
+
+	func init(value int, bonus int) {
+		this.Value = value + bonus
+	}
 }
 
 func NewChild(name string) (*Child, error) {
@@ -280,6 +281,8 @@ func main() {
 	}
 
 	_ = Combined()
+	delegated := Delegated(4)
+	fmt.Println("delegated", delegated.Value)
 	_ = Child{Middle: Middle{Base: Base{Name: "literal"}}}
 }
 `
@@ -315,6 +318,7 @@ func main() {
 		"left",
 		"right",
 		"combined",
+		"delegated 5",
 		"",
 	}, "\n")
 	if string(output) != want {
@@ -420,7 +424,9 @@ class Sample {
     Ready bool
     Value *int
 
-    func init() {
+	func init(ready bool, value *int) {
+		this.Ready = ready
+		this.Value = value
         this.Value ||= defaultPointer()
     }
 
@@ -433,14 +439,14 @@ class Sample {
 
 func main() {
     existingValue := 3
-    existing := Sample(Ready: true, Value: &existingValue)
+	existing := Sample(true, &existingValue)
     existing.Configure(true)
     if booleanDefaults != 0 || pointerDefaults != 0 {
         fmt.Println("default evaluated eagerly")
         return
     }
 
-    missing := Sample()
+	missing := Sample(false, nil)
     missing.Configure(false)
     fmt.Println(booleanDefaults, pointerDefaults, *missing.Value)
 }

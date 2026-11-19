@@ -269,7 +269,7 @@ concrete subclass type without declaring a separate method for every subclass.
 
 ```go
 class EntityFactory {
-    static func New() *self {
+    static func Create() *self {
         return new(self)
     }
 }
@@ -278,11 +278,11 @@ class User : EntityFactory {
     Name string
 }
 
-user := User.New()
+user := User.Create()
 user.Name = "Ada"
 ```
 
-`New` is defined once on `EntityFactory`; the call through `User` makes `self`
+`Create` is defined once on `EntityFactory`; the call through `User` makes `self`
 resolve to `User`, so `user` has type `*User`. The compiler treats `self` as an
 implicit generic type parameter and supplies the call-site class. It can appear
 in static method parameter and result types, and in the method body as a type

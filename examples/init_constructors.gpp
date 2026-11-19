@@ -1,0 +1,27 @@
+import "fmt"
+
+class Sample {
+    Value int
+
+    func init(value int) {
+        this(value, 1)
+    }
+
+    func init(value string) {
+        this.Value = len(value)
+    }
+
+    func init(value int, bonus int) {
+        this.Value = value + bonus
+    }
+}
+
+func main() {
+    fromInteger := Sample(4)
+    fromString := Sample("four")
+    fromTwoArguments := Sample(4, 2)
+
+    fmt.Println(fromInteger.Value)
+    fmt.Println(fromString.Value)
+    fmt.Println(fromTwoArguments.Value)
+}

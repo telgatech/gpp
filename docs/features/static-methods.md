@@ -60,32 +60,11 @@ Static methods have no implicit instance receiver. They are selected through
 the class name, and their behavior is statically resolved. See [static method
 rules](/reference/specifications/static-methods).
 
-## Use `New` for positional construction
-
-Static methods named `New` act as constructors for positional class calls.
-Calling `Type(...)` selects the matching `New` overload by argument types and
-count. When `New` exists, positional calls use its overloads and do not fall
-back to assigning fields by order if none matches. Without a `New` method,
-positional calls assign fields in declaration order. Named field construction
-always assigns fields directly. These constructor methods are optional:
-classes whose zero values are ready to use can still be declared with `var`.
-
-For example, [`factory_constructors.gpp`](https://github.com/telgatech/gpp/blob/main/examples/factory_constructors.gpp)
-demonstrates overloaded factories selected by argument type and count:
-
-```gpp
-class Sample {
-    Value int
-
-    static func New(value int) *Sample { return Sample(Value: value + 1) }
-    static func New(value string) *Sample { return Sample(Value: len(value)) }
-    static func New(value int, bonus int) *Sample { return Sample(Value: value + bonus) }
-}
-
-one := Sample(4)
-two := Sample("four")
-three := Sample(4, 3)
-```
+Factory methods are ordinary static methods. Give them names that describe the
+creation path, such as `Create`, `Guest`, or `FromName`, and call them
+explicitly. Use instance `init(...)` overloads when `Type(...)` should select
+and run a constructor. See [class constructors](/guide/features/classes#constructors-init)
+for those rules and an example.
 
 ## Use `self` for the calling class's type
 
@@ -94,7 +73,7 @@ return the class used at the call site:
 
 ```go
 class EntityFactory {
-    static func New() *self {
+    static func Create() *self {
         return new(self)
     }
 }
@@ -103,12 +82,12 @@ class User : EntityFactory {
     Name string
 }
 
-user := User.New() // user is *User
+user := User.Create() // user is *User
 user.Name = "Ada"
 ```
 
-`New` is defined once on `EntityFactory`; the call through `User` makes `self`
-refer to `User`, so `New` returns `*User`. The compiler treats `self` as an
+`Create` is defined once on `EntityFactory`; the call through `User` makes `self`
+refer to `User`, so `Create` returns `*User`. The compiler treats `self` as an
 implicit generic type parameter. It can also be used as a type argument inside
 the method body, for example `Helper[self](...)`. `self` refers to a type;
 `this` refers to an instance. The method implementation remains statically

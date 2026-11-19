@@ -885,22 +885,16 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			if method.IsStatic {
 				return methodDiagnosticf(class, &method, "class %s initializer `init` cannot be static", class.Name)
 			}
-			if _, exists := methods["init"]; exists {
-				return methodDiagnosticf(class, &method, "class %s may declare only one initializer `init`", class.Name)
-			}
-			if strings.TrimSpace(methodParametersSource(method)) != "" {
-				return methodDiagnosticf(class, &method, "class %s initializer `init` cannot have parameters", class.Name)
-			}
 			result := strings.TrimSpace(methodResultSource(method))
-			if result != "" && !initializerErrorResult(result, pkg) {
-				return methodDiagnosticf(class, &method, "class %s initializer `init` must return no values or a trailing error", class.Name)
+			if result != "" && result != "error" {
+				return methodDiagnosticf(class, &method, "class %s initializer `init` must return no values or error", class.Name)
 			}
 		}
 		if method.IsStatic && tokensContainIdentifier(methodBodyTokens(method), "this") {
 			return methodDiagnosticf(class, &method, "static method %s has no this", method.Name)
 		}
 		if method.Name == "GppRuntimeClass" || method.Name == "GppRuntimeObject" ||
-			method.Name == "GppInitialize" || method.Name == "__gppInit" {
+			strings.HasPrefix(method.Name, "GppInitialize") || strings.HasPrefix(method.Name, "__gppInit") {
 			return methodDiagnosticf(class, &method, "class %s method %s is reserved for GPP generated methods", class.Name, method.Name)
 		}
 		if fields[method.Name] {
@@ -958,6 +952,9 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 			class.Methods[method.index].GoName = goName
 		}
 	}
+	if err := validateInitializerDelegation(class, pkg.Classes); err != nil {
+		return err
+	}
 
 	parents := map[string]bool{}
 	for _, parentName := range classParentNames(class) {
@@ -977,37 +974,67 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	return nil
 }
 
-func initializerErrorResult(result string, pkg *PackageSymbols) bool {
-	if result == "error" {
-		return true
+func validateInitializerDelegation(class *ClassDecl, classes map[string]*ClassDecl) error {
+	initializers := classInitializers(class)
+	if len(initializers) == 0 {
+		return nil
 	}
-	name := strings.TrimPrefix(result, "*")
-	if class := pkg.Classes[name]; class != nil {
-		return semanticClassHasErrorMethod(class, pkg.Classes, map[*ClassDecl]bool{})
+	context := constructorContext{
+		Targets:      map[string]constructorTarget{},
+		CurrentClass: class.Name,
 	}
-	if class := pkg.ImportedClasses[name]; class != nil {
-		return semanticClassHasErrorMethod(class, pkg.ImportedClasses, map[*ClassDecl]bool{})
+	for name, declaration := range classes {
+		context.Targets[name] = constructorTarget{Class: declaration, Classes: classes}
 	}
-	return false
-}
-
-func semanticClassHasErrorMethod(class *ClassDecl, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) bool {
-	if class == nil || visiting[class] {
-		return false
+	target := context.Targets[class.Name]
+	delegates := map[string]string{}
+	for _, method := range initializers {
+		if method.BodyAST == nil {
+			continue
+		}
+		delegationIndex := -1
+		var delegation *CallExpr
+		for index, statement := range method.BodyAST.Statements {
+			expression, ok := statement.(*ExpressionStmt)
+			if !ok {
+				continue
+			}
+			call, ok := expression.Expression.(*CallExpr)
+			if !ok {
+				continue
+			}
+			name, ok := call.Callee.(*NameExpr)
+			if !ok || name.Name != "this" {
+				continue
+			}
+			if delegationIndex >= 0 {
+				return methodDiagnosticf(class, method, "initializer delegation this(...) may appear only once")
+			}
+			delegationIndex, delegation = index, call
+		}
+		if delegationIndex < 0 {
+			continue
+		}
+		if delegationIndex != 0 {
+			return methodDiagnosticf(class, method, "initializer delegation this(...) must be the first statement")
+		}
+		context.CurrentParameterTypes = parameterTypeMapFromNodes(method.ParameterAST)
+		_, selected, err := resolveClassInitializerCall(delegation, target, initializers, context)
+		if err != nil {
+			return methodDiagnosticf(class, method, "initializer delegation: %v", err)
+		}
+		delegates[methodOutputName(*method)] = methodOutputName(*selected)
 	}
-	visiting[class] = true
-	defer delete(visiting, class)
-	for _, method := range class.Methods {
-		if !method.IsStatic && method.Name == "Error" && methodParametersSource(method) == "" && strings.TrimSpace(methodResultSource(method)) == "string" {
-			return true
+	for start := range delegates {
+		seen := map[string]bool{}
+		for current := start; current != ""; current = delegates[current] {
+			if seen[current] {
+				return classDiagnosticf(class, "class %s has a cycle in its init constructor delegation", class.Name)
+			}
+			seen[current] = true
 		}
 	}
-	for _, parent := range classParentNames(class) {
-		if semanticClassHasErrorMethod(classes[parent], classes, visiting) {
-			return true
-		}
-	}
-	return false
+	return nil
 }
 
 func sourceContainsIdentifier(source, wanted string) bool {

@@ -3,9 +3,10 @@
 ## Status
 
 Implemented. Constructor-style class calls lower to pointers and ordinary
-composite literals remain values. Constructor calls invoke validated `init()`
-hooks after fields have been assigned, including base-to-derived initialization
-and error propagation.
+composite literals remain values. Classes may define overloaded instance
+`init(...)` constructors; classes without `init` keep field-based positional
+or named construction. Initializer sequencing supports inheritance and error
+propagation.
 
 ## Goals
 
@@ -91,9 +92,10 @@ run a class `init` hook.
 
 ## Field ordering and arguments
 
-Positional arguments map to fields in declaration order. In an inherited class,
-parent fields come first in parent declaration order, followed by the derived
-class's own fields.
+When a class declares no `init`, positional arguments map to fields in
+declaration order. In an inherited class, parent fields come first in parent
+declaration order, followed by the derived class's own fields. Named arguments
+can identify fields directly.
 
 Named arguments may initialize inherited fields:
 
@@ -119,23 +121,24 @@ The normal GPP argument rules apply:
 * required arguments must be supplied; and
 * defaults and overload resolution are applied before construction lowering.
 
-## Instance initializer
+## Instance constructors
 
-A class may declare one reserved instance initializer named `init`:
+A class may declare one or more instance initializers named `init`. The
+overloads define the class's accepted construction signatures:
 
 ```go
 class Person {
     Name string
     Age int
 
-    func init() {
-        this.Name = strings.TrimSpace(this.Name)
+    func init(name string) {
+        this.Name = strings.TrimSpace(name)
     }
 }
 ```
 
-`init` is called automatically by constructor-style calls after the fields have
-been populated. It is not called by ordinary `Person{...}` literals.
+`Person(...)` allocates one object and invokes the matching `init` on it.
+Ordinary `Person{...}` literals do not call `init`.
 
 An initializer may return an error:
 
@@ -144,10 +147,11 @@ class Person {
     Name string
     Age int
 
-    func init() error {
-        if this.Name == "" {
+    func init(name string) error {
+        if strings.TrimSpace(name) == "" {
             return errors.New("name is required")
         }
+        this.Name = strings.TrimSpace(name)
         if this.Age < 0 {
             return errors.New("age cannot be negative")
         }
@@ -156,15 +160,17 @@ class Person {
 }
 ```
 
-When `init` returns `error`, constructor-style construction returns two
-results:
+When the selected `init` or a parent initializer returns `error`,
+constructor-style construction returns two results:
 
 ```go
 p, err := Person("Bob", 42)
 ```
 
-The first result is always `*Person`. The second result is the initializer's
-error. A non-error initializer returns only `*Person`.
+The first result is always `*Person`. The second result carries the first
+initializer error. If no initializer returns `error`, construction returns
+only `*Person`; uncaptured fallible calls inside an initializer still
+propagate as exceptions.
 
 This follows GPP's ordinary trailing-error rules. Omitting the trailing error
 promotes a non-nil error to an exception:
@@ -179,64 +185,91 @@ To handle the error as a value, capture it explicitly:
 p, err := Person("Bob", 42)
 ```
 
-No initializer may return any result other than either no result or one
-trailing error-compatible result.
+An initializer may return either no result or the built-in `error` type.
+Constructors must be instance methods and cannot be static. Custom error values
+can be returned through `error` just as they can from other Go functions.
+An initializer does not need an `error` result merely to call fallible
+functions: an uncaptured error propagates as an exception. Declare `error`
+when constructor callers should receive a trailing error value that can be
+captured or handled with `??`.
 
-## Initializer restrictions
+## Choosing a construction form
 
-`init` has deliberately narrow semantics:
+If a class has one or more `init` overloads, every `Type(...)` call must match
+one. Calls do not fall back to assigning fields, and named field arguments are
+not available for that class. If the class has no `init`, constructor
+arguments initialize fields by position or name. Static factory methods are
+ordinary methods and should be called explicitly by their descriptive names.
+`Type(...)` only invokes a matching `init` overload or performs field-based
+construction when the class has no initializer.
 
-* it is an instance method and must not be declared `static`;
-* it takes no parameters;
-* it has at most one result, and that result must be `error`-compatible;
-* a class may declare at most one `init`; and
-* `init` is not an overloadable method.
+Constructor overloads use the same parameter and overload rules as other
+instance methods. Duplicate signatures are compile-time errors.
 
 The compiler diagnoses invalid declarations at the source location of `init`,
 for example:
 
 ```text
-class Person initializer `init` cannot have parameters
 class Person initializer `init` must return no values or a trailing error
 class Person initializer `init` cannot be static
 ```
 
-`init` is not a general-purpose method. If a class needs multiple construction
-paths, it should use static factory methods or overloaded constructor-style
-calls that ultimately share the same initializer.
+An initializer can delegate to another overload of the same class with
+`this(...)`. The delegation must be the first statement. The selected overload
+runs first, then the delegating initializer continues. Delegation cycles are
+compile-time errors.
 
 ## Inheritance initialization order
 
 For a derived class, constructor-style initialization proceeds from the
-base-most class to the most-derived class:
+base-most class to the most-derived class. An allocated object is available to
+all initializers, and each embedded parent constructor runs once in declared
+parent order:
 
-1. allocate and populate the complete object;
-2. run each embedded parent's initializer once, in left-to-right parent
-   declaration order;
-3. run the derived class initializer; and
+1. allocate the complete object;
+2. initialize each parent from its own parents outward;
+3. run the selected initializer for the class; and
 4. return the initialized pointer, or the first error encountered.
 
 Example:
 
 ```go
+class Directory {
+    Path string
+    func init(path string) { this.Path = path }
+}
+
 class Audited {
-    func init() error {
-        // runs first
-        return nil
+    AuditID int
+    func init(id int) { this.AuditID = id }
+}
+
+class Employee : Directory, Audited {
+    Name string
+    func init(path string, auditID int, name string) {
+        super[Directory](path)
+        super[Audited](auditID)
+        this.Name = name
     }
 }
 
-class Employee : Audited {
-    func init() error {
-        // runs second
-        return nil
-    }
-}
+employee := Employee("/archive", 42, "Ada")
 ```
 
+`super(...)` selects the sole parent when there is one; `super[Parent](...)`
+selects a parent explicitly when there are multiple. These calls must appear
+before the initializer body. A parent with a no-argument initializer runs
+automatically when omitted. Omitting a parent initializer that requires
+arguments is a compile-time error. The parent calls execute in declared parent
+order regardless of their order in the source.
+
+`this(...)` delegates to another overload of the same class and must be the
+first statement. The delegated constructor initializes the parent chain once;
+then the delegating constructor continues. Cycles are compile-time errors.
+
 If an initializer returns an error, later initializers do not run. Each
-initializer observes the same allocated object, including the fields populated
-by the constructor call and any changes made by earlier initializers.
+initializer observes the same allocated object and changes made by earlier
+initializers.
 
 Initializer dispatch during construction is non-virtual and statically tied to
 each class in the inheritance chain. This prevents a partially initialized

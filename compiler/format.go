@@ -31,6 +31,7 @@ func formatSourceWithFile(file *File, source string) string {
 	dropBlankLines := make([]bool, len(lines))
 	indent := 0
 	state := formatScanState{}
+	ternaryContinuation := false
 	previousLineOpenedBlock := false
 	previousCodeLineBlank := false
 	templateLines, templateEnds := templateBodyLinesForFile(file, source, lines)
@@ -105,10 +106,14 @@ func formatSourceWithFile(file *File, source string) string {
 			continuation = 0
 		}
 		lineIndent := indent + continuation
+		if ternaryContinuation {
+			lineIndent++
+		}
 		if isCaseClauseLine(content) && lineIndent > 0 {
 			lineIndent--
 		}
 		lines[index] = strings.Repeat("    ", lineIndent) + content
+		ternaryContinuation = formatTernaryContinuation(content, ternaryContinuation)
 		delta := formatBraceDelta(content, &state)
 		if startsWithBraceClose {
 			// The leading brace was already removed to align this line. Count
@@ -129,6 +134,17 @@ func formatSourceWithFile(file *File, source string) string {
 		}
 	}
 	return strings.TrimRight(strings.Join(formattedLines, "\n"), "\n") + "\n"
+}
+
+func formatTernaryContinuation(line string, continuing bool) bool {
+	line = strings.TrimSpace(line)
+	if continuing && strings.HasPrefix(line, "//") {
+		return true
+	}
+	if strings.HasSuffix(line, "?") && !strings.HasSuffix(line, "??") {
+		return true
+	}
+	return continuing && strings.HasSuffix(line, ":")
 }
 
 func sortImportGroups(source string) string {

@@ -1914,8 +1914,16 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	if err != nil {
 		return err
 	}
-	if initializer := classInitializer(class); initializer != nil {
+	for _, initializer := range classInitializers(class) {
 		methods = append(methods, *initializer)
+	}
+	initializerParents := make(map[*Method][]initializerParentCall)
+	for _, initializer := range classInitializers(class) {
+		parentCalls, err := initializerParentCalls(class, *initializer, classes, context)
+		if err != nil {
+			return err
+		}
+		initializerParents[initializer] = parentCalls
 	}
 
 	for _, method := range class.Methods {
@@ -1929,12 +1937,8 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 
 	for methodIndex := range methods {
 		method := methods[methodIndex]
-		// Initializers are construction hooks, not inherited API methods. A
-		// class's own init method is emitted below as its source method; a
-		// parent's init is invoked through the parent's generated helper.
-		if method.Name == "init" && classInitializer(class) == nil {
-			continue
-		}
+		// Initializers are not inherited API methods. The class's own overloads
+		// are emitted under generated names and reached through constructor calls.
 		if method.Generated && isDefaultObjectMethod(method) {
 			if len(class.TypeParamsAST) != 0 {
 				continue
@@ -1951,6 +1955,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		emitSourceDirective(out, sourcePath, methodSourceLine(method, class))
 		methodName := methodOutputName(method)
 		exceptionContext := contextForMethod(context, class, method.Name)
+		exceptionContext.CurrentResultAST = methodResultTypeNode(method)
 		if direct, handled, err := directMethodSource(class, method, exceptionContext); handled {
 			if err != nil {
 				return err
@@ -2082,12 +2087,22 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		out.WriteString("\n}\n\n")
 	}
 
-	if classInitializer(class) != nil {
-		fmt.Fprintf(out, "func (this *%s) GppInitialize() error {\n", class.Name+typeParameterNames(class.TypeParamsAST))
-		if strings.TrimSpace(methodResultSource(*classInitializer(class))) == "" {
-			out.WriteString("\tthis.__gppInit()\n\treturn nil\n")
+	for _, initializer := range classInitializers(class) {
+		parameters, arguments, err := initializerWrapperParameters(*initializer, context)
+		if err != nil {
+			return err
+		}
+		methodName := methodOutputName(*initializer)
+		helperName := constructorInitializerHelperName(*initializer)
+		fmt.Fprintf(out, "func (this *%s) %s(%s) error {\n", class.Name+typeParameterNames(class.TypeParamsAST), helperName, parameters)
+		for _, parentCall := range initializerParents[initializer] {
+			call := "this." + strings.Join(parentCall.path, ".") + "." + parentCall.helper + "(" + strings.Join(parentCall.arguments, ", ") + ")"
+			fmt.Fprintf(out, "\tif err := %s; err != nil { return err }\n", call)
+		}
+		if strings.TrimSpace(methodResultSource(*initializer)) == "" {
+			fmt.Fprintf(out, "\tthis.%s(%s)\n\treturn nil\n", methodName, strings.Join(arguments, ", "))
 		} else {
-			out.WriteString("\treturn this.__gppInit()\n")
+			fmt.Fprintf(out, "\treturn this.%s(%s)\n", methodName, strings.Join(arguments, ", "))
 		}
 		out.WriteString("}\n\n")
 	}
@@ -2146,6 +2161,244 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	return nil
 }
 
+type initializerParentCall struct {
+	path      []string
+	helper    string
+	arguments []string
+}
+
+func initializerParentCalls(class *ClassDecl, initializer Method, classes map[string]*ClassDecl, context constructorContext) ([]initializerParentCall, error) {
+	if initializerDelegationCall(initializer) != nil {
+		if initializerHasSuperInitializerCall(initializer) {
+			return nil, methodDiagnosticf(class, &initializer, "an initializer cannot use both this(...) and super(...)")
+		}
+		return nil, nil
+	}
+	parents := classParentNames(class)
+	if len(parents) == 0 {
+		if initializerHasSuperInitializerCall(initializer) {
+			return nil, methodDiagnosticf(class, &initializer, "class %s has no parent constructor to call", class.Name)
+		}
+		return nil, nil
+	}
+	explicit := map[string]*CallExpr{}
+	if initializer.BodyAST != nil {
+		seenBody := false
+		for _, statement := range initializer.BodyAST.Statements {
+			expression, ok := statement.(*ExpressionStmt)
+			if !ok {
+				if !seenBody {
+					seenBody = true
+				}
+				continue
+			}
+			call, ok := expression.Expression.(*CallExpr)
+			if !ok || !isSuperInitializerCall(call) {
+				seenBody = true
+				continue
+			}
+			if seenBody {
+				return nil, methodDiagnosticf(class, &initializer, "super(...) constructor calls must appear before the initializer body")
+			}
+			parentName := ""
+			switch callee := call.Callee.(type) {
+			case *NameExpr:
+				if len(parents) != 1 {
+					return nil, methodDiagnosticf(class, &initializer, "use super[Parent](...) to select a parent constructor when the class has multiple parents")
+				}
+				parentName = parents[0]
+			case *IndexExpr:
+				base, baseOK := callee.Receiver.(*NameExpr)
+				name, nameOK := callee.Index.(*NameExpr)
+				if baseOK && base.Name == "super" && nameOK {
+					parentName = name.Name
+				}
+			}
+			if parentName == "" || !containsString(parents, parentName) {
+				return nil, methodDiagnosticf(class, &initializer, "super constructor call must name a direct parent of %s", class.Name)
+			}
+			if explicit[parentName] != nil {
+				return nil, methodDiagnosticf(class, &initializer, "parent %s constructor is called more than once", parentName)
+			}
+			explicit[parentName] = call
+		}
+	}
+	if initializerSuperCallCount(initializer) != len(explicit) {
+		return nil, methodDiagnosticf(class, &initializer, "super(...) constructor calls must appear before the initializer body")
+	}
+
+	context.CurrentClass = class.Name
+	context.CurrentMethod = "init"
+	context.CurrentParameterTypes = parameterTypeMapFromNodes(initializer.ParameterAST)
+	result := make([]initializerParentCall, 0, len(parents))
+	for _, parentName := range parents {
+		parent := classes[parentName]
+		if parent == nil {
+			continue
+		}
+		methods := classInitializers(parent)
+		if len(methods) == 0 {
+			if explicit[parentName] != nil {
+				return nil, methodDiagnosticf(class, &initializer, "parent %s has no init constructor", parentName)
+			}
+			if err := appendInheritedInitializerCalls(&result, parent, []string{parentName}, classes, context, map[*ClassDecl]bool{}); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		call := explicit[parentName]
+		if call == nil {
+			hasZeroArgumentInitializer := false
+			for _, method := range methods {
+				parameters, parseErr := parameterInfosForMethod(*method)
+				if parseErr == nil && requiredParameterCount(callableSignature{Parameters: parameters}) == 0 {
+					hasZeroArgumentInitializer = true
+					break
+				}
+			}
+			if !hasZeroArgumentInitializer {
+				callSyntax := "super(...)"
+				if len(parents) > 1 {
+					callSyntax = "super[" + parentName + "](...)"
+				}
+				return nil, methodDiagnosticf(class, &initializer, "parent %s has no zero-argument constructor; call %s to pass its constructor arguments", parentName, callSyntax)
+			}
+			call = &CallExpr{Callee: &NameExpr{Name: parentName}}
+		}
+		parentTarget := constructorTarget{Class: parent, Classes: classes}
+		resolved, selected, err := resolveClassInitializerCall(call, parentTarget, methods, context)
+		if err != nil {
+			return nil, methodDiagnosticf(class, &initializer, "parent %s constructor: %v", parentName, err)
+		}
+		arguments := make([]string, 0, len(resolved))
+		for _, source := range resolved {
+			argument, parseErr := parseStaticArgumentNode(source)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			argument, parseErr = lowerExceptionExprNode(argument, context)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			formatted, formatErr := expressionNodeSource(argument)
+			if formatErr != nil {
+				return nil, formatErr
+			}
+			arguments = append(arguments, formatted)
+		}
+		result = append(result, initializerParentCall{
+			path:      []string{parentName},
+			helper:    constructorInitializerHelperName(*selected),
+			arguments: arguments,
+		})
+	}
+	return result, nil
+}
+
+func initializerHasSuperInitializerCall(initializer Method) bool {
+	return initializerSuperCallCount(initializer) > 0
+}
+
+func initializerSuperCallCount(initializer Method) int {
+	count := 0
+	for index, token := range initializer.BodyTokens {
+		if token.Text != "super" || index+1 >= len(initializer.BodyTokens) {
+			continue
+		}
+		next := initializer.BodyTokens[index+1].Text
+		if next == "(" {
+			count++
+			continue
+		}
+		if next == "[" {
+			for scan := index + 2; scan+1 < len(initializer.BodyTokens); scan++ {
+				if initializer.BodyTokens[scan].Text == "]" && initializer.BodyTokens[scan+1].Text == "(" {
+					count++
+					break
+				}
+				if initializer.BodyTokens[scan].Text == ";" || initializer.BodyTokens[scan].Text == "{" {
+					break
+				}
+			}
+		}
+	}
+	return count
+}
+
+func appendInheritedInitializerCalls(output *[]initializerParentCall, class *ClassDecl, path []string, classes map[string]*ClassDecl, context constructorContext, visiting map[*ClassDecl]bool) error {
+	if class == nil || visiting[class] {
+		return nil
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+	for _, parentName := range classParentNames(class) {
+		parent := classes[parentName]
+		if parent == nil {
+			continue
+		}
+		parentPath := append(append([]string(nil), path...), parentName)
+		methods := classInitializers(parent)
+		if len(methods) == 0 {
+			if err := appendInheritedInitializerCalls(output, parent, parentPath, classes, context, visiting); err != nil {
+				return err
+			}
+			continue
+		}
+		call := &CallExpr{Callee: &NameExpr{Name: parentName}}
+		parentTarget := constructorTarget{Class: parent, Classes: classes}
+		resolved, selected, err := resolveClassInitializerCall(call, parentTarget, methods, context)
+		if err != nil {
+			return fmt.Errorf("parent %s constructor: %w", parentName, err)
+		}
+		arguments := make([]string, 0, len(resolved))
+		for _, source := range resolved {
+			argument, parseErr := parseStaticArgumentNode(source)
+			if parseErr != nil {
+				return parseErr
+			}
+			argument, parseErr = lowerExceptionExprNode(argument, context)
+			if parseErr != nil {
+				return parseErr
+			}
+			formatted, formatErr := expressionNodeSource(argument)
+			if formatErr != nil {
+				return formatErr
+			}
+			arguments = append(arguments, formatted)
+		}
+		*output = append(*output, initializerParentCall{
+			path:      parentPath,
+			helper:    constructorInitializerHelperName(*selected),
+			arguments: arguments,
+		})
+	}
+	return nil
+}
+
+func isSuperInitializerCall(call *CallExpr) bool {
+	if call == nil {
+		return false
+	}
+	switch callee := call.Callee.(type) {
+	case *NameExpr:
+		return callee.Name == "super"
+	case *IndexExpr:
+		base, ok := callee.Receiver.(*NameExpr)
+		return ok && base.Name == "super"
+	default:
+		return false
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func isDefaultObjectMethod(method Method) bool {
 	return !method.IsStatic && methodParametersSource(method) == "" && methodResultSource(method) == "string" &&
 		(method.Name == "String" || method.Name == "Dump")
@@ -2159,16 +2412,64 @@ func methodReceiverType(class *ClassDecl, method Method) string {
 	return "*" + classType
 }
 
-func classInitializer(class *ClassDecl) *Method {
+func classInitializers(class *ClassDecl) []*Method {
 	if class == nil {
 		return nil
 	}
+	var result []*Method
 	for index := range class.Methods {
 		if class.Methods[index].Name == "init" && !class.Methods[index].IsStatic {
-			return &class.Methods[index]
+			result = append(result, &class.Methods[index])
 		}
 	}
-	return nil
+	return result
+}
+
+func constructorInitializerHelperName(method Method) string {
+	name := methodOutputName(method)
+	return "GppInitialize" + strings.TrimPrefix(name, "__gppInit")
+}
+
+func initializerParameterNames(method Method) []string {
+	parameters, err := parameterInfosForMethod(method)
+	if err != nil {
+		return nil
+	}
+	result := make([]string, 0, len(parameters))
+	for index, parameter := range parameters {
+		name := parameter.Name
+		if name == "" {
+			name = fmt.Sprintf("__gppInitArg%d", index)
+		}
+		if _, ok := parameter.TypeAST.(*VariadicType); ok {
+			name += "..."
+		}
+		result = append(result, name)
+	}
+	return result
+}
+
+func initializerWrapperParameters(method Method, context constructorContext) (string, []string, error) {
+	parameters, err := parameterInfosForMethod(method)
+	if err != nil {
+		return "", nil, err
+	}
+	parts := make([]string, 0, len(parameters))
+	arguments := make([]string, 0, len(parameters))
+	for index, parameter := range parameters {
+		name := parameter.Name
+		if name == "" {
+			name = fmt.Sprintf("__gppInitArg%d", index)
+		}
+		typeName := transformPolymorphicType(parameter.typeText(), context)
+		parts = append(parts, name+" "+typeName)
+		argument := name
+		if _, ok := parameter.TypeAST.(*VariadicType); ok {
+			argument += "..."
+		}
+		arguments = append(arguments, argument)
+	}
+	return strings.Join(parts, ", "), arguments, nil
 }
 
 func typeParameterNames(parameters []TypeParameterNode) string {
@@ -2547,7 +2848,10 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 
 func methodOutputName(method Method) string {
 	if method.Name == "init" {
-		return "__gppInit"
+		if method.GoName == "" {
+			return "__gppInit"
+		}
+		return "__gppInit" + strings.TrimPrefix(method.GoName, "init")
 	}
 	name := method.Name
 	if method.GoName != "" {

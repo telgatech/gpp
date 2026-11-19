@@ -21,7 +21,8 @@ class SetOperationsTest : test.Suite {
 	}
 
 	func ClearEmptiesSetAndAllowsReuse() {
-		values := container.Set[int](1, 2)
+		var values container.Set[int]
+		values.Add(1, 2)
 		values.Clear()
 		this.Equal(0, values.Len())
 		this.True(values.IsEmpty())
@@ -81,19 +82,28 @@ class SetOperationsTest : test.Suite {
 	}
 }
 
-class SeededContainerTest : test.Suite {
-	func SequenceFactoriesPreserveInsertionOrder() {
-		stack := container.Stack[int](1, 2, 3)
+class ZeroValueContainerTest : test.Suite {
+	func SequenceOperationsPreserveInsertionOrder() {
+		var stack container.Stack[int]
+		stack.Push(1)
+		stack.Push(2)
+		stack.Push(3)
 		stackTop, hasStackTop := stack.Pop()
 		this.True(hasStackTop)
 		this.Equal(3, stackTop)
 
-		queue := container.Queue[int](1, 2, 3)
+		var queue container.Queue[int]
+		queue.Enqueue(1)
+		queue.Enqueue(2)
+		queue.Enqueue(3)
 		queueFront, hasQueueFront := queue.Dequeue()
 		this.True(hasQueueFront)
 		this.Equal(1, queueFront)
 
-		deque := container.Deque[int](1, 2, 3)
+		var deque container.Deque[int]
+		deque.PushBack(1)
+		deque.PushBack(2)
+		deque.PushBack(3)
 		dequeFront, hasDequeFront := deque.PopFront()
 		dequeBack, hasDequeBack := deque.PopBack()
 		this.True(hasDequeFront)
@@ -101,21 +111,30 @@ class SeededContainerTest : test.Suite {
 		this.Equal(1, dequeFront)
 		this.Equal(3, dequeBack)
 
-		list := container.List[int](1, 2, 3)
+		var list container.List[int]
+		list.PushBack(1)
+		list.PushBack(2)
+		list.PushBack(3)
 		this.Equal(3, list.Len())
 		firstListValue, hasListValue := list.Front()
 		this.True(hasListValue)
 		this.Equal(1, firstListValue)
 
-		ring := container.Ring[int](1, 2, 3)
+		var ring container.Ring[int]
+		ring.PushBack(1)
+		ring.PushBack(2)
+		ring.PushBack(3)
 		this.Equal(3, ring.Len())
 		this.Equal(1, ring.Values()[0])
 	}
 
-	func PriorityQueueFactoryAcceptsInitialValues() {
-		queue := container.PriorityQueue[int](func(left, right int) bool {
+	func PriorityQueueFactoryOrdersValues() {
+		queue := container.NewPriorityQueue[int](func(left, right int) bool {
 			return left < right
-		}, 8, 3, 5)
+		})
+		queue.Push(8)
+		queue.Push(3)
+		queue.Push(5)
 
 		first, hasFirst := queue.Pop()
 		second, hasSecond := queue.Pop()

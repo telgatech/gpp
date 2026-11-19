@@ -1134,7 +1134,7 @@ func main() {
 	}))
 	defer server.Close()
 
-	client := http.Client(BaseURL: server.URL+"/api", Timeout: 10*time.Second)
+	client := http.Client(baseURL: server.URL+"/api", timeout: 10*time.Second)
 	ctx := context.Background()
 	client.Get("/login", ctx).Body.Close()
 	cookieReply := client.Get[Reply]("/cookie")

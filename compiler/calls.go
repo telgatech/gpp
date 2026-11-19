@@ -299,7 +299,7 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 
 	result := map[string][]callableSignature{}
 	for _, method := range class.Methods {
-		if method.IsStatic {
+		if method.IsStatic || method.Name == "init" {
 			continue
 		}
 		parameters, err := parameterInfosForMethod(method)

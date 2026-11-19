@@ -18,7 +18,7 @@ class User {
     Name string
 }
 
-client := http.Client(BaseURL: apiURL, Timeout: 10 * time.Second)
+client := http.Client(baseURL: apiURL, timeout: 10 * time.Second)
 user := client.Get[User]("/users/1")
 created := client.Post[User]("/users", newUser)
 summary := client.Get[struct(name: string, level: int)]("/users/summary")

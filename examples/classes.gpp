@@ -5,6 +5,10 @@ import "fmt"
 class Greeting {
     Name string
 
+    func init(name string) {
+        this.Name = name
+    }
+
     func Message() string {
         return this._message() + ", " + this.Name
     }
@@ -15,15 +19,43 @@ class Greeting {
 }
 
 class PersonalizedGreeting : Greeting {
+    Prefix string
+
+    func init(name string, prefix string) {
+        super(name)
+        this.Prefix = prefix
+    }
+
     func _message() string {
-        return "Welcome"
+        return this.Prefix
+    }
+}
+
+class Locale {
+    Language string
+
+    func init(language string) {
+        this.Language = language
+    }
+}
+
+class LocalizedGreeting : PersonalizedGreeting, Locale {
+    func init(name string, prefix string, language string) {
+        super[PersonalizedGreeting](name, prefix)
+        super[Locale](language)
+    }
+
+    func Description() string {
+        return this.Message() + " (" + this.Language + ")"
     }
 }
 
 func main() {
-    greeting := Greeting(Name: "Ada")
-    personalized := PersonalizedGreeting(Name: "Ada")
+    greeting := Greeting("Ada")
+    personalized := PersonalizedGreeting("Ada", "Welcome")
+    localized := LocalizedGreeting("Ada", "Welcome", "en")
 
     fmt.Println(greeting.Message())
     fmt.Println(personalized.Message())
+    fmt.Println(localized.Description())
 }

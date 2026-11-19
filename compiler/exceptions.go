@@ -143,7 +143,7 @@ func transformExceptionRegion(src string, context constructorContext, rethrowNam
 // declaration from source, but must not send the executable body through the
 // source parser a second time merely to lower exceptions.
 func transformExceptionMethodBodyAST(body string, method *Method, context constructorContext) (string, bool, error) {
-	if method == nil || method.BodyAST == nil || !blockContainsExceptionSyntax(method.BodyAST) {
+	if method == nil || method.BodyAST == nil || (!blockContainsExceptionSyntax(method.BodyAST) && !blockStartsWithThisInitializerDelegation(method)) {
 		return body, false, nil
 	}
 	methodContext := context
@@ -165,6 +165,22 @@ func transformExceptionMethodBodyAST(body string, method *Method, context constr
 		return body, true, err
 	}
 	return text, true, nil
+}
+
+func blockStartsWithThisInitializerDelegation(method *Method) bool {
+	if method == nil || method.Name != "init" || method.BodyAST == nil || len(method.BodyAST.Statements) == 0 {
+		return false
+	}
+	statement, ok := method.BodyAST.Statements[0].(*ExpressionStmt)
+	if !ok {
+		return false
+	}
+	call, ok := statement.Expression.(*CallExpr)
+	if !ok {
+		return false
+	}
+	callee, ok := call.Callee.(*NameExpr)
+	return ok && callee.Name == "this"
 }
 
 func blockContainsExceptionSyntax(block *BlockStmt) bool {
@@ -1449,6 +1465,17 @@ func lowerFunctionGoStmtNode(statement Stmt, context constructorContext, rethrow
 		return lowerExceptionExprNode(expression, context)
 	}
 	switch value := statement.(type) {
+	case *ExpressionStmt:
+		if delegated, handled, err := lowerThisInitializerStatement(value.Expression, context); handled {
+			if err != nil {
+				return nil, err
+			}
+			return lowerFunctionGoStmtNode(delegated, context, rethrowName)
+		}
+		if err := lowerExceptionStmtNodes(value, context); err != nil {
+			return nil, err
+		}
+		return goStmtNode(value, rethrowName)
 	case *AssignmentStmt:
 		if value.Operator == "||=" {
 			if err := lowerExceptionStmtNodes(value, context); err != nil {
@@ -1900,6 +1927,17 @@ func lowerExceptionGoStmtNode(statement Stmt, context constructorContext, rethro
 		return nil, nil
 	}
 	switch value := statement.(type) {
+	case *ExpressionStmt:
+		if delegated, handled, err := lowerThisInitializerStatement(value.Expression, context); handled {
+			if err != nil {
+				return nil, err
+			}
+			return lowerExceptionGoStmtNode(delegated, context, rethrowName)
+		}
+		if err := lowerExceptionStmtNodes(value, context); err != nil {
+			return nil, err
+		}
+		return goExceptionStmtNode(value, rethrowName)
 	case *AssignmentStmt:
 		if value.Operator == "||=" {
 			if err := lowerExceptionStmtNodes(value, context); err != nil {
@@ -2117,6 +2155,20 @@ func lowerExceptionStmtNodes(statement Stmt, context constructorContext) error {
 	if statement == nil {
 		return nil
 	}
+	if value, ok := statement.(*ExpressionStmt); ok {
+		if call, isCall := value.Expression.(*CallExpr); isCall && context.CurrentMethod == "init" && isSuperInitializerCall(call) {
+			// The matching parent calls are emitted by the constructor bridge,
+			// before the source initializer body runs.
+			value.Expression = &CallExpr{Callee: &FunctionLiteralExpr{Type: &FunctionType{}, Body: &BlockStmt{}}}
+			return nil
+		}
+		if delegated, handled, err := lowerThisInitializerStatement(value.Expression, context); handled {
+			if err != nil {
+				return err
+			}
+			return lowerExceptionStmtNodes(delegated, context)
+		}
+	}
 	lower := func(expression ExprNode) (ExprNode, error) { return lowerExceptionExprNode(expression, context) }
 	switch value := statement.(type) {
 	case *ExpressionStmt:
@@ -2287,12 +2339,8 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 			return nil, err
 		}
 		if context.DeferConstructorLowering {
-			if _, target, constructor := constructorTargetForCallee(callExpression.Callee, context); constructor {
-				for _, initializer := range constructorInitializers(target.Class, classesForClass(context, target.Class), nil, map[*ClassDecl]bool{}) {
-					if initializer.ReturnsErr {
-						return callExpression, nil
-					}
-				}
+			if _, target, constructor := constructorTargetForCallee(callExpression.Callee, context); constructor && constructorCallMayReturnError(callExpression, target, context) {
+				return callExpression, nil
 			}
 		}
 		if lowered, handled, err := lowerRecordCallExprNode(callExpression, context); handled {
@@ -4124,10 +4172,8 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 		return promotedCall{}, false
 	}
 	if name, target, ok := constructorTargetForCallee(call.Callee, context); ok {
-		for _, initializer := range constructorInitializers(target.Class, classesForClass(context, target.Class), nil, map[*ClassDecl]bool{}) {
-			if initializer.ReturnsErr {
-				return promotedCall{types: []string{"*" + name, "error"}, trailingError: true}, true
-			}
+		if constructorCallMayReturnError(call, target, context) {
+			return promotedCall{types: []string{"*" + name, "error"}, trailingError: true}, true
 		}
 	}
 	if result, ok := generatedStaticSelfResultType(call.Callee, context); ok {

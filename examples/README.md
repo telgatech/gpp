@@ -18,7 +18,8 @@ gpp run examples/hello.gpp
 The examples cover:
 
 - `hello.gpp` — classes, methods, implicit `this`, imports, and interpolation.
-- `classes.gpp` — a public method using a protected method that a child class overrides.
+- `classes.gpp` — constructors for a class, a single-parent child, and a
+  multiple-parent child using `super(...)` and `super[Parent](...)`.
 - `assignments.gpp` — arithmetic, bitwise, and shift compound assignments.
 - `or_assignment.gpp` — `||=` defaults boolean values when false and pointer values when nil.
 - `operators.gpp` — compound assignments, increment/decrement, boolean/nil `||=`, ternary expressions, safe access, and multi-result error fallback with `??`.
@@ -26,8 +27,8 @@ The examples cover:
 - `foo.gpp` — import and call the companion `foo.bar.gpp` package by its GPP
   logical name; the compiler supplies the generated Go path internally.
 - `constructors.gpp` — positional and named construction.
-- `factory_constructors.gpp` — positional class construction routed to overloaded
-  static `New` factories, including factories with multiple arguments.
+- `init_constructors.gpp` — overloaded `init` constructors selected by
+  argument type and count, including a constructor with multiple arguments.
 - `generics.gpp` — generic `Stack[T]`, constrained `Index[K comparable, V]`,
   multi-parameter `Pair[A, B]`, explicit type arguments, and methods whose
   fields and signatures use those parameters; also generic free and static
