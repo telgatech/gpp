@@ -26,6 +26,7 @@ func formatSourceWithFile(file *File, source string) string {
 	if formatted, ok := formatGoCompatibleSource(source); ok {
 		return formatted
 	}
+	source = sortImportGroups(source)
 	lines := strings.Split(source, "\n")
 	dropBlankLines := make([]bool, len(lines))
 	indent := 0
@@ -128,6 +129,63 @@ func formatSourceWithFile(file *File, source string) string {
 		}
 	}
 	return strings.TrimRight(strings.Join(formattedLines, "\n"), "\n") + "\n"
+}
+
+func sortImportGroups(source string) string {
+	tokens, err := LexSource("format", source)
+	if err != nil {
+		return source
+	}
+	type importEdit struct {
+		start int
+		end   int
+		text  string
+	}
+	var edits []importEdit
+	const prefix = "package __gpp_format__\n\n"
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Kind != TokenKeyword || tokens[index].Text != "import" {
+			continue
+		}
+		open := nextSignificantToken(tokens, index+1)
+		if open >= len(tokens) || tokens[open].Text != "(" {
+			continue
+		}
+		depth := 1
+		close := -1
+		for cursor := open + 1; cursor < len(tokens); cursor++ {
+			switch tokens[cursor].Text {
+			case "(":
+				depth++
+			case ")":
+				depth--
+				if depth == 0 {
+					close = cursor
+					cursor = len(tokens)
+				}
+			}
+		}
+		if close < 0 {
+			continue
+		}
+		start, end := tokens[index].Span.Start, tokens[close].Span.End
+		block := source[start:end]
+		formatted, err := gofmt.Source([]byte(prefix + block + "\n"))
+		if err != nil {
+			index = close
+			continue
+		}
+		sorted := strings.TrimSpace(strings.TrimPrefix(string(formatted), prefix))
+		if sorted != strings.TrimSpace(block) {
+			edits = append(edits, importEdit{start: start, end: end, text: sorted})
+		}
+		index = close
+	}
+	for index := len(edits) - 1; index >= 0; index-- {
+		edit := edits[index]
+		source = source[:edit.start] + edit.text + source[edit.end:]
+	}
+	return source
 }
 
 // formatGoCompatibleSource delegates ordinary Go files and snippets to

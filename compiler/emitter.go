@@ -1810,7 +1810,7 @@ func transformTopLevelDeclSource(function *FunctionDecl, context constructorCont
 	}
 	code, err = transformCallableCalls(code, context)
 	if err != nil {
-		return "", err
+		return "", rebaseDiagnosticToSource(err, function.SourceFile, function.SourceSpan)
 	}
 	code, err = transformImplicitErrorPromotion(code, context)
 	if err != nil {

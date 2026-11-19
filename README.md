@@ -196,10 +196,11 @@ gpp fmt --check ./...
 gpp fmt --stdout examples/hello.gpp
 ```
 
-Use `gpp fiximports` to add imports when a unique available package matches
-qualified names in GPP source. It prefers bundled GPP packages and uses
-`std`-prefixed aliases for colliding standard-library imports. It supports
-`--check` and `--stdout` modes.
+Use `gpp fiximports` to add missing imports, remove unused named imports, and
+resolve package-name clashes when a unique available package matches qualified
+names in GPP source. It prefers bundled GPP packages and uses `std`-prefixed
+aliases for colliding standard-library imports. It supports `--check` and
+`--stdout` modes.
 
 Pass `-emit-go` to `gpp build` when you want the generated Go workspace path
 reported for inspection.

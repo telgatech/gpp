@@ -23,7 +23,7 @@ type importPackage struct {
 	Name       string
 	Symbols    map[string]bool
 	Module     bool
-	GPP     bool
+	GPP        bool
 	Standard   bool
 }
 
@@ -418,6 +418,24 @@ func fixImports(filename string, source []byte, packages map[string][]importPack
 		}
 	}
 	declared := declaredNames(file)
+	usedAliases := sourceUsedImportAliases(tokens, file, declared)
+	unusedImports := map[int]bool{}
+	for _, imported := range file.Imports {
+		alias := imported.Alias
+		if alias == "" {
+			alias = importName(imported.Path, packages)
+		}
+		if alias != "_" && alias != "." && !usedAliases[alias] {
+			unusedImports[imported.Span().Start] = true
+		}
+	}
+	if len(unusedImports) > 0 {
+		cleaned, changed := removeUnusedImportSpecs(source, tokens, file, unusedImports)
+		if changed {
+			fixed, _, err := fixImports(filename, cleaned, packages)
+			return fixed, true, err
+		}
+	}
 	var uses []selectorUse
 	for index := 0; index+2 < len(tokens); index++ {
 		if tokens[index].Kind != compiler.TokenIdentifier || tokens[index+1].Text != "." || tokens[index+2].Kind != compiler.TokenIdentifier {
@@ -535,6 +553,184 @@ func fixImports(filename string, source []byte, packages map[string][]importPack
 		updated = append(updated[:edit.start], append([]byte(edit.text), updated[edit.end:]...)...)
 	}
 	return updated, true, nil
+}
+
+func sourceUsedImportAliases(tokens []compiler.Token, file *compiler.File, declared map[string]bool) map[string]bool {
+	used := map[string]bool{}
+	for index := 0; index+2 < len(tokens); index++ {
+		current := tokens[index]
+		if current.Kind != compiler.TokenIdentifier || tokens[index+1].Text != "." || tokens[index+2].Kind != compiler.TokenIdentifier {
+			continue
+		}
+		if index >= 2 && tokens[index-1].Text == "." && tokens[index-2].Kind == compiler.TokenIdentifier {
+			continue
+		}
+		insideImport := false
+		for _, imported := range file.Imports {
+			span := imported.Span()
+			if current.Span.Start >= span.Start && current.Span.End <= span.End {
+				insideImport = true
+				break
+			}
+		}
+		if insideImport || declared[current.Text] || isKeywordLike(current.Text) {
+			continue
+		}
+		used[current.Text] = true
+	}
+	return used
+}
+
+type importDeclarationSpan struct {
+	start   int
+	end     int
+	grouped bool
+	specs   []compiler.ImportDecl
+}
+
+func removeUnusedImportSpecs(source []byte, tokens []compiler.Token, file *compiler.File, unused map[int]bool) ([]byte, bool) {
+	declarations := importDeclarationSpans(tokens, file)
+	var edits []sourceEdit
+	for _, declaration := range declarations {
+		var removing []compiler.ImportDecl
+		for _, imported := range declaration.specs {
+			if unused[imported.Span().Start] {
+				removing = append(removing, imported)
+			}
+		}
+		if len(removing) == 0 {
+			continue
+		}
+		if !declaration.grouped || len(removing) == len(declaration.specs) {
+			start, end := completeSourceLine(source, declaration.start, declaration.end)
+			edits = append(edits, sourceEdit{start: start, end: end, text: preservedCommentLines(source, tokens, start, end)})
+			continue
+		}
+		lines := map[int][]compiler.ImportDecl{}
+		for _, imported := range removing {
+			lineStart, _ := completeSourceLine(source, imported.Span().Start, imported.Span().End)
+			lines[lineStart] = append(lines[lineStart], imported)
+		}
+		for lineStart, importsOnLine := range lines {
+			lineEnd := lineStart
+			for lineEnd < len(source) && source[lineEnd] != '\n' {
+				lineEnd++
+			}
+			if lineEnd < len(source) {
+				lineEnd++
+			}
+			// Leave unusual same-line import lists intact rather than risk
+			// deleting a neighboring import with different usage.
+			var specsOnLine int
+			for _, imported := range declaration.specs {
+				if imported.Span().Start >= lineStart && imported.Span().Start < lineEnd {
+					specsOnLine++
+				}
+			}
+			if specsOnLine != len(importsOnLine) {
+				continue
+			}
+			edits = append(edits, sourceEdit{start: lineStart, end: lineEnd, text: preservedCommentLines(source, tokens, lineStart, lineEnd)})
+		}
+	}
+	if len(edits) == 0 {
+		return source, false
+	}
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	updated := append([]byte(nil), source...)
+	for _, edit := range edits {
+		updated = append(updated[:edit.start], append([]byte(edit.text), updated[edit.end:]...)...)
+	}
+	return updated, true
+}
+
+func importDeclarationSpans(tokens []compiler.Token, file *compiler.File) []importDeclarationSpan {
+	var declarations []importDeclarationSpan
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].Kind != compiler.TokenKeyword || tokens[index].Text != "import" {
+			continue
+		}
+		next := nextNonTrivia(tokens, index+1)
+		if next >= len(tokens) {
+			continue
+		}
+		declaration := importDeclarationSpan{start: tokens[index].Span.Start}
+		if tokens[next].Text == "(" {
+			declaration.grouped = true
+			depth := 1
+			close := -1
+			for cursor := next + 1; cursor < len(tokens); cursor++ {
+				switch tokens[cursor].Text {
+				case "(":
+					depth++
+				case ")":
+					depth--
+					if depth == 0 {
+						close = cursor
+						cursor = len(tokens)
+					}
+				}
+			}
+			if close < 0 {
+				continue
+			}
+			declaration.end = tokens[close].Span.End
+			for _, imported := range file.Imports {
+				span := imported.Span()
+				if span.Start >= tokens[next].Span.End && span.End <= tokens[close].Span.Start {
+					declaration.specs = append(declaration.specs, imported)
+				}
+			}
+			declarations = append(declarations, declaration)
+			index = close
+			continue
+		}
+		for _, imported := range file.Imports {
+			span := imported.Span()
+			if span.Start >= tokens[next].Span.Start {
+				declaration.end = span.End
+				declaration.specs = append(declaration.specs, imported)
+				break
+			}
+		}
+		if len(declaration.specs) > 0 {
+			declarations = append(declarations, declaration)
+		}
+	}
+	return declarations
+}
+
+func completeSourceLine(source []byte, start, end int) (int, int) {
+	lineStart := bytes.LastIndexByte(source[:start], '\n') + 1
+	lineEnd := end
+	for lineEnd < len(source) && source[lineEnd] != '\n' {
+		lineEnd++
+	}
+	if lineEnd < len(source) {
+		lineEnd++
+	}
+	return lineStart, lineEnd
+}
+
+func preservedCommentLines(source []byte, tokens []compiler.Token, start, end int) string {
+	var preserved strings.Builder
+	for _, token := range tokens {
+		if token.Kind != compiler.TokenComment || token.Span.Start < start || token.Span.End > end {
+			continue
+		}
+		lineStart := bytes.LastIndexByte(source[:token.Span.Start], '\n') + 1
+		indent := source[lineStart:token.Span.Start]
+		for _, value := range indent {
+			if value != ' ' && value != '\t' {
+				indent = nil
+				break
+			}
+		}
+		preserved.Write(indent)
+		preserved.Write(source[token.Span.Start:token.Span.End])
+		preserved.WriteByte('\n')
+	}
+	return preserved.String()
 }
 
 func groupedImportEdit(source []byte, tokens []compiler.Token, paths []string, aliases map[string]string, packages map[string][]importPackage) (sourceEdit, bool) {

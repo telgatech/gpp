@@ -577,7 +577,7 @@ Commands:
     run        build and run a GPP program
     clean      remove generated build artifacts
     fmt        format GPP source
-    fiximports add missing imports
+    fiximports add and remove imports
     test       run tests
     env        show environment information
     doctor     diagnose the toolchain

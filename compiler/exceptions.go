@@ -2401,6 +2401,11 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 			}
 			return lowerExceptionExprNode(lowered, context)
 		}
+		for _, argument := range value.Arguments {
+			if argument.Name != "" && !isNamedLiteralConstructor(value.Callee) {
+				return nil, sourceLineError(value.Span(), unresolvedNamedArgumentsError(value, context))
+			}
+		}
 		lowered, err := lowerExceptionExprNode(value.Callee, context)
 		if err != nil {
 			return nil, err

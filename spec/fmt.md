@@ -970,6 +970,8 @@ try {
 # 44. Imports
 
 Imports may be sorted deterministically.
+Within each import group, `gpp fmt` sorts import paths lexically, matching
+`gofmt`. Blank-line-separated groups remain separate.
 
 Example:
 

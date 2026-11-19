@@ -14,12 +14,12 @@ gpp fmt --stdout app.gpp
 
 ## Fixing imports
 
-`gpp fiximports` adds imports when a unique available package matches the
-qualified names used by a source file. It prefers bundled GPP packages; if
-both GPP and standard-library packages with the same package name are used,
-the standard package gets a `std`-prefixed alias such as `stdhttp`. It does
-not change dependencies or guess when multiple packages at the same priority
-match.
+`gpp fiximports` adds missing imports, removes unused named imports, and resolves
+package-name clashes when a unique available package matches a qualified name.
+It prefers bundled GPP packages; if both GPP and standard-library packages with
+the same package name are used, the standard package gets a `std`-prefixed alias
+such as `stdhttp`. It does not change dependencies or guess when multiple
+packages at the same priority match.
 
 ```sh
 gpp fiximports app.gpp

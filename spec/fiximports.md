@@ -3,9 +3,9 @@
 ## 1. Purpose
 
 `gpp fiximports` finds source-level qualified names that match a unique package
-and exported package member available to the current Go module, then adds the
-corresponding imports. It is a semantic source fix and remains separate from
-`gpp fmt`.
+and exported package member available to the current Go module, adds missing
+imports, removes unused named imports, and resolves package-name clashes. It
+is a semantic source fix and remains separate from `gpp fmt`.
 
 ```sh
 gpp fiximports
@@ -52,9 +52,10 @@ are rewritten to the prefixed alias. This also applies when the colliding
 GPP package is already imported. A source receiver already written with the
 `std` prefix explicitly requests a matching Go standard-library package.
 
-Existing import paths and comments MUST be preserved. An existing standard
-import may have its alias changed when a name clash requires it. Other source
-outside import alias and selector edits MUST be preserved.
+Existing comments MUST be preserved. An existing standard import may have its
+alias changed when a name clash requires it. Unused named imports are removed;
+blank and dot imports are preserved. Other source outside import, alias, and
+selector edits MUST be preserved.
 
 The command MUST be idempotent: a second invocation after successful fixes
 does not add duplicate imports.
@@ -73,6 +74,6 @@ package matches are not errors and remain unchanged.
 ## 5. Relationship to formatting
 
 `gpp fmt` remains responsible for canonical layout. `gpp fiximports` adds
-resolvable missing imports and applies the alias and selector edits required
-to resolve package-name clashes. It does not format source, remove unused
-imports, or rename symbols.
+resolvable missing imports, removes unused named imports, and applies the
+alias and selector edits required to resolve package-name clashes. It does not
+format source or rename symbols.

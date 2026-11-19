@@ -247,15 +247,13 @@ func loadBuildCache(output, key string) (buildCacheManifest, bool, error) {
 	return manifest, true, nil
 }
 
-func writeBuildCache(output, key string, warnings []unusedLocalWarning) error {
+func writeBuildCache(output, key string, warnings []string) error {
 	digest, err := generatedOutputDigest(output)
 	if err != nil {
 		return err
 	}
 	manifest := buildCacheManifest{Schema: buildCacheSchema, Key: key, OutputDigest: digest}
-	for _, warning := range warnings {
-		manifest.Warnings = append(manifest.Warnings, warning.String())
-	}
+	manifest.Warnings = append(manifest.Warnings, warnings...)
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return err

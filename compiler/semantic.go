@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -422,6 +424,79 @@ func ResolveProgramWithModulePath(program *Program, modulePath string) (*Semanti
 	}
 
 	return model, nil
+}
+
+func validateLocalModuleImports(program *Program, model *SemanticModel, options CompileOptions) error {
+	if program == nil || options.ModulePath == "" {
+		return nil
+	}
+	root := options.ProjectRoot
+	if root == "" {
+		for _, file := range program.Files {
+			if file.SourcePath == "" {
+				continue
+			}
+			for directory := filepath.Dir(file.SourcePath); ; directory = filepath.Dir(directory) {
+				if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+					root = directory
+					break
+				}
+				parent := filepath.Dir(directory)
+				if parent == directory {
+					break
+				}
+			}
+			if root != "" {
+				break
+			}
+		}
+	}
+	if root == "" {
+		return nil
+	}
+	prefix := options.ModulePath + "/"
+	for _, file := range program.Files {
+		for _, imported := range file.Imports {
+			if !strings.HasPrefix(imported.Path, prefix) {
+				continue
+			}
+			alias := imported.Alias
+			if alias == "" {
+				alias = path.Base(imported.Path)
+			}
+			if alias != "_" && alias != "." && !sourceImportAliasUsed(file, alias) {
+				continue
+			}
+			if _, ok := logicalPackageForImport(imported.Path, options.ModulePath, model); ok {
+				continue
+			}
+			relative := strings.TrimPrefix(imported.Path, prefix)
+			directory := filepath.Join(root, filepath.FromSlash(relative))
+			entries, err := os.ReadDir(directory)
+			packageExists := false
+			if err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() {
+						continue
+					}
+					extension := filepath.Ext(entry.Name())
+					if extension == ".go" || extension == ".gpp" || strings.HasSuffix(entry.Name(), ".gpp.tpl") {
+						packageExists = true
+						break
+					}
+				}
+			}
+			if packageExists {
+				continue
+			}
+			name := file.SourcePath
+			if name == "" {
+				name = file.Name
+			}
+			return diagnosticAt(name, imported.Span(), fmt.Errorf("undefined package %s", imported.Path))
+		}
+	}
+	return nil
 }
 
 func embedLocation(embed *EmbedDecl) string {

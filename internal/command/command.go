@@ -132,7 +132,7 @@ func printHelp() {
 	fmt.Println("    run        build and run a GPP program")
 	fmt.Println("    clean      remove generated build artifacts")
 	fmt.Println("    fmt        format GPP source")
-	fmt.Println("    fiximports add imports and resolve package-name clashes")
+	fmt.Println("    fiximports add and remove imports, resolve package-name clashes")
 	fmt.Println("    test       run GPP tests")
 	fmt.Println("    doc        show GPP source documentation")
 	fmt.Println("    env        show environment information")
@@ -555,6 +555,7 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 	if !state.Hit {
 		if err := compiler.CompileFilesWithOptions(sources, options.output, compiler.CompileOptions{
 			ModulePath:        options.module,
+			ProjectRoot:       sourceProjectRoot(sources),
 			Development:       options.development,
 			NoPrelude:         options.noPrelude,
 			NoStdlib:          options.noStdlib,
@@ -574,6 +575,11 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 		for _, warning := range warnings {
 			state.Warn = append(state.Warn, warning.String())
 		}
+		importWarnings, err := unusedImportWarnings(sources)
+		if err != nil {
+			return state, err
+		}
+		state.Warn = append(state.Warn, importWarnings...)
 	}
 	if options.warnings {
 		for _, warning := range state.Warn {
@@ -589,7 +595,7 @@ func compileSources(sources []string, options compileFlags, clean bool, includeT
 		}
 	}
 	if cacheable && state.Key != "" && !state.Hit {
-		if err := writeBuildCache(options.output, state.Key, warnings); err != nil {
+		if err := writeBuildCache(options.output, state.Key, state.Warn); err != nil {
 			return state, err
 		}
 	}

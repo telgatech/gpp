@@ -5,6 +5,7 @@
 - Added compile-time enum switch exhaustiveness checks with diagnostics listing missing cases.
 - Added source diagnostics for invalid enum member selectors.
 - Improved compiler diagnostic reporting to match that of Go: one per line, capped at 10 errors.
+- Made `gpp fiximports` remove unused imports and added Go-style import sorting to `gpp fmt`.
 
 ## 2026-11-18
 

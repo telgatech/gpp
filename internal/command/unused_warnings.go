@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,6 +20,56 @@ type unusedLocalWarning struct {
 	line   int
 	column int
 	name   string
+}
+
+func unusedImportWarnings(sources []string) ([]string, error) {
+	warnings := []string{}
+	for _, source := range sources {
+		contents, err := os.ReadFile(source)
+		if err != nil {
+			return nil, err
+		}
+		file, err := compiler.ParseFile(source, string(contents))
+		if err != nil {
+			return nil, err
+		}
+		used := map[string]bool{}
+		for index, token := range file.Tokens {
+			if token.Kind != compiler.TokenIdentifier {
+				continue
+			}
+			insideImport := false
+			for _, imported := range file.Imports {
+				span := imported.Span()
+				if token.Span.Start >= span.Start && token.Span.End <= span.End {
+					insideImport = true
+					break
+				}
+			}
+			if insideImport {
+				continue
+			}
+			next := index + 1
+			for next < len(file.Tokens) && (file.Tokens[next].Kind == compiler.TokenComment || file.Tokens[next].Kind == compiler.TokenNewline) {
+				next++
+			}
+			if next < len(file.Tokens) && file.Tokens[next].Text == "." {
+				used[token.Text] = true
+			}
+		}
+		for _, imported := range file.Imports {
+			alias := imported.Alias
+			if alias == "" {
+				alias = path.Base(imported.Path)
+			}
+			if alias == "_" || alias == "." || used[alias] {
+				continue
+			}
+			diagnostic := compiler.NewDiagnosticError(source, imported.Span(), fmt.Errorf("warning: imported and not used: %s", alias))
+			warnings = append(warnings, normalizeBackendLocation(diagnostic.Error(), ""))
+		}
+	}
+	return warnings, nil
 }
 
 func (warning unusedLocalWarning) String() string {

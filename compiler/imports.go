@@ -81,3 +81,38 @@ func pruneUnusedImports(source string) (string, error) {
 	}
 	return output.String(), nil
 }
+
+func sourceImportAliasUsed(file *File, alias string) bool {
+	if file == nil || alias == "" || alias == "_" || alias == "." {
+		return false
+	}
+	tokens := file.Tokens
+	if len(tokens) == 0 && file.Source != "" {
+		var err error
+		tokens, err = LexSource(file.Name, file.Source)
+		if err != nil {
+			return false
+		}
+	}
+	for index, current := range tokens {
+		if current.Kind != TokenIdentifier || current.Text != alias {
+			continue
+		}
+		insideImport := false
+		for _, imported := range file.Imports {
+			span := imported.Span()
+			if current.Span.Start >= span.Start && current.Span.End <= span.End {
+				insideImport = true
+				break
+			}
+		}
+		if insideImport {
+			continue
+		}
+		next := nextSignificantToken(tokens, index+1)
+		if next < len(tokens) && tokens[next].Text == "." {
+			return true
+		}
+	}
+	return false
+}

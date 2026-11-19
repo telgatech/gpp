@@ -125,12 +125,15 @@ func TestFixImportsMergesNewImportIntoExistingGroup(t *testing.T) {
 
 import (
     "gpp/http"
-    gppsql  "gpp/sql"
     stdsql "database/sql"
-
 )
 
-func main() { _ = common.Server{} }
+func main() {
+	_ = common.Server{}
+	_ = http.Server{}
+	var db stdsql.DB
+	_ = db
+}
 `)
 	fixed, added, err := fixImports("app.gpp", source, packages)
 	if err != nil {
@@ -143,12 +146,16 @@ func main() { _ = common.Server{} }
 
 import (
     "gpp/http"
-    gppsql  "gpp/sql"
     stdsql "database/sql"
     "example.com/project/common"
 )
 
-func main() { _ = common.Server{} }
+func main() {
+	_ = common.Server{}
+	_ = http.Server{}
+	var db stdsql.DB
+	_ = db
+}
 `
 	if string(fixed) != want {
 		t.Fatalf("new import was not merged cleanly into the existing group:\n%s", fixed)

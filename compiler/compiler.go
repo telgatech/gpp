@@ -169,6 +169,9 @@ func CompileProgramWithOptions(program *Program, outputDir string, options Compi
 	if err != nil {
 		return err
 	}
+	if err := validateLocalModuleImports(program, model, options); err != nil {
+		return err
+	}
 	if err := expandSerializableClasses(program, model, options.ModulePath); err != nil {
 		return err
 	}

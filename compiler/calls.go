@@ -1600,6 +1600,7 @@ type callableCallRewrite struct {
 	start       int
 	end         int
 	replacement string
+	err         error
 }
 
 func transformCallableCallsAST(src string, context constructorContext) (string, bool, error) {
@@ -1632,6 +1633,11 @@ func transformCallableCallsAST(src string, context constructorContext) (string, 
 	}
 	if len(candidates) == 0 {
 		return src, false, nil
+	}
+	for _, candidate := range candidates {
+		if candidate.err != nil {
+			return src, true, candidate.err
+		}
 	}
 	outermost := make([]callableCallRewrite, 0, len(candidates))
 	for index, candidate := range candidates {
@@ -1694,7 +1700,9 @@ func collectCallableCallRewrites(expression ExprNode, src string, context constr
 	}
 	switch value := expression.(type) {
 	case *CallExpr:
-		if rewrite, ok, err := callableCallRewriteFor(value, src, context); err == nil && ok {
+		if rewrite, ok, err := callableCallRewriteFor(value, src, context); err != nil {
+			*result = append(*result, callableCallRewrite{err: err})
+		} else if ok {
 			*result = append(*result, rewrite)
 		}
 		collectCallableCallRewrites(value.Callee, src, context, result)
@@ -1966,10 +1974,60 @@ func callableCallRewriteFor(call *CallExpr, src string, context constructorConte
 		}
 	}
 	if !changed {
+		hasNamedArguments := false
+		for _, argument := range call.Arguments {
+			if argument.Name != "" {
+				hasNamedArguments = true
+				break
+			}
+		}
+		if hasNamedArguments {
+			if isNamedLiteralConstructor(call.Callee) {
+				return callableCallRewrite{}, false, nil
+			}
+			if _, _, isConstructor := constructorTargetForCallee(call.Callee, context); isConstructor {
+				return callableCallRewrite{}, false, nil
+			}
+			if _, _, isStructConstructor := namedStructConstructorForCallee(call.Callee, context); isStructConstructor {
+				return callableCallRewrite{}, false, nil
+			}
+			if _, handled, err := lowerExceptionExtensionCallNode(call, context); handled || err != nil {
+				return callableCallRewrite{}, false, err
+			}
+			return callableCallRewrite{}, false, sourceLineError(call.Span(), unresolvedNamedArgumentsError(call, context))
+		}
 		return callableCallRewrite{}, false, nil
 	}
 	span := call.Span()
 	return callableCallRewrite{call: call, start: span.Start, end: span.End, replacement: replacement}, true, nil
+}
+
+func isNamedLiteralConstructor(callee ExprNode) bool {
+	switch value := callee.(type) {
+	case *NameExpr:
+		return value.Name == "map" || value.Name == "struct"
+	case *TypeExpr:
+		if named, ok := value.Type.(*NamedType); ok && len(named.Parts) == 1 {
+			return named.Parts[0] == "map" || named.Parts[0] == "struct"
+		}
+	}
+	return false
+}
+
+func unresolvedNamedArgumentsError(call *CallExpr, context constructorContext) error {
+	if selector, ok := call.Callee.(*SelectorExpr); ok {
+		if receiver, ok := selector.Receiver.(*NameExpr); ok {
+			if importPath := context.AvailableImports[receiver.Name]; importPath != "" && context.ModulePath != "" &&
+				strings.HasPrefix(importPath, context.ModulePath+"/") {
+				return missingPackageError(importPath)
+			}
+		}
+	}
+	return fmt.Errorf("cannot resolve named arguments for call to %s", callableName(call))
+}
+
+func missingPackageError(importPath string) error {
+	return fmt.Errorf("undefined package %s", path.Clean(importPath))
 }
 
 func transformCallableArgumentSources(values []string, context constructorContext) ([]string, error) {

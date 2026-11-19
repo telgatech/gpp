@@ -18,6 +18,9 @@ gofmt -w ./...
 ```
 :::
 
+`gpp fmt` sorts import paths within each import group, like `gofmt`, while
+preserving aliases, comments, and separate groups.
+
 ## Use check mode and standard output
 
 Check mode reports unformatted source without rewriting it, which is useful
@@ -31,5 +34,6 @@ gpp fmt --stdout main.gpp
 Formatting behavior is shared with the language server. See [formatting in the tooling guide](/guide/tooling#formatting) and the [formatter specification](/reference/specifications/fmt).
 
 Use [`gpp fiximports`](/guide/tooling#fixing-imports) to add resolvable missing
-imports separately from formatting. GPP packages take priority; colliding
+imports, remove unused named imports, and resolve package-name clashes
+separately from formatting. GPP packages take priority; colliding
 standard-library packages use aliases such as `stdhttp`.
