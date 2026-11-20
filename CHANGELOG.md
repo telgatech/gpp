@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-20
+
+- Updated docs landing examples for constructors, multi-value error fallbacks, and HTTP server startup.
+
 ## 2026-11-19
 
 - Added overloaded `init(...)` class constructors with explicit `this(...)` delegation and parent super[T](...) constructor calls.
