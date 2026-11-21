@@ -42,6 +42,9 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 	}
 
 	context := localConstructorContext(model.Packages[file.Package].Classes)
+	for name := range model.Packages[file.Package].Types {
+		context.KnownTypes[name] = true
+	}
 	context.StructConstructors = namedStructConstructors([]*File{file})
 	context.Enums = model.Packages[file.Package].Enums
 	context.Annotations = model.Packages[file.Package].Annotations
@@ -124,6 +127,7 @@ type overloadContext struct {
 
 type constructorContext struct {
 	Targets                    map[string]constructorTarget
+	KnownTypes                 map[string]bool
 	StructConstructors         map[string][]constructorField
 	Enums                      map[string]*EnumDecl
 	Overloads                  overloadContext
@@ -229,8 +233,9 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 	}
 
 	context := constructorContext{
-		Targets: targets,
-		Enums:   map[string]*EnumDecl{},
+		Targets:    targets,
+		KnownTypes: map[string]bool{},
+		Enums:      map[string]*EnumDecl{},
 		Overloads: overloadContext{
 			Functions:             map[string]map[int]string{},
 			FunctionTypes:         map[string]map[string]string{},
@@ -293,6 +298,7 @@ func localConstructorContext(classes map[string]*ClassDecl) constructorContext {
 }
 
 func emitFile(file *File, context constructorContext) ([]byte, error) {
+	resolveBracketLiteralCandidates(file, context)
 	var out strings.Builder
 	if context.Overloads.NativeFunctionReturns == nil {
 		context.Overloads.NativeFunctionReturns = nativeFunctionReturnTypes(file)

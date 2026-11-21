@@ -93,9 +93,11 @@ func (*SelectorExpr) expr()                 {}
 func (expression *SelectorExpr) Span() Span { return expression.SpanValue }
 
 type IndexExpr struct {
-	Receiver  ExprNode
-	Index     ExprNode
-	SpanValue Span
+	Receiver                ExprNode
+	Index                   ExprNode
+	BracketLiteralCandidate *CompositeLiteralExpr
+	BracketLiteralResolved  bool
+	SpanValue               Span
 }
 
 func (*IndexExpr) node()                 {}
@@ -103,9 +105,11 @@ func (*IndexExpr) expr()                 {}
 func (expression *IndexExpr) Span() Span { return expression.SpanValue }
 
 type IndexListExpr struct {
-	Receiver  ExprNode
-	Indices   []ExprNode
-	SpanValue Span
+	Receiver                ExprNode
+	Indices                 []ExprNode
+	BracketLiteralCandidate *CompositeLiteralExpr
+	BracketLiteralResolved  bool
+	SpanValue               Span
 }
 
 func (*IndexListExpr) node()                 {}
@@ -218,9 +222,10 @@ type CompositeElement struct {
 }
 
 type CompositeLiteralExpr struct {
-	Type      TypeNode
-	Elements  []CompositeElement
-	SpanValue Span
+	Type         TypeNode
+	Elements     []CompositeElement
+	TypedBracket bool
+	SpanValue    Span
 }
 
 func (*CompositeLiteralExpr) node()                 {}
@@ -303,6 +308,11 @@ func ParseExpressionTokens(tokens []Token) (ExprNode, error) {
 		}
 	}
 	if !isUnaryOperator(filtered[0].Text) {
+		if literal, ok, err := parseExplicitBracketLiteral(filtered); err != nil {
+			return nil, err
+		} else if ok {
+			return literal, nil
+		}
 		if composite, ok, err := parseCompositeLiteral(filtered, tokens); err != nil {
 			return nil, err
 		} else if ok {
@@ -325,6 +335,213 @@ func ParseExpressionTokens(tokens []Token) (ExprNode, error) {
 		return &TokenExpr{Tokens: preserved, SpanValue: tokenSpan(filtered)}, nil
 	}
 	return expression, nil
+}
+
+// parseExplicitBracketLiteral handles the unambiguous type-prefixed slice and
+// array forms whose type itself begins with '[' (for example []int[...] and
+// [3]int[...]). Named-type prefixes are retained as index expressions until
+// semantic type metadata can distinguish them from ordinary indexing.
+func parseExplicitBracketLiteral(tokens []Token) (*CompositeLiteralExpr, bool, error) {
+	literal, consumed, ok, err := parseBracketLiteralPrefix(tokens)
+	if err != nil || !ok || consumed != len(tokens) {
+		return nil, false, err
+	}
+	return literal, true, nil
+}
+
+func parseBracketLiteralPrefix(tokens []Token) (*CompositeLiteralExpr, int, bool, error) {
+	if len(tokens) < 2 || tokens[0].Text != "[" {
+		return nil, 0, false, nil
+	}
+
+	for open := 1; open < len(tokens); open++ {
+		if tokens[open].Text != "[" || !isTopLevelTokenAt(tokens, open) {
+			continue
+		}
+		close, ok := findExpressionClosing(tokens, open, "[", "]")
+		if !ok {
+			continue
+		}
+		// A generic type application can itself look like a literal boundary
+		// (for example [2]Box[int][...]). Keep consuming the type while another
+		// bracket group immediately follows it.
+		if close+1 < len(tokens) && tokens[close+1].Text == "[" && bracketTokensLookLikeTypeArguments(tokens[open+1:close]) {
+			if _, prefixErr := ParseTypeTokens(tokens[:open]); prefixErr == nil {
+				continue
+			}
+		}
+		typeNode, err := ParseTypeTokens(tokens[:open])
+		if err != nil || typeNode == nil {
+			continue
+		}
+		if _, sliceType := typeNode.(*SliceType); !sliceType {
+			if _, arrayType := typeNode.(*ArrayType); !arrayType {
+				continue
+			}
+		}
+		literalType := typeNode
+		elementType := typeNode
+		if arrayType, ok := typeNode.(*ArrayType); ok {
+			elementType = arrayType.Element
+		} else {
+			literalType = &SliceType{Element: typeNode, SpanValue: typeNode.Span()}
+		}
+		constructor := bracketTypeExpression(elementType)
+		elements, err := parseBracketLiteralElements(tokens[open+1:close], constructor, literalType)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		return &CompositeLiteralExpr{Type: literalType, Elements: elements, TypedBracket: true, SpanValue: tokenSpan(tokens[:close+1])}, close + 1, true, nil
+	}
+
+	// A leading bracket group with no type prefix is an elided element literal,
+	// used where the surrounding typed slice or array supplies its type.
+	if tokens[0].Text == "[" {
+		if close, ok := findExpressionClosing(tokens, 0, "[", "]"); ok && (close == len(tokens)-1 || bracketLiteralPrefixCanContinue(tokens, close+1)) {
+			elements, err := parseBracketLiteralElements(tokens[1:close], nil, nil)
+			if err != nil {
+				return nil, 0, false, err
+			}
+			return &CompositeLiteralExpr{Elements: elements, SpanValue: tokenSpan(tokens[:close+1])}, close + 1, true, nil
+		}
+	}
+	return nil, 0, false, nil
+}
+
+func bracketLiteralPrefixCanContinue(tokens []Token, next int) bool {
+	if next >= len(tokens) {
+		return true
+	}
+	switch tokens[next].Text {
+	case ".", "?.", "[", "(", "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "|", "^", "&", "<<", ">>", "&^":
+		return true
+	default:
+		return false
+	}
+}
+
+func bracketTokensLookLikeTypeArguments(tokens []Token) bool {
+	parts := splitExpressionTokens(tokens)
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		part = significantSyntaxTokens(part)
+		if len(part) == 0 || (part[0].Kind != TokenIdentifier && part[0].Kind != TokenKeyword && part[0].Text != "*" && part[0].Text != "[" && part[0].Text != "map" && part[0].Text != "chan" && part[0].Text != "func" && part[0].Text != "struct" && part[0].Text != "interface") {
+			return false
+		}
+		if typeNode, err := ParseTypeTokens(part); err != nil || typeNode == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func bracketTypeExpression(typeNode TypeNode) ExprNode {
+	switch typeNode.(type) {
+	case *NamedType, *PointerType:
+		text, err := typeNodeSource(typeNode)
+		if err != nil {
+			return nil
+		}
+		tokens, err := LexSource("bracket element type", text)
+		if err != nil {
+			return nil
+		}
+		expression, err := ParseExpressionTokens(tokens)
+		if err != nil {
+			return nil
+		}
+		return expression
+	default:
+		return nil
+	}
+}
+
+func isTopLevelTokenAt(tokens []Token, target int) bool {
+	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	for index := 0; index < target; index++ {
+		switch tokens[index].Text {
+		case "(":
+			parenDepth++
+		case ")":
+			parenDepth--
+		case "[":
+			bracketDepth++
+		case "]":
+			bracketDepth--
+		case "{":
+			braceDepth++
+		case "}":
+			braceDepth--
+		}
+	}
+	return parenDepth == 0 && bracketDepth == 0 && braceDepth == 0
+}
+
+func parseBracketLiteralElements(tokens []Token, constructor ExprNode, literalType TypeNode) ([]CompositeElement, error) {
+	parts := splitExpressionTokens(tokens)
+	elements := make([]CompositeElement, 0, len(parts))
+	for _, part := range parts {
+		part = significantSyntaxTokens(part)
+		if len(part) == 0 {
+			continue
+		}
+		if part[0].Text == "(" && part[len(part)-1].Text == ")" {
+			if constructor == nil {
+				value, err := ParseExpressionTokens(part)
+				if err != nil {
+					return nil, err
+				}
+				elements = append(elements, CompositeElement{Value: value})
+				continue
+			}
+			arguments, err := parseConstructorArgumentGroup(part[1 : len(part)-1])
+			if err != nil {
+				return nil, err
+			}
+			elements = append(elements, CompositeElement{Value: &CallExpr{Callee: constructor, Arguments: arguments, SpanValue: tokenSpan(part)}})
+			continue
+		}
+		value, err := ParseExpressionTokens(part)
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, CompositeElement{Value: value})
+	}
+	return elements, nil
+}
+
+func parseConstructorArgumentGroup(tokens []Token) ([]CallArg, error) {
+	parts := splitExpressionTokens(tokens)
+	arguments := make([]CallArg, 0, len(parts))
+	for _, part := range parts {
+		part = significantSyntaxTokens(part)
+		if len(part) == 0 {
+			continue
+		}
+		name := ""
+		nameSpan := Span{}
+		argumentParser := expressionParser{tokens: part}
+		if parsedName, parsedSpan, ok := argumentParser.parseCallArgumentName(); ok {
+			name = parsedName
+			nameSpan = parsedSpan
+			part = part[argumentParser.index:]
+		}
+		spread := len(part) > 1 && part[len(part)-1].Text == "..."
+		if spread {
+			part = part[:len(part)-1]
+		}
+		value, err := ParseExpressionTokens(part)
+		if err != nil {
+			return nil, err
+		}
+		if spread && value != nil {
+			value = &SpreadExpr{Expression: value, SpanValue: tokenSpan(significantSyntaxTokens(part))}
+		}
+		arguments = append(arguments, CallArg{Name: name, NameSpan: nameSpan, Value: value})
+	}
+	return arguments, nil
 }
 
 // ParseExpressionTokens normally discards newlines because they are not
@@ -674,6 +891,12 @@ func (parser *expressionParser) parsePrefix() (ExprNode, error) {
 			}
 		}
 	}
+	if literal, consumed, ok, err := parseBracketLiteralPrefix(remaining); err != nil {
+		return nil, err
+	} else if ok {
+		parser.index += consumed
+		return literal, nil
+	}
 	// A conversion whose type starts with a non-identifier token (for
 	// example []byte(value) or *Problem(value)) is lexically ambiguous with
 	// indexing/unary syntax. Recognize the type prefix before the ordinary
@@ -896,6 +1119,9 @@ func expressionNodeSource(expression ExprNode) (string, error) {
 		}
 		return receiver + operator + value.Name, nil
 	case *IndexExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil {
+			return compositeLiteralNodeSource(value.BracketLiteralCandidate)
+		}
 		receiver, err := expressionNodeSource(value.Receiver)
 		if err != nil {
 			return "", err
@@ -903,6 +1129,9 @@ func expressionNodeSource(expression ExprNode) (string, error) {
 		index, err := expressionNodeSource(value.Index)
 		return receiver + "[" + index + "]", err
 	case *IndexListExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil {
+			return compositeLiteralNodeSource(value.BracketLiteralCandidate)
+		}
 		receiver, err := expressionNodeSource(value.Receiver)
 		if err != nil {
 			return "", err
@@ -982,30 +1211,7 @@ func expressionNodeSource(expression ExprNode) (string, error) {
 		inner, err := expressionNodeSource(value.Inner)
 		return "(" + inner + ")", err
 	case *CompositeLiteralExpr:
-		typeText := ""
-		if value.Type != nil {
-			var err error
-			typeText, err = typeNodeSource(value.Type)
-			if err != nil {
-				return "", err
-			}
-		}
-		elements := make([]string, 0, len(value.Elements))
-		for _, element := range value.Elements {
-			text, elementErr := expressionNodeSource(element.Value)
-			if elementErr != nil {
-				return "", elementErr
-			}
-			if element.Key != nil {
-				key, keyErr := expressionNodeSource(element.Key)
-				if keyErr != nil {
-					return "", keyErr
-				}
-				text = key + ": " + text
-			}
-			elements = append(elements, text)
-		}
-		return typeText + "{" + strings.Join(elements, ", ") + "}", nil
+		return compositeLiteralNodeSource(value)
 	case *TokenExpr:
 		return tokenExpressionSource(value.Tokens), nil
 	case *LambdaExpr:
@@ -1024,6 +1230,36 @@ func expressionNodeSource(expression ExprNode) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported expression AST node %T", expression)
 	}
+}
+
+func compositeLiteralNodeSource(value *CompositeLiteralExpr) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	typeText := ""
+	if value.Type != nil {
+		var err error
+		typeText, err = typeNodeSource(value.Type)
+		if err != nil {
+			return "", err
+		}
+	}
+	elements := make([]string, 0, len(value.Elements))
+	for _, element := range value.Elements {
+		text, elementErr := expressionNodeSource(element.Value)
+		if elementErr != nil {
+			return "", elementErr
+		}
+		if element.Key != nil {
+			key, keyErr := expressionNodeSource(element.Key)
+			if keyErr != nil {
+				return "", keyErr
+			}
+			text = key + ": " + text
+		}
+		elements = append(elements, text)
+	}
+	return typeText + "{" + strings.Join(elements, ", ") + "}", nil
 }
 
 func interpolatedStringSource(expression *InterpolatedStringExpr) (string, error) {
@@ -1133,6 +1369,11 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 			return nil, fmt.Errorf("expected ] in expression")
 		}
 		inside := parser.tokens[open+1 : close]
+		literalCandidate := bracketLiteralCandidate(left, inside)
+		bracketSpan := Span{Start: left.Span().Start, End: parser.tokens[close].Span.End, Line: left.Span().Line, Column: left.Span().Column}
+		if literalCandidate != nil {
+			literalCandidate.SpanValue = bracketSpan
+		}
 		colon := topLevelToken(inside, ":")
 		if colon >= 0 {
 			low, high, max := ExprNode(nil), ExprNode(nil), ExprNode(nil)
@@ -1168,8 +1409,11 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 			return &SliceExpr{Receiver: left, Low: low, High: high, Max: max, SpanValue: Span{Start: left.Span().Start, End: parser.tokens[close].Span.End, Line: left.Span().Line, Column: left.Span().Column}}, nil
 		}
 		index, err := ParseExpressionTokens(inside)
-		if err != nil {
+		if err != nil && literalCandidate == nil {
 			return nil, err
+		}
+		if err != nil && literalCandidate != nil && len(literalCandidate.Elements) == 1 {
+			index = literalCandidate.Elements[0].Value
 		}
 		parser.index = close + 1
 		parts := splitExpressionTokens(inside)
@@ -1177,14 +1421,22 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 			indices := make([]ExprNode, 0, len(parts))
 			for _, part := range parts {
 				item, itemErr := ParseExpressionTokens(part)
-				if itemErr != nil || item == nil {
+				if (itemErr != nil || item == nil) && literalCandidate == nil {
 					return nil, fmt.Errorf("invalid generic index argument")
+				}
+				if itemErr != nil || item == nil {
+					if len(indices) < len(literalCandidate.Elements) {
+						item = literalCandidate.Elements[len(indices)].Value
+					}
 				}
 				indices = append(indices, item)
 			}
-			return &IndexListExpr{Receiver: left, Indices: indices, SpanValue: Span{Start: left.Span().Start, End: parser.tokens[close].Span.End, Line: left.Span().Line, Column: left.Span().Column}}, nil
+			return &IndexListExpr{Receiver: left, Indices: indices, BracketLiteralCandidate: literalCandidate, SpanValue: bracketSpan}, nil
 		}
-		return &IndexExpr{Receiver: left, Index: index, SpanValue: Span{Start: left.Span().Start, End: parser.tokens[close].Span.End, Line: left.Span().Line, Column: left.Span().Column}}, nil
+		if err != nil {
+			index = nil
+		}
+		return &IndexExpr{Receiver: left, Index: index, BracketLiteralCandidate: literalCandidate, SpanValue: bracketSpan}, nil
 	case "(":
 		parser.index++
 		arguments := []CallArg{}
@@ -1216,6 +1468,33 @@ func (parser *expressionParser) parsePostfix(left ExprNode) (ExprNode, error) {
 	default:
 		return left, nil
 	}
+}
+
+func bracketLiteralCandidate(prefix ExprNode, elements []Token) *CompositeLiteralExpr {
+	if prefix == nil {
+		return nil
+	}
+	typeSource, err := expressionNodeSource(prefix)
+	if err != nil {
+		return nil
+	}
+	typeTokens, err := LexSource("bracket literal type", typeSource)
+	if err != nil {
+		return nil
+	}
+	elementType, err := ParseTypeTokens(typeTokens)
+	if err != nil || elementType == nil {
+		return nil
+	}
+	literalType := TypeNode(&SliceType{Element: elementType, SpanValue: elementType.Span()})
+	if array, ok := elementType.(*ArrayType); ok {
+		literalType = array
+	}
+	values, err := parseBracketLiteralElements(elements, prefix, literalType)
+	if err != nil {
+		return nil
+	}
+	return &CompositeLiteralExpr{Type: literalType, Elements: values}
 }
 
 // parseCallArgumentName accepts both ordinary named arguments (`name: value`)

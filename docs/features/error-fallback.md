@@ -1,4 +1,4 @@
-# Lazy error fallback
+# Error fallback
 
 The `??` operator supplies a fallback only when the left side raises a GPP
 error. Successful values, including nil, pass through unchanged. Its right

@@ -632,6 +632,7 @@ func parseParameterInfos(params string) ([]parameterInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	parts = expandGroupedParameterNames(parts)
 
 	result := []parameterInfo{}
 	seenDefault := false
@@ -710,6 +711,79 @@ func parseParameterInfos(params string) ([]parameterInfo, error) {
 	}
 
 	return result, nil
+}
+
+// expandGroupedParameterNames handles Go-style parameter declarations such as
+// `name, prefix, language string`. The top-level comma splitter separates the
+// names, so the final explicitly typed name supplies the type for the pending
+// names before ordinary parameter parsing continues.
+func expandGroupedParameterNames(parts []string) []string {
+	result := make([]string, 0, len(parts))
+	pending := []string{}
+	flushPending := func() {
+		result = append(result, pending...)
+		pending = nil
+	}
+
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		left := trimmed
+		defaultSuffix := ""
+		if equal := topLevelEquals(trimmed); equal >= 0 {
+			left = strings.TrimSpace(trimmed[:equal])
+			defaultSuffix = trimmed[equal:]
+		}
+
+		if name, ok := bareParameterIdentifier(left); ok {
+			pending = append(pending, name)
+			continue
+		}
+
+		if len(pending) > 0 {
+			name, typeName, ok := namedParameterType(left)
+			if ok {
+				for _, groupedName := range append(pending, name) {
+					result = append(result, groupedName+" "+typeName+defaultSuffix)
+				}
+				pending = nil
+				continue
+			}
+		}
+
+		flushPending()
+		result = append(result, part)
+	}
+	flushPending()
+	return result
+}
+
+func bareParameterIdentifier(source string) (string, bool) {
+	tokens, err := LexSource("parameter", source)
+	if err != nil {
+		return "", false
+	}
+	filtered := significantSyntaxTokens(tokens)
+	if len(filtered) != 1 || filtered[0].Kind != TokenIdentifier {
+		return "", false
+	}
+	return filtered[0].Text, true
+}
+
+func namedParameterType(source string) (string, string, bool) {
+	tokens, err := LexSource("parameter", source)
+	if err != nil {
+		return "", "", false
+	}
+	filtered := significantSyntaxTokens(tokens)
+	if !parameterNameCandidate(filtered) {
+		return "", "", false
+	}
+	typeNode, err := ParseTypeTokens(filtered[1:])
+	if err != nil || typeNode == nil {
+		return "", "", false
+	}
+	typeName, err := typeNodeSource(typeNode)
+	return filtered[0].Text, typeName, err == nil && typeName != ""
 }
 
 func parameterNameCandidate(tokens []Token) bool {
@@ -1533,13 +1607,25 @@ func renameOverloadedCallee(expression ExprNode, name string) (ExprNode, bool) {
 		if !changed {
 			return expression, false
 		}
-		return &IndexExpr{Receiver: receiver, Index: callee.Index, SpanValue: callee.SpanValue}, true
+		return &IndexExpr{
+			Receiver:                receiver,
+			Index:                   callee.Index,
+			BracketLiteralCandidate: callee.BracketLiteralCandidate,
+			BracketLiteralResolved:  callee.BracketLiteralResolved,
+			SpanValue:               callee.SpanValue,
+		}, true
 	case *IndexListExpr:
 		receiver, changed := renameOverloadedSelector(callee.Receiver, name)
 		if !changed {
 			return expression, false
 		}
-		return &IndexListExpr{Receiver: receiver, Indices: append([]ExprNode(nil), callee.Indices...), SpanValue: callee.SpanValue}, true
+		return &IndexListExpr{
+			Receiver:                receiver,
+			Indices:                 append([]ExprNode(nil), callee.Indices...),
+			BracketLiteralCandidate: callee.BracketLiteralCandidate,
+			BracketLiteralResolved:  callee.BracketLiteralResolved,
+			SpanValue:               callee.SpanValue,
+		}, true
 	default:
 		return expression, false
 	}
@@ -2132,6 +2218,22 @@ func parseStaticArgumentNode(source string) (ExprNode, error) {
 	return ParseExpressionTokens(tokens)
 }
 
+func indexedExpressionElementType(receiverType string) string {
+	receiverType = strings.TrimSpace(receiverType)
+	if strings.HasPrefix(receiverType, "[]") {
+		return strings.TrimSpace(strings.TrimPrefix(receiverType, "[]"))
+	}
+	if strings.HasPrefix(receiverType, "[") {
+		if close := strings.Index(receiverType, "]"); close >= 0 {
+			return strings.TrimSpace(receiverType[close+1:])
+		}
+	}
+	if receiverType == "string" {
+		return "byte"
+	}
+	return ""
+}
+
 func staticExpressionTypeNode(expression ExprNode, context constructorContext, valueTypes map[string]string) string {
 	switch value := expression.(type) {
 	case *LiteralExpr:
@@ -2166,7 +2268,19 @@ func staticExpressionTypeNode(expression ExprNode, context constructorContext, v
 		if typeName, err := typeNodeSource(value.Type); err == nil {
 			return typeName
 		}
+	case *IndexExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil && value.BracketLiteralCandidate.Type != nil {
+			if typeName, err := typeNodeSource(value.BracketLiteralCandidate.Type); err == nil {
+				return strings.TrimSpace(typeName)
+			}
+		}
+		return indexedExpressionElementType(staticExpressionTypeNode(value.Receiver, context, valueTypes))
 	case *IndexListExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil && value.BracketLiteralCandidate.Type != nil {
+			if typeName, err := typeNodeSource(value.BracketLiteralCandidate.Type); err == nil {
+				return strings.TrimSpace(typeName)
+			}
+		}
 		return staticExpressionTypeNode(value.Receiver, context, valueTypes)
 	case *ParenthesizedExpr:
 		return staticExpressionTypeNode(value.Inner, context, valueTypes)

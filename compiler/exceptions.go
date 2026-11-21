@@ -2408,6 +2408,9 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 		}
 		return value, err
 	case *IndexExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil {
+			return lowerExceptionExprNode(value.BracketLiteralCandidate, context)
+		}
 		left, err := lowerExceptionExprNode(value.Receiver, context)
 		if err != nil {
 			return nil, err
@@ -2416,6 +2419,9 @@ func lowerExceptionExprNode(expression ExprNode, context constructorContext) (Ex
 		value.Receiver, value.Index = left, right
 		return value, err
 	case *IndexListExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil {
+			return lowerExceptionExprNode(value.BracketLiteralCandidate, context)
+		}
 		lowered, err := lowerExceptionExprNode(value.Receiver, context)
 		if err != nil {
 			return nil, err

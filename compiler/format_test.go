@@ -424,3 +424,21 @@ func TestFormatSourceCollapsesRepeatedBlankLinesLikeGoFmt(t *testing.T) {
 		t.Fatalf("repeated blank lines were not collapsed:\n%s", got)
 	}
 }
+
+func TestFormatSourceKeepsSliceExpressionColonsTight(t *testing.T) {
+	source := "func main(){\npart:=arr[1 : 4]\nprefix:=arr[: 4]\nsuffix:=arr[1 : ]\nwhole:=arr[ : ]\nfull:=arr[1 : 4 : 5]\nfullPrefix:=arr[ : 4 : 5]\nentry:=map[string]int{\"one\":1}\nuser:=User[(Name:\"Ada\")]\n}\n"
+	formatted := FormatSource(source)
+	for _, expression := range []string{"arr[1:4]", "arr[:4]", "arr[1:]", "arr[:]", "arr[1:4:5]", "arr[:4:5]"} {
+		if !strings.Contains(formatted, expression) {
+			t.Errorf("slice expression was not formatted as %q:\n%s", expression, formatted)
+		}
+	}
+	for _, colonSpacing := range []string{`"one": 1`, `Name: "Ada"`} {
+		if !strings.Contains(formatted, colonSpacing) {
+			t.Errorf("non-slice colon spacing changed (expected %q):\n%s", colonSpacing, formatted)
+		}
+	}
+	if again := FormatSource(formatted); again != formatted {
+		t.Fatalf("formatter is not idempotent:\nfirst:\n%s\nsecond:\n%s", formatted, again)
+	}
+}

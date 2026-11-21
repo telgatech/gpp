@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-21
+
+- Added cron and experimental work queue examples to the documentation landing page.
+- Refined landing page examples for generics, inheritance, error handling, and operators.
+- Added typed slice and array literals with nested type inference and class construction.
+- Preserved grouped parameter declarations alongside typed slice and array literals.
+
 ## 2026-11-20
 
 - Updated docs landing examples for constructors, multi-value error fallbacks, and HTTP server startup.

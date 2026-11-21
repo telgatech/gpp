@@ -23,7 +23,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 - [Lambdas](./lambdas)
 - [Regular expressions](./regular-expressions)
 - [Safe access](./safe-access)
-- [Lazy error fallback](./error-fallback)
+- [Error fallback](./error-fallback)
 - [Conditional expressions](./conditional-expressions)
 - [Operators](./operators)
 - [Annotations and introspection](./annotations)

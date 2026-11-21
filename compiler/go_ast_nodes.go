@@ -677,6 +677,9 @@ func goExprNode(expression ExprNode) (ast.Expr, error) {
 		}
 		return &ast.SelectorExpr{X: receiver, Sel: ast.NewIdent(value.Name)}, nil
 	case *IndexExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil {
+			return goExprNode(value.BracketLiteralCandidate)
+		}
 		receiver, err := goExprNode(value.Receiver)
 		if err != nil {
 			return nil, err
@@ -687,6 +690,9 @@ func goExprNode(expression ExprNode) (ast.Expr, error) {
 		}
 		return &ast.IndexExpr{X: receiver, Index: index}, nil
 	case *IndexListExpr:
+		if value.BracketLiteralResolved && value.BracketLiteralCandidate != nil {
+			return goExprNode(value.BracketLiteralCandidate)
+		}
 		receiver, err := goExprNode(value.Receiver)
 		if err != nil {
 			return nil, err

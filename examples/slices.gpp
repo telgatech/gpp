@@ -1,0 +1,63 @@
+package main
+
+import "fmt"
+
+struct User {
+    Name string
+}
+
+class Message {
+    Text string
+
+    func init(text string) {
+        this.Text = text
+    }
+}
+
+class Box[T any] {
+    Value T
+
+    func init(value T) {
+        this.Value = value
+    }
+}
+
+func printNumbers(numbers []int) {
+    fmt.Println("received", numbers)
+}
+
+func main() {
+    numbers := int[3, 1, 2]
+    empty := int[]
+    matrix := []int[[1, 2], [3, 4]]
+    fixed := [3]int[10, 20, 30]
+    // Prelude methods operate on slices too.
+    scores := int[3, 1, 2]
+    moreNumbers := scores.Append(4)
+    numberWindow := moreNumbers[1:4]
+    numberTail := moreNumbers[1:]
+    allNumbers := moreNumbers[:]
+    prefixNumbers := moreNumbers[:3]
+    boundedWindow := moreNumbers[1:3:4]
+    boundedPrefix := moreNumbers[:3:4]
+    removed := scores.DeleteBy(value => value == 2)
+    found, foundTwo := scores.Find(value => value == 2)
+    scores.Sort()
+    sortedScores := scores.Take(3)
+    scores[1] = 20
+    hasNumbers := numbers.Any()
+
+    users := User[(Name: "Ada"), (Name: "Lin")]
+    messages := Message[(text: "hello"), ("welcome")]
+    userMessages := users.Zip(messages)
+    boxes := Box[int][(1), (2)]
+
+    fmt.Println(numbers, empty, matrix, fixed)
+    printNumbers(numbers)
+    fmt.Println(moreNumbers, numberWindow, numberTail, removed, found, foundTwo, sortedScores, scores, hasNumbers)
+    fmt.Println(allNumbers, prefixNumbers, boundedWindow, boundedPrefix)
+    fmt.Println(users[0].Name, users[1].Name)
+    fmt.Println(messages[0].Text, messages[1].Text)
+    fmt.Println(userMessages[0].First.Name, userMessages[0].Second.Text)
+    fmt.Println(boxes[0].Value, boxes[1].Value)
+}

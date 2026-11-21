@@ -1157,6 +1157,9 @@ func joinNames(names []string) string {
 func constructorContextForFile(file *File, model *SemanticModel, modulePath string) (constructorContext, error) {
 	localClasses := model.Packages[file.Package].Classes
 	context := localConstructorContext(localClasses)
+	for name := range model.Packages[file.Package].Types {
+		context.KnownTypes[name] = true
+	}
 	context.StructConstructors = namedStructConstructors(model.Packages[file.Package].Files)
 	context.GlobalValueTypes = globalValueTypesForFile(file)
 	context.Package = file.Package

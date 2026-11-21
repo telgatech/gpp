@@ -40,7 +40,7 @@ class Locale {
 }
 
 class LocalizedGreeting : PersonalizedGreeting, Locale {
-    func init(name string, prefix string, language string) {
+    func init(name, prefix, language string) {
         super[PersonalizedGreeting](name, prefix)
         super[Locale](language)
     }

@@ -326,7 +326,8 @@ func methodBodyTokens(method Method) []Token {
 
 func methodBodySource(method Method) string {
 	if method.Owner != nil && method.BodySpan.Start >= 0 && method.BodySpan.End <= len(method.Owner.Source) && method.BodySpan.Start <= method.BodySpan.End {
-		return method.Owner.Source[method.BodySpan.Start:method.BodySpan.End]
+		source := method.Owner.Source[method.BodySpan.Start:method.BodySpan.End]
+		return rewriteResolvedBracketLiterals(source, method.BodySpan.Start, method.BodyAST)
 	}
 	return ""
 }
@@ -437,7 +438,8 @@ func functionSource(function *FunctionDecl) string {
 		return ""
 	}
 	if function.Owner != nil && function.SourceSpan.Start >= 0 && function.SourceSpan.End <= len(function.Owner.Source) && function.SourceSpan.Start <= function.SourceSpan.End {
-		return function.Owner.Source[function.SourceSpan.Start:function.SourceSpan.End]
+		source := function.Owner.Source[function.SourceSpan.Start:function.SourceSpan.End]
+		return rewriteResolvedBracketLiterals(source, function.SourceSpan.Start, function.Method.BodyAST)
 	}
 	if function.GoAST != nil {
 		var output bytes.Buffer

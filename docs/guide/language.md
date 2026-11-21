@@ -53,6 +53,29 @@ guest := User.Guest()
 Inheritance and polymorphism are implemented through generated Go structures
 and interfaces, so classes can still interoperate with ordinary Go code.
 
+## Typed slices and arrays
+
+Put the element type before a bracketed list to create a slice. The type also
+provides the element type for nested literals:
+
+```gpp
+numbers := int[1, 2, 3]                 // []int
+matrix := []int[[1, 2], [3, 4]]        // [][]int
+fixed := [3]int[10, 20, 30]            // [3]int
+empty := int[]
+```
+
+Class elements use the same constructor rules as ordinary `Type(...)` calls.
+The parenthesized group supplies the arguments for one element:
+
+```gpp
+boxes := Box[int][(value: 1), (value: 2)] // []*Box[int]
+```
+
+Use Go brace literals when you need keyed or indexed elements, such as
+`[]int{2: 10}`. See the [typed slice and array literal specification](/reference/specifications/slice-array-literals)
+for the full syntax and compatibility rules.
+
 Multiple parents are allowed. If parents expose the same member, qualify the
 member through the parent name instead of relying on an implicit winner. A
 derived value passed through a base-typed parameter keeps the concrete method

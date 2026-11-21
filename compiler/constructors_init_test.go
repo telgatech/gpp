@@ -114,8 +114,10 @@ func main() {
 	fromFactory := Sample(4)
 	fromOverload := Sample("four")
 	fromTwoArguments := Sample(4, 3)
+	fromNamedOverload := Sample(value: "four")
+	fromNamedTwoArguments := Sample(bonus: 4, value: 5)
 	plain := Plain(12)
-	fmt.Println(fromFactory.Value, fromOverload.Value, fromTwoArguments.Value, plain.Value)
+	fmt.Println(fromFactory.Value, fromOverload.Value, fromTwoArguments.Value, fromNamedOverload.Value, fromNamedTwoArguments.Value, plain.Value)
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
@@ -132,7 +134,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("generated initializer program did not run: %v\n%s", err, output)
 	}
-	if got, want := strings.TrimSpace(string(output)), "5 4 7 12"; got != want {
+	if got, want := strings.TrimSpace(string(output)), "5 4 7 4 9 12"; got != want {
 		t.Fatalf("unexpected factory construction output: got %q, want %q", got, want)
 	}
 }
@@ -220,7 +222,7 @@ class Base {
 
 class Middle: Base {
 	func init(name string) error {
-		super(name)
+		super(name: name)
 		fmt.Println("middle", this.Name)
 		if this.Name == "bad-base" {
 			return errors.New("middle rejected value")
@@ -231,7 +233,7 @@ class Middle: Base {
 
 class Child: Middle {
 	func init(name string) {
-		super(name)
+		super(name: name)
 		fmt.Println("child", this.Name)
 	}
 }
@@ -248,11 +250,36 @@ class Combined: Left, Right {
 	func init() { fmt.Println("combined") }
 }
 
+class NamedLeft {
+	Label string
+
+	func init(label string) {
+		this.Label = label
+		fmt.Println("named left", label)
+	}
+}
+
+class NamedRight {
+	Code int
+
+	func init(code int) {
+		this.Code = code
+		fmt.Println("named right", code)
+	}
+}
+
+class NamedCombined: NamedLeft, NamedRight {
+	func init(label string, code int) {
+		super[NamedRight](code: code)
+		super[NamedLeft](label: label)
+	}
+}
+
 class Delegated {
 	Value int
 
 	func init(value int) {
-		this(value, 1)
+		this(bonus: 1, value: value)
 	}
 
 	func init(value int, bonus int) {
@@ -261,17 +288,17 @@ class Delegated {
 }
 
 func NewChild(name string) (*Child, error) {
-	return Child(name)
+	return Child(name: name)
 }
 
 func main() {
-	good, err := Child("good")
+	good, err := Child(name: "good")
 	fmt.Println("good", good.Name, err == nil)
 
 	returned, err := NewChild("returned")
 	fmt.Println("returned", returned.Name, err == nil)
 
-	bad, err := Child("bad")
+	bad, err := Child(name: "bad")
 	fmt.Println("bad", bad == nil, err)
 
 	try {
@@ -281,7 +308,9 @@ func main() {
 	}
 
 	_ = Combined()
-	delegated := Delegated(4)
+	namedCombined := NamedCombined(code: 42, label: "named")
+	fmt.Println("named parents", namedCombined.Label, namedCombined.Code)
+	delegated := Delegated(value: 4)
 	fmt.Println("delegated", delegated.Value)
 	_ = Child{Middle: Middle{Base: Base{Name: "literal"}}}
 }
@@ -318,6 +347,9 @@ func main() {
 		"left",
 		"right",
 		"combined",
+		"named left named",
+		"named right 42",
+		"named parents named 42",
 		"delegated 5",
 		"",
 	}, "\n")

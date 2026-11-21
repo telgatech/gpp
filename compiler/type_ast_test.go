@@ -192,6 +192,32 @@ class User {
 	}
 }
 
+func TestParseGroupedNamedParameters(t *testing.T) {
+	file, err := ParseFile("grouped-parameters.gpp", `class LocalizedGreeting {
+	func init(name, prefix, language string) {}
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	class := file.Decls[0].(*ClassDecl)
+	parameters := class.Methods[0].ParameterAST
+	if len(parameters) != 3 {
+		t.Fatalf("got %d parameters, want 3: %#v", len(parameters), parameters)
+	}
+	for index, want := range []string{"name", "prefix", "language"} {
+		if parameters[index].Name != want {
+			t.Errorf("parameter %d name: got %q, want %q", index+1, parameters[index].Name, want)
+		}
+		got, err := typeNodeSource(parameters[index].Type)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "string" {
+			t.Errorf("parameter %q type: got %q, want string", want, got)
+		}
+	}
+}
+
 func TestMethodResultFieldsAreStructured(t *testing.T) {
 	file, err := ParseFile("named-results.gpp", `func named() (value int, err error) { return 0, nil }`)
 	if err != nil {

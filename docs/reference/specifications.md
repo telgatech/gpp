@@ -16,6 +16,7 @@ before each docs development or production build.
 - [Import fixes](./specifications/fiximports)
 - [Type resolver](./specifications/type-resolver)
 - [Generic GPP classes](./specifications/generic-classes)
+- [Typed slice and array literals](./specifications/slice-array-literals)
 - [Generic containers](./specifications/std.container)
 
 ## Core features

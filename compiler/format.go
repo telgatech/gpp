@@ -789,6 +789,9 @@ func canonicalizeClosingParenSpacing(line string) string {
 func canonicalizeColonSpacing(line string) string {
 	var output strings.Builder
 	output.Grow(len(line) + 8)
+	squareDepth := 0
+	parenDepth, braceDepth := 0, 0
+	bracketParenDepth, bracketBraceDepth := []int{}, []int{}
 	for index := 0; index < len(line); {
 		character := line[index]
 		if character == '"' || character == '\'' || character == '`' {
@@ -813,15 +816,42 @@ func canonicalizeColonSpacing(line string) string {
 			output.WriteString(line[index:])
 			break
 		}
+		sliceColon := character == ':' && squareDepth > 0 &&
+			parenDepth == bracketParenDepth[squareDepth-1] && braceDepth == bracketBraceDepth[squareDepth-1]
+		if sliceColon {
+			current := strings.TrimRight(output.String(), " \t")
+			output.Reset()
+			output.WriteString(current)
+		}
 		output.WriteByte(character)
 		index++
+		switch character {
+		case '[':
+			squareDepth++
+			bracketParenDepth = append(bracketParenDepth, parenDepth)
+			bracketBraceDepth = append(bracketBraceDepth, braceDepth)
+		case ']':
+			if squareDepth > 0 {
+				squareDepth--
+				bracketParenDepth = bracketParenDepth[:len(bracketParenDepth)-1]
+				bracketBraceDepth = bracketBraceDepth[:len(bracketBraceDepth)-1]
+			}
+		case '(':
+			parenDepth++
+		case ')':
+			parenDepth--
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+		}
 		if character != ':' || index < len(line) && line[index] == '=' {
 			continue
 		}
 		for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
 			index++
 		}
-		if index < len(line) && line[index] != '}' && line[index] != ')' && line[index] != ']' && line[index] != ',' && line[index] != ';' {
+		if !sliceColon && index < len(line) && line[index] != '}' && line[index] != ')' && line[index] != ']' && line[index] != ',' && line[index] != ';' {
 			output.WriteByte(' ')
 		}
 	}
