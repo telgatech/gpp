@@ -116,6 +116,19 @@ existing := Box[int](value: 1)
 boxes := Box[int][existing, (value: 2)]
 ```
 
+This also allows child class instances in a slice typed as their parent:
+
+```gpp
+class Animal {}
+class Dog: Animal {}
+class Cat: Animal {}
+
+animals := Animal[Dog(), Cat()]
+```
+
+The slice uses the parent dispatch type, while each element keeps its concrete
+child value.
+
 For a class with one or more `init` methods, the argument group must match an
 initializer overload. Initializers, parent initialization, and error
 propagation behave as they do for an ordinary `Type(...)` constructor call. If

@@ -475,6 +475,28 @@ func applyClassPointerElement(candidate *CompositeLiteralExpr, context construct
 	if !ok || target.Class == nil {
 		return
 	}
+	if classHasDerivedInContext(target, context) {
+		named, ok := element.(*NamedType)
+		if !ok {
+			return
+		}
+		interfaceName := target.InterfaceName
+		if interfaceName == "" {
+			interfaceName = "Gpp" + target.Class.Name
+		}
+		parts := []string{interfaceName}
+		if target.Qualifier != "" {
+			parts = []string{target.Qualifier, interfaceName}
+		}
+		interfaceType := &NamedType{Parts: parts, Arguments: named.Arguments, SpanValue: named.SpanValue}
+		switch value := candidate.Type.(type) {
+		case *SliceType:
+			value.Element = interfaceType
+		case *ArrayType:
+			value.Element = interfaceType
+		}
+		return
+	}
 	if _, alreadyPointer := element.(*PointerType); alreadyPointer {
 		return
 	}
@@ -485,6 +507,21 @@ func applyClassPointerElement(candidate *CompositeLiteralExpr, context construct
 	case *ArrayType:
 		value.Element = pointer
 	}
+}
+
+func classHasDerivedInContext(base constructorTarget, context constructorContext) bool {
+	if classHasDerived(base.Class, base.Classes) {
+		return true
+	}
+	for _, candidate := range context.Targets {
+		if candidate.Class == nil || candidate.Class == base.Class {
+			continue
+		}
+		if classInheritsTarget(candidate, base, context) {
+			return true
+		}
+	}
+	return false
 }
 
 var builtinTypeNames = map[string]bool{

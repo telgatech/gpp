@@ -72,6 +72,9 @@ The parenthesized group supplies the arguments for one element:
 boxes := Box[int][(value: 1), (value: 2)] // []*Box[int]
 ```
 
+Elements can also be ordinary expressions, so a parent-typed slice can hold
+child class instances: `animals := Animal[Dog(), Cat()]`.
+
 Use Go brace literals when you need keyed or indexed elements, such as
 `[]int{2: 10}`. See the [typed slice and array literal specification](/reference/specifications/slice-array-literals)
 for the full syntax and compatibility rules.

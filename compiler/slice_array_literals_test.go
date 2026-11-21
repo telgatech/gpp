@@ -23,6 +23,24 @@ class Box[T any] {
 	func init(value T) { this.Value = value }
 }
 
+class Animal {
+	func Kind() string { return "animal" }
+}
+
+class Dog: Animal {
+	func Kind() string { return "dog" }
+}
+
+class Cat: Animal {
+	func Kind() string { return "cat" }
+}
+
+class Person {
+	Name string
+	func init(name string) { this.Name = name }
+	func init() { this.Name = "default" }
+}
+
 struct User { Name string }
 
 func main() {
@@ -35,6 +53,8 @@ func main() {
 	boxes := Box[int][(value: 5), (6)]
 	boxArray := [2]Box[int][(7), (8)]
 	emptyBoxes := Box[int][]
+	animals := Animal[Dog(), Cat()]
+	people := Person[Person("Ada"), ()]
 	users := User[(Name: "Ada"), (Name: "Lin")]
 	selected := numbers[1]
 	scores := int[3, 1, 2]
@@ -49,6 +69,7 @@ func main() {
 	fmt.Println(withoutTwo, found, foundTwo, replaced)
 	fmt.Println(goFiltered)
 	fmt.Println(boxes[0].Value, boxes[1].Value, len(emptyBoxes), boxArray[0].Value, boxArray[1].Value, users[0].Name, users[1].Name, selected, shadowed)
+	fmt.Println(people[0].Name, people[1].Name, animals[0].Kind(), animals[1].Kind())
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
@@ -67,7 +88,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("run typed collection literal fixture: %v\n%s", err, output)
 	}
-	want := "[1 2 3] [] [[1 2] [3 4]] [[1 2] [3 4]] 16 1\n[3 1] 2 true [3 1 20]\n[3 2]\n5 6 0 7 8 Ada Lin 2 9\n"
+	want := "[1 2 3] [] [[1 2] [3 4]] [[1 2] [3 4]] 16 1\n[3 1] 2 true [3 1 20]\n[3 2]\n5 6 0 7 8 Ada Lin 2 9\nAda default dog cat\n"
 	if string(output) != want {
 		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", output, want)
 	}

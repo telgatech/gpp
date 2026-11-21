@@ -22,6 +22,18 @@ class Box[T any] {
     }
 }
 
+class Animal {
+    func Kind() string { return "animal" }
+}
+
+class Dog : Animal {
+    func Kind() string { return "dog" }
+}
+
+class Cat : Animal {
+    func Kind() string { return "cat" }
+}
+
 func printNumbers(numbers []int) {
     fmt.Println("received", numbers)
 }
@@ -51,6 +63,7 @@ func main() {
     messages := Message[(text: "hello"), ("welcome")]
     userMessages := users.Zip(messages)
     boxes := Box[int][(1), (2)]
+    animals := Animal[Dog(), Cat()]
 
     fmt.Println(numbers, empty, matrix, fixed)
     printNumbers(numbers)
@@ -60,4 +73,5 @@ func main() {
     fmt.Println(messages[0].Text, messages[1].Text)
     fmt.Println(userMessages[0].First.Name, userMessages[0].Second.Text)
     fmt.Println(boxes[0].Value, boxes[1].Value)
+    fmt.Println(animals[0].Kind(), animals[1].Kind())
 }

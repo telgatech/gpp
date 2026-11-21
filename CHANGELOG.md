@@ -6,6 +6,7 @@
 - Refined landing page examples for generics, inheritance, error handling, and operators.
 - Added typed slice and array literals with nested type inference and class construction.
 - Preserved grouped parameter declarations alongside typed slice and array literals.
+- Fixed parent-class slices to accept child class values and documented the pattern.
 
 ## 2026-11-20
 
