@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"fmt"
-	"reflect"
 )
 
 // BodyStmtKind classifies a parsed statement without losing its original
@@ -396,8 +395,48 @@ func walkStmtExpressions(statement Stmt, visit func(ExprNode)) {
 }
 
 func isNilStmt(statement Stmt) bool {
-	value := reflect.ValueOf(statement)
-	return value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) && value.IsNil()
+	switch value := statement.(type) {
+	case *TokenStmt:
+		return value == nil
+	case *ExpressionStmt:
+		return value == nil
+	case *DeclarationStmt:
+		return value == nil
+	case *TypeDeclarationStmt:
+		return value == nil
+	case *AssignmentStmt:
+		return value == nil
+	case *LabelStmt:
+		return value == nil
+	case *ReturnStmt:
+		return value == nil
+	case *ThrowStmt:
+		return value == nil
+	case *BranchStmt:
+		return value == nil
+	case *DeferStmt:
+		return value == nil
+	case *GoStmt:
+		return value == nil
+	case *SendStmt:
+		return value == nil
+	case *IncDecStmt:
+		return value == nil
+	case *IfStmt:
+		return value == nil
+	case *TryStmt:
+		return value == nil
+	case *ForStmt:
+		return value == nil
+	case *SwitchStmt:
+		return value == nil
+	case *CaseStmt:
+		return value == nil
+	case *BlockStmt:
+		return value == nil
+	default:
+		return statement == nil
+	}
 }
 
 func walkBlockExpressions(block *BlockStmt, visit func(ExprNode)) {

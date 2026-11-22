@@ -1049,6 +1049,36 @@ func main() {
 	}
 }
 
+func TestTypedBracketSliceLiteralProvidesClassCompletions(t *testing.T) {
+	root := t.TempDir()
+	source := `package main
+class Box[T any] {
+	Value T
+	func Label() string { return "box" }
+}
+func main() {
+	boxes := Box[int][(Value: 1)]
+	boxes[0].
+}
+`
+	file, err := compiler.ParseFile("main.gpp", source)
+	if err != nil {
+		t.Fatalf("typed bracket slice literal should parse: %v", err)
+	}
+	path := filepath.Join(root, "main.gpp")
+	file.SourcePath = path
+	state := &fileState{Path: path, URI: uriForPath(path), Source: source, File: file}
+	workspace := &workspaceState{files: map[string]*fileState{path: state}}
+	workspace.docIndex = compiler.BuildDocIndex([]*compiler.File{file})
+	workspace.symbols = workspace.collectSymbols()
+	server := &server{workspace: workspace}
+	offset := strings.Index(source, "boxes[0].\n") + len("boxes[0].")
+	items := completionLabels(server.contextualCompletions(state, offset))
+	if !items["Label"] {
+		t.Fatalf("typed bracket slice literal did not provide class member completion (receiver type %q): %#v", server.receiverType(state, "boxes[0]", offset), items)
+	}
+}
+
 func TestMapGetHoverSelectsCallOverloadAndListsAlternatives(t *testing.T) {
 	root := t.TempDir()
 	source := `package main

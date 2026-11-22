@@ -375,7 +375,7 @@ func bracketCandidateIsType(candidate *CompositeLiteralExpr, context constructor
 		known = builtinTypeNames[name] || context.KnownTypes[name] || context.Enums[name] != nil || context.StructConstructors[name] != nil
 		if target, exists := context.Targets[name]; exists && target.Class != nil {
 			known = true
-			if len(target.Class.TypeParamsAST) > 0 && !hasTypeArguments(elementType) && bracketElementsAreTypes(candidate.Elements) {
+			if len(target.Class.TypeParamsAST) > 0 && !hasTypeArguments(elementType) && candidate.bracketElementsAreTypeSyntax {
 				return false
 			}
 		}
@@ -424,30 +424,6 @@ func bracketTypeName(typeNode TypeNode) (name, qualifier string, ok bool) {
 func hasTypeArguments(typeNode TypeNode) bool {
 	named, ok := typeNode.(*NamedType)
 	return ok && len(named.Arguments) > 0
-}
-
-func bracketElementsAreTypes(elements []CompositeElement) bool {
-	if len(elements) == 0 {
-		return false
-	}
-	for _, element := range elements {
-		if element.Value == nil {
-			return false
-		}
-		text, err := expressionNodeSource(element.Value)
-		if err != nil {
-			return false
-		}
-		tokens, err := LexSource("bracket type argument", text)
-		if err != nil {
-			return false
-		}
-		typeNode, err := ParseTypeTokens(tokens)
-		if err != nil || typeNode == nil {
-			return false
-		}
-	}
-	return true
 }
 
 func applyClassPointerElement(candidate *CompositeLiteralExpr, context constructorContext) {

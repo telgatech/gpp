@@ -4479,12 +4479,19 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 		}
 		return s.callExpressionType(state, method, value, depth+1)
 	case *compiler.IndexExpr:
+		if literalType := s.bracketLiteralCandidateType(state, method, value.Receiver, value.BracketLiteralCandidate); literalType != "" {
+			return literalType
+		}
 		container := s.expressionType(state, method, value.Receiver, depth+1)
 		if strings.HasPrefix(container, "[]") {
 			return strings.TrimPrefix(container, "[]")
 		}
 		if index := strings.LastIndex(container, "]"); strings.HasPrefix(container, "map[") && index >= 0 {
 			return container[index+1:]
+		}
+	case *compiler.IndexListExpr:
+		if literalType := s.bracketLiteralCandidateType(state, method, value.Receiver, value.BracketLiteralCandidate); literalType != "" {
+			return literalType
 		}
 	case *compiler.SliceExpr:
 		container := s.expressionType(state, method, value.Receiver, depth+1)
@@ -4500,6 +4507,73 @@ func (s *server) expressionType(state *fileState, method *compiler.Method, expre
 		}
 	}
 	return ""
+}
+
+func (s *server) bracketLiteralCandidateType(state *fileState, method *compiler.Method, receiver compiler.ExprNode, candidate *compiler.CompositeLiteralExpr) string {
+	if state == nil || candidate == nil || candidate.Type == nil || !s.isTypeExpression(state, method, receiver) {
+		return ""
+	}
+
+	var element compiler.TypeNode
+	switch value := candidate.Type.(type) {
+	case *compiler.SliceType:
+		element = value.Element
+	case *compiler.ArrayType:
+		element = value.Element
+	default:
+		return ""
+	}
+	if element == nil {
+		return ""
+	}
+	elementType := sourceType(state.Source, element.Span())
+	if elementType == "" {
+		return ""
+	}
+	if named, ok := element.(*compiler.NamedType); ok && len(named.Parts) > 0 {
+		name := named.Parts[len(named.Parts)-1]
+		if symbol := s.symbolAtName(state, name, element.Span().Start); symbol != nil && symbol.Kind == compiler.DocClass {
+			elementType = "*" + elementType
+		}
+	}
+	if _, isSlice := candidate.Type.(*compiler.SliceType); isSlice {
+		return "[]" + elementType
+	}
+	return sourceType(state.Source, candidate.Type.Span())
+}
+
+func (s *server) isTypeExpression(state *fileState, method *compiler.Method, expression compiler.ExprNode) bool {
+	if state == nil || expression == nil {
+		return false
+	}
+	switch value := expression.(type) {
+	case *compiler.TypeExpr:
+		return value.Type != nil
+	case *compiler.NameExpr:
+		if method != nil {
+			if _, local := s.localBindingAt(state, value.SpanValue.Start, value.Name); local {
+				return false
+			}
+		}
+		symbol := s.symbolAtName(state, value.Name, value.SpanValue.Start)
+		return symbol != nil && (symbol.Kind == compiler.DocClass || symbol.Kind == compiler.DocEnum || symbol.Kind == compiler.DocType)
+	case *compiler.SelectorExpr:
+		if value.Safe {
+			return false
+		}
+		symbol := s.symbolAtName(state, value.Name, value.SpanValue.Start)
+		return symbol != nil && (symbol.Kind == compiler.DocClass || symbol.Kind == compiler.DocEnum || symbol.Kind == compiler.DocType)
+	case *compiler.IndexExpr:
+		return s.isTypeExpression(state, method, value.Receiver)
+	case *compiler.IndexListExpr:
+		return s.isTypeExpression(state, method, value.Receiver)
+	case *compiler.UnaryExpr:
+		return value.Operator == "*" && s.isTypeExpression(state, method, value.Operand)
+	case *compiler.ParenthesizedExpr:
+		return s.isTypeExpression(state, method, value.Inner)
+	default:
+		return false
+	}
 }
 
 func isMapConstructorCall(expression compiler.ExprNode) bool {
@@ -6809,10 +6883,12 @@ func completionState(state *fileState, offset int) *fileState {
 		return state
 	}
 	file.SourcePath = state.Path
-	recovered := *state
-	recovered.Source = source
-	recovered.File = file
-	return &recovered
+	return &fileState{
+		Path:   state.Path,
+		URI:    state.URI,
+		Source: source,
+		File:   file,
+	}
 }
 
 func (s *server) resolveCompletionItem(item CompletionItem) CompletionItem {

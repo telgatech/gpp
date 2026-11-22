@@ -222,10 +222,11 @@ type CompositeElement struct {
 }
 
 type CompositeLiteralExpr struct {
-	Type         TypeNode
-	Elements     []CompositeElement
-	TypedBracket bool
-	SpanValue    Span
+	Type                         TypeNode
+	Elements                     []CompositeElement
+	TypedBracket                 bool
+	bracketElementsAreTypeSyntax bool
+	SpanValue                    Span
 }
 
 func (*CompositeLiteralExpr) node()                 {}
@@ -438,23 +439,47 @@ func bracketTokensLookLikeTypeArguments(tokens []Token) bool {
 }
 
 func bracketTypeExpression(typeNode TypeNode) ExprNode {
-	switch typeNode.(type) {
-	case *NamedType, *PointerType:
-		text, err := typeNodeSource(typeNode)
-		if err != nil {
+	switch value := typeNode.(type) {
+	case *NamedType:
+		if value == nil || len(value.Parts) == 0 {
 			return nil
 		}
-		tokens, err := LexSource("bracket element type", text)
-		if err != nil {
-			return nil
+		var expression ExprNode = &NameExpr{Name: value.Parts[0], SpanValue: value.SpanValue}
+		for _, part := range value.Parts[1:] {
+			expression = &SelectorExpr{Receiver: expression, Name: part, SpanValue: value.SpanValue}
 		}
-		expression, err := ParseExpressionTokens(tokens)
-		if err != nil {
-			return nil
+		if len(value.Arguments) == 1 {
+			argument := bracketTypeExpression(value.Arguments[0])
+			if argument == nil {
+				return nil
+			}
+			expression = &IndexExpr{Receiver: expression, Index: argument, SpanValue: value.SpanValue}
+		} else if len(value.Arguments) > 1 {
+			arguments := make([]ExprNode, 0, len(value.Arguments))
+			for _, argumentType := range value.Arguments {
+				argument := bracketTypeExpression(argumentType)
+				if argument == nil {
+					return nil
+				}
+				arguments = append(arguments, argument)
+			}
+			expression = &IndexListExpr{Receiver: expression, Indices: arguments, SpanValue: value.SpanValue}
 		}
 		return expression
+	case *PointerType:
+		if value == nil {
+			return nil
+		}
+		element := bracketTypeExpression(value.Element)
+		if element == nil {
+			return nil
+		}
+		return &UnaryExpr{Operator: "*", Operand: element, SpanValue: value.SpanValue}
 	default:
-		return nil
+		if typeNode == nil {
+			return nil
+		}
+		return &TypeExpr{Type: typeNode, SpanValue: typeNode.Span()}
 	}
 }
 
@@ -1474,16 +1499,8 @@ func bracketLiteralCandidate(prefix ExprNode, elements []Token) *CompositeLitera
 	if prefix == nil {
 		return nil
 	}
-	typeSource, err := expressionNodeSource(prefix)
-	if err != nil {
-		return nil
-	}
-	typeTokens, err := LexSource("bracket literal type", typeSource)
-	if err != nil {
-		return nil
-	}
-	elementType, err := ParseTypeTokens(typeTokens)
-	if err != nil || elementType == nil {
+	elementType, ok := bracketExpressionType(prefix)
+	if !ok || elementType == nil {
 		return nil
 	}
 	literalType := TypeNode(&SliceType{Element: elementType, SpanValue: elementType.Span()})
@@ -1494,7 +1511,100 @@ func bracketLiteralCandidate(prefix ExprNode, elements []Token) *CompositeLitera
 	if err != nil {
 		return nil
 	}
-	return &CompositeLiteralExpr{Type: literalType, Elements: values}
+	return &CompositeLiteralExpr{
+		Type:                         literalType,
+		Elements:                     values,
+		bracketElementsAreTypeSyntax: bracketElementTokensAreTypes(elements),
+	}
+}
+
+func bracketElementTokensAreTypes(tokens []Token) bool {
+	parts := splitExpressionTokens(tokens)
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		part = significantSyntaxTokens(part)
+		if len(part) == 0 {
+			return false
+		}
+		if _, err := ParseTypeTokens(part); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func bracketExpressionType(expression ExprNode) (TypeNode, bool) {
+	switch value := expression.(type) {
+	case *TypeExpr:
+		return value.Type, value.Type != nil
+	case *NameExpr:
+		return &NamedType{Parts: []string{value.Name}, SpanValue: value.SpanValue}, value.Name != ""
+	case *SelectorExpr:
+		if value.Safe {
+			return nil, false
+		}
+		receiver, ok := bracketExpressionType(value.Receiver)
+		if !ok {
+			return nil, false
+		}
+		named, ok := receiver.(*NamedType)
+		if !ok || len(named.Arguments) > 0 {
+			return nil, false
+		}
+		parts := append([]string(nil), named.Parts...)
+		parts = append(parts, value.Name)
+		return &NamedType{Parts: parts, SpanValue: value.SpanValue}, true
+	case *IndexExpr:
+		base, ok := bracketExpressionType(value.Receiver)
+		if !ok {
+			return nil, false
+		}
+		argument, ok := bracketExpressionType(value.Index)
+		if !ok {
+			return nil, false
+		}
+		return bracketTypeWithArguments(base, []TypeNode{argument}, value.SpanValue)
+	case *IndexListExpr:
+		base, ok := bracketExpressionType(value.Receiver)
+		if !ok || len(value.Indices) == 0 {
+			return nil, false
+		}
+		arguments := make([]TypeNode, 0, len(value.Indices))
+		for _, index := range value.Indices {
+			argument, ok := bracketExpressionType(index)
+			if !ok {
+				return nil, false
+			}
+			arguments = append(arguments, argument)
+		}
+		return bracketTypeWithArguments(base, arguments, value.SpanValue)
+	case *UnaryExpr:
+		if value.Operator != "*" {
+			return nil, false
+		}
+		element, ok := bracketExpressionType(value.Operand)
+		if !ok {
+			return nil, false
+		}
+		return &PointerType{Element: element, SpanValue: value.SpanValue}, true
+	case *ParenthesizedExpr:
+		return bracketExpressionType(value.Inner)
+	default:
+		return nil, false
+	}
+}
+
+func bracketTypeWithArguments(base TypeNode, arguments []TypeNode, span Span) (TypeNode, bool) {
+	named, ok := base.(*NamedType)
+	if !ok || len(named.Parts) == 0 || len(arguments) == 0 {
+		return nil, false
+	}
+	copy := *named
+	copy.Arguments = append(append([]TypeNode(nil), named.Arguments...), arguments...)
+	copy.SpanValue = span
+	return &copy, true
 }
 
 // parseCallArgumentName accepts both ordinary named arguments (`name: value`)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-22
+
+- Removed compiler reflection and source round-trips from statement and slice-literal handling.
+- Fixed LSP completion state to avoid copying a mutex and added `go vet ./...` to CI.
+- Added LSP type inference for bracket-based slice literals.
+- Updated the docs navigation logo to the isometric mark.
+
 ## 2026-11-21
 
 - Added cron and experimental work queue examples to the documentation landing page.

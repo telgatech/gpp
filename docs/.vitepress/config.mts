@@ -20,8 +20,8 @@ export default defineConfig({
   ],
   themeConfig: {
     logo: {
-      src: '/gpp_monogram.png',
-      alt: 'GPP monogram'
+      src: '/gpp_logo_isometric_cube_trimmed.png',
+      alt: 'GPP logo'
     },
     siteTitle: false,
     nav: [
