@@ -19,7 +19,7 @@ class App : http.Server {
 }
 
 app := App()
-app.Listen(0)
+app.Listen(8080)
 ```
 
 ```go [Go]
@@ -196,7 +196,7 @@ class BillingRoutes @{http.Mountable} {
 
 app := App()
 app.Mount(BillingRoutes(), "/billing", "billing.example.com")
-app.Listen(0)
+app.Listen(8080)
 ```
 
 `http.Mountable` is a marker annotation; no router base class is required. Path

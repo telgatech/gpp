@@ -70,10 +70,8 @@ The ORM owns model-specific column mapping. Use `orm.Get` and
 `orm.Select` for full-SQL queries into model classes:
 
 ```gpp
-employee, err := orm.Get[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
-if err != nil { panic(err) }
-employees, err := orm.Select[Employee](db, "SELECT id, name FROM employees ORDER BY id")
-if err != nil { panic(err) }
+employee := orm.Get[Employee](db, "SELECT id, name FROM employees WHERE id = $1", id)
+employees := orm.Select[Employee](db, "SELECT id, name FROM employees ORDER BY id")
 ```
 
 For model operations that build SQL from the mapping, use `Employee.Get`,

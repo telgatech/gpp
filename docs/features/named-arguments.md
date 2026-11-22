@@ -41,4 +41,5 @@ quiet := Greet(name: "Ada", punctuation: ".")
 
 This is useful when one or two options are common and the rest are occasional.
 Use [overloading](/features/overloading) when input types represent genuinely
-different operations. More details are in the [call syntax specification](/reference/specifications/constructors).
+different operations. See the [function defaults and call rules](/reference/specifications/base#function-defaults)
+for the full argument rules.

@@ -34,10 +34,29 @@ func main() {
 		fmt.Println("no path matched")
 	}
 
+	switch path {
+	case regexp(`^/users/(?P<userID>[0-9]+)$`):
+		fmt.Println("named capture:", match.userID)
+		fmt.Println("full match:", match.Items[0])
+		fmt.Println("first capture:", match.Items[1])
+	}
+
+	path = "/files/docs/readme"
+	switch path {
+	case regexp(`^/files/([^/]+)/([^/]+)$`):
+		fmt.Println("unnamed captures:", match.Items[1], match.Items[2])
+	}
+
+	path = "/members/73"
+	switch path {
+	case regexp(`^/members/(?P<userID>[0-9]+)$`), regexp(`^/people/(?P<userID>[0-9]+)$`):
+		fmt.Println("alternative capture:", match.userID, match.Items[1])
+	}
+
 	// The builtin call and the standard library package selector coexist.
 	compiled, err := regexp.Compile(pattern)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("stdlib selector:", compiled.MatchString(path))
+	fmt.Println("stdlib selector:", compiled.MatchString("/users/42"))
 }

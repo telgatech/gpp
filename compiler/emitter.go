@@ -76,10 +76,6 @@ func EmitWithOptions(file *File, options CompileOptions) ([]byte, error) {
 			context.AvailableImports[class.SerializationQualifier] = "gpp/encoding"
 		}
 	}
-	if fileUsesRegexpBuiltin(file) {
-		alias := regexpBuiltinImportAlias(context.AvailableImports)
-		context.AvailableImports[alias] = "regexp"
-	}
 	context.Introspection.Enabled = fileUsesIntrospection(file)
 	context.Extensions = extensionMethodsForDeclarations(model.Packages[file.Package].Extensions, "")
 	if !options.NoPrelude {
@@ -308,6 +304,7 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	regexAlias := ""
 	if fileUsesRegexpBuiltin(file) {
 		regexAlias = regexpBuiltinImportAlias(context.AvailableImports)
+		context.AvailableImports[regexAlias] = "regexp"
 	}
 
 	interpolationName, needsFmtImport, err := interpolationImport(file)

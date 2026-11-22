@@ -25,12 +25,18 @@ template Page(name string) {
 
 :::
 
-Run the application with the development server to enable watching:
+Put `.gpp.tpl` files in the project source tree so the compiler can discover
+their template declarations. When the app runs with `gpp run`, those files are
+registered with the development watcher. Saving a valid edit reloads it into
+the running server without restarting the app:
 
 ```sh
 gpp run
 ```
 
 The watcher installs a new version only after it parses successfully, so a
-temporary syntax error does not replace the last valid template. Production
-builds use compiled template sources. See [template watch mode](/reference/specifications/tpl.watch).
+temporary syntax error leaves the last valid template active. Production builds
+use the compiled template sources and do not watch for file changes. This
+development workflow applies to compiler-managed `.gpp.tpl` files; see the
+[template watch specification](/reference/specifications/tpl.watch) for other
+reloadable sources.

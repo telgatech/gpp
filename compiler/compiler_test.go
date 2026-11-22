@@ -145,6 +145,58 @@ func main() {
 	}
 }
 
+func TestCompileFilesRunRegexpSwitchCaptures(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `import "fmt"
+
+func main() {
+    path := "/users/42"
+    switch path {
+    case regexp("^/users/(?P<userID>[0-9]+)$"):
+        fmt.Println(match.userID, match.Items[0], match.Items[1])
+    }
+
+    path = "/members/77"
+    switch path {
+    case regexp("^/users/(?P<userID>[0-9]+)$"), regexp("^/members/(?P<userID>[0-9]+)$"):
+        fmt.Println(match.userID, match.Items[1])
+    }
+
+    path = "/files/readme"
+    switch path {
+    case regexp("^/files/([^/]+)$"):
+        fmt.Println(match.Items[1])
+    }
+
+    routePattern := "^/users/([0-9]+)$"
+    path = "/users/43"
+    switch path {
+    case regexp(routePattern):
+        fmt.Println(match.Items[1])
+    }
+}`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		generated, _ := os.ReadFile(filepath.Join(outputDir, "main.go"))
+		t.Fatalf("generated regexp capture program did not run: %v\n%s\n%s", err, output, generated)
+	}
+	want := "42 /users/42 42\n77 77\nreadme\n43\n"
+	if string(output) != want {
+		t.Fatalf("regexp capture output = %q, want %q", output, want)
+	}
+}
+
 func TestCompileFilesMapsBackendDiagnosticsToGPPSource(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

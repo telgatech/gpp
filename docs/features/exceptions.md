@@ -1,16 +1,11 @@
 # Exception handling
 
-Error handling has been one of the most debated parts of Go throughout the
-language's life. Developers often land in different camps: some value Go's
-explicit error returns, while others prefer the familiar control flow of
-exceptions. GPP aims to resolve that tension by keeping traditional Go error
-handling intact and adding exceptions as a modern, well-understood way to
-handle errors in application code. Teams can use either style where it fits,
-including in the same codebase.
-
-GPP adopts the path of least resistence by simply treating unhandled errors and turning them into propogating exceptions automatically using nothing more than Go's existing `error` values. There is no separate
-exception base type so to speak, and Go APIs do not need to change. Structured error flow
-is useful when repeated propagation makes the main path hard to read.
+GPP keeps Go's ordinary `error` values and function signatures. When a call's
+trailing error result is left uncaptured, a non-nil error propagates to the
+nearest matching handler through its callers; if it reaches the program entry
+point without being handled, it becomes an uncaught exception. You can also
+capture and check errors explicitly, so existing Go-style error handling
+remains available in the same codebase.
 
 ## How exception handling works: a guided example
 

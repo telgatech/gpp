@@ -25,8 +25,9 @@ message := "Hello {{user.Name}}, order {{order.ID}}"
 
 Expressions between `{{` and `}}` are GPP expressions. The compiler lowers
 the interpolation to formatting code, so it does not change the type or
-behavior of the values being interpolated. Interpolation works in both quoted
-strings and raw backtick strings.
+behavior of the values being interpolated. Interpolation applies to
+double-quoted strings. Backtick strings keep their contents literal, including
+any `{{...}}` text.
 
 ## Format a value
 
@@ -35,8 +36,8 @@ Formatting verbs can be included when a value needs a specific presentation:
 ```go
 price := "Total: {{amount:.2f}}"
 summary := "{{item.Name}} x {{quantity}}"
-multiline := `Hello, {{user.Name}}!
-Your order {{order.ID}} is ready.`
+multiline := "Hello, {{user.Name}}!\nYour order {{order.ID}} is ready."
+templateSource := `Hello, {{user.Name}}!` // remains literal template source
 ```
 
 For complex alignment or custom formatting, build the string with the normal

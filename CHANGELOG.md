@@ -2,6 +2,8 @@
 
 ## 2026-11-22
 
+- Updated feature documentation with clearer explanations and examples.
+- Added case-local `match` captures for named and positional groups in regex switches.
 - Removed compiler reflection and source round-trips from statement and slice-literal handling.
 - Fixed LSP completion state to avoid copying a mutex and added `go vet ./...` to CI.
 - Added LSP type inference for bracket-based slice literals.

@@ -2790,3 +2790,111 @@ func main() {
 		t.Fatalf("regexp switch case was not lowered to a cached matcher:\n%s", generated)
 	}
 }
+
+func TestEmitRegexSwitchCaptureStruct(t *testing.T) {
+	file, err := ParseFile("regexp_switch_captures.gpp", `
+func main() {
+    path := "/users/42"
+    switch path {
+    case regexp("^/users/(?P<userID>[0-9]+)$"):
+        _ = match.userID
+        _ = match.Items[0]
+        _ = match.Items[1]
+    case regexp("^/files/([^/]+)$"):
+        _ = match.Items[1]
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	for _, expected := range []string{
+		"FindStringSubmatch(",
+		"Items []string",
+		"userID string",
+		"match.userID",
+		"match.Items",
+	} {
+		if !strings.Contains(generated, expected) {
+			t.Fatalf("generated regex capture code missing %q:\n%s", expected, generated)
+		}
+	}
+}
+
+func TestEmitRegexSwitchDynamicCaptureItems(t *testing.T) {
+	file, err := ParseFile("regexp_switch_dynamic_captures.gpp", `
+func main(pattern string) {
+    path := "/users/42"
+    switch path {
+    case regexp(pattern):
+        _ = match.Items[1]
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "Items []string") || strings.Contains(generated, "userID string") {
+		t.Fatalf("dynamic pattern should expose only positional captures:\n%s", generated)
+	}
+}
+
+func TestEmitRegexSwitchAlternativeCapturesDoNotExposeNonSharedFields(t *testing.T) {
+	file, err := ParseFile("regexp_switch_alternative_captures.gpp", `
+func main() {
+    value := "one"
+    switch value {
+    case regexp("^(?P<first>one)$"), regexp("^(?P<second>two)$"):
+        _ = match.Items[1]
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := Emit(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(code)
+	if !strings.Contains(generated, "Items []string") || strings.Contains(generated, "first string") || strings.Contains(generated, "second string") {
+		t.Fatalf("alternative-only names should not become match fields:\n%s", generated)
+	}
+}
+
+func TestEmitRegexSwitchRejectsNonSharedNamedCaptureAccess(t *testing.T) {
+	file, err := ParseFile("regexp_switch_non_shared_capture.gpp", `
+func main() {
+    value := "one"
+    switch value {
+    case regexp("^(?P<first>one)$"), regexp("^(?P<second>two)$"):
+        _ = match.first
+    }
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Emit(file)
+	if err == nil || !strings.Contains(err.Error(), `regexp alternatives do not all define named capture "first"`) {
+		t.Fatalf("expected a diagnostic for a capture missing from one alternative, got %v", err)
+	}
+}
+
+func TestEnsureGeneratedImportsIncludesRegexpBuiltinAlias(t *testing.T) {
+	body := "import \"fmt\"\n\nvar re = gppRegexp.MustCompile(\"x\")\n"
+	generated := ensureGeneratedImports(body, constructorContext{AvailableImports: map[string]string{"gppRegexp": "regexp"}})
+	if !strings.Contains(generated, `gppRegexp "regexp"`) {
+		t.Fatalf("generated regexp alias import missing:\n%s", generated)
+	}
+}
