@@ -1,9 +1,11 @@
 import { defineConfig } from 'vitepress'
 
+const siteDescription = 'A superset of Go with modern language features including classes, inheritance, generics, function overloading, named arguments, exceptions, extension methods, annotations, records, enums and more!'
+
 export default defineConfig({
   lang: 'en-US',
   title: 'GPP',
-  description: 'A practical, modern superset of Go.',
+  description: siteDescription,
   base: '/',
   cleanUrls: true,
   lastUpdated: true,
@@ -18,9 +20,35 @@ export default defineConfig({
       }
     ]
   ],
+  transformHead({ pageData }) {
+    const relativePath = pageData.relativePath
+      .replace(/(^|\/)index\.md$/, '$1')
+      .replace(/\.md$/, '')
+    const pageUrl = new URL(relativePath, 'https://gpp.telga.in/').href
+    const title = pageData.title ? `${pageData.title} | GPP` : 'GPP'
+    const description = pageData.description || siteDescription
+    const imageUrl = 'https://gpp.telga.in/logo.png'
+
+    return [
+      ['meta', { property: 'og:type', content: 'website' }],
+      ['meta', { property: 'og:site_name', content: 'GPP' }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: pageUrl }],
+      ['meta', { property: 'og:image', content: imageUrl }],
+      ['meta', { property: 'og:image:alt', content: 'GPP logo' }],
+      ['meta', { property: 'og:image:width', content: '598' }],
+      ['meta', { property: 'og:image:height', content: '741' }],
+      ['meta', { name: 'twitter:card', content: 'summary' }],
+      ['meta', { name: 'twitter:title', content: title }],
+      ['meta', { name: 'twitter:description', content: description }],
+      ['meta', { name: 'twitter:image', content: imageUrl }],
+      ['meta', { name: 'twitter:image:alt', content: 'GPP logo' }]
+    ]
+  },
   themeConfig: {
     logo: {
-      src: '/gpp_logo_isometric_cube_trimmed.png',
+      src: '/logo.png',
       alt: 'GPP logo'
     },
     siteTitle: false,

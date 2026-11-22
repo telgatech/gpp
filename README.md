@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/public/gpp_logo_isometric_cube_trimmed.png" alt="GPP logo" height="96">
+  <img src="docs/public/logo.png" alt="GPP logo" height="96">
   <h1>GPP</h1>
   <p><strong>A superset of Go with modern language features.</strong><br>
   Keep Go packages, generated Go code, and the familiar toolchain.</p>
