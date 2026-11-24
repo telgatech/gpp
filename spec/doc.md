@@ -1153,7 +1153,7 @@ Do not show both hypothetical generated and actual user methods.
 
 ---
 
-# 47. `.class` Metadata
+# 47. `.Class` Metadata
 
 Class documentation may mention introspection support.
 
@@ -1161,7 +1161,7 @@ Example:
 
 ```text
 Metadata:
-    User.class
+    User.Class
 ```
 
 Detailed reflection metadata itself need not flood normal output.
@@ -1175,10 +1175,10 @@ gpp doc --metadata User
 may show:
 
 ```text
-fields
-methods
-parents
-annotations
+Fields
+Methods
+Parents
+Annotations
 ```
 
 ---

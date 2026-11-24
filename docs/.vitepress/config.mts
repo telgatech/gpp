@@ -136,8 +136,10 @@ export default defineConfig({
               text: 'gpp/exp',
               link: '/guide/standard-library/exp',
               items: [
+                { text: 'cache', link: '/guide/standard-library/exp-cache' },
                 { text: 'http', link: '/guide/standard-library/exp-http' },
-                { text: 'queue', link: '/guide/standard-library/exp-queue' }
+                { text: 'queue', link: '/guide/standard-library/exp-queue' },
+                { text: 'workflow', link: '/guide/standard-library/exp-workflow' }
               ]
             },
             {

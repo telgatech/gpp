@@ -35,7 +35,7 @@ func transformIntrospectionAST(src string, context constructorContext) (string, 
 	if handled {
 		return transformed, true, nil
 	}
-	return src, strings.Contains(src, ".class"), nil
+	return src, strings.Contains(src, ".Class"), nil
 }
 
 func transformIntrospectionMetadataAST(src string, context constructorContext) (string, bool, error) {
@@ -48,6 +48,9 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 	}
 	valueTypes := introspectionASTValueTypes(src, bodies, context)
 	metadataTypes := map[string]int{}
+	for name, typeName := range enumValueTypesAST(bodies, context) {
+		valueTypes[name] = typeName
+	}
 	if context.CurrentClass != "" {
 		valueTypes["this"] = "*" + context.CurrentClass
 	}
@@ -64,7 +67,9 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 		}
 	}
 	for _, body := range bodies {
-		collectIntrospectionMetadataBlock(body, metadataTypes, context, valueTypes, addEdit)
+		if err := collectIntrospectionMetadataBlock(body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return "", true, err
+		}
 		walkIntrospectionBlockExpressions(body, func(expression ExprNode) {
 			selector, ok := expression.(*SelectorExpr)
 			if !ok {
@@ -74,10 +79,6 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 			if replacement, exists := introspectionSelectorNames[selector.Name]; exists && introspectionSelectorValid(kind, selector.Name) {
 				span := selector.Span()
 				addEdit(span.End-len(selector.Name), span.End, replacement)
-			}
-			if selector.Name == "type" {
-				span := selector.Span()
-				addEdit(span.End-len(selector.Name), span.End, "Type")
 			}
 		})
 		walkIntrospectionBlockExpressions(body, func(expression ExprNode) {
@@ -90,7 +91,7 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 				return
 			}
 			kind := introspectionExpressionKindNode(selector.Receiver, metadataTypes, context, valueTypes)
-			if kind == introspectionField && (selector.Name == "set" || selector.Name == "addr") {
+			if kind == introspectionField && (selector.Name == "Set" || selector.Name == "Addr") {
 				argument := call.Arguments[0].Value
 				actual := staticExpressionTypeNode(argument, context, valueTypes)
 				if actual != "" && !strings.HasPrefix(strings.TrimSpace(actual), "*") && introspectionClassNameNode(argument, context, valueTypes) != "" {
@@ -98,7 +99,7 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 					addEdit(span.Start, span.Start, "&")
 				}
 			}
-			if kind != introspectionAnnotations || (selector.Name != "Has" && selector.Name != "Find" && selector.Name != "All" && selector.Name != "has" && selector.Name != "find" && selector.Name != "all") {
+			if kind != introspectionAnnotations || (selector.Name != "Has" && selector.Name != "Find" && selector.Name != "All") {
 				return
 			}
 			name, ok := annotationNameNode(call.Arguments[0].Value)
@@ -141,18 +142,35 @@ func transformIntrospectionMetadataAST(src string, context constructorContext) (
 	return src, true, nil
 }
 
-func collectIntrospectionMetadataBlock(block *BlockStmt, metadataTypes map[string]int, context constructorContext, valueTypes map[string]string, addEdit func(int, int, string)) {
+func collectIntrospectionMetadataBlock(block *BlockStmt, metadataTypes map[string]int, context constructorContext, valueTypes map[string]string, addEdit func(int, int, string)) error {
 	if block == nil {
-		return
+		return nil
 	}
 	for _, statement := range block.Statements {
-		collectIntrospectionMetadataStatement(statement, metadataTypes, context, valueTypes, addEdit)
+		if err := collectIntrospectionMetadataStatement(statement, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[string]int, context constructorContext, valueTypes map[string]string, addEdit func(int, int, string)) {
+func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[string]int, context constructorContext, valueTypes map[string]string, addEdit func(int, int, string)) error {
 	if statement == nil {
-		return
+		return nil
+	}
+	var addressError error
+	walkStmtExpressions(statement, func(expression ExprNode) {
+		if addressError != nil {
+			return
+		}
+		unary, ok := expression.(*UnaryExpr)
+		if !ok || unary.Operator != "&" {
+			return
+		}
+		addressError = readonlyMetadataTargetError(unary.Operand, metadataTypes, context, valueTypes)
+	})
+	if addressError != nil {
+		return addressError
 	}
 	assign := func(names []Token, values []ExprNode) {
 		for index, name := range names {
@@ -167,6 +185,11 @@ func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[str
 	case *DeclarationStmt:
 		assign(value.Names, value.Values)
 	case *AssignmentStmt:
+		for _, target := range value.Left {
+			if err := readonlyMetadataTargetError(target, metadataTypes, context, valueTypes); err != nil {
+				return err
+			}
+		}
 		names := make([]*NameExpr, 0, len(value.Left))
 		for _, left := range value.Left {
 			if name, ok := left.(*NameExpr); ok {
@@ -183,6 +206,22 @@ func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[str
 			}
 		}
 	case *ForStmt:
+		for _, initializer := range []ExprNode{value.Init, value.Post} {
+			if assignment, ok := initializer.(*AssignmentExpr); ok {
+				for _, target := range assignment.Left {
+					if err := readonlyMetadataTargetError(target, metadataTypes, context, valueTypes); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if value.RangeOperator == "=" {
+			for _, target := range value.RangeKey {
+				if err := readonlyMetadataTargetError(target, metadataTypes, context, valueTypes); err != nil {
+					return err
+				}
+			}
+		}
 		kind := introspectionExpressionKindNode(value.RangeExpr, metadataTypes, context, valueTypes)
 		if kind == introspectionFields || kind == introspectionMethods || kind == introspectionParents || kind == introspectionParameters {
 			if name, start, ok := introspectionRangeValue(value.RangeKey); ok {
@@ -197,29 +236,99 @@ func collectIntrospectionMetadataStatement(statement Stmt, metadataTypes map[str
 				}
 			}
 		}
-		collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit)
+		if err := collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
 	case *TokenStmt:
-		collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit)
+		if err := collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
 		for _, child := range value.Children {
-			collectIntrospectionMetadataStatement(child, metadataTypes, context, valueTypes, addEdit)
+			if err := collectIntrospectionMetadataStatement(child, metadataTypes, context, valueTypes, addEdit); err != nil {
+				return err
+			}
 		}
 	case *IfStmt:
-		collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit)
-		collectIntrospectionMetadataBlock(value.Else, metadataTypes, context, valueTypes, addEdit)
+		if assignment, ok := value.Init.(*AssignmentExpr); ok {
+			for _, target := range assignment.Left {
+				if err := readonlyMetadataTargetError(target, metadataTypes, context, valueTypes); err != nil {
+					return err
+				}
+			}
+		}
+		if err := collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
+		if err := collectIntrospectionMetadataBlock(value.Else, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
 		if value.ElseIf != nil {
-			collectIntrospectionMetadataStatement(value.ElseIf, metadataTypes, context, valueTypes, addEdit)
+			if err := collectIntrospectionMetadataStatement(value.ElseIf, metadataTypes, context, valueTypes, addEdit); err != nil {
+				return err
+			}
 		}
 	case *SwitchStmt:
-		collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit)
-	case *CaseStmt:
-		collectIntrospectionMetadataBlock(value.Clause.Body, metadataTypes, context, valueTypes, addEdit)
-	case *TryStmt:
-		collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit)
-		for _, clause := range value.Catches {
-			collectIntrospectionMetadataBlock(clause.Body, metadataTypes, context, valueTypes, addEdit)
+		if assignment, ok := value.Init.(*AssignmentExpr); ok {
+			for _, target := range assignment.Left {
+				if err := readonlyMetadataTargetError(target, metadataTypes, context, valueTypes); err != nil {
+					return err
+				}
+			}
 		}
-		collectIntrospectionMetadataBlock(value.Finally, metadataTypes, context, valueTypes, addEdit)
+		if err := collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
+	case *CaseStmt:
+		if err := collectIntrospectionMetadataBlock(value.Clause.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
+	case *TryStmt:
+		if err := collectIntrospectionMetadataBlock(value.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
+		for _, clause := range value.Catches {
+			if err := collectIntrospectionMetadataBlock(clause.Body, metadataTypes, context, valueTypes, addEdit); err != nil {
+				return err
+			}
+		}
+		if err := collectIntrospectionMetadataBlock(value.Finally, metadataTypes, context, valueTypes, addEdit); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func readonlyMetadataTargetError(target ExprNode, metadataTypes map[string]int, context constructorContext, valueTypes map[string]string) error {
+	selector, ok := target.(*SelectorExpr)
+	if !ok {
+		return nil
+	}
+	kind := introspectionExpressionKindNode(selector.Receiver, metadataTypes, context, valueTypes)
+	property := introspectionSelectorNames[selector.Name]
+	readOnly := false
+	switch kind {
+	case introspectionClass:
+		readOnly = property == "Name" || property == "Fields" || property == "Methods" || property == "Parents" || property == "Annotations"
+	case introspectionField:
+		readOnly = property == "Name" || property == "Owner" || property == "Type" || property == "Annotations"
+	case introspectionMethod:
+		readOnly = property == "Name" || property == "Owner" || property == "Parameters" || property == "Result" || property == "Static" || property == "Annotations"
+	case introspectionParameter:
+		readOnly = property == "Name" || property == "Type" || property == "Annotations"
+	case introspectionType:
+		readOnly = property == "Name"
+	case introspectionAnnotation:
+		readOnly = property == "Name" || property == "FullName" || property == "Args"
+	}
+	if readOnly {
+		return fmt.Errorf("cannot assign to read-only introspection metadata property %s", property)
+	}
+	if enumMemberMetadataSelector(selector.Name) {
+		if _, handled := enumSelectorLowering(selector, context, valueTypes, ""); handled {
+			return fmt.Errorf("cannot assign to read-only enum metadata property %s", selector.Name)
+		}
+	}
+	return nil
 }
 
 func introspectionRangeValue(expressions []ExprNode) (string, int, bool) {
@@ -271,10 +380,10 @@ func introspectionExpressionKindNode(expression ExprNode, variables map[string]i
 				return introspectionClass
 			}
 			base := introspectionExpressionKindNode(selector.Receiver, variables, context, valueTypes)
-			if base == introspectionAnnotations && (selector.Name == "Find" || selector.Name == "find") {
+			if base == introspectionAnnotations && selector.Name == "Find" {
 				return introspectionAnnotation
 			}
-			if base == introspectionAnnotations && (selector.Name == "All" || selector.Name == "all") {
+			if base == introspectionAnnotations && selector.Name == "All" {
 				return introspectionAnnotations
 			}
 		}
@@ -283,7 +392,7 @@ func introspectionExpressionKindNode(expression ExprNode, variables map[string]i
 	case *IndexListExpr:
 		return introspectionIndexedKind(introspectionExpressionKindNode(value.Receiver, variables, context, valueTypes))
 	case *SelectorExpr:
-		if value.Name == "class" {
+		if value.Name == "Class" {
 			if name, ok := value.Receiver.(*NameExpr); ok {
 				if target, exists := context.Targets[name.Name]; exists && target.Class != nil {
 					return introspectionClass
@@ -301,51 +410,51 @@ func introspectionExpressionKindNode(expression ExprNode, variables map[string]i
 		}
 		base := introspectionExpressionKindNode(value.Receiver, variables, context, valueTypes)
 		switch value.Name {
-		case "fields", "Fields":
+		case "Fields":
 			if base == introspectionClass {
 				return introspectionFields
 			}
-		case "methods", "Methods":
+		case "Methods":
 			if base == introspectionClass {
 				return introspectionMethods
 			}
-		case "parents", "Parents":
+		case "Parents":
 			if base == introspectionClass {
 				return introspectionParents
 			}
-		case "parameters", "Parameters":
+		case "Parameters":
 			if base == introspectionMethod {
 				return introspectionParameters
 			}
-		case "annotations", "Annotations":
+		case "Annotations":
 			if base == introspectionClass || base == introspectionField || base == introspectionMethod || base == introspectionParameter {
 				return introspectionAnnotations
 			}
-		case "has", "Has", "find", "Find", "all", "All":
+		case "Has", "Find", "All":
 			if base == introspectionAnnotations {
-				if value.Name == "find" || value.Name == "Find" {
+				if value.Name == "Find" {
 					return introspectionAnnotation
 				}
 				return introspectionAnnotations
 			}
-		case "type", "Type":
+		case "Type":
 			if base == introspectionField || base == introspectionParameter {
 				return introspectionType
 			}
-		case "owner", "Owner":
+		case "Owner":
 			if base == introspectionField || base == introspectionMethod {
 				return introspectionClass
 			}
-		case "result", "Result":
+		case "Result":
 			if base == introspectionMethod {
 				return introspectionType
 			}
-		case "name", "Name":
+		case "Name":
 			if base == introspectionParameter {
 				return introspectionParameter
 			}
 		}
-		if base == introspectionAnnotation && (value.Name == "name" || value.Name == "Name" || value.Name == "fullName" || value.Name == "FullName" || value.Name == "args" || value.Name == "Args") {
+		if base == introspectionAnnotation && (value.Name == "Name" || value.Name == "FullName" || value.Name == "Args") {
 			return introspectionAnnotation
 		}
 	}
@@ -370,19 +479,19 @@ func introspectionIndexedKind(kind introspectionExprKind) introspectionExprKind 
 func introspectionSelectorValid(kind introspectionExprKind, name string) bool {
 	switch kind {
 	case introspectionClass:
-		return name == "name" || name == "fields" || name == "annotations" || name == "methods" || name == "parents"
+		return name == "Name" || name == "Fields" || name == "Annotations" || name == "Methods" || name == "Parents"
 	case introspectionField:
-		return name == "name" || name == "owner" || name == "type" || name == "get" || name == "set" || name == "addr" || name == "annotations"
+		return name == "Name" || name == "Owner" || name == "Type" || name == "Get" || name == "Set" || name == "Addr" || name == "Annotations"
 	case introspectionMethod:
-		return name == "name" || name == "owner" || name == "parameters" || name == "result" || name == "annotations" || name == "static"
+		return name == "Name" || name == "Owner" || name == "Parameters" || name == "Result" || name == "Annotations" || name == "Static"
 	case introspectionParameter:
-		return name == "name" || name == "type" || name == "annotations"
+		return name == "Name" || name == "Type" || name == "Annotations"
 	case introspectionAnnotations:
-		return name == "has" || name == "find" || name == "all"
+		return name == "Has" || name == "Find" || name == "All"
 	case introspectionAnnotation:
-		return name == "name" || name == "fullName" || name == "args"
+		return name == "Name" || name == "FullName" || name == "Args"
 	case introspectionType:
-		return name == "name"
+		return name == "Name"
 	default:
 		return false
 	}
@@ -458,11 +567,11 @@ func walkIntrospectionExpression(expression ExprNode, visit func(ExprNode)) {
 	}
 }
 
-// transformIntrospectionClassAST lowers `.class` using the structured
+// transformIntrospectionClassAST lowers `.Class` using the structured
 // expression tree. Metadata member lowering is kept separate because it also
 // needs scoped tracking for fields, methods, parameters, and annotations.
 func transformIntrospectionClassAST(src string, context constructorContext) (string, bool, error) {
-	if !strings.Contains(src, ".class") {
+	if !strings.Contains(src, ".Class") {
 		return src, false, nil
 	}
 
@@ -487,7 +596,7 @@ func transformIntrospectionClassAST(src string, context constructorContext) (str
 	for _, body := range bodies {
 		walkIntrospectionBlockExpressions(body, func(expression ExprNode) {
 			selector, ok := expression.(*SelectorExpr)
-			if !ok || selector.Name != "class" || selector.Receiver == nil {
+			if !ok || selector.Name != "Class" || selector.Receiver == nil {
 				return
 			}
 			receiverAST, err := goExprNode(selector.Receiver)
@@ -514,7 +623,7 @@ func transformIntrospectionClassAST(src string, context constructorContext) (str
 		})
 	}
 	if invalidClassAccess != "" {
-		return "", true, fmt.Errorf("%s.class is only available on GPP class instances or class names", invalidClassAccess)
+		return "", true, fmt.Errorf("%s.Class is only available on GPP class instances or class names", invalidClassAccess)
 	}
 	if len(edits) == 0 {
 		return src, true, nil
@@ -614,7 +723,7 @@ func introspectionStaticTargetExpr(receiver ExprNode, context constructorContext
 // going through the source-span compatibility pass. Static class names become
 // generated descriptors; instance expressions become GppRuntimeClass calls.
 func lowerIntrospectionClassExprNode(selector *SelectorExpr, context constructorContext) (ExprNode, bool, error) {
-	if selector == nil || selector.Name != "class" || context.Introspection == nil || !context.Introspection.Enabled {
+	if selector == nil || selector.Name != "Class" || context.Introspection == nil || !context.Introspection.Enabled {
 		return nil, false, nil
 	}
 	if target, ok := introspectionStaticTargetExpr(selector.Receiver, context); ok {
@@ -626,7 +735,7 @@ func lowerIntrospectionClassExprNode(selector *SelectorExpr, context constructor
 	}
 	valueTypes := context.CurrentParameterTypes
 	if introspectionClassNameNode(receiver, context, valueTypes) == "" {
-		return nil, true, fmt.Errorf("%s.class is only available on GPP class instances or class names", expressionDisplayName(selector.Receiver))
+		return nil, true, fmt.Errorf("%s.Class is only available on GPP class instances or class names", expressionDisplayName(selector.Receiver))
 	}
 	return &CallExpr{
 		Callee:    &SelectorExpr{Receiver: receiver, Name: "GppRuntimeClass"},
@@ -647,10 +756,6 @@ func lowerIntrospectionMetadataSelectorNode(selector *SelectorExpr, context cons
 		selector.Name = replacement
 		return selector, true, nil
 	}
-	if selector.Name == "type" && introspectionSelectorValid(kind, selector.Name) {
-		selector.Name = "Type"
-		return selector, true, nil
-	}
 	return nil, false, nil
 }
 
@@ -663,7 +768,7 @@ func lowerIntrospectionCallArguments(call *CallExpr, context constructorContext)
 		return
 	}
 	kind := introspectionExpressionKindNode(selector.Receiver, context.CurrentIntrospectionKinds, context, context.CurrentParameterTypes)
-	if kind == introspectionAnnotations && (selector.Name == "Has" || selector.Name == "Find" || selector.Name == "All" || selector.Name == "has" || selector.Name == "find" || selector.Name == "all") && len(call.Arguments) > 0 {
+	if kind == introspectionAnnotations && (selector.Name == "Has" || selector.Name == "Find" || selector.Name == "All") && len(call.Arguments) > 0 {
 		if name, ok := annotationNameNode(call.Arguments[0].Value); ok {
 			declaration := context.Annotations[name]
 			if declaration == nil {

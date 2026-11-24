@@ -1,0 +1,294 @@
+package gpp.exp.cache
+
+import (
+	"container/list"
+    "errors"
+    "fmt"
+    "regexp"
+    "strings"
+    "sync"
+    "time"
+    gppencoding "gpp/encoding"
+)
+
+// ErrNotFound is returned when a cache key is missing or expired.
+var ErrNotFound = errors.New("cache: key not found")
+var ErrEntryTooLarge = errors.New("cache: entry exceeds maxMemory")
+
+// DefaultMaxMemory is the default retained-payload budget for the in-process store.
+const DefaultMaxMemory int = 1073741824
+
+// Store is the byte-oriented interface implemented by cache backends.
+// Delete removes every key matching a regular expression. A zero TTL means
+// no expiration; negative TTLs are invalid.
+type Store interface {
+    Get(key string) ([]byte, bool, error)
+    Set(key string, value []byte, ttl time.Duration) error
+    Delete(pattern string) error
+    Clear() error
+}
+
+// Cache provides typed GOB values over a byte-oriented Store.
+class Cache {
+    store Store
+
+    func init(maxMemory int = 1073741824, maxEntries int = 0) {
+        this.store = MemoryStore(maxMemory, maxEntries)
+    }
+
+    func init(store Store) error {
+        if store == nil {
+            return fmt.Errorf("cache: store cannot be nil")
+        }
+        this.store = store
+        return nil
+    }
+
+    func Set[T any](key string, value T) error {
+        return this.SetWithTTL(key, value, 0)
+    }
+
+    func SetWithTTL[T any](key string, value T, ttl time.Duration) error {
+        if strings.TrimSpace(key) == "" {
+            return fmt.Errorf("cache: key cannot be empty")
+        }
+        if ttl < 0 {
+            return fmt.Errorf("cache: TTL cannot be negative")
+        }
+        data, err := gppencoding.ToGOB(value)
+        if err != nil {
+            return fmt.Errorf("cache: encode value: %w", err)
+        }
+        if err := this.store.Set(key, data, ttl); err != nil {
+            return fmt.Errorf("cache: store value: %w", err)
+        }
+        return nil
+    }
+
+    func Get[T any](key string) (T, error) {
+        var zero T
+        if strings.TrimSpace(key) == "" {
+            return zero, fmt.Errorf("cache: key cannot be empty")
+        }
+        data, found, err := this.store.Get(key)
+        if err != nil {
+            return zero, fmt.Errorf("cache: read value: %w", err)
+        }
+        if !found {
+            return zero, fmt.Errorf("cache: key %q: %w", key, ErrNotFound)
+        }
+        value, err := gppencoding.FromGOB[T](data)
+        if err != nil {
+            return zero, fmt.Errorf("cache: decode value for key %q: %w", key, err)
+        }
+        return value, nil
+    }
+
+    func GetOrSet[T any](key string, ttl time.Duration, load func() (T, error)) (T, error) {
+        if ttl < 0 {
+            var zero T
+            return zero, fmt.Errorf("cache: TTL cannot be negative")
+        }
+        value, err := this.Get[T](key)
+        if err == nil {
+            return value, nil
+        }
+        if !errors.Is(err, ErrNotFound) {
+            var zero T
+            return zero, err
+        }
+        value, err = load()
+        if err != nil {
+            return value, err
+        }
+        if err := this.SetWithTTL(key, value, ttl); err != nil {
+            return value, err
+        }
+        return value, nil
+    }
+
+    func Delete(pattern string) error {
+        if strings.TrimSpace(pattern) == "" {
+            return fmt.Errorf("cache: delete pattern cannot be empty")
+        }
+        if _, err := regexp.Compile(pattern); err != nil {
+            return fmt.Errorf("cache: invalid delete pattern: %w", err)
+        }
+        if err := this.store.Delete(pattern); err != nil {
+            return fmt.Errorf("cache: delete entries matching %q: %w", pattern, err)
+        }
+        return nil
+    }
+
+    func Clear() error {
+        if err := this.store.Clear(); err != nil {
+            return fmt.Errorf("cache: clear store: %w", err)
+        }
+        return nil
+    }
+}
+
+type cacheEntry struct {
+    value []byte
+    expiresAt int64
+    size int64
+    lru *list.Element
+}
+
+// MemoryStore is a concurrency-safe, in-process byte store with bounded LRU eviction.
+class MemoryStore {
+    mu sync.Mutex
+    items map[string]cacheEntry
+    lru list.List
+    maxMemory int64
+    maxEntries int
+    usedMemory int64
+    pruneTimer *time.Timer
+    pruneAt int64
+
+    func init(maxMemory int = 1073741824, maxEntries int = 0) {
+        this.items = map[string]cacheEntry{}
+        if maxMemory < 0 {
+            maxMemory = 0
+        }
+        this.maxMemory = int64(maxMemory)
+        this.maxEntries = maxEntries
+    }
+
+    func Get(key string) ([]byte, bool, error) {
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        this.pruneExpiredLocked(time.Now().UnixNano())
+        entry, exists := this.items[key]
+        if !exists {
+            return nil, false, nil
+        }
+        if entry.expiresAt > 0 && time.Now().UnixNano() >= entry.expiresAt {
+            this.removeLocked(key, entry)
+            return nil, false, nil
+        }
+        this.lru.MoveToFront(entry.lru)
+        return append([]byte(nil), entry.value...), true, nil
+    }
+
+    func Set(key string, value []byte, ttl time.Duration) error {
+        if ttl < 0 {
+            return fmt.Errorf("cache: TTL cannot be negative")
+        }
+        expiresAt := int64(0)
+        if ttl > 0 {
+            expiresAt = time.Now().Add(ttl).UnixNano()
+        }
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        if this.items == nil {
+            this.items = map[string]cacheEntry{}
+        }
+        now := time.Now().UnixNano()
+        this.pruneExpiredLocked(now)
+        size := int64(len(key) + len(value))
+        if size > this.maxMemory {
+            return fmt.Errorf("%w: entry needs %d bytes, limit is %d", ErrEntryTooLarge, size, this.maxMemory)
+        }
+        if previous, exists := this.items[key]; exists {
+            this.removeLocked(key, previous)
+        }
+        for (this.maxEntries > 0 && len(this.items) >= this.maxEntries) || this.usedMemory+size > this.maxMemory {
+            this.evictOldestLocked()
+        }
+        entry := cacheEntry{value: append([]byte(nil), value...), expiresAt: expiresAt, size: size}
+        entry.lru = this.lru.PushFront(key)
+        this.items[key] = entry
+        this.usedMemory += size
+        if expiresAt > 0 {
+            this.schedulePruneLocked(expiresAt)
+        }
+        return nil
+    }
+
+    func Delete(pattern string) error {
+        matcher, err := regexp.Compile(pattern)
+        if err != nil {
+            return err
+        }
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        for key := range this.items {
+            if matcher.MatchString(key) {
+                this.removeLocked(key, this.items[key])
+            }
+        }
+        return nil
+    }
+
+    func Clear() error {
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        if this.pruneTimer != nil {
+            this.pruneTimer.Stop()
+            this.pruneTimer = nil
+            this.pruneAt = 0
+        }
+        this.items = map[string]cacheEntry{}
+        this.lru.Init()
+        this.usedMemory = 0
+        return nil
+    }
+
+    func removeLocked(key string, entry cacheEntry) {
+        delete(this.items, key)
+        this.lru.Remove(entry.lru)
+        this.usedMemory -= entry.size
+    }
+
+    func evictOldestLocked() {
+        oldest := this.lru.Back()
+        if oldest == nil {
+            return
+        }
+        key := oldest.Value.(string)
+        this.removeLocked(key, this.items[key])
+    }
+
+    func pruneExpiredLocked(now int64) {
+        for key, entry := range this.items {
+            if entry.expiresAt > 0 && now >= entry.expiresAt {
+                this.removeLocked(key, entry)
+            }
+        }
+    }
+
+    func schedulePruneLocked(expiresAt int64) {
+        if this.pruneTimer != nil && this.pruneAt <= expiresAt {
+            return
+        }
+        if this.pruneTimer != nil {
+            this.pruneTimer.Stop()
+        }
+        delay := time.Until(time.Unix(0, expiresAt))
+        if delay < 0 {
+            delay = 0
+        }
+        this.pruneAt = expiresAt
+        this.pruneTimer = time.AfterFunc(delay, func() {
+            this.pruneExpired()
+        })
+    }
+
+    func pruneExpired() {
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        this.pruneTimer = nil
+        this.pruneAt = 0
+        this.pruneExpiredLocked(time.Now().UnixNano())
+        earliest := int64(0)
+        for _, entry := range this.items {
+            if entry.expiresAt > 0 && (earliest == 0 || entry.expiresAt < earliest) {
+                earliest = entry.expiresAt
+            }
+        }
+        if earliest > 0 {
+            this.schedulePruneLocked(earliest)
+        }
+    }
+}

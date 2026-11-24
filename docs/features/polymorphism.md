@@ -36,6 +36,31 @@ func Deliver(notifier Notifier, message string) string {
 
 ## Define a shared contract
 
+Declare a named Go interface with `interface Name { ... }`. It is equivalent to
+Go's `type Name interface { ... }`; matching remains implicit:
+
+```gpp
+interface Greeter {
+    Greet() string
+}
+
+struct Person {
+    Name string
+}
+
+func (person Person) Greet() string {
+    return "Hello, " + person.Name
+}
+
+func greet(value Greeter) string {
+    return value.Greet()
+}
+```
+
+A `Person` satisfies `Greeter` because it has the required method. The compiler
+emits an ordinary Go interface, so it works with Go APIs and interfaces declared
+with the Go spelling.
+
 A parent class declares behavior that derived classes can specialize:
 
 ```go

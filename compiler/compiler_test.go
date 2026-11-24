@@ -2100,34 +2100,32 @@ enum Role string {
     Admin = "administrator"
 }
 
-enum (
-    Level uint8 {
-        Low
-        High
-    }
-)
+enum Level uint8 {
+    Low
+    High
+}
 
 func main() {
     status := Status.Active
-    fmt.Println(status == Status.Active, status.name, status.value)
+    fmt.Println(status == Status.Active, status.Name, status.Value)
     autoStatus := Status.From(7)
-    fmt.Println(autoStatus.name)
-    for _, item := range Status.values {
-        fmt.Println(item.name, item.value)
+    fmt.Println(autoStatus.Name)
+    for _, item := range Status.Values {
+        fmt.Println(item.Name, item.Value)
     }
 
     role, err := Role.From("administrator")
     if err != nil { panic(err) }
-    fmt.Println(role.name, role.value)
+    fmt.Println(role.Name, role.Value)
     _, err = Role.From("unknown")
-    fmt.Println(err != nil, Level.High.value)
+    fmt.Println(err != nil, Level.High.Value)
 
     encoded, err := json.Marshal(Role.Admin)
     if err != nil { panic(err) }
     var decoded Role
     if err := json.Unmarshal(encoded, &decoded); err != nil { panic(err) }
     _, invalidJSONErr := json.Marshal(Role("unknown"))
-    fmt.Println(string(encoded), decoded.name, invalidJSONErr != nil)
+    fmt.Println(string(encoded), decoded.Name, invalidJSONErr != nil)
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
@@ -2176,7 +2174,7 @@ import (
 
 func main() {
     status := shared.Status.Active
-    fmt.Println(status.name, status.value, shared.Status.Pending.name)
+    fmt.Println(status.Name, status.Value, shared.Status.Pending.Name)
 }
 `), 0644); err != nil {
 		t.Fatal(err)
@@ -3194,17 +3192,17 @@ class Child : Base @{Bar} {
 }
 
 func main() {
-    fmt.Println(Child.class.annotations.has(Foo), Child.class.annotations.has(Bar))
-    for parent := range Child.class.parents {
-        fmt.Println(parent.name, parent.annotations.has(Foo))
+    fmt.Println(Child.Class.Annotations.Has(Foo), Child.Class.Annotations.Has(Bar))
+    for parent := range Child.Class.Parents {
+        fmt.Println(parent.Name, parent.Annotations.Has(Foo))
     }
-    for field := range Child.class.fields {
-        fmt.Println(field.name, field.owner.name, field.annotations.has(Foo))
+    for field := range Child.Class.Fields {
+        fmt.Println(field.Name, field.Owner.Name, field.Annotations.Has(Foo))
     }
-    for method := range Child.class.methods {
-        fmt.Println(method.name, method.owner.name, method.annotations.has(Foo))
-        for parameter := range method.parameters {
-            fmt.Println(parameter.name, parameter.annotations.has(Query))
+    for method := range Child.Class.Methods {
+        fmt.Println(method.Name, method.Owner.Name, method.Annotations.Has(Foo))
+        for parameter := range method.Parameters {
+            fmt.Println(parameter.Name, parameter.Annotations.Has(Query))
         }
     }
 }
@@ -4126,7 +4124,7 @@ class Model {
     Id string
 
     func Describe() string {
-        return this.class.name
+        return this.Class.Name
     }
 }
 
@@ -4139,12 +4137,12 @@ class Manager: Employee {}
 func main() {
     first := Employee("id", "Bob")
     second := Employee("id2", "Alice")
-    field := Employee.class.fields[1]
-    field.set(first, "Carol")
-    fmt.Println(first.class.name, Employee.class.name, first.class == second.class)
-    fmt.Println(field.name, field.get(first), field.addr(first) != nil)
-    table := Employee.class.annotations.find(Table)
-    fmt.Println(table.args[0])
+    field := Employee.Class.Fields[1]
+    field.Set(first, "Carol")
+    fmt.Println(first.Class.Name, Employee.Class.Name, first.Class == second.Class)
+    fmt.Println(field.Name, field.Get(first), field.Addr(first) != nil)
+    table := Employee.Class.Annotations.Find(Table)
+    fmt.Println(table.Args[0])
 
     var model Model = Employee("id3", "Dan")
     fmt.Println(model.Describe())
@@ -4201,7 +4199,7 @@ import (
 
 func main() {
     person := people.Person("Bob")
-    fmt.Println(people.Person.class.name, person.class.name)
+    fmt.Println(people.Person.Class.Name, person.Class.Name)
 }
 `), 0644); err != nil {
 		t.Fatal(err)
@@ -5068,6 +5066,21 @@ func TestCompileORMExamplePromotesGenericFullSQLQueries(t *testing.T) {
 		if !strings.Contains(string(generated), call) {
 			t.Errorf("ORM example call was not promoted: %s\nGenerated source:\n%s", call, generated)
 		}
+	}
+}
+
+func TestCompileCacheExamplePromotesImportedGenericClassMethod(t *testing.T) {
+	examplePath := filepath.Join("..", "examples", "cache.gpp")
+	outputDir := t.TempDir()
+	if err := CompileFilesWithOptions([]string{examplePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(outputDir, "cache.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "__gppUnwrap(reports.GetOrSet[*Report]") {
+		t.Fatalf("imported generic class method error was not promoted:\n%s", generated)
 	}
 }
 

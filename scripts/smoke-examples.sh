@@ -68,6 +68,7 @@ for source in examples/*.gpp; do
             ;;
         foo) run_example "$example" "$source" examples/foo.bar.gpp ;;
         tpl) run_example "$example" "$source" examples/tpl_external.gpp.tpl ;;
+        workflow) run_example "$example" "$source" -- seed ;;
         *) run_example "$example" "$source" ;;
     esac
 done
@@ -76,6 +77,20 @@ echo "Running durable queue tests..."
 "$gpp" test tests/queue.gpp >"$temp_root/queue-tests.log" 2>&1 || {
 	cat "$temp_root/queue-tests.log"
 	echo "Queue tests failed" >&2
+	exit 1
+}
+
+echo "Running durable workflow tests..."
+"$gpp" test tests/workflow.gpp >"$temp_root/workflow-tests.log" 2>&1 || {
+	cat "$temp_root/workflow-tests.log"
+	echo "Workflow tests failed" >&2
+	exit 1
+}
+
+echo "Running cache tests..."
+"$gpp" test tests/cache.gpp >"$temp_root/cache-tests.log" 2>&1 || {
+	cat "$temp_root/cache-tests.log"
+	echo "Cache tests failed" >&2
 	exit 1
 }
 

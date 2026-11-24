@@ -19,13 +19,13 @@ class Employee @{Table("employees")} {
 }
 
 func main() {
-    descriptor := Employee.class
-    table := descriptor.annotations.find(Table)
-    fmt.Println(table.args[0])
+    descriptor := Employee.Class
+    table := descriptor.Annotations.Find(Table)
+    fmt.Println(table.Args[0])
 
-    for field := range descriptor.fields {
-        if field.annotations.has(PK) {
-            fmt.Println("primary key:", field.name)
+    for field := range descriptor.Fields {
+        if field.Annotations.Has(PK) {
+            fmt.Println("primary key:", field.Name)
         }
     }
 }

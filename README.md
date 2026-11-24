@@ -27,13 +27,13 @@ feature with comparisons and examples.
 
 - **[Classes](docs/features/classes.md)** — Group fields and methods around an
   implicit `this`, with concise construction and generated Go structs.
-- **[Static methods and factories](docs/features/static-methods.md)** — Put
+- **[Static methods](docs/features/static-methods.md)** — Put
   type-level operations on a class and provide named ways to construct values.
 - **[Polymorphism](docs/features/polymorphism.md)** — Use class values through
   compatible base types and interfaces, including when calling methods.
-- **[Multiple inheritance](docs/features/multiple-inheritance.md)** — Compose
+- **[Class inheritance](docs/features/multiple-inheritance.md)** — Compose
   behavior from multiple base classes, with qualified access when members conflict.
-- **[Overloading](docs/features/overloading.md)** — Reuse a function or method
+- **[Overloaded functions](docs/features/overloading.md)** — Reuse a function or method
   name for different arities and statically distinguishable argument types.
 - **[Named arguments and defaults](docs/features/named-arguments.md)** — Make
   call sites clearer and omit arguments that have a declared default.
@@ -55,14 +55,14 @@ feature with comparisons and examples.
   and use regular expressions through concise prelude helpers.
 - **[Safe access](docs/features/safe-access.md)** — Use `?.` to access members
   of nullable class values without repeating explicit nil checks.
-- **[Lazy error fallback](docs/features/error-fallback.md)** — Use `??` to
+- **[Error fallback](docs/features/error-fallback.md)** — Use `??` to
   evaluate a fallback only when the value on its left is absent or erroneous.
 - **[Exception handling](docs/features/exceptions.md)** — Keep Go-style error
   values while adding `throw`, `try`, typed `catch`, and `finally` syntax.
-- **[Program exit hook](docs/features/at-exit.md)** — Register `atExit` work
-  that runs during normal program shutdown.
 - **[Annotations and introspection](docs/features/annotations.md)** — Declare
   typed metadata, validate its targets, and inspect it at runtime.
+- **[Program exit hook](docs/features/at-exit.md)** — Register `atExit` work
+  that runs during normal program shutdown.
 
 ### Application features and standard library
 
@@ -76,10 +76,6 @@ feature with comparisons and examples.
   named structs, or models from full SQL statements.
 - **[ORM models](docs/features/orm.md)** — Map annotated models to tables and
   use model-oriented queries and persistence hooks.
-- **[Typed templates](docs/features/templates.md)** — Define HTML/XML templates
-  as functions and render them with Go's `html/template` protections.
-- **[External template reloads](docs/features/template-reload.md)** — Reload
-  `.gpp.tpl` files during development without rebuilding the server.
 - **[Embedded assets](docs/features/embedded-assets.md)** — Include files and
   directories in the program through source-level declarations.
 - **[Cron scheduling](docs/guide/standard-library/cron.md)** — Schedule
@@ -88,6 +84,10 @@ feature with comparisons and examples.
   experimental packages, including the HTTP client and durable work queue.
 - **[Suite-based tests](docs/features/testing.md)** — Organize tests into
   suites, methods, and annotations, then run them through `gpp test`.
+- **[Typed templates](docs/features/templates.md)** — Define HTML/XML templates
+  as functions and render them with Go's `html/template` protections.
+- **[External template reloads](docs/features/template-reload.md)** — Reload
+  `.gpp.tpl` files during development without rebuilding the server.
 
 ### Go compatibility and tooling
 

@@ -957,17 +957,32 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 
 	parents := map[string]bool{}
-	for _, parentName := range classParentNames(class) {
+	parentTypes := class.ParentAST
+	parentNames := classParentNames(class)
+	for index, parentName := range parentNames {
 		if parents[parentName] {
 			return classDiagnosticf(class, "class %s lists parent %s more than once", class.Name, parentName)
 		}
 		parents[parentName] = true
 
-		if _, ok := pkg.Classes[parentName]; !ok {
+		parent, ok := pkg.Classes[parentName]
+		if !ok {
+			parent = pkg.ImportedClasses[parentName]
+		}
+		if parent == nil {
 			if _, imported := pkg.ImportedClasses[parentName]; imported {
 				continue
 			}
 			return classDiagnosticf(class, "class %s has unresolved parent %s in package %s", class.Name, parentName, pkg.Name)
+		}
+		if index < len(parentTypes) {
+			instantiated, ok := parentTypes[index].(*NamedType)
+			if !ok {
+				return classDiagnosticf(class, "parent %s must be a named class type", parentName)
+			}
+			if len(instantiated.Arguments) != len(parent.TypeParamsAST) {
+				return classDiagnosticf(class, "parent %s expects %d type arguments, got %d", parentName, len(parent.TypeParamsAST), len(instantiated.Arguments))
+			}
 		}
 	}
 
@@ -1208,6 +1223,19 @@ func constructorContextForFile(file *File, model *SemanticModel, modulePath stri
 		}
 		if alias != "_" {
 			context.ImportedTypes[alias] = pkg.Types
+		}
+		for typeName, fields := range namedStructConstructors(pkg.Files) {
+			constructorName := typeName
+			if qualifier != "" {
+				constructorName = qualifier + "." + typeName
+			}
+			exportedFields := make([]constructorField, 0, len(fields))
+			for _, field := range fields {
+				if ast.IsExported(field.Name) {
+					exportedFields = append(exportedFields, field)
+				}
+			}
+			context.StructConstructors[constructorName] = exportedFields
 		}
 
 		for className, class := range pkg.Classes {

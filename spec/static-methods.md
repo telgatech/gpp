@@ -114,7 +114,7 @@ Static methods may refer to the declaring class explicitly:
 ```go
 class User {
     static func Describe() string {
-        return User.class.name
+        return User.Class.Name
     }
 }
 ```
@@ -407,7 +407,7 @@ Class metadata should distinguish static and instance methods.
 Possible descriptor field:
 
 ```go
-method.static
+method.Static
 ```
 
 or equivalent.
@@ -415,8 +415,8 @@ or equivalent.
 Potential class APIs:
 
 ```go
-User.class.methods
-User.class.staticMethods
+User.Class.Methods
+User.Class.StaticMethods
 ```
 
 Exact surface may follow the existing method descriptor design.

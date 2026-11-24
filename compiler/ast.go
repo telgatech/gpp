@@ -244,9 +244,9 @@ func (declaration *ClassDecl) Span() Span {
 	return declaration.SpanValue
 }
 
-// ParentNames returns the source spelling of the structured parent types.
-// Consumers that need inheritance metadata should use this accessor instead
-// of relying on a duplicate string field in ClassDecl.
+// ParentNames returns the declared base class names, without generic type
+// arguments. The full instantiated parent syntax remains available in
+// ParentAST.
 func (declaration *ClassDecl) ParentNames() []string {
 	return classParentNames(declaration)
 }
@@ -324,6 +324,7 @@ type Method struct {
 	IsStatic             bool
 	ContextualSelf       bool
 	Generated            bool
+	InheritedFromGeneric bool
 	ParametersSpan       Span
 	ParameterAST         []ParameterNode
 	ParameterAnnotations map[string][]AnnotationUse

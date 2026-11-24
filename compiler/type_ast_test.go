@@ -326,6 +326,27 @@ enum Status int {
 	}
 }
 
+func TestClassParentParsesGenericTypeArguments(t *testing.T) {
+	file, err := ParseFile("generic-parent.gpp", `
+class Child[T any] : base.Parent[[]T, map[string]int] {
+}
+`)
+	if err != nil {
+		t.Fatalf("parse generic parent: %v", err)
+	}
+	class := file.Decls[0].(*ClassDecl)
+	if got := classParentNames(class); len(got) != 1 || got[0] != "base.Parent" {
+		t.Fatalf("parent class name should omit type arguments, got %#v", got)
+	}
+	if got := classParentTypeSources(class); len(got) != 1 || got[0] != "base.Parent[[]T, map[string]int]" {
+		t.Fatalf("parent type should retain its type arguments, got %#v", got)
+	}
+	parent, ok := class.ParentAST[0].(*NamedType)
+	if !ok || len(parent.Arguments) != 2 {
+		t.Fatalf("expected a generic parent type with two arguments, got %#v", class.ParentAST[0])
+	}
+}
+
 func TestExtensionTargetNormalizationUsesTypeAST(t *testing.T) {
 	if got := normalizeExtensionTarget(" * map [ string ] [ ] *Person "); got != "*map[string][]*Person" {
 		t.Fatalf("unexpected normalized extension target: %q", got)

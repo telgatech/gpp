@@ -91,6 +91,33 @@ func TestResolveProgramRejectsInvalidInheritance(t *testing.T) {
 	}
 }
 
+func TestResolveProgramValidatesGenericParentArity(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "missing argument",
+			source: "class Parent[T any] {}\nclass Child : Parent {}",
+			want:   "parent Parent expects 1 type arguments, got 0",
+		},
+		{
+			name:   "extra argument",
+			source: "class Parent[T any] {}\nclass Child : Parent[int, string] {}",
+			want:   "parent Parent expects 1 type arguments, got 2",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ResolveProgram(parseProgram(t, test.source))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q, got %v", test.want, err)
+			}
+		})
+	}
+}
+
 func TestResolveProgramRejectsChildAccessToPrivateInheritedFieldsAndMethods(t *testing.T) {
 	tests := []struct {
 		name   string

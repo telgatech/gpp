@@ -1,0 +1,128 @@
+import (
+    "errors"
+    "time"
+    "gpp/encoding"
+    cache "gpp/exp/cache"
+    "gpp/test"
+)
+
+class CachedReport @{encoding.Serializable} {
+    Name string
+    Total int
+}
+
+class TypedCacheTest : test.Suite {
+    Cache *cache.Cache
+
+    func _setup() {
+        this.Cache = cache.Cache()
+    }
+
+    func _teardown() {
+        this.Cache.Clear()
+    }
+
+    func RoundTripsSerializableValues() {
+        this.Equal(nil, this.Cache.SetWithTTL("report:weekly", CachedReport(Name: "weekly", Total: 42), time.Minute))
+        report, getErr := this.Cache.Get[*CachedReport]("report:weekly")
+        this.Equal(nil, getErr)
+        this.Equal("weekly", report.Name)
+        this.Equal(42, report.Total)
+    }
+
+    func GetOrSetRunsLoaderOnlyOnMiss() {
+        loads := 0
+        loader := func() (int, error) {
+            loads++
+            return 42, nil
+        }
+
+        first, firstErr := this.Cache.GetOrSet[int]("count", time.Minute, loader)
+        second, secondErr := this.Cache.GetOrSet[int]("count", time.Minute, loader)
+        this.Equal(nil, firstErr)
+        this.Equal(nil, secondErr)
+        this.Equal(42, first)
+        this.Equal(42, second)
+        this.Equal(1, loads)
+    }
+
+    func DeleteAndClearRemoveEntries() {
+        this.Cache.Set("one", 1)
+        this.Cache.Set("two", 2)
+        this.Equal(nil, this.Cache.Delete("^one$"))
+        _, deletedErr := this.Cache.Get[int]("one")
+        this.Equal(true, errors.Is(deletedErr, cache.ErrNotFound))
+
+        this.Equal(nil, this.Cache.Clear())
+        _, clearedErr := this.Cache.Get[int]("two")
+        this.Equal(true, errors.Is(clearedErr, cache.ErrNotFound))
+    }
+
+    func DeleteMatchesRegularExpression() {
+        this.Cache.Set("report:weekly", 1)
+        this.Cache.Set("report:monthly", 2)
+        this.Cache.Set("user:42", 3)
+        this.Equal(nil, this.Cache.Delete("^report:"))
+
+        _, weeklyErr := this.Cache.Get[int]("report:weekly")
+        _, monthlyErr := this.Cache.Get[int]("report:monthly")
+        user, userErr := this.Cache.Get[int]("user:42")
+        this.Equal(true, errors.Is(weeklyErr, cache.ErrNotFound))
+        this.Equal(true, errors.Is(monthlyErr, cache.ErrNotFound))
+        this.Equal(nil, userErr)
+        this.Equal(3, user)
+    }
+
+    func ExpiresEntriesAfterTTL() {
+        this.Cache.SetWithTTL("short", 7, 10*time.Millisecond)
+        time.Sleep(20 * time.Millisecond)
+        _, err := this.Cache.Get[int]("short")
+        this.Equal(true, errors.Is(err, cache.ErrNotFound))
+    }
+
+    func EvictsLeastRecentlyUsedEntryAtEntryLimit() {
+        bounded := cache.Cache(maxEntries: 2)
+        bounded.Set("first", 1)
+        bounded.Set("second", 2)
+        _, firstErr := bounded.Get[int]("first")
+        this.Equal(nil, firstErr)
+
+        bounded.Set("third", 3)
+        _, secondErr := bounded.Get[int]("second")
+        first, firstErr := bounded.Get[int]("first")
+        third, thirdErr := bounded.Get[int]("third")
+        this.Equal(true, errors.Is(secondErr, cache.ErrNotFound))
+        this.Equal(nil, firstErr)
+        this.Equal(nil, thirdErr)
+        this.Equal(1, first)
+        this.Equal(3, third)
+        bounded.Clear()
+    }
+
+    func EnforcesPayloadMemoryLimit() {
+        bounded := cache.MemoryStore(maxMemory: 5)
+        this.Equal(nil, bounded.Set("a", []byte("12"), 0))
+        this.Equal(nil, bounded.Set("b", []byte("34"), 0))
+        _, firstFound, firstErr := bounded.Get("a")
+        _, secondFound, secondErr := bounded.Get("b")
+        this.Equal(nil, firstErr)
+        this.Equal(nil, secondErr)
+        this.Equal(false, firstFound)
+        this.Equal(true, secondFound)
+
+        cacheWithTinyBudget := cache.Cache(maxMemory: 1)
+        tooLargeErr := cacheWithTinyBudget.Set("a", 1)
+        this.Equal(true, errors.Is(tooLargeErr, cache.ErrEntryTooLarge))
+        cacheWithTinyBudget.Clear()
+    }
+
+    func ConstructsCacheWithCustomStore() {
+        store := cache.MemoryStore(maxEntries: 2)
+        custom := cache.Cache(store: store)
+        this.Equal(nil, custom.Set("custom", 9))
+        value, err := custom.Get[int]("custom")
+        this.Equal(nil, err)
+        this.Equal(9, value)
+        custom.Clear()
+    }
+}

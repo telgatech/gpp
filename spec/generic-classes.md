@@ -22,9 +22,8 @@ The feature must:
   diagnostics, and the language server.
 
 Generic classes add no runtime type system. The compiler emits ordinary Go
-generic types and methods. Generic inheritance, compiler-side member
-substitution, and runtime introspection for generic classes remain follow-up
-work.
+generic types and methods. Generic inheritance uses instantiated Go embedded
+types, with inherited member types substituted by the compiler.
 
 ## Declaration syntax
 
@@ -127,8 +126,9 @@ class parameters in fields, arguments, and results. Run it with
 
 ## Inheritance
 
-A generic class may inherit from a generic class by supplying its type
-arguments:
+A class may inherit from a generic class by supplying its type arguments.
+Arguments may refer to the child's type parameters, use nested types, or be
+concrete types:
 
 ```gpp
 class Named[T] {
@@ -138,15 +138,21 @@ class Named[T] {
 class Audited[T]: Named[T] {
     CreatedBy string
 }
+
+class IntNamed: Named[int] {}
 ```
 
 Parent type arguments are checked in the child class's type-parameter scope.
-Inherited fields and methods retain their substituted types. Instantiating
-`Audited[int]` therefore exposes `Value` as `int`.
+The compiler substitutes those arguments through inherited fields, methods,
+overload signatures, constructors, and multiple-parent chains. Instantiating
+`Audited[int]` therefore exposes `Value` as `int`; `IntNamed` exposes it as
+`int` without declaring its own type parameter.
 
 Inheritance from a generic class requires explicit parent type arguments. An
 uninstantiated generic parent is invalid. Existing multiple-inheritance
-conflict and qualification rules continue to apply after substitution.
+conflict and qualification rules continue to apply after substitution. Go
+checks parent type argument constraints in generated code. Generic classes do
+not yet have per-instantiation runtime introspection descriptors.
 
 ## Shared type analysis
 
@@ -212,16 +218,16 @@ same source location.
 The first implementation deliberately leaves these cases unsupported or to
 generated-Go checking:
 
-* generic inheritance and inherited member substitution;
-* compiler-side type substitution for overload, extension, lambda, safe-access,
-  and template analysis on instantiated generic classes;
+* compiler-side type substitution for extension, lambda, safe-access, and
+  template analysis on instantiated generic classes;
 * per-instantiation introspection descriptors and generated serialization
   methods for generic classes; and
-* source-located compiler diagnostics for type-argument arity and constraint
-  failures before generated Go compilation.
+* source-located compiler diagnostics for type-argument arity on ordinary
+  generic instantiations and constraint failures before generated-Go
+  compilation. Parent type argument arity is checked in GPP source.
 
 These limits must not be presented as completed behavior. Follow-up work should
-add the shared type model below and remove each limit with focused tests.
+remove each remaining limit with focused tests.
 
 ## Non-goals for the complete feature
 
@@ -239,7 +245,8 @@ The implementation is ready when:
    instantiations. **Done for class declarations and instance methods.**
 3. Explicit constructor calls lower to valid Go composite literals. **Done.**
 4. Field and method types are substituted for each concrete instantiation.
-5. Generic parent fields and methods resolve after substitution.
+5. Generic parent fields, methods, and constructor arguments resolve after
+   substitution. **Done.**
 6. Invalid type arguments, constraints, constructors, and members produce
    source-located diagnostics in both CLI and LSP analysis.
 7. Imported native Go generics and GPP generic classes interoperate in the

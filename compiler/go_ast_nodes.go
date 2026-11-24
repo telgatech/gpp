@@ -1494,7 +1494,7 @@ func setConstructorASTValue(root *constructorASTLiteral, path []string, fieldNam
 
 func constructorASTLiteralExpr(name string, class *ClassDecl, literal *constructorASTLiteral, classes map[string]*ClassDecl, qualifier string) ExprNode {
 	elements := []CompositeElement{}
-	for _, parentName := range classParentNames(class) {
+	for parentIndex, parentName := range classParentNames(class) {
 		child := literal.Children[parentName]
 		parentFieldName := classParentFieldName(parentName)
 		if child == nil {
@@ -1504,10 +1504,7 @@ func constructorASTLiteralExpr(name string, class *ClassDecl, literal *construct
 			continue
 		}
 		parent := classes[parentName]
-		parentNameText := parentName
-		if !strings.Contains(parentName, ".") {
-			parentNameText = qualifyTypeName(parentName, qualifier)
-		}
+		parentNameText := classParentInstantiationSource(class, parentIndex, name, qualifier)
 		value := constructorASTLiteralExpr(parentNameText, parent, child, classes, qualifier)
 		elements = append(elements, CompositeElement{Key: &NameExpr{Name: parentFieldName}, Value: value})
 	}
@@ -1517,6 +1514,28 @@ func constructorASTLiteralExpr(name string, class *ClassDecl, literal *construct
 		}
 	}
 	return &CompositeLiteralExpr{Type: parseTypeText(name), Elements: elements}
+}
+
+func classParentInstantiationSource(class *ClassDecl, parentIndex int, classInstance, qualifier string) string {
+	if class == nil || parentIndex < 0 || parentIndex >= len(class.ParentAST) {
+		return ""
+	}
+	parentType := class.ParentAST[parentIndex]
+	if instance, ok := parseTypeText(classInstance).(*NamedType); ok && len(instance.Arguments) == len(class.TypeParamsAST) {
+		substitutions := make(map[string]TypeNode, len(class.TypeParamsAST))
+		for index, parameter := range class.TypeParamsAST {
+			substitutions[parameter.Name] = instance.Arguments[index]
+		}
+		parentType = substituteTypeParameters(parentType, substitutions)
+	}
+	name, err := typeNodeSource(parentType)
+	if err != nil || strings.TrimSpace(name) == "" {
+		return classParentNames(class)[parentIndex]
+	}
+	if parent, ok := parentType.(*NamedType); ok && len(parent.Parts) == 1 {
+		name = qualifyTypeName(name, qualifier)
+	}
+	return name
 }
 
 func goStmtNode(statement Stmt, rethrowName string) ([]ast.Stmt, error) {

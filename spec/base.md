@@ -67,6 +67,13 @@
   and a body reference to `Name` becomes `this.Name` when no local or parameter
   named `Name` is in scope.
 
+## Interfaces
+- Declare named Go interfaces with `interface Reader { Read([]byte) (int, error) }`.
+- The shorthand supports generic type parameters and emits the equivalent Go
+  `type Reader interface { ... }` declaration.
+- Interface satisfaction follows Go's implicit method-set rules; GPP does not
+  add interface satisfaction through extension methods.
+
 ## Inheritance
 - Support inheritance syntax:
     class Employee : Person {
@@ -253,8 +260,8 @@
 - configurable CLI output directory
 - anonymous structural structs with deterministic generated Go structs; see
   `spec/structs.md` and field visibility in `spec/structs.visibility.md`
-- compile-time-generated class descriptors through `obj.class` and
-  `Class.fields`; see `spec.introspection.md`
+- compile-time-generated class descriptors through `obj.Class` and
+  `Class.Fields`; see `spec.introspection.md`
 - an implicit standard prelude for small slice, map, and string helpers; see
   `spec/prelude.md`
 - extension methods on native Go and GPP types; see `spec.extension-methods.md`

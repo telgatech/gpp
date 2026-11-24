@@ -486,6 +486,133 @@ func main() {
 	}
 }
 
+func TestCompileFilesRunsGenericClassParent(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `class Parent[V any] {
+    Value V
+
+    func Get() V {
+        return this.Value
+    }
+
+    func Echo(value V) V {
+        return value
+    }
+}
+
+class Wrapper[T any] : Parent[[]T] {}
+class Child[T any] : Wrapper[T] {}
+class IntChild : Parent[int] {}
+
+class ExtraParent[R any] {
+    Extra R
+
+    func GetExtra() R {
+        return this.Extra
+    }
+}
+
+class Combined[T any] : Parent[T], ExtraParent[[]T] {}
+
+class InitializedParent[V any] {
+    Value V
+
+    func init(value V) {
+        this.Value = value
+    }
+
+    func Get() V {
+        return this.Value
+    }
+}
+
+class InitializedChild[T any] : InitializedParent[[]T] {
+    func init(value []T) {
+        super(value)
+    }
+}
+
+func main() {
+    child := Child[int](Value: []int{42})
+    println(child.Get()[0])
+    println(child.Echo([]int{43})[0])
+    concrete := IntChild(Value: 7)
+    println(concrete.Get())
+    println(concrete.Echo(8))
+    combined := Combined[int](Value: 11, Extra: []int{12})
+    println(combined.Get())
+    println(combined.GetExtra()[0])
+    initialized := InitializedChild[int]([]int{9})
+    println(initialized.Get()[0])
+}`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated generic parent program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "42\n43\n7\n8\n11\n12\n9\n" {
+		t.Fatalf("unexpected generic parent output: %q", output)
+	}
+}
+
+func TestCompileFilesRunsImportedGenericClassParent(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	parentPath := filepath.Join(inputDir, "parent.gpp")
+	mainPath := filepath.Join(inputDir, "main.gpp")
+	parentSource := `package demo.base
+
+class Parent[V any] {
+    Value V
+
+    func Get() V {
+        return this.Value
+    }
+}`
+	mainSource := `package main
+
+import (
+    "fmt"
+    demo.base
+)
+
+class Child[T any] : base.Parent[[]T] {}
+
+func main() {
+    child := Child[int](Value: []int{42})
+    fmt.Println(child.Get()[0])
+}`
+	if err := os.WriteFile(parentPath, []byte(parentSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainPath, []byte(mainSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{parentPath, mainPath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated imported generic parent program did not run: %v\n%s", err, output)
+	}
+	if string(output) != "42\n" {
+		t.Fatalf("unexpected imported generic parent output: %q", output)
+	}
+}
+
 func TestCompileFilesRunsGenericMethodDeclaredOnClass(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()
@@ -724,7 +851,7 @@ func TestEmitInheritedMethodsOnDerivedReceiver(t *testing.T) {
 	file, err := ParseFile("inherited_methods.gpp", `
 class Model {
     func RuntimeName() string {
-        return this.class.name
+        return this.Class.Name
     }
 }
 
@@ -2024,20 +2151,20 @@ class Employee: Model {
     Age int
 
     func Label() string {
-        return this.class.name
+        return this.Class.Name
     }
 }
 
 func main() {
     employee := Employee("id", "Bob", 42)
-    c := Employee.class
-    for f := range employee.class.fields {
-        _ = f.name
-        _ = f.owner.name
-        _ = f.type.name
-        _ = f.get(employee)
-        f.set(employee, "Alice")
-        _ = f.addr(employee)
+    c := Employee.Class
+    for f := range employee.Class.Fields {
+        _ = f.Name
+        _ = f.Owner.Name
+        _ = f.Type.Name
+        _ = f.Get(employee)
+        f.Set(employee, "Alice")
+        _ = f.Addr(employee)
     }
     _ = c
 }
@@ -2079,7 +2206,7 @@ func TestEmitRejectsNativeTypeIntrospection(t *testing.T) {
 import "net/http"
 
 func main() {
-    _ = http.Request.class
+    _ = http.Request.Class
 }
 
 `)
@@ -2088,7 +2215,7 @@ func main() {
 	}
 
 	_, err = Emit(file)
-	if err == nil || !strings.Contains(err.Error(), "http.Request.class") {
+	if err == nil || !strings.Contains(err.Error(), "http.Request.Class") {
 		t.Fatalf("expected native type introspection error, got %v", err)
 	}
 }
@@ -2366,7 +2493,7 @@ class Employee: Model @{Table("employees")} {
 
 extend *sql.DB {
     func ModelName(entity Model) string {
-        return entity.class.name
+        return entity.Class.Name
     }
 }
 
@@ -2524,17 +2651,17 @@ func Helper(value string @{Required}) string @{Trace} {
 }
 
 func main() {
-    descriptor := Employee.class
-    table := descriptor.annotations.find(Table)
-    _ = table.name
-    _ = table.fullName
-    _ = table.args[0]
-    for field := range descriptor.fields {
-        _ = field.annotations.has(PK)
-        _ = field.annotations.all(Required)
+    descriptor := Employee.Class
+    table := descriptor.Annotations.Find(Table)
+    _ = table.Name
+    _ = table.FullName
+    _ = table.Args[0]
+    for field := range descriptor.Fields {
+        _ = field.Annotations.Has(PK)
+        _ = field.Annotations.All(Required)
     }
-    for method := range descriptor.methods {
-        _ = method.annotations.has(Trace)
+    for method := range descriptor.Methods {
+        _ = method.Annotations.Has(Trace)
     }
 }
 `)

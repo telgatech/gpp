@@ -54,8 +54,8 @@ func TestTransformEnumsUsesASTTypesForRangeValues(t *testing.T) {
 		"Status": {Name: "Status", Members: []EnumMember{{Name: "Active"}}},
 	}}
 
-	source := `for _, item := range Status.values {
-	fmt.Println(item.name, item.value)
+	source := `for _, item := range Status.Values {
+	fmt.Println(item.Name, item.Value)
 }`
 	transformed, handled, err := transformEnumsAST(source, context)
 	if err != nil {
@@ -64,10 +64,10 @@ func TestTransformEnumsUsesASTTypesForRangeValues(t *testing.T) {
 	if !handled {
 		t.Fatal("expected the structured range body to handle enum metadata lowering")
 	}
-	if strings.Contains(transformed, "item.name") || strings.Contains(transformed, "item.value") {
-		t.Fatalf("enum range metadata remained after AST lowering: %s", transformed)
+	if !strings.Contains(transformed, "GppEnum_StatusValues") {
+		t.Fatalf("enum range did not lower to its generated metadata values: %s", transformed)
 	}
 	if !strings.Contains(transformed, "item.Name") || !strings.Contains(transformed, "item.Value") {
-		t.Fatalf("unexpected enum range lowering: %s", transformed)
+		t.Fatalf("enum metadata fields should remain ordinary field access: %s", transformed)
 	}
 }

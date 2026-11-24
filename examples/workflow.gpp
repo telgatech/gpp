@@ -1,0 +1,118 @@
+import (
+    "fmt"
+    queue "gpp/exp/queue"
+    workflow "gpp/exp/workflow"
+    "os"
+    "time"
+)
+
+enum OrderState string {
+    AuthorizePayment = "authorize-payment"
+    AwaitPayment = "await-payment"
+    ReserveInventory = "reserve-inventory"
+    CreateShipment = "create-shipment"
+    SendConfirmation = "send-confirmation"
+    CancelOrder = "cancel-order"
+    Done = "done"
+}
+
+enum OrderEvent string {
+    Approved = "approved"
+    Pending = "pending"
+    Declined = "declined"
+    PaymentSettled = "payment-settled"
+    PaymentTimedOut = "payment-timed-out"
+    InventoryReserved = "inventory-reserved"
+    ShipmentCreated = "shipment-created"
+    ConfirmationSent = "confirmation-sent"
+    OrderCancelled = "order-cancelled"
+}
+
+class FulfillOrder : workflow.Message {
+    OrderID string
+    SKU string
+    Quantity int
+    CustomerEmail string
+    PaymentPending bool
+    PaymentAuthorizationID string
+    ReservationID string
+    TrackingNumber string
+
+    func _states() []workflow.State {
+        return workflow.State[
+            (Name: OrderState.AuthorizePayment.Value),
+            (Name: OrderState.AwaitPayment.Value),
+            (Name: OrderState.ReserveInventory.Value),
+            (Name: OrderState.CreateShipment.Value),
+            (Name: OrderState.SendConfirmation.Value),
+            (Name: OrderState.CancelOrder.Value),
+            (Name: OrderState.Done.Value, Terminal: true),
+        ]
+    }
+
+    func _transitions() []workflow.Transition {
+        return workflow.Transition[
+            (From: OrderState.AuthorizePayment.Value, On: OrderEvent.Approved.Value, To: OrderState.ReserveInventory.Value),
+            (From: OrderState.AuthorizePayment.Value, On: OrderEvent.Pending.Value, To: OrderState.AwaitPayment.Value),
+            (From: OrderState.AuthorizePayment.Value, On: OrderEvent.Declined.Value, To: OrderState.CancelOrder.Value),
+            (From: OrderState.AwaitPayment.Value, On: OrderEvent.PaymentSettled.Value, To: OrderState.ReserveInventory.Value),
+            (From: OrderState.AwaitPayment.Value, On: OrderEvent.PaymentTimedOut.Value, To: OrderState.CancelOrder.Value),
+            (From: OrderState.ReserveInventory.Value, On: OrderEvent.InventoryReserved.Value, To: OrderState.CreateShipment.Value),
+            (From: OrderState.CreateShipment.Value, On: OrderEvent.ShipmentCreated.Value, To: OrderState.SendConfirmation.Value),
+            (From: OrderState.SendConfirmation.Value, On: OrderEvent.ConfirmationSent.Value, To: OrderState.Done.Value),
+            (From: OrderState.CancelOrder.Value, On: OrderEvent.OrderCancelled.Value, To: OrderState.Done.Value),
+        ]
+    }
+
+    func _waits() []workflow.Wait {
+        return workflow.Wait[
+            (State: OrderState.AwaitPayment.Value, Signal: OrderEvent.PaymentSettled.Value, Timeout: time.Second, TimeoutEvent: OrderEvent.PaymentTimedOut.Value, HasTimeout: true),
+        ]
+    }
+
+    func _execute(state string) (string, error) {
+        typedState := OrderState.From(state)
+        switch typedState {
+        case OrderState.AuthorizePayment:
+            if this.PaymentPending {
+                fmt.Println("payment pending for order", this.OrderID)
+                return OrderEvent.Pending.Value, nil
+            }
+            this.PaymentAuthorizationID = "auth-" + this.OrderID
+            fmt.Println("authorized payment for order", this.OrderID)
+            return OrderEvent.Approved.Value, nil
+        case OrderState.ReserveInventory:
+            this.ReservationID = "reservation-" + this.OrderID
+            fmt.Println("reserved", this.Quantity, this.SKU, "for order", this.OrderID)
+            return OrderEvent.InventoryReserved.Value, nil
+        case OrderState.CreateShipment:
+            this.TrackingNumber = "tracking-" + this.OrderID
+            fmt.Println("created shipment for order", this.OrderID)
+            return OrderEvent.ShipmentCreated.Value, nil //errors.New("failed")
+        case OrderState.SendConfirmation:
+            fmt.Println("sent tracking", this.TrackingNumber, "to", this.CustomerEmail)
+            return OrderEvent.ConfirmationSent.Value, nil
+        case OrderState.CancelOrder:
+            fmt.Println("cancelled order", this.OrderID)
+            return OrderEvent.OrderCancelled.Value, nil
+        case OrderState.AwaitPayment:
+            return "", fmt.Errorf("state %s is waiting for a signal", state)
+        case OrderState.Done:
+            return "", fmt.Errorf("state %s is terminal", state)
+        }
+        return "", fmt.Errorf("unknown state %q", state)
+    }
+}
+
+func main() {
+    try {
+        q := queue.New()
+        if len(os.Args) > 1 && os.Args[1] == "seed" {
+            q.Push(FulfillOrder(OrderID: "order-42", SKU: "keyboard", Quantity: 1, CustomerEmail: "ada@example.com"))
+            q.Push(FulfillOrder(OrderID: "order-43", SKU: "mouse", Quantity: 2, CustomerEmail: "grace@example.com", PaymentPending: true))
+        }
+        q.Drain(30 * time.Second)
+    } catch err {
+        fmt.Println("workflow example:", err)
+    }
+}

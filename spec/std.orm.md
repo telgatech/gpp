@@ -142,7 +142,7 @@ The current implementation expects a single primary key.
 `Update` and `Delete` locate the primary-key field through:
 
 ```go
-field.annotations.has(PK)
+field.Annotations.Has(PK)
 ```
 
 Composite keys are not part of the initial implementation.
@@ -390,20 +390,20 @@ return entity._afterCreate(this)
 Obtain:
 
 ```go
-table := entity.class.annotations.find(Table)
+table := entity.Class.Annotations.Find(Table)
 ```
 
 Enumerate:
 
 ```go
-entity.class.fields
+entity.Class.Fields
 ```
 
 For every field with a `Column` annotation:
 
 ```go
 columns = append(columns, columnName)
-values = append(values, field.get(any(entity)))
+values = append(values, field.Get(any(entity)))
 ```
 
 Fields without `Column` are ignored.
@@ -561,8 +561,8 @@ Inspect concrete runtime fields.
 Find the field satisfying:
 
 ```go
-field.annotations.find(Column) != nil
-field.annotations.has(PK)
+field.Annotations.Find(Column) != nil
+field.Annotations.Has(PK)
 ```
 
 Obtain:
@@ -629,7 +629,7 @@ Model
 Therefore:
 
 ```go
-entity.class
+entity.Class
 ```
 
 inside inherited/polymorphic code must represent the most-derived runtime class.
@@ -637,16 +637,16 @@ inside inherited/polymorphic code must represent the most-derived runtime class.
 This descriptor must expose:
 
 ```go
-class.annotations
-class.fields
+class.Annotations
+class.Fields
 ```
 
 Fields must expose:
 
 ```go
-field.annotations
-field.get(obj)
-field.addr(obj)
+field.Annotations
+field.Get(obj)
+field.Addr(obj)
 ```
 
 ---
@@ -658,11 +658,11 @@ The ORM must use annotation symbols, not string names.
 Examples:
 
 ```go
-descriptor.annotations.find(Table)
+descriptor.Annotations.Find(Table)
 
-field.annotations.find(Column)
+field.Annotations.Find(Column)
 
-field.annotations.has(PK)
+field.Annotations.Has(PK)
 ```
 
 `Table`, `Column`, and `PK` are annotation declarations exported by `gpp/orm`.
@@ -1097,10 +1097,10 @@ employee.Insert(db)
 must use:
 
 ```text
-Employee.class
+Employee.Class
 ```
 
-metadata, not `Model.class`.
+metadata, not `Model.Class`.
 
 ---
 

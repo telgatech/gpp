@@ -7,8 +7,8 @@ import DonationButton from './.vitepress/theme/DonationButton.vue'
 <div class="about-profile-card">
   <img
     class="about-profile-avatar"
-    src="https://media.licdn.com/dms/image/v2/D5603AQHyajRXSjE7ng/profile-displayphoto-shrink_200_200/profile-displayphoto-shrink_200_200/0/1722577204929?e=1792022400&amp;v=beta&amp;t=P_-cFL_q3ZyrVPjWY3AAEE3OalxXjkNv3cRup0Yrluk"
-    alt="Sunder Rajan's LinkedIn profile photo"
+    src="https://telga.in/sunderrajan.png"
+    alt="Sunder Rajan"
     width="88"
     height="88"
     loading="lazy"

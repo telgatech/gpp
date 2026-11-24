@@ -27,25 +27,6 @@ var enumBackingTypes = map[string]bool{
 
 func parseEnums(src string, start int) ([]*EnumDecl, int, error) {
 	pos := skipSpace(src, start+len("enum"))
-	if pos < len(src) && src[pos] == '(' {
-		close, err := findMatchingParen(src, pos)
-		if err != nil {
-			return nil, 0, err
-		}
-		enums := []*EnumDecl{}
-		for cursor := skipSpace(src, pos+1); cursor < close; cursor = skipSpace(src, cursor) {
-			enum, next, err := parseEnumDeclaration(src, cursor)
-			if err != nil {
-				return nil, 0, err
-			}
-			enums = append(enums, enum)
-			cursor = next
-		}
-		if len(enums) == 0 {
-			return nil, 0, fmt.Errorf("enum group cannot be empty")
-		}
-		return enums, close + 1, nil
-	}
 	enum, end, err := parseEnumDeclaration(src, pos)
 	if err != nil {
 		return nil, 0, err
@@ -554,10 +535,26 @@ func enumReferenceType(key string, enum *EnumDecl) string {
 
 func enumValuesReference(expr ast.Expr, context constructorContext) (string, *EnumDecl, bool) {
 	selector, ok := expr.(*ast.SelectorExpr)
-	if !ok || selector.Sel.Name != "values" {
+	if !ok || selector.Sel.Name != "Values" {
 		return "", nil, false
 	}
 	return enumReference(selector.X, context)
+}
+
+func enumMemberMetadataSelector(name string) bool {
+	return enumNameSelector(name) || enumValueSelector(name)
+}
+
+func enumNameSelector(name string) bool {
+	return name == "Name"
+}
+
+func enumValueSelector(name string) bool {
+	return name == "Value"
+}
+
+func enumValuesSelector(name string) bool {
+	return name == "Values"
 }
 
 func enumGeneratedMember(key string, enum *EnumDecl, name string) string {
@@ -848,7 +845,7 @@ func singleSyntaxIdentifier(tokens []Token) string {
 }
 
 func enumRangeElementTypeNode(expression ExprNode, context constructorContext, valueTypes map[string]string) string {
-	if selector, ok := expression.(*SelectorExpr); ok && selector.Name == "values" {
+	if selector, ok := expression.(*SelectorExpr); ok && enumValuesSelector(selector.Name) {
 		if key, enum, found := enumReferenceExpr(selector.Receiver, context); found {
 			return enumReferencePrefix(key) + enumMetaTypeName(enum)
 		}
@@ -866,7 +863,7 @@ func enumExpressionTypeNode(expression ExprNode, context constructorContext, val
 			if value.Name == "From" {
 				return enumReferenceType(key, enum)
 			}
-			if value.Name == "values" {
+			if enumValuesSelector(value.Name) {
 				return "[]" + enumReferencePrefix(key) + enumMetaTypeName(enum)
 			}
 			if _, exists := enumMember(enum, value.Name); exists {
@@ -891,9 +888,9 @@ func enumSelectorLowering(selector *SelectorExpr, context constructorContext, va
 	}
 	if memberSelector, ok := selector.Receiver.(*SelectorExpr); ok {
 		if key, enum, found := enumReferenceNode(memberSelector.Receiver, context); found {
-			if member, exists := enumMember(enum, memberSelector.Name); exists && (selector.Name == "name" || selector.Name == "value") {
+			if member, exists := enumMember(enum, memberSelector.Name); exists && enumMemberMetadataSelector(selector.Name) {
 				field := "Name"
-				if selector.Name == "value" {
+				if enumValueSelector(selector.Name) {
 					field = "Value"
 				}
 				return enumGeneratedMeta(key, enum, member.Name) + "." + field, true
@@ -904,7 +901,7 @@ func enumSelectorLowering(selector *SelectorExpr, context constructorContext, va
 		switch selector.Name {
 		case "From":
 			return enumReferencePrefix(key) + enumFromName(enum), true
-		case "values":
+		case "Values":
 			return enumReferencePrefix(key) + enumValuesName(enum), true
 		default:
 			if member, exists := enumMember(enum, selector.Name); exists {
@@ -917,19 +914,19 @@ func enumSelectorLowering(selector *SelectorExpr, context constructorContext, va
 		for key, enum := range context.Enums {
 			if typeName == enumReferencePrefix(key)+enumMetaTypeName(enum) {
 				field := "Name"
-				if selector.Name == "value" {
+				if enumValueSelector(selector.Name) {
 					field = "Value"
 				}
-				if selector.Name == "name" || selector.Name == "value" {
+				if enumMemberMetadataSelector(selector.Name) {
 					return name.Name + "." + field, true
 				}
 			}
 		}
 		if typeName := strings.TrimPrefix(typeName, "*"); typeName != "" {
 			if enum, exists := context.Enums[typeName]; exists {
-				if selector.Name == "name" || selector.Name == "value" {
+				if enumMemberMetadataSelector(selector.Name) {
 					helper := enumReferencePrefix(typeName) + "GppEnum_" + enum.Name
-					if selector.Name == "name" {
+					if enumNameSelector(selector.Name) {
 						helper += "Name"
 					} else {
 						helper += "Value"
@@ -976,9 +973,9 @@ func lowerEnumSelectorNode(selector *SelectorExpr, context constructorContext) (
 	valueTypes := context.CurrentParameterTypes
 	if memberSelector, ok := selector.Receiver.(*SelectorExpr); ok {
 		if key, enum, found := enumReferenceExpr(memberSelector.Receiver, context); found {
-			if member, exists := enumMember(enum, memberSelector.Name); exists && (selector.Name == "name" || selector.Name == "value") {
+			if member, exists := enumMember(enum, memberSelector.Name); exists && enumMemberMetadataSelector(selector.Name) {
 				field := "Name"
-				if selector.Name == "value" {
+				if enumValueSelector(selector.Name) {
 					field = "Value"
 				}
 				return qualifiedNameExpr(enumGeneratedMeta(key, enum, member.Name) + "." + field), true, nil
@@ -989,7 +986,7 @@ func lowerEnumSelectorNode(selector *SelectorExpr, context constructorContext) (
 		switch selector.Name {
 		case "From":
 			return qualifiedNameExpr(enumReferencePrefix(key) + enumFromName(enum)), true, nil
-		case "values":
+		case "Values":
 			return qualifiedNameExpr(enumReferencePrefix(key) + enumValuesName(enum)), true, nil
 		default:
 			if member, exists := enumMember(enum, selector.Name); exists {
@@ -1001,9 +998,9 @@ func lowerEnumSelectorNode(selector *SelectorExpr, context constructorContext) (
 		typeName := strings.TrimSpace(valueTypes[name.Name])
 		for key, enum := range context.Enums {
 			if typeName == enumReferencePrefix(key)+enumMetaTypeName(enum) {
-				if selector.Name == "name" || selector.Name == "value" {
+				if enumMemberMetadataSelector(selector.Name) {
 					field := "Name"
-					if selector.Name == "value" {
+					if enumValueSelector(selector.Name) {
 						field = "Value"
 					}
 					return &SelectorExpr{Receiver: name, Name: field, SpanValue: selector.Span()}, true, nil
@@ -1011,9 +1008,9 @@ func lowerEnumSelectorNode(selector *SelectorExpr, context constructorContext) (
 			}
 		}
 		if typeName = strings.TrimPrefix(typeName, "*"); typeName != "" {
-			if enum, exists := context.Enums[typeName]; exists && (selector.Name == "name" || selector.Name == "value") {
+			if enum, exists := context.Enums[typeName]; exists && enumMemberMetadataSelector(selector.Name) {
 				helper := enumReferencePrefix(typeName) + "GppEnum_" + enum.Name
-				if selector.Name == "name" {
+				if enumNameSelector(selector.Name) {
 					helper += "Name"
 				} else {
 					helper += "Value"

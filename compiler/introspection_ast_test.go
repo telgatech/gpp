@@ -18,7 +18,7 @@ func TestTransformIntrospectionUsesBodyAST(t *testing.T) {
 		},
 	}
 
-	transformed, handled, err := transformIntrospectionAST("return this.class.name", context)
+	transformed, handled, err := transformIntrospectionAST("return this.Class.Name", context)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,9 +36,9 @@ func TestTransformIntrospectionASTTracksMetadataRanges(t *testing.T) {
 		Introspection: newIntrospectionContext(map[string]*ClassDecl{"Employee": class}),
 	}
 
-	source := `descriptor := Employee.class
-for field := range descriptor.fields {
-	_ = field.name
+	source := `descriptor := Employee.Class
+for field := range descriptor.Fields {
+	_ = field.Name
 }`
 	transformed, handled, err := transformIntrospectionAST(source, context)
 	if err != nil {
@@ -55,5 +55,23 @@ for field := range descriptor.fields {
 		if !strings.Contains(transformed, expected) {
 			t.Fatalf("metadata lowering missing %q:\n%s", expected, transformed)
 		}
+	}
+}
+
+func TestIntrospectionMetadataPropertiesAreReadOnly(t *testing.T) {
+	class := &ClassDecl{Name: "Employee"}
+	context := constructorContext{
+		Targets: map[string]constructorTarget{
+			"Employee": {Class: class, InterfaceName: "GppEmployee"},
+		},
+		Introspection: newIntrospectionContext(map[string]*ClassDecl{"Employee": class}),
+	}
+	source := `func Rename(employee *Employee) { employee.Class.Name = "renamed" }`
+	_, handled, err := transformIntrospectionAST(source, context)
+	if !handled {
+		t.Fatal("expected introspection handling")
+	}
+	if err == nil || !strings.Contains(err.Error(), "read-only introspection metadata property Name") {
+		t.Fatalf("expected read-only metadata diagnostic, got %v", err)
 	}
 }

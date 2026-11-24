@@ -378,7 +378,7 @@ Generated ToGOB methods should appear in class method metadata under the same ru
 For example:
 
 ```go
-User.class.methods
+User.Class.Methods
 ```
 
 may expose:

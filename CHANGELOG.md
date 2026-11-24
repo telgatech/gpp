@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-24
+
+- Removed grouped enum declarations; each enum now has its own declaration.
+- Added concise named Go interface declarations with `interface Name { ... }` syntax.
+- Added experimental typed cache support in `gpp/exp/cache` with overloaded constructors, GOB encoding, TTL pruning, regex deletion, a replaceable store, and a bounded default 1 GiB LRU payload budget.
+- Fixed implicit error promotion for generic methods on imported classes, including factory-returned receivers.
+
+## 2026-11-23
+
+- Fixed generic class inheritance with parent type arguments applied to inherited members and constructors.
+- Fixed metadata field names for public scoping. Added exported enum and reflection metadata selectors with read-only GPP access.
+- Added experimental `gpp/exp/workflow` durable state machines with branching, signal and timeout waits, retries, and crash recovery on the work queue.
+
 ## 2026-11-22
 
 - Updated feature documentation with clearer explanations and examples.

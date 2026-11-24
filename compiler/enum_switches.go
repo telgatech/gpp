@@ -102,7 +102,7 @@ func validateEnumMembersInBlock(block *BlockStmt, context constructorContext, fi
 				return
 			}
 			switch selector.Name {
-			case "From", "values":
+			case "From", "Values":
 				return
 			}
 			if _, exists := enumMember(enum, selector.Name); exists || hasStaticEnumExtension(context.Extensions, key, enum, selector.Name) {

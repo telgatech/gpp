@@ -1,0 +1,21 @@
+import "fmt"
+
+interface Greeter {
+    Greet() string
+}
+
+struct Person {
+    Name string
+}
+
+func (person Person) Greet() string {
+    return "Hello, " + person.Name
+}
+
+func greet(value Greeter) {
+    fmt.Println(value.Greet())
+}
+
+func main() {
+    greet(Person(Name: "Ada"))
+}

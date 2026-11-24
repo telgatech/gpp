@@ -712,7 +712,7 @@ Generated methods should appear in class metadata just like normal methods unles
 For example:
 
 ```go
-User.class.methods
+User.Class.Methods
 ```
 
 may include:

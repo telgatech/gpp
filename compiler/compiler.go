@@ -562,7 +562,7 @@ func generatedPackageFingerprints(program *Program, model *SemanticModel, option
 	localFingerprints := make(map[string]string, len(filesByPackage))
 	for packageName, files := range filesByPackage {
 		h := sha256.New()
-		writePackageHashPart(h, "package-fingerprint-version=9")
+		writePackageHashPart(h, "package-fingerprint-version=11")
 		writePackageHashPart(h, "package="+packageName)
 		for _, file := range files {
 			writePackageHashPart(h, "source-path="+file.SourcePath)

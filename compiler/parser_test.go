@@ -1,9 +1,39 @@
 package compiler
 
 import (
+	"go/ast"
 	"strings"
 	"testing"
 )
+
+func TestParseNamedInterfaceShorthand(t *testing.T) {
+	file, err := ParseFile("interfaces.gpp", `interface Mapper[T any]{
+    Map(T) T
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Decls) != 1 {
+		t.Fatalf("expected one interface declaration, got %d", len(file.Decls))
+	}
+	declaration, ok := file.Decls[0].(*GoDecl)
+	if !ok || len(declaration.Declarations) != 1 {
+		t.Fatalf("expected interface shorthand to enter Go declaration path, got %#v", file.Decls[0])
+	}
+	typeDeclaration, ok := declaration.Declarations[0].(*ast.GenDecl)
+	if !ok || len(typeDeclaration.Specs) != 1 {
+		t.Fatalf("expected a Go type declaration, got %#v", declaration.Declarations[0])
+	}
+	typeSpec, ok := typeDeclaration.Specs[0].(*ast.TypeSpec)
+	if !ok || typeSpec.Name.Name != "Mapper" || typeSpec.TypeParams == nil {
+		t.Fatalf("expected generic Mapper interface type, got %#v", typeDeclaration.Specs[0])
+	}
+	interfaceType, ok := typeSpec.Type.(*ast.InterfaceType)
+	if !ok || interfaceType.Methods == nil || len(interfaceType.Methods.List) != 1 {
+		t.Fatalf("expected one interface method, got %#v", typeSpec.Type)
+	}
+}
 
 func TestParseRejectsUseDeclaration(t *testing.T) {
 	_, err := ParseFile("legacy.gpp", "use fmt\n")
@@ -211,7 +241,7 @@ func Users() {}
 	}
 }
 
-func TestParseEnumsSupportsSingleAndGroupedDeclarations(t *testing.T) {
+func TestParseEnumsRequireSeparateDeclarations(t *testing.T) {
 	file, err := ParseFile("enums.gpp", `
 enum Status int {
     Pending
@@ -219,12 +249,10 @@ enum Status int {
     Done
 }
 
-enum (
-    Role string {
-        User
-        Admin = "admin"
-    }
-)
+enum Role string {
+    User
+    Admin = "admin"
+}
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -239,6 +267,12 @@ enum (
 	role := file.Decls[1].(*EnumDecl)
 	if enumBackingType(role) != "string" || enumMemberValueSource(role.Members[0]) != `"User"` || enumMemberValueSource(role.Members[1]) != `"admin"` {
 		t.Fatalf("unexpected string enum values: %#v", role)
+	}
+	if _, err := ParseFile("grouped-enums.gpp", `enum (
+    First int { One }
+    Second int { Two }
+)`); err == nil || !strings.Contains(err.Error(), "enum requires a name") {
+		t.Fatalf("expected grouped enum syntax to be rejected, got %v", err)
 	}
 }
 

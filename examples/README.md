@@ -35,6 +35,8 @@ The examples cover:
   functions.
 - `containers.gpp` — typed `Set`, `Stack`, `Queue`, `Deque`, `List`, and
   comparator-based `PriorityQueue` from the bundled `gpp/container` package.
+- `cache.gpp` — an experimental typed cache with GOB serialization, TTLs, and
+  load-on-miss behavior.
 - `static_methods.gpp` — class-qualified factory and parsing methods.
 - `inheritance.gpp` — multiple parent fields and methods, overrides dispatched
   through both parent types, and qualified parent access.
@@ -46,12 +48,14 @@ The examples cover:
 - `safe_access.gpp` — explicit `?.` safe access for nullable class values.
 - `structs.gpp` — named and anonymous structs flowing through function
   parameters and return values.
+- `interfaces.gpp` — concise named interface declarations and implicit Go
+  interface satisfaction.
 - `introspection.gpp` — runtime class names, parent classes, inherited field
   ownership and access, method and parameter metadata, and annotation lookup.
 - `extension_methods.gpp` — extensions on strings and GPP classes.
 - `multi_extension.gpp` — one extension block shared by strings and slices,
   including a generic extension method.
-- `enums.gpp` — typed enums, enum blocks, explicit values, lookup, iteration,
+- `enums.gpp` — typed enum declarations, explicit values, lookup, iteration,
   and JSON encoding.
 - `annotations.gpp` — declared annotations, target restrictions, field/method
   usage, and annotation introspection.
@@ -80,6 +84,8 @@ The examples cover:
   explicit startup, context-aware callbacks, and graceful shutdown.
 - `queue.gpp` — durable messages with priorities and bounded draining;
   retries and dead-letter handling are checked in `tests/queue.gpp`.
+- `workflow.gpp` — order fulfillment across durable workflow steps; process
+  crash recovery is tested in `tests/workflow.gpp`.
 - `todo-app.gpp` — a server-rendered SQLite todo app with a JSON API, OpenAPI
   and Swagger UI, ORM static query methods with exception-based error handling,
   and a context-aware cron cleanup job.

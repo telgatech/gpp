@@ -91,45 +91,12 @@ enum Membership string {
 }
 
 membership := Membership.Seller
-fmt.Println(membership.name)  // Seller
-fmt.Println(membership.value) // seller
+fmt.Println(membership.Name)  // Seller
+fmt.Println(membership.Value) // seller
 ```
 
-## Declare related enums together
-
-An `enum (...)` block groups multiple declarations when a package defines
-several related choice sets. Each declaration still creates an independent
-enum type with its own backing type and members:
-
-```go
-enum (
-    Status string {
-        Draft
-        Published
-        Archived
-    }
-
-    Visibility int {
-        Private
-        Unlisted
-        Public
-    }
-
-    Priority int {
-        Low
-        Normal
-        High
-    }
-)
-
-status := Status.Published
-visibility := Visibility.Public
-priority := Priority.High
-```
-
-Grouping is only a declaration convenience. It does not combine the enums:
-for example, `Status.Published` cannot be used where `Visibility` is
-expected, even if two enums use the same backing type.
+Declare each enum separately. Every declaration defines one independent named
+type with its own backing type and members.
 
 The member name identifies the choice in source code and metadata; the backing
 value is the normal representation for JSON, SQL, and other boundaries. That
@@ -186,8 +153,8 @@ The enum also exposes its declared values in declaration order, which is
 useful for menus, validation messages, documentation, and introspection:
 
 ```go
-for role := range Role.values {
-    fmt.Println(role.name, role.value)
+for role := range Role.Values {
+    fmt.Println(role.Name, role.Value)
 }
 ```
 

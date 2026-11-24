@@ -1887,7 +1887,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 	}
 	fmt.Fprintf(out, "type %s%s struct {\n", class.Name, classTypeParams)
 
-	for _, parent := range classParentNames(class) {
+	for _, parent := range classParentTypeSources(class) {
 		fmt.Fprintf(out, "\t%s\n", parent)
 	}
 
@@ -1949,8 +1949,18 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 			emitDefaultObjectMethod(out, class, method, context)
 			continue
 		}
-		if parentName, ok := importedParentForMethod(class, method, classes); ok {
-			if err := emitImportedInheritedMethod(out, class, parentName, method, context); err != nil {
+		if method.InheritedFromGeneric {
+			parentName, ok := genericInheritedParentForMethod(class, method, classes)
+			if !ok {
+				return classDiagnosticf(class, "cannot find generic parent implementation for inherited method %s", method.Name)
+			}
+			if err := emitInheritedMethod(out, class, parentName, method, context); err != nil {
+				return err
+			}
+			continue
+		}
+		if parentName, imported := importedParentForMethod(class, method, classes); imported {
+			if err := emitInheritedMethod(out, class, parentName, method, context); err != nil {
 				return err
 			}
 			continue
@@ -2128,7 +2138,7 @@ func emitClass(out *strings.Builder, file *File, class *ClassDecl, context const
 		}
 		parameterSource := methodParametersSource(method)
 		resultSource := methodResultSource(method)
-		if parentName, imported := importedParentForMethod(class, method, classes); imported {
+		if parentName, inherited := importedParentForMethod(class, method, classes); inherited {
 			parameterSource = qualifyInheritedMethodTypes(parameterSource, method, parentName, classes, context)
 			resultSource = qualifyInheritedMethodTypes(resultSource, method, parentName, classes, context)
 		}
@@ -2497,9 +2507,30 @@ func emitDefaultObjectMethod(out *strings.Builder, class *ClassDecl, method Meth
 	out.WriteString("}\n\n")
 }
 
-// importedParentForMethod identifies inherited methods whose implementation
-// belongs to another generated package. Their bodies must remain in that
-// package so references to package-local helpers and imports stay valid.
+// genericInheritedParentForMethod identifies the direct generic parent whose
+// instantiated method is exposed by an inherited wrapper.
+func genericInheritedParentForMethod(class *ClassDecl, method Method, classes map[string]*ClassDecl) (string, bool) {
+	if classDeclaresMethod(class, method) {
+		return "", false
+	}
+	for parentIndex, parentName := range classParentNames(class) {
+		parent := classes[parentName]
+		if parent == nil {
+			continue
+		}
+		parentMethods, err := inheritedMethodsForParent(parent, class.ParentAST[parentIndex], classes, map[*ClassDecl]bool{})
+		if err != nil {
+			continue
+		}
+		for _, parentMethod := range parentMethods {
+			if methodSignatureKey(parentMethod) == methodSignatureKey(method) && parentMethod.Name == method.Name {
+				return parentName, true
+			}
+		}
+	}
+	return "", false
+}
+
 func importedParentForMethod(class *ClassDecl, method Method, classes map[string]*ClassDecl) (string, bool) {
 	if classDeclaresMethod(class, method) {
 		return "", false
@@ -2523,6 +2554,59 @@ func importedParentForMethod(class *ClassDecl, method Method, classes map[string
 		}
 	}
 	return "", false
+}
+
+func inheritedMethodsForParent(parent *ClassDecl, parentType TypeNode, classes map[string]*ClassDecl, visiting map[*ClassDecl]bool) ([]Method, error) {
+	methods, err := interfaceMethods(parent, classes, visiting)
+	if err != nil {
+		return nil, err
+	}
+	substitutions := classTypeSubstitutions(parent, parentType)
+	if len(substitutions) == 0 {
+		return methods, nil
+	}
+	for index := range methods {
+		methods[index] = substituteMethodTypes(methods[index], substitutions)
+		if len(parent.TypeParamsAST) > 0 {
+			methods[index].InheritedFromGeneric = true
+		}
+	}
+	return methods, nil
+}
+
+func classTypeSubstitutions(class *ClassDecl, instance TypeNode) map[string]TypeNode {
+	substitutions := map[string]TypeNode{}
+	if class == nil {
+		return substitutions
+	}
+	named, ok := instance.(*NamedType)
+	if !ok || len(named.Arguments) != len(class.TypeParamsAST) {
+		return substitutions
+	}
+	for index, parameter := range class.TypeParamsAST {
+		substitutions[parameter.Name] = named.Arguments[index]
+	}
+	return substitutions
+}
+
+func substituteMethodTypes(method Method, substitutions map[string]TypeNode) Method {
+	if len(substitutions) == 0 {
+		return method
+	}
+	method.ParameterAST = append([]ParameterNode(nil), method.ParameterAST...)
+	for index := range method.ParameterAST {
+		method.ParameterAST[index].Type = substituteTypeParameters(method.ParameterAST[index].Type, substitutions)
+	}
+	method.ResultAST = substituteTypeParameters(method.ResultAST, substitutions)
+	method.ResultFieldsAST = append([]ParameterNode(nil), method.ResultFieldsAST...)
+	for index := range method.ResultFieldsAST {
+		method.ResultFieldsAST[index].Type = substituteTypeParameters(method.ResultFieldsAST[index].Type, substitutions)
+	}
+	method.TypeParamsAST = append([]TypeParameterNode(nil), method.TypeParamsAST...)
+	for index := range method.TypeParamsAST {
+		method.TypeParamsAST[index].Constraint = substituteTypeParameters(method.TypeParamsAST[index].Constraint, substitutions)
+	}
+	return method
 }
 
 func classDeclaresMethod(class *ClassDecl, method Method) bool {
@@ -2560,7 +2644,7 @@ func parameterSignatureKeyFromSource(params string) string {
 	return strings.Join(parts, ",")
 }
 
-func emitImportedInheritedMethod(out *strings.Builder, class *ClassDecl, parentName string, method Method, context constructorContext) error {
+func emitInheritedMethod(out *strings.Builder, class *ClassDecl, parentName string, method Method, context constructorContext) error {
 	typeParameters := append([]TypeParameterNode(nil), method.TypeParamsAST...)
 	for index := range typeParameters {
 		if typeParameters[index].Constraint == nil {
@@ -2812,7 +2896,7 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 		seen[method.Name+fmt.Sprintf("/%d", arity)] = true
 	}
 
-	for _, parentName := range classParentNames(class) {
+	for parentIndex, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			return nil, fmt.Errorf(
@@ -2822,7 +2906,10 @@ func interfaceMethods(class *ClassDecl, classes map[string]*ClassDecl, visiting 
 			)
 		}
 
-		parentMethods, err := interfaceMethods(parent, classes, visiting)
+		if parentIndex >= len(class.ParentAST) {
+			return nil, fmt.Errorf("class %s has invalid parent type %s", class.Name, parentName)
+		}
+		parentMethods, err := inheritedMethodsForParent(parent, class.ParentAST[parentIndex], classes, visiting)
 		if err != nil {
 			return nil, err
 		}
@@ -2861,6 +2948,15 @@ func methodOutputName(method Method) string {
 		name = method.GoName
 	}
 	if memberVisibility(method.Name) == memberProtected {
+		// Queue messages use a protected _execute() hook. Experimental
+		// workflows overload it with _execute(step), so keep the generated Go
+		// selectors distinct when an overload comes from a parent class.
+		if method.Name == "_execute" && method.GoName == "" {
+			arity, err := parameterCount(methodParametersSource(method))
+			if err == nil {
+				name += fmt.Sprintf("__gpp_%d", arity)
+			}
+		}
 		return generatedMemberName(name)
 	}
 	return name
@@ -3102,13 +3198,13 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 	defer delete(visiting, class)
 
 	overloads := map[string]map[string]string{}
-	for _, method := range class.Methods {
+	addMethod := func(method Method) {
 		if method.GoName == "" || method.IsStatic {
-			continue
+			return
 		}
 		minimumArity, maximumArity, err := methodCallArityRange(method)
 		if err != nil {
-			continue
+			return
 		}
 		parameters := method.ParameterAST
 		if len(parameters) == 0 && maximumArity != 0 {
@@ -3126,22 +3222,24 @@ func methodOverloadTypesForClass(class *ClassDecl, classes map[string]*ClassDecl
 			overloads[method.Name][key] = methodOutputName(method)
 		}
 	}
-	for _, parentName := range classParentNames(class) {
+	for _, method := range class.Methods {
+		addMethod(method)
+	}
+	for parentIndex, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			continue
 		}
-		for name, methods := range methodOverloadTypesForClass(parent, classes, visiting) {
-			if !classMemberVisibleToSubclass(parent, name) {
-				continue
-			}
-			if overloads[name] == nil {
-				overloads[name] = map[string]string{}
-			}
-			for typeKey, goName := range methods {
-				if _, exists := overloads[name][typeKey]; !exists {
-					overloads[name][typeKey] = goName
-				}
+		if parentIndex >= len(class.ParentAST) {
+			continue
+		}
+		methods, err := inheritedMethodsForParent(parent, class.ParentAST[parentIndex], classes, visiting)
+		if err != nil {
+			continue
+		}
+		for _, method := range methods {
+			if classMemberVisibleToSubclass(parent, method.Name) {
+				addMethod(method)
 			}
 		}
 	}
@@ -3170,11 +3268,19 @@ func classFieldTypesForClass(class *ClassDecl, classes map[string]*ClassDecl, vi
 	defer delete(visiting, class)
 
 	fields := map[string]string{}
-	for _, parentName := range classParentNames(class) {
+	for parentIndex, parentName := range classParentNames(class) {
 		if parent, ok := classes[parentName]; ok {
-			for name, typeName := range classFieldTypesForClass(parent, classes, visiting) {
+			parentFields := classFieldTypesForClass(parent, classes, visiting)
+			substitutions := map[string]TypeNode{}
+			if parentIndex < len(class.ParentAST) {
+				substitutions = classTypeSubstitutions(parent, class.ParentAST[parentIndex])
+			}
+			for name, typeName := range parentFields {
 				if !classMemberVisibleToSubclass(parent, name) {
 					continue
+				}
+				if len(substitutions) > 0 {
+					typeName = substituteTypeSource(typeName, substitutions)
 				}
 				fields[name] = typeName
 			}
@@ -4330,6 +4436,11 @@ func overloadCallName(call *CallExpr, types map[string]string, overloads overloa
 }
 
 func overloadMethodCallName(function *SelectorExpr, genericArity, arity int, typeKey string, types map[string]string, overloads overloadContext) (string, bool, error) {
+	// Generated protected dispatch selectors already contain their Go-level
+	// overload name and must not be lowered a second time as source methods.
+	if strings.HasPrefix(function.Name, "GppProtected_") {
+		return "", false, nil
+	}
 	methodSet := overloads.Methods
 	methodTypes := overloads.MethodTypes
 	if receiver, ok := function.Receiver.(*NameExpr); !ok || receiver.Name != "this" {
@@ -5071,6 +5182,10 @@ type constructorField struct {
 }
 
 func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix []string, visiting map[*ClassDecl]bool) ([]constructorField, error) {
+	return constructorFieldsWithSubstitution(class, classes, prefix, visiting, nil)
+}
+
+func constructorFieldsWithSubstitution(class *ClassDecl, classes map[string]*ClassDecl, prefix []string, visiting map[*ClassDecl]bool, substitutions map[string]TypeNode) ([]constructorField, error) {
 	if visiting[class] {
 		return nil, fmt.Errorf("inheritance cycle involving class %s", class.Name)
 	}
@@ -5079,7 +5194,7 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 	defer delete(visiting, class)
 
 	fields := []constructorField{}
-	for _, parentName := range classParentNames(class) {
+	for parentIndex, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			return nil, fmt.Errorf(
@@ -5089,11 +5204,16 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 			)
 		}
 
-		parentFields, err := constructorFields(
+		parentType := TypeNode(nil)
+		if parentIndex < len(class.ParentAST) {
+			parentType = substituteTypeParameters(class.ParentAST[parentIndex], substitutions)
+		}
+		parentFields, err := constructorFieldsWithSubstitution(
 			parent,
 			classes,
 			append(prefix, classParentFieldName(parentName)),
 			visiting,
+			classTypeSubstitutions(parent, parentType),
 		)
 		if err != nil {
 			return nil, err
@@ -5102,9 +5222,17 @@ func constructorFields(class *ClassDecl, classes map[string]*ClassDecl, prefix [
 	}
 
 	for _, field := range class.Fields {
+		fieldType := field.TypeAST
+		if fieldType != nil {
+			fieldType = substituteTypeParameters(fieldType, substitutions)
+		}
+		fieldTypeText, err := typeNodeSource(fieldType)
+		if err != nil || fieldTypeText == "" {
+			fieldTypeText = fieldTypeSource(field)
+		}
 		fields = append(fields, constructorField{
 			Name:        field.Name,
-			Type:        fieldTypeSource(field),
+			Type:        fieldTypeText,
 			Path:        append([]string(nil), prefix...),
 			Owner:       class.Name,
 			File:        field.Owner,

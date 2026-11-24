@@ -22,14 +22,93 @@ import (
 // subclasses provide the protected _execute hook and serialization for their own fields.
 class Message @{gppencoding.Serializable} {
     Priority int
+    execution *Execution @{gppencoding.Ignore}
 
     func _execute() error @{std.Hook} {
         return fmt.Errorf("queue: message subclasses must implement _execute")
     }
 
+    func _queueBegin(signal string) @{std.Hook} {
+        this.execution = Execution.Create(signal)
+    }
+
+    // ExecutionContext is available while _execute is running. Specialized
+    // message types can use it to request continuation, waiting, or retries.
+    func ExecutionContext() *Execution {
+        return this.execution
+    }
+
+    func _queueOutcome() ExecutionOutcome @{std.Hook} {
+        if this.execution == nil {
+            return ExecutionOutcome{}
+        }
+        return this.execution.Outcome()
+    }
+
     func QueuePriority() int {
         return this.Priority
     }
+}
+
+// Execution carries scheduling requests for the current message attempt.
+// Message subclasses can request continuation, waiting, or a retry override.
+class Execution {
+    signal string
+    continueExecution bool
+    waitFor string
+    timeout time.Duration
+    timeoutEvent string
+    retries int
+    hasRetries bool
+
+    static func Create(signal string) *Execution {
+        execution := Execution()
+        execution.signal = signal
+        return execution
+    }
+
+    func Signal() string {
+        return this.signal
+    }
+
+    func Continue() {
+        this.continueExecution = true
+    }
+
+    func WaitFor(signal string, timeout time.Duration, timeoutEvent string) {
+        this.waitFor = signal
+        this.timeout = timeout
+        this.timeoutEvent = timeoutEvent
+    }
+
+    func RetryLimit(retries int) {
+        this.retries = retries
+        this.hasRetries = true
+    }
+
+    func Outcome() ExecutionOutcome {
+        wakeAt := int64(0)
+        if this.timeout > 0 {
+            wakeAt = time.Now().Add(this.timeout).UnixNano()
+        }
+        return ExecutionOutcome{
+            Continue: this.continueExecution,
+            WaitFor: this.waitFor,
+            WakeAt: wakeAt,
+            TimeoutEvent: this.timeoutEvent,
+            Retries: this.retries,
+            HasRetries: this.hasRetries,
+        }
+    }
+}
+
+type ExecutionOutcome struct {
+    Continue bool
+    WaitFor string
+    WakeAt int64
+    TimeoutEvent string
+    Retries int
+    HasRetries bool
 }
 
 type gppQueueStored struct {
@@ -39,6 +118,11 @@ type gppQueueStored struct {
     LastError string
     Type string
     Payload []byte
+    Waiting bool
+    WaitFor string
+    WakeAt int64
+    TimeoutEvent string
+    Signal string
 }
 
 type gppQueueEvent struct {
@@ -50,6 +134,11 @@ type gppQueueEvent struct {
     LastError string
     Type string
     Payload []byte
+    Waiting bool
+    WaitFor string
+    WakeAt int64
+    TimeoutEvent string
+    Signal string
 }
 
 class DeadLetter {
@@ -178,7 +267,7 @@ class Queue {
             if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&event); err != nil {
                 return fmt.Errorf("queue: decode log record at offset %d: %w", offset, err)
             }
-            if event.Version != 1 || (event.ID == 0 && event.Kind != 5) {
+            if (event.Version != 1 && event.Version != 2 && event.Version != 3) || (event.ID == 0 && event.Kind != 5) {
                 return fmt.Errorf("queue: invalid log event at offset %d", offset)
             }
             switch event.Kind {
@@ -193,6 +282,11 @@ class Queue {
                     return fmt.Errorf("queue: duplicate message ID %d in log", event.ID)
                 }
                 stored := gppQueueStored{ID: event.ID, Priority: event.Priority, Retries: event.Retries, LastError: event.LastError, Type: event.Type, Payload: event.Payload}
+                stored.Waiting = event.Waiting
+                stored.WaitFor = event.WaitFor
+                stored.WakeAt = event.WakeAt
+                stored.TimeoutEvent = event.TimeoutEvent
+                stored.Signal = event.Signal
                 this.items[event.ID] = stored
                 if event.ID >= this.nextID {
                     this.nextID = event.ID + 1
@@ -227,6 +321,38 @@ class Queue {
             case 5:
                 this.needsStartupCompaction = true
                 this.dead = map[uint64]gppQueueStored{}
+            case 6:
+                stored, exists := this.items[event.ID]
+                if (event.Version != 2 && event.Version != 3) || !exists {
+                    return fmt.Errorf("queue: invalid checkpoint for message %d", event.ID)
+                }
+                stored.Payload = event.Payload
+                stored.Retries = 0
+                stored.LastError = ""
+                stored.Waiting = event.Waiting
+                stored.WaitFor = event.WaitFor
+                stored.WakeAt = event.WakeAt
+                stored.TimeoutEvent = event.TimeoutEvent
+                stored.Signal = event.Signal
+                this.items[event.ID] = stored
+            case 7:
+                stored, exists := this.items[event.ID]
+                if event.Version != 3 || !exists || !stored.Waiting || stored.WaitFor != event.Signal {
+                    return fmt.Errorf("queue: invalid signal event for message %d", event.ID)
+                }
+                stored.Waiting = false
+                stored.Signal = event.Signal
+                stored.WakeAt = 0
+                this.items[event.ID] = stored
+            case 8:
+                stored, exists := this.items[event.ID]
+                if event.Version != 3 || !exists || !stored.Waiting || stored.TimeoutEvent == "" || stored.TimeoutEvent != event.Signal {
+                    return fmt.Errorf("queue: invalid timeout event for message %d (version=%d, exists=%t, waiting=%t, expected=%q, got=%q)", event.ID, event.Version, exists, stored.Waiting, stored.TimeoutEvent, event.Signal)
+                }
+                stored.Waiting = false
+                stored.Signal = event.Signal
+                stored.WakeAt = 0
+                this.items[event.ID] = stored
             default:
                 return fmt.Errorf("queue: unknown log event kind %d at offset %d", event.Kind, offset)
             }
@@ -234,7 +360,9 @@ class Queue {
         }
         this.pending = []uint64{}
         for _, item := range this.items {
-            this.pending = gppQueueInsertPending(this.pending, this.items, item.ID)
+            if !item.Waiting {
+                this.pending = gppQueueInsertPending(this.pending, this.items, item.ID)
+            }
             if _, err := gppQueueRestore(item); err != nil {
                 return err
             }
@@ -253,22 +381,55 @@ class Queue {
 
     // Push durably stores a message and schedules it for execution.
     func Push(message GppMessage) error {
+        _, err := this.PushID(message)
+        return err
+    }
+
+    // PushID stores a message and returns its durable queue ID.
+    func PushID(message GppMessage) (uint64, error) {
         class := message.GppRuntimeClass()
         if class == nil || !gppQueueIsMessageClass(class, map[*GppClass]bool {}) {
-            return fmt.Errorf("queue: message must subclass queue.Message")
+            return 0, fmt.Errorf("queue: message must subclass queue.Message")
         }
         if !gppQueueHasConcreteExecute(class) {
-            return fmt.Errorf("queue: message class %s must implement _execute", class.Name)
+            return 0, fmt.Errorf("queue: message class %s must implement _execute", class.Name)
         }
         if class.DecodeGOB == nil {
-            return fmt.Errorf("queue: message class %s has no generated serializer", class.Name)
+            return 0, fmt.Errorf("queue: message class %s has no generated serializer", class.Name)
         }
         payload, err := message.ToGOB()
         if err != nil {
-            return fmt.Errorf("queue: serialize message: %w", err)
+            return 0, fmt.Errorf("queue: serialize message: %w", err)
         }
         stored := gppQueueStored{Priority: message.QueuePriority(), Type: class.Package + "." + class.Name, Payload: payload}
 
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        if this.closed || this.closing {
+            return 0, fmt.Errorf("queue: queue is closed")
+        }
+        if this.failure != nil {
+            return 0, fmt.Errorf("queue: log is unavailable: %w", this.failure)
+        }
+        stored.ID = this.nextID
+        event := gppQueueEvent{Version: 3, Kind: 1, ID: stored.ID, Priority: stored.Priority, Type: stored.Type, Payload: stored.Payload}
+        if err := gppQueueAppend(this.log, event); err != nil {
+            this.failure = err
+            return 0, err
+        }
+        this.nextID++
+        this.items[stored.ID] = stored
+        this.pending = gppQueueInsertPending(this.pending, this.items, stored.ID)
+        gppQueueNotify(this.notify)
+        gppQueueNotify(this.changed)
+        return stored.ID, nil
+    }
+
+    // Signal resumes a message waiting for the matching string event.
+    func Signal(id uint64, eventName string) error {
+        if eventName == "" {
+            return fmt.Errorf("queue: signal event cannot be empty")
+        }
         this.mu.Lock()
         defer this.mu.Unlock()
         if this.closed || this.closing {
@@ -277,15 +438,26 @@ class Queue {
         if this.failure != nil {
             return fmt.Errorf("queue: log is unavailable: %w", this.failure)
         }
-        stored.ID = this.nextID
-        event := gppQueueEvent{Version: 1, Kind: 1, ID: stored.ID, Priority: stored.Priority, Type: stored.Type, Payload: stored.Payload}
-        if err := gppQueueAppend(this.log, event); err != nil {
+        stored, exists := this.items[id]
+        if !exists {
+            return fmt.Errorf("queue: message %d does not exist", id)
+        }
+        if !stored.Waiting {
+            return fmt.Errorf("queue: message %d is not waiting", id)
+        }
+        if stored.WaitFor != eventName {
+            return fmt.Errorf("queue: message %d is waiting for %q, not %q", id, stored.WaitFor, eventName)
+        }
+        signal := gppQueueEvent{Version: 3, Kind: 7, ID: id, Signal: eventName}
+        if err := gppQueueAppend(this.log, signal); err != nil {
             this.failure = err
             return err
         }
-        this.nextID++
-        this.items[stored.ID] = stored
-        this.pending = gppQueueInsertPending(this.pending, this.items, stored.ID)
+        stored.Waiting = false
+        stored.Signal = eventName
+        stored.WakeAt = 0
+        this.items[id] = stored
+        this.pending = gppQueueInsertPending(this.pending, this.items, id)
         gppQueueNotify(this.notify)
         gppQueueNotify(this.changed)
         return nil
@@ -458,12 +630,18 @@ class Queue {
     func consume() {
         defer close(this.workerDone)
         for {
-            stored, ok := this.take()
+            stored, ok, nextWake := this.take()
             if !ok {
+                var timer <-chan time.Time
+                if nextWake > 0 {
+                    timer = time.After(nextWake)
+                }
                 select {
                 case <-this.stop:
                     return
                 case <-this.notify:
+                    continue
+                case <-timer:
                     continue
                 }
             }
@@ -483,26 +661,46 @@ class Queue {
                 }
                 continue
             }
-            if err := message.GppProtected_execute(); err != nil {
-                retry, recordErr := this.fail(stored.ID, err)
+            message.GppProtected_queueBegin(stored.Signal)
+            executionErr := message.GppProtected_execute__gpp_0()
+            outcome := message.GppProtected_queueOutcome()
+            if executionErr != nil {
+                retryLimit := this.retries
+                if outcome.HasRetries {
+                    retryLimit = outcome.Retries
+                }
+                retry, recordErr := this.failWithRetries(stored.ID, executionErr, retryLimit)
                 if recordErr != nil {
                     stdlog.Printf("queue: record failure for message %d: %v", stored.ID, recordErr)
                     if !gppQueuePause(this.stop) { return }
                     continue
                 }
                 if retry {
-                    stdlog.Printf("queue: _execute for message %d (%s) failed; retrying: %v", stored.ID, stored.Type, err)
+                    stdlog.Printf("queue: _execute for message %d (%s) failed; retrying: %v", stored.ID, stored.Type, executionErr)
                     if !gppQueuePause(this.stop) { return }
                 } else {
-                    stdlog.Printf("queue: _execute for message %d (%s) failed; moved to dead letters: %v", stored.ID, stored.Type, err)
+                    stdlog.Printf("queue: _execute for message %d (%s) failed; moved to dead letters: %v", stored.ID, stored.Type, executionErr)
                 }
                 continue
             }
-            if err := this.ack(stored.ID); err != nil {
-                stdlog.Printf("queue: acknowledge message %d failed: %v", stored.ID, err)
-                this.release(stored.ID)
-                if !gppQueuePause(this.stop) { return }
-                continue
+            if outcome.Continue || outcome.WaitFor != "" {
+                payload, err := message.ToGOB()
+                if err == nil {
+                    err = this.checkpoint(stored.ID, payload, outcome.WaitFor, outcome.WakeAt, outcome.TimeoutEvent)
+                }
+                if err != nil {
+                    stdlog.Printf("queue: checkpoint message %d failed: %v", stored.ID, err)
+                    this.release(stored.ID)
+                    if !gppQueuePause(this.stop) { return }
+                    continue
+                }
+            } else {
+                if err := this.ack(stored.ID); err != nil {
+                    stdlog.Printf("queue: acknowledge message %d failed: %v", stored.ID, err)
+                    this.release(stored.ID)
+                    if !gppQueuePause(this.stop) { return }
+                    continue
+                }
             }
             select {
             case <-this.stop:
@@ -512,23 +710,55 @@ class Queue {
         }
     }
 
-    func take() (gppQueueStored, bool) {
+    func take() (gppQueueStored, bool, time.Duration) {
         this.mu.Lock()
         defer this.mu.Unlock()
         if this.closed || this.failure != nil {
-            return gppQueueStored{}, false
+            return gppQueueStored{}, false, 0
         }
-        for len(this.pending) > 0 {
-            id := this.pending[0]
-            this.pending = this.pending[1:]
-            stored, exists := this.items[id]
-            if !exists || this.inFlight[id] {
+        for {
+            for len(this.pending) > 0 {
+                id := this.pending[0]
+                this.pending = this.pending[1:]
+                stored, exists := this.items[id]
+                if !exists || this.inFlight[id] || stored.Waiting {
+                    continue
+                }
+                this.inFlight[id] = true
+                return stored, true, 0
+            }
+
+            now := time.Now()
+            var nextWake int64
+            for id, stored := range this.items {
+                if !stored.Waiting || stored.WakeAt == 0 {
+                    continue
+                }
+                if stored.WakeAt <= now.UnixNano() {
+                    event := gppQueueEvent{Version: 3, Kind: 8, ID: id, Signal: stored.TimeoutEvent}
+                    if err := gppQueueAppend(this.log, event); err != nil {
+                        this.failure = err
+                        return gppQueueStored{}, false, 0
+                    }
+                    stored.Waiting = false
+                    stored.Signal = stored.TimeoutEvent
+                    stored.WakeAt = 0
+                    this.items[id] = stored
+                    this.pending = gppQueueInsertPending(this.pending, this.items, id)
+                    continue
+                }
+                if nextWake == 0 || stored.WakeAt < nextWake {
+                    nextWake = stored.WakeAt
+                }
+            }
+            if len(this.pending) > 0 {
                 continue
             }
-            this.inFlight[id] = true
-            return stored, true
+            if nextWake == 0 {
+                return gppQueueStored{}, false, 0
+            }
+            return gppQueueStored{}, false, time.Duration(nextWake - now.UnixNano())
         }
-        return gppQueueStored{}, false
     }
 
     func ack(id uint64) error {
@@ -552,7 +782,45 @@ class Queue {
         return this.maybeCompact()
     }
 
+    func checkpoint(id uint64, payload []byte, waitFor string, wakeAt int64, timeoutEvent string) error {
+        this.mu.Lock()
+        defer this.mu.Unlock()
+        stored, exists := this.items[id]
+        if !exists || !this.inFlight[id] {
+            return fmt.Errorf("queue: message %d is not in flight", id)
+        }
+        if this.failure != nil {
+            return fmt.Errorf("queue: log is unavailable: %w", this.failure)
+        }
+        waiting := waitFor != ""
+        event := gppQueueEvent{Version: 3, Kind: 6, ID: id, Payload: payload, Waiting: waiting, WaitFor: waitFor, WakeAt: wakeAt, TimeoutEvent: timeoutEvent}
+        if err := gppQueueAppend(this.log, event); err != nil {
+            this.failure = err
+            return err
+        }
+        stored.Payload = payload
+        stored.Retries = 0
+        stored.LastError = ""
+        stored.Waiting = waiting
+        stored.WaitFor = waitFor
+        stored.WakeAt = wakeAt
+        stored.TimeoutEvent = timeoutEvent
+        stored.Signal = ""
+        this.items[id] = stored
+        delete(this.inFlight, id)
+        if !stored.Waiting {
+            this.pending = gppQueueInsertPendingContinuation(this.pending, this.items, id)
+        }
+        gppQueueNotify(this.notify)
+        gppQueueNotify(this.changed)
+        return this.maybeCompact()
+    }
+
     func fail(id uint64, executionErr error) (bool, error) {
+        return this.failWithRetries(id, executionErr, this.retries)
+    }
+
+    func failWithRetries(id uint64, executionErr error, retryLimit int) (bool, error) {
         this.mu.Lock()
         defer this.mu.Unlock()
         stored, exists := this.items[id]
@@ -564,7 +832,7 @@ class Queue {
             delete(this.inFlight, id)
             return false, fmt.Errorf("queue: log is unavailable: %w", this.failure)
         }
-        retry := stored.Retries < this.retries
+        retry := stored.Retries < retryLimit
         kind := uint8(4)
         if retry {
             kind = 3
@@ -632,7 +900,7 @@ class Queue {
             return fmt.Errorf("queue: create compacted log: %w", err)
         }
         writeItem := func(item gppQueueStored) error {
-            event := gppQueueEvent{Version: 1, Kind: 1, ID: item.ID, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Type: item.Type, Payload: item.Payload}
+            event := gppQueueEvent{Version: 3, Kind: 1, ID: item.ID, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Type: item.Type, Payload: item.Payload, Waiting: item.Waiting, WaitFor: item.WaitFor, WakeAt: item.WakeAt, TimeoutEvent: item.TimeoutEvent, Signal: item.Signal}
             frame, err := gppQueueFrame(event)
             if err != nil {
                 return err
@@ -668,7 +936,7 @@ class Queue {
             }
         }
         for id, item := range this.dead {
-            event := gppQueueEvent{Version: 1, Kind: 4, ID: id, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Type: item.Type, Payload: item.Payload}
+            event := gppQueueEvent{Version: 3, Kind: 4, ID: id, Priority: item.Priority, Retries: item.Retries, LastError: item.LastError, Type: item.Type, Payload: item.Payload, Waiting: item.Waiting, WaitFor: item.WaitFor, WakeAt: item.WakeAt, TimeoutEvent: item.TimeoutEvent, Signal: item.Signal}
             frame, err := gppQueueFrame(event)
             if err != nil {
                 _ = file.Close()
@@ -754,7 +1022,7 @@ func gppQueueIsMessageClass(class *GppClass, visiting map[*GppClass]bool) bool {
 
 func gppQueueHasConcreteExecute(class *GppClass) bool {
     for _, method := range class.Methods {
-        if method.Name == "_execute" && method.Owner != nil && method.Owner != GppMessageClass {
+        if method.Name == "_execute" && method.Owner != nil && method.Owner != GppMessageClass && len(method.Parameters) == 0 {
             return true
         }
     }
@@ -767,6 +1035,21 @@ func gppQueueInsertPending(pending []uint64, items map[uint64]gppQueueStored, id
     for current, pendingID := range pending {
         item := items[pendingID]
         if priority > item.Priority || (priority == item.Priority && id < pendingID) {
+            index = current
+            break
+        }
+    }
+    pending = append(pending, 0)
+    copy(pending[index+1:], pending[index:])
+    pending[index] = id
+    return pending
+}
+
+func gppQueueInsertPendingContinuation(pending []uint64, items map[uint64]gppQueueStored, id uint64) []uint64 {
+    priority := items[id].Priority
+    index := len(pending)
+    for current, pendingID := range pending {
+        if priority > items[pendingID].Priority {
             index = current
             break
         }

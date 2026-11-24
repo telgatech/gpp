@@ -1,0 +1,24 @@
+import (
+    "fmt"
+    "gpp/encoding"
+    cache "gpp/exp/cache"
+    "time"
+)
+
+class Report @{encoding.Serializable} {
+    Name string
+    Total int
+}
+
+func main() {
+    try {
+        reports := cache.Cache()
+        report := reports.GetOrSet[*Report]("report:weekly", 5*time.Minute, func() (*Report, error) {
+                fmt.Println("building report")
+                return Report(Name: "weekly", Total: 42), nil
+        })
+        fmt.Println(report.Name, report.Total)
+    } catch err {
+        fmt.Println("cache example:", err)
+    }
+}

@@ -1,0 +1,257 @@
+package gpp.exp.workflow
+
+import (
+    "fmt"
+    "time"
+    queue "gpp/exp/queue"
+    std "gpp/std"
+)
+
+// State declares one state in a state machine.
+type State struct {
+    Name string
+    Terminal bool
+    Retries int
+    HasRetries bool
+}
+
+// Transition routes a state and its completed event to another state.
+type Transition struct {
+    From string
+    On string
+    To string
+}
+
+// Wait pauses a state until its signal arrives or its timeout expires.
+type Wait struct {
+    State string
+    Signal string
+    Timeout time.Duration
+    TimeoutEvent string
+    HasTimeout bool
+}
+
+type gppStateMachineHooks interface {
+    GppProtected_states() []State
+    GppProtected_transitions() []Transition
+    GppProtected_waits() []Wait
+    GppProtected_execute__gpp_1(state string) (string, error)
+}
+
+// Message adds durable state-machine execution to a serializable queue message.
+class Message : queue.Message {
+    CurrentState string
+
+    func _states() []State @{std.Hook} {
+        return []State{}
+    }
+
+    func _transitions() []Transition @{std.Hook} {
+        return []Transition{}
+    }
+
+    func _waits() []Wait @{std.Hook} {
+        return []Wait{}
+    }
+
+    func _execute(state string) (string, error) @{std.Hook} {
+        return "", fmt.Errorf("workflow: message subclasses must implement _execute(state)")
+    }
+
+    func _execute() error @{std.Hook} {
+        hooks, err := gppStateMachineGetHooks(this)
+        if err != nil {
+            return err
+        }
+        states := hooks.GppProtected_states()
+        transitions := hooks.GppProtected_transitions()
+        waits := hooks.GppProtected_waits()
+        if err := gppStateMachineValidate(states, transitions, waits); err != nil {
+            return err
+        }
+
+        if this.CurrentState == "" {
+            this.CurrentState = states[0].Name
+        }
+
+        stateName := this.CurrentState
+        state, exists := gppStateMachineFindState(states, stateName)
+        if !exists {
+            return fmt.Errorf("workflow: current state %q is not defined", stateName)
+        }
+        if state.Terminal {
+            return nil
+        }
+        waitConfig, isWaiting := gppStateMachineFindWait(waits, stateName)
+        execution := this.ExecutionContext()
+        signal := execution.Signal()
+        if isWaiting {
+            if signal == "" {
+                timeout := time.Duration(0)
+                timeoutEvent := ""
+                if waitConfig.HasTimeout {
+                    timeout = waitConfig.Timeout
+                    timeoutEvent = waitConfig.TimeoutEvent
+                }
+                execution.WaitFor(waitConfig.Signal, timeout, timeoutEvent)
+                return nil
+            }
+            if signal != waitConfig.Signal && (!waitConfig.HasTimeout || signal != waitConfig.TimeoutEvent) {
+                return fmt.Errorf("workflow: unexpected signal %q while waiting in state %q", signal, stateName)
+            }
+            target, found := gppStateMachineFindTransition(transitions, stateName, signal)
+            if !found {
+                return fmt.Errorf("workflow: no transition from waiting state %q for event %q", stateName, signal)
+            }
+            this.CurrentState = target
+            return this._scheduleTarget(target, states, waits)
+        }
+
+        if signal != "" {
+            return fmt.Errorf("workflow: state %q does not accept a signal", stateName)
+        }
+        if state.HasRetries {
+            execution.RetryLimit(state.Retries)
+        }
+        event, err := hooks.GppProtected_execute__gpp_1(stateName)
+        if err != nil {
+            return err
+        }
+        target, found := gppStateMachineFindTransition(transitions, stateName, event)
+        if !found {
+            return fmt.Errorf("workflow: no transition from state %q for event %q", stateName, event)
+        }
+        this.CurrentState = target
+        return this._scheduleTarget(target, states, waits)
+    }
+
+    func _scheduleTarget(name string, states []State, waits []Wait) error {
+        state, exists := gppStateMachineFindState(states, name)
+        if !exists {
+            return fmt.Errorf("workflow: transition targets undefined state %q", name)
+        }
+        if state.Terminal {
+            return nil
+        }
+        wait, exists := gppStateMachineFindWait(waits, name)
+        if exists {
+            timeout := time.Duration(0)
+            timeoutEvent := ""
+            if wait.HasTimeout {
+                timeout = wait.Timeout
+                timeoutEvent = wait.TimeoutEvent
+            }
+            this.ExecutionContext().WaitFor(wait.Signal, timeout, timeoutEvent)
+        } else {
+            this.ExecutionContext().Continue()
+        }
+        return nil
+    }
+}
+
+func gppStateMachineGetHooks(value *Message) (gppStateMachineHooks, error) {
+    object := value.GppDynamicObject
+    if object == nil {
+        object = value
+    }
+    hooks, ok := object.(gppStateMachineHooks)
+    if !ok {
+        return nil, fmt.Errorf("workflow: class does not implement state machine hooks")
+    }
+    return hooks, nil
+}
+
+func gppStateMachineFindState(states []State, name string) (State, bool) {
+    for _, state := range states {
+        if state.Name == name {
+            return state, true
+        }
+    }
+    return State{}, false
+}
+
+func gppStateMachineFindWait(waits []Wait, name string) (Wait, bool) {
+    for _, wait := range waits {
+        if wait.State == name {
+            return wait, true
+        }
+    }
+    return Wait{}, false
+}
+
+func gppStateMachineFindTransition(transitions []Transition, from string, event string) (string, bool) {
+    for _, transition := range transitions {
+        if transition.From == from && transition.On == event {
+            return transition.To, true
+        }
+    }
+    return "", false
+}
+
+func gppStateMachineValidate(states []State, transitions []Transition, waits []Wait) error {
+    if len(states) == 0 {
+        return fmt.Errorf("workflow: _states() must declare at least one state")
+    }
+    if states[0].Terminal {
+        return fmt.Errorf("workflow: first state %q cannot be terminal", states[0].Name)
+    }
+    names := map[string]bool{}
+    for _, state := range states {
+        if state.Name == "" {
+            return fmt.Errorf("workflow: state name cannot be empty")
+        }
+        if names[state.Name] {
+            return fmt.Errorf("workflow: duplicate state %q", state.Name)
+        }
+        if state.HasRetries && state.Retries < 0 {
+            return fmt.Errorf("workflow: retry limit for state %q cannot be negative", state.Name)
+        }
+        names[state.Name] = true
+    }
+    seen := map[string]bool{}
+    for _, transition := range transitions {
+        if !names[transition.From] {
+            return fmt.Errorf("workflow: transition starts at undefined state %q", transition.From)
+        }
+        if !names[transition.To] {
+            return fmt.Errorf("workflow: transition targets undefined state %q", transition.To)
+        }
+        key := transition.From + "\x00" + transition.On
+        if seen[key] {
+            return fmt.Errorf("workflow: duplicate transition from %q for event %q", transition.From, transition.On)
+        }
+        seen[key] = true
+    }
+    seenWaits := map[string]bool{}
+    for _, wait := range waits {
+        state, exists := gppStateMachineFindState(states, wait.State)
+        if !exists {
+            return fmt.Errorf("workflow: wait references undefined state %q", wait.State)
+        }
+        if state.Terminal {
+            return fmt.Errorf("workflow: terminal state %q cannot wait", wait.State)
+        }
+        if seenWaits[wait.State] {
+            return fmt.Errorf("workflow: duplicate wait configuration for state %q", wait.State)
+        }
+        seenWaits[wait.State] = true
+        if wait.Signal == "" {
+            return fmt.Errorf("workflow: wait state %q has an empty signal", wait.State)
+        }
+        if _, exists := gppStateMachineFindTransition(transitions, wait.State, wait.Signal); !exists {
+            return fmt.Errorf("workflow: wait state %q has no transition for signal %q", wait.State, wait.Signal)
+        }
+        if wait.HasTimeout {
+            if wait.Timeout <= 0 {
+                return fmt.Errorf("workflow: timeout for state %q must be positive", wait.State)
+            }
+            if wait.TimeoutEvent == "" {
+                return fmt.Errorf("workflow: wait state %q has an empty timeout event", wait.State)
+            }
+            if _, exists := gppStateMachineFindTransition(transitions, wait.State, wait.TimeoutEvent); !exists {
+                return fmt.Errorf("workflow: wait state %q has no transition for timeout event %q", wait.State, wait.TimeoutEvent)
+            }
+        }
+    }
+    return nil
+}

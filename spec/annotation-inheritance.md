@@ -150,7 +150,7 @@ Foo
 Therefore:
 
 ```go
-for method := range Child.class.methods {
+for method := range Child.Class.Methods {
     ...
 }
 ```
@@ -214,7 +214,7 @@ class Child : Base {
 }
 ```
 
-When inspecting `Child.class.fields`, the inherited field should report:
+When inspecting `Child.Class.Fields`, the inherited field should report:
 
 ```text
 name:
@@ -393,14 +393,14 @@ class Child : Base @{Bar} {
 Direct annotation lookup should produce:
 
 ```text
-Base.class.annotations
+Base.Class.Annotations
     Foo
 
-Child.class.annotations
+Child.Class.Annotations
     Bar
 ```
 
-`Foo` must not be physically copied into `Child.class.annotations`.
+`Foo` must not be physically copied into `Child.Class.Annotations`.
 
 ---
 
@@ -411,7 +411,7 @@ A subclass can still discover annotations on its ancestors through normal class 
 Example:
 
 ```go
-Child.class.parents
+Child.Class.Parents
 ```
 
 contains:
@@ -423,7 +423,7 @@ Base
 and:
 
 ```go
-Base.class.annotations
+Base.Class.Annotations
 ```
 
 contains:
@@ -453,7 +453,7 @@ annotations discoverable through class ancestry
 Possible API:
 
 ```go
-Child.class.annotations
+Child.Class.Annotations
 ```
 
 for direct annotations.
@@ -461,19 +461,19 @@ for direct annotations.
 And one of:
 
 ```go
-Child.class.allAnnotations
+Child.Class.Annotations.All
 ```
 
 or:
 
 ```go
-Child.class.annotations.has(Foo, inherited: true)
+Child.Class.Annotations.Has(Foo, inherited: true)
 ```
 
 or:
 
 ```go
-Child.class.annotations.resolve(Foo)
+Child.Class.Annotations.Resolve(Foo)
 ```
 
 for ancestry-aware lookup.
@@ -489,7 +489,7 @@ The semantic distinction is required.
 A clean possible design is:
 
 ```go
-class.annotations
+class.Annotations
 ```
 
 Direct annotations only.
@@ -499,7 +499,7 @@ And:
 ```go
 class.annotation(Foo)
 class.hasAnnotation(Foo)
-class.annotationsOf(Foo)
+class.AnnotationsOf(Foo)
 ```
 
 with an explicit inheritance option where needed.
@@ -560,7 +560,7 @@ Annotations must retain symbol identity through inheritance.
 Example:
 
 ```go
-field.annotations.has(PK)
+field.Annotations.Has(PK)
 ```
 
 must resolve against the actual declared annotation symbol.
@@ -693,7 +693,7 @@ class C : A, B {
 Direct lookup:
 
 ```text
-C.class.annotations
+C.Class.Annotations
     empty
 ```
 
@@ -709,7 +709,7 @@ The language should preserve source ownership of each annotation.
 It should not manufacture:
 
 ```text
-C.annotations = [Foo, Bar]
+C.Annotations = [Foo, Bar]
 ```
 
 as direct declaration metadata.
@@ -773,13 +773,13 @@ Resolving annotations for a subclass must not mutate metadata belonging to its p
 Example:
 
 ```go
-Base.class.annotations
+Base.Class.Annotations
 ```
 
 must remain unchanged after inspecting:
 
 ```go
-Child.class
+Child.Class
 ```
 
 Effective/inherited views should be computed separately.
@@ -910,17 +910,17 @@ class App : Base @{
 Then:
 
 ```text
-App.class.annotations
+App.Class.Annotations
     Feature("app")
 
-App.class.parents
+App.Class.Parents
     Base
 
-App.class.fields
+App.Class.Fields
     Base.Id
         Persisted
 
-App.class.methods
+App.Class.Methods
     Base.Run
         Handler
 ```
@@ -947,7 +947,7 @@ class App : Base {
 Now:
 
 ```text
-App.class.methods
+App.Class.Methods
     App.Run
         no annotations
 ```
@@ -1090,15 +1090,15 @@ class B : A @{Bar} {}
 Verify:
 
 ```text
-A.class.annotations = Foo
-B.class.annotations = Bar
+A.Class.Annotations = Foo
+B.Class.Annotations = Bar
 ```
 
 ---
 
 ## Ancestor Discovery
 
-Verify `B` can discover `A` and inspect `A.class.annotations`.
+Verify `B` can discover `A` and inspect `A.Class.Annotations`.
 
 ---
 

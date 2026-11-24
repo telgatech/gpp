@@ -86,6 +86,28 @@ func ParseFile(name, src string) (*File, error) {
 		case legacyUseAt(src, pos):
 			return nil, diagnosticAt(name, sourceSpan(src, pos, pos), fmt.Errorf("use declarations are no longer supported; use Go import syntax"))
 
+		case isInterfaceShorthandStart(src, pos):
+			rewritten, end, err := rewriteInterfaceDeclarationShorthand(src, pos)
+			if err != nil {
+				return nil, diagnosticAt(name, sourceSpan(src, pos, pos), err)
+			}
+			declarations, fileSet := parseGoDeclarations(name, file.Package, rewritten)
+			if len(declarations) == 0 {
+				return nil, diagnosticAt(name, sourceSpan(src, pos, end), fmt.Errorf("invalid interface declaration"))
+			}
+			line, column := sourcePosition(src, declarationPos)
+			file.Decls = append(file.Decls, &GoDecl{
+				Declarations: declarations,
+				FileSet:      fileSet,
+				Doc:          doc,
+				Tokens:       tokensWithinSpan(file.Tokens, pos, end),
+				Owner:        file,
+				SourceSpan:   Span{Start: declarationPos, End: end, Line: line, Column: column},
+				SourceFile:   name,
+				SourceLine:   line,
+			})
+			pos = end
+
 		case isStructShorthandStart(src, pos):
 			rewritten, end, err := rewriteStructDeclarationShorthand(src, pos)
 			if err != nil {
@@ -750,6 +772,54 @@ func isStructShorthandStart(source string, start int) bool {
 	return position < len(source) && source[position] == '{'
 }
 
+func isInterfaceShorthandStart(source string, start int) bool {
+	if !keywordAt(source, start, "interface") {
+		return false
+	}
+	position := skipSpace(source, start+len("interface"))
+	name, size := readIdent(source[position:])
+	if size == 0 || !isIdentifier(name) {
+		return false
+	}
+	position = skipSpace(source, position+size)
+	if position < len(source) && source[position] == '[' {
+		end, err := findMatchingBracket(source, position)
+		if err != nil {
+			return false
+		}
+		position = skipSpace(source, end+1)
+	}
+	return position < len(source) && source[position] == '{'
+}
+
+// rewriteInterfaceDeclarationShorthand maps `interface Reader { ... }` to
+// Go's named interface declaration so it can share the ordinary Go AST path.
+func rewriteInterfaceDeclarationShorthand(source string, start int) (string, int, error) {
+	position := skipSpace(source, start+len("interface"))
+	name, size := readIdent(source[position:])
+	if size == 0 || !isIdentifier(name) {
+		return "", start, fmt.Errorf("interface declaration requires a name")
+	}
+	position = skipSpace(source, position+size)
+	typeParameters := ""
+	if position < len(source) && source[position] == '[' {
+		end, err := findMatchingBracket(source, position)
+		if err != nil {
+			return "", start, fmt.Errorf("interface %s type parameters: %w", name, err)
+		}
+		typeParameters = source[position : end+1]
+		position = skipSpace(source, end+1)
+	}
+	if position >= len(source) || source[position] != '{' {
+		return "", start, fmt.Errorf("interface %s requires a method body", name)
+	}
+	end, err := findMatchingBrace(source, position)
+	if err != nil {
+		return "", start, err
+	}
+	return "type " + name + typeParameters + " interface " + source[position:end+1], end + 1, nil
+}
+
 // rewriteStructDeclarationShorthand parses `struct Foo { ... }` and presents
 // an equivalent Go type declaration to the existing Go AST pipeline.
 func rewriteStructDeclarationShorthand(source string, start int) (string, int, error) {
@@ -1096,16 +1166,28 @@ func parseClass(src string, start int) (*ClassDecl, int, error) {
 		for {
 			pos = skipClassHeaderSpace(src, pos)
 
+			parentStart := pos
 			parent, n := readQualifiedIdent(src[pos:])
 			if n == 0 {
 				return nil, 0, fmt.Errorf(
 					"expected parent class",
 				)
 			}
-
-			class.ParentAST = append(class.ParentAST, parseTypeText(parent))
-
 			pos += n
+			pos = skipClassHeaderSpace(src, pos)
+			if pos < len(src) && src[pos] == '[' {
+				end, err := findMatchingBracket(src, pos)
+				if err != nil {
+					return nil, 0, fmt.Errorf("parent class %s type arguments: %w", parent, err)
+				}
+				pos = end + 1
+			}
+			parentType := parseTypeText(src[parentStart:pos])
+			if parentType == nil {
+				return nil, 0, fmt.Errorf("invalid parent class type %q", strings.TrimSpace(src[parentStart:pos]))
+			}
+			class.ParentAST = append(class.ParentAST, parentType)
+
 			pos = skipClassHeaderSpace(src, pos)
 
 			if pos >= len(src) || src[pos] != ',' {
@@ -2118,7 +2200,7 @@ func findNextExtension(src string, start int) int {
 		if lineStart && braceDepth == 0 {
 			p := skipHorizontal(src, i)
 
-			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || keywordAt(src, p, "extend") ||
+			if keywordAt(src, p, "class") || keywordAt(src, p, "enum") || isInterfaceShorthandStart(src, p) || keywordAt(src, p, "extend") ||
 				keywordAt(src, p, "annotation") || keywordAt(src, p, "embed") || keywordAt(src, p, "template") || keywordAt(src, p, "package") ||
 				(p > start && topLevelDeclarationBoundary(src, start, p)) {
 				boundary := leadingCommentStart(src, start, p)
@@ -2329,7 +2411,7 @@ func leadingDocComments(src string, pos int) (string, int) {
 }
 
 func documentationTargetAt(src string, pos int) bool {
-	for _, keyword := range []string{"package", "import", "func", "const", "var", "let", "type", "struct", "class", "enum", "extend", "annotation", "embed", "template"} {
+	for _, keyword := range []string{"package", "import", "func", "const", "var", "let", "type", "struct", "class", "enum", "interface", "extend", "annotation", "embed", "template"} {
 		if keywordAt(src, pos, keyword) {
 			return true
 		}

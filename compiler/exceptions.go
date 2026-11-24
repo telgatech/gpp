@@ -4252,12 +4252,47 @@ func promotedCallForExpr(call *CallExpr, context constructorContext, valueTypes 
 			(variadicParameterIndex(candidate) < 0 && len(call.Arguments) > len(candidate.Parameters)) {
 			continue
 		}
-		resultTypes := resultTypesFromText(candidate.resultText())
+		resultNode := instantiatedCallableResult(candidate, call, context, "")
+		resultText, err := typeNodeSource(resultNode)
+		if err != nil {
+			continue
+		}
+		resultTypes := resultTypesFromText(resultText)
 		if len(resultTypes) > 0 && isErrorLikeType(resultTypes[len(resultTypes)-1], context) {
 			return promotedCall{types: resultTypes, trailingError: true}, true
 		}
 	}
 	return promotedCall{}, false
+}
+
+func explicitCallTypeArguments(call *CallExpr) []ExprNode {
+	if call == nil {
+		return nil
+	}
+	switch callee := call.Callee.(type) {
+	case *IndexExpr:
+		return []ExprNode{callee.Index}
+	case *IndexListExpr:
+		return callee.Indices
+	default:
+		return nil
+	}
+}
+
+func instantiatedCallableResult(signature callableSignature, call *CallExpr, context constructorContext, qualifier string) TypeNode {
+	result := signature.ResultAST
+	typeArguments := explicitCallTypeArguments(call)
+	if len(typeArguments) == len(signature.TypeParams) {
+		substitutions := make(map[string]TypeNode, len(typeArguments))
+		for index, parameter := range signature.TypeParams {
+			substitutions[parameter.Name] = expressionTypeNode(typeArguments[index])
+		}
+		result = substituteTypeParameters(result, substitutions)
+	}
+	if qualifier != "" {
+		result = qualifyImportedTypeNode(result, qualifier+"._", importedClassesForQualifier(context, qualifier), context.ImportedTypes)
+	}
+	return result
 }
 
 func promotedSelectorCandidates(function *SelectorExpr, call *CallExpr, context constructorContext, valueTypes map[string]string) []callableSignature {

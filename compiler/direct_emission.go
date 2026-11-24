@@ -265,7 +265,9 @@ func directMethodBody(method Method, context constructorContext) (*ast.BlockStmt
 		bodyContext.CurrentParameterTypes[name] = typeName
 	}
 	introspectionKinds := map[string]int{}
-	collectIntrospectionMetadataBlock(bodyAST, introspectionKinds, bodyContext, bodyContext.CurrentParameterTypes, func(int, int, string) {})
+	if err := collectIntrospectionMetadataBlock(bodyAST, introspectionKinds, bodyContext, bodyContext.CurrentParameterTypes, func(int, int, string) {}); err != nil {
+		return nil, true, err
+	}
 	bodyContext.CurrentIntrospectionKinds = introspectionKinds
 	bodyContext.RecordValueTypes = cloneStringMap(bodyContext.CurrentParameterTypes)
 	if bodyContext.RecordValueTypes == nil {

@@ -503,24 +503,24 @@ Examples:
 
 Declared annotation metadata must integrate with:
 
-.class
-.fields
-.methods
-.annotations
+.Class
+.Fields
+.Methods
+.Annotations
 
 Examples:
 
-Employee.class.annotations
+Employee.Class.Annotations
 
-field.annotations
+field.Annotations
 
-method.annotations
+method.Annotations
 
 Annotation descriptors should expose at least:
 
-annotation.name
-annotation.fullName
-annotation.args
+annotation.Name
+annotation.FullName
+annotation.Args
 
 Recommended:
 
@@ -545,22 +545,22 @@ Descriptor identity should resolve to the actual declaration symbol.
 
 Therefore:
 
-annotations.has(web.Auth)
+annotations.Has(web.Auth)
 
 would eventually be preferable to:
 
-annotations.has("Auth")
+annotations.Has("Auth")
 
 But for ergonomic v1 introspection, string lookup may still exist.
 
 Recommended long-term API:
 
-annotations.has(web.Auth)
-annotations.find(web.Auth)
+annotations.Has(web.Auth)
+annotations.Find(web.Auth)
 
 Optional convenience:
 
-annotations.has("Auth")
+annotations.Has("Auth")
 
 String lookup must not be the sole identity mechanism.
 
@@ -570,13 +570,13 @@ Since annotations are now declared symbols, expose declaration-safe lookup.
 
 Example:
 
-if m.annotations.has(web.Get) {
-    a := m.annotations.find(web.Get)
+if m.Annotations.Has(web.Get) {
+    a := m.Annotations.Find(web.Get)
 }
 
 This is superior to:
 
-m.annotations.find("get")
+m.Annotations.Find("get")
 
 because it is:
 
@@ -587,9 +587,9 @@ because it is:
 
 Recommended API:
 
-annotations.has(annotationType) bool
-annotations.find(annotationType) *Annotation
-annotations.all(annotationType) []Annotation
+annotations.Has(annotationType) bool
+annotations.Find(annotationType) *Annotation
+annotations.All(annotationType) []Annotation
 
 String-based overloads may optionally remain.
 
@@ -615,13 +615,13 @@ class Employee @{model.Table("employees")} {
 
 Introspection:
 
-table := Employee.class.annotations.find(model.Table)
+table := Employee.Class.Annotations.Find(model.Table)
 
-println(table.args[0])
+println(table.Args[0])
 
-for f := range Employee.class.fields {
-    if f.annotations.has(model.PK) {
-        println("primary key:", f.name)
+for f := range Employee.Class.Fields {
+    if f.Annotations.Has(model.PK) {
+        println("primary key:", f.Name)
     }
 }
 
@@ -652,9 +652,9 @@ class Users @{web.Auth} {
 
 Router library may introspect:
 
-Users.class.annotations
-Users.class.methods
-method.annotations
+Users.Class.Annotations
+Users.Class.Methods
+method.Annotations
 
 The compiler itself does not interpret Get/Post/Auth/Role.
 
@@ -717,7 +717,7 @@ Example:
 class Model @{A} {}
 class Employee : Model {}
 
-Employee.class.annotations.has(A)
+Employee.Class.Annotations.Has(A)
 
 recommended result:
 
@@ -725,7 +725,7 @@ false
 
 Libraries may inspect:
 
-Employee.class.parents
+Employee.Class.Parents
 
 if they want inherited class metadata.
 
@@ -754,11 +754,11 @@ valid.
 
 Therefore:
 
-annotations.find(Index)
+annotations.Find(Index)
 
 returns first in source order.
 
-annotations.all(Index)
+annotations.All(Index)
 
 returns all.
 
@@ -893,7 +893,7 @@ error according to normal package visibility rules.
 11. Validate argument types.
 12. Validate `on` placement.
 13. Generate annotation metadata descriptors.
-14. Integrate with `.annotations`.
+14. Integrate with `.Annotations`.
 15. Support symbol-based introspection lookup.
 16. Add inheritance tests.
 17. Add package/import tests.

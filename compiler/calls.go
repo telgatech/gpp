@@ -45,6 +45,7 @@ type callableSignature struct {
 	Qualifier  string
 	ImportPath string
 	Parameters []parameterInfo
+	TypeParams []TypeParameterNode
 	ResultAST  TypeNode
 	StaticSelf bool
 	SourceFile string
@@ -310,19 +311,31 @@ func methodSignaturesForClass(class *ClassDecl, classes map[string]*ClassDecl, v
 			Name:       method.Name,
 			GoName:     methodOutputName(method),
 			Parameters: parameters,
+			TypeParams: append([]TypeParameterNode(nil), method.TypeParamsAST...),
 			ResultAST:  methodResultTypeNode(method),
 		})
 	}
-	for _, parentName := range classParentNames(class) {
+	for parentIndex, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			continue
 		}
+		if parentIndex >= len(class.ParentAST) {
+			continue
+		}
+		substitutions := classTypeSubstitutions(parent, class.ParentAST[parentIndex])
 		for name, signatures := range methodSignaturesForClass(parent, classes, visiting) {
 			if !classMemberVisibleToSubclass(parent, name) {
 				continue
 			}
-			result[name] = append(result[name], signatures...)
+			for _, signature := range signatures {
+				signature.Parameters = append([]parameterInfo(nil), signature.Parameters...)
+				for index := range signature.Parameters {
+					signature.Parameters[index].TypeAST = substituteTypeParameters(signature.Parameters[index].TypeAST, substitutions)
+				}
+				signature.ResultAST = substituteTypeParameters(signature.ResultAST, substitutions)
+				result[name] = append(result[name], signature)
+			}
 		}
 	}
 	return result
@@ -350,6 +363,7 @@ func staticMethodSignaturesForClass(class *ClassDecl, classes map[string]*ClassD
 			Name:       method.Name,
 			GoName:     staticMethodGoName(class, method),
 			Parameters: parameters,
+			TypeParams: append([]TypeParameterNode(nil), method.TypeParamsAST...),
 			ResultAST:  methodResultTypeNode(method),
 			StaticSelf: method.ContextualSelf,
 		})
@@ -463,11 +477,24 @@ func functionDeclSignature(function *FunctionDecl) (callableSignature, error) {
 	return callableSignature{
 		Name:       function.Name,
 		Parameters: parameters,
+		TypeParams: append([]TypeParameterNode(nil), function.Method.TypeParamsAST...),
 		ResultAST:  methodResultTypeNode(function.Method),
 		SourceFile: function.SourceFile,
 		SourceLine: function.SourceLine,
 		SourceSpan: function.SourceSpan,
 	}, nil
+}
+
+func importedClassesForQualifier(context constructorContext, qualifier string) map[string]*ClassDecl {
+	classes := map[string]*ClassDecl{}
+	prefix := qualifier + "."
+	for name, target := range context.Targets {
+		if !strings.HasPrefix(name, prefix) || target.Class == nil {
+			continue
+		}
+		classes[strings.TrimPrefix(name, prefix)] = target.Class
+	}
+	return classes
 }
 
 func goCallableSignature(function *ast.FuncDecl, fileSet *token.FileSet, filename string) callableSignature {
@@ -2426,6 +2453,14 @@ func staticCallResultTypeNode(call *CallExpr, context constructorContext, valueT
 		if qualified, ok := directSelectorPath(callee); ok {
 			if target, ok := context.Targets[qualified]; ok && target.Class != nil {
 				return qualified
+			}
+		}
+		if receiver, ok := callee.Receiver.(*NameExpr); ok {
+			for _, signature := range context.ImportedFunctionSignatures[receiver.Name][callee.Name] {
+				result := instantiatedCallableResult(signature, call, context, receiver.Name)
+				if resultText, err := typeNodeSource(result); err == nil && strings.TrimSpace(resultText) != "" {
+					return resultText
+				}
 			}
 		}
 		if signature, concreteReceiver, ok := staticMethodSignatureForCall(callee.Receiver, callee.Name, context); ok {

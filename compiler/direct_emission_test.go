@@ -166,7 +166,7 @@ func Add(value int) int {
 func TestDirectFunctionEmissionDefersIntrospectionSelectors(t *testing.T) {
 	file, err := ParseFile("direct-introspection-selector.gpp", `
 func Name(value Person) string {
-	return value.class.name
+	return value.Class.Name
 }
 `)
 	if err != nil {
@@ -191,7 +191,7 @@ class Person {
 }
 
 func Name(value Person) string {
-    return value.class.name
+    return value.Class.Name
 }
 `)
 	if err != nil {
@@ -224,11 +224,11 @@ enum Status string {
 }
 
 func Name(value Status) string {
-    return value.name
+    return value.Name
 }
 
 func Meta() string {
-    return Status.Active.name
+    return Status.Active.Name
 }
 `)
 	if err != nil {

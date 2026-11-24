@@ -557,6 +557,7 @@ html.dark .VPHomeHero .container .image-container::after {
   border-radius: 50%;
   background: var(--vp-c-bg-mute);
   object-fit: cover;
+  object-position: center top;
 }
 
 .about-profile-copy h2 {

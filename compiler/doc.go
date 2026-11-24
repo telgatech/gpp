@@ -207,7 +207,7 @@ func documentationSymbols(packageName string, declaration Decl) []DocSymbol {
 		symbol := DocSymbol{
 			Kind: DocClass, Name: value.Name, FullName: qualified(value.Name), Package: packageName,
 			Doc: value.Doc, Source: classSource(value), SourceFile: value.SourceFile, SourceLine: value.SourceLine,
-			Exported: exportedDocName(value.Name), Parents: classParentNames(value),
+			Exported: exportedDocName(value.Name), Parents: classParentTypeSources(value),
 			Annotations: formatAnnotationUses(value.Annotations),
 		}
 		for _, field := range value.Fields {
@@ -659,7 +659,7 @@ func goFunctionSignature(function *ast.FuncDecl) string {
 
 func classSource(class *ClassDecl) string {
 	result := "class " + class.Name
-	parents := classParentNames(class)
+	parents := classParentTypeSources(class)
 	if len(parents) > 0 {
 		result += " : " + strings.Join(parents, ", ")
 	}

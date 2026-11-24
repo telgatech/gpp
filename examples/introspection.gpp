@@ -28,34 +28,34 @@ class Employee: Model @{Entity("employees")} {
 
 func main() {
     employee := Employee("id-1", "Bob", 42)
-    descriptor := employee.class
+    descriptor := employee.Class
 
-    fmt.Println("class", descriptor.name)
-    fmt.Println("table", descriptor.annotations.find(Entity).args[0])
-    for parent := range descriptor.parents {
-        fmt.Println("parent", parent.name, "table", parent.annotations.find(Entity).args[0])
+    fmt.Println("class", descriptor.Name)
+    fmt.Println("table", descriptor.Annotations.Find(Entity).Args[0])
+    for parent := range descriptor.Parents {
+        fmt.Println("parent", parent.Name, "table", parent.Annotations.Find(Entity).Args[0])
     }
 
     fmt.Println("fields")
-    for field := range descriptor.fields {
-        fmt.Println(" ", field.owner.name+"."+field.name, field.type.name, field.get(employee))
-        if field.annotations.has(PrimaryKey) {
+    for field := range descriptor.Fields {
+        fmt.Println(" ", field.Owner.Name+"."+field.Name, field.Type.Name, field.Get(employee))
+        if field.Annotations.Has(PrimaryKey) {
             fmt.Println("  primary key")
         }
-        if field.annotations.has(Required) {
+        if field.Annotations.Has(Required) {
             fmt.Println("  required")
         }
     }
 
     fmt.Println("methods")
-    for method := range descriptor.methods {
-        fmt.Println(" ", method.owner.name+"."+method.name, "->", method.result.name)
-        if method.annotations.has(Trace) {
+    for method := range descriptor.Methods {
+        fmt.Println(" ", method.Owner.Name+"."+method.Name, "->", method.Result.Name)
+        if method.Annotations.Has(Trace) {
             fmt.Println("  traced")
         }
-        for parameter := range method.parameters {
-            fmt.Println("  parameter", parameter.name, parameter.type.name,
-                "required:", parameter.annotations.has(Required))
+        for parameter := range method.Parameters {
+            fmt.Println("  parameter", parameter.Name, parameter.Type.Name,
+                "required:", parameter.Annotations.Has(Required))
         }
     }
 

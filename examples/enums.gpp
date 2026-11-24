@@ -16,12 +16,10 @@ enum Role string {
     Admin = "administrator"
 }
 
-enum (
-    Level uint8 {
-        Low
-        High
-    }
-)
+enum Level uint8 {
+    Low
+    High
+}
 
 // Every Status member must be handled here, or the switch needs a default case.
 func printStatus(status Status) {
@@ -39,20 +37,20 @@ func main() {
     try {
         status := Status.Active
         printStatus(status)
-        fmt.Println(status == Status.Active, status.name, status.value)
+        fmt.Println(status == Status.Active, status.Name, status.Value)
         autoStatus := Status.From(7)
-        fmt.Println(autoStatus.name)
-        for _, item := range Status.values {
-            fmt.Println(item.name, item.value)
+        fmt.Println(autoStatus.Name)
+        for _, item := range Status.Values {
+            fmt.Println(item.Name, item.Value)
         }
 
         role := Role.From("administrator")
-        fmt.Println(role.name, role.value)
+        fmt.Println(role.Name, role.Value)
 
         encoded := json.Marshal(Role.Admin)
         var decoded Role
         json.Unmarshal(encoded, &decoded)
-        fmt.Println(Level.High.value, string(encoded), decoded.name)
+        fmt.Println(Level.High.Value, string(encoded), decoded.Name)
     } catch err {
         fmt.Println("enum example:", err)
     }

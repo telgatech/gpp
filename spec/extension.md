@@ -388,11 +388,11 @@ Example:
 
 extend sql.DB {
     func Find[T](id any) (T, error) {
-        c := T.class
+        c := T.Class
 
         obj := T()
 
-        // build SELECT using c.fields
+        // build SELECT using c.Fields
         // QueryRow using database/sql
         // Scan into field addresses
 
@@ -557,7 +557,7 @@ Generic DB helper:
 
 extend *sql.DB {
     func Find[T](id any) (T, error) {
-        c := T.class
+        c := T.Class
         obj := T()
 
         // query using database/sql

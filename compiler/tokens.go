@@ -350,6 +350,24 @@ func classParentNames(class *ClassDecl) []string {
 	}
 	parents := make([]string, 0, len(class.ParentAST))
 	for _, parent := range class.ParentAST {
+		if named, ok := parent.(*NamedType); ok && len(named.Parts) > 0 {
+			parents = append(parents, strings.Join(named.Parts, "."))
+			continue
+		}
+		name, err := typeNodeSource(parent)
+		if err == nil && strings.TrimSpace(name) != "" {
+			parents = append(parents, name)
+		}
+	}
+	return parents
+}
+
+func classParentTypeSources(class *ClassDecl) []string {
+	if class == nil {
+		return nil
+	}
+	parents := make([]string, 0, len(class.ParentAST))
+	for _, parent := range class.ParentAST {
 		name, err := typeNodeSource(parent)
 		if err == nil && strings.TrimSpace(name) != "" {
 			parents = append(parents, name)

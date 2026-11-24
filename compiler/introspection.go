@@ -23,15 +23,15 @@ func fileUsesIntrospection(file *File) bool {
 	for _, declaration := range file.Decls {
 		switch value := declaration.(type) {
 		case *MixedDecl:
-			if tokenSequence(mixedDeclTokens(value), ".", "class") {
+			if tokenSequence(mixedDeclTokens(value), ".", "Class") {
 				return true
 			}
 		case *GoDecl:
-			if tokenSequence(goDeclTokens(value), ".", "class") {
+			if tokenSequence(goDeclTokens(value), ".", "Class") {
 				return true
 			}
 		case *ValueDecl:
-			if tokenSequence(valueDeclTokens(value), ".", "class") {
+			if tokenSequence(valueDeclTokens(value), ".", "Class") {
 				return true
 			}
 		case *ClassDecl:
@@ -47,7 +47,7 @@ func fileUsesIntrospection(file *File) bool {
 				}
 			}
 			for _, method := range value.Methods {
-				if len(method.Annotations) > 0 || len(method.ParameterAnnotations) > 0 || tokenSequence(methodBodyTokens(method), ".", "class") {
+				if len(method.Annotations) > 0 || len(method.ParameterAnnotations) > 0 || tokenSequence(methodBodyTokens(method), ".", "Class") {
 					return true
 				}
 			}
@@ -58,7 +58,7 @@ func fileUsesIntrospection(file *File) bool {
 				}
 			}
 		case *FunctionDecl:
-			if len(value.Annotations) > 0 || len(value.Method.ParameterAnnotations) > 0 || tokenSequence(methodBodyTokens(value.Method), ".", "class") {
+			if len(value.Annotations) > 0 || len(value.Method.ParameterAnnotations) > 0 || tokenSequence(methodBodyTokens(value.Method), ".", "Class") {
 				return true
 			}
 		}
@@ -634,16 +634,21 @@ func effectiveMethodDescriptors(class *ClassDecl, classes map[string]*ClassDecl,
 		}
 		seen[method.Name+fmt.Sprintf("/%d", arity)] = true
 	}
-	for _, parentName := range classParentNames(class) {
+	for parentIndex, parentName := range classParentNames(class) {
 		parent, ok := classes[parentName]
 		if !ok {
 			return nil, fmt.Errorf("class %s has unresolved parent %s", class.Name, parentName)
+		}
+		if parentIndex >= len(class.ParentAST) {
+			return nil, fmt.Errorf("class %s has invalid parent type %s", class.Name, parentName)
 		}
 		inherited, err := effectiveMethodDescriptors(parent, classes, visiting)
 		if err != nil {
 			return nil, err
 		}
+		substitutions := classTypeSubstitutions(parent, class.ParentAST[parentIndex])
 		for _, descriptor := range inherited {
+			descriptor.Method = substituteMethodTypes(descriptor.Method, substitutions)
 			arity, err := parameterCount(methodParametersSource(descriptor.Method))
 			if err != nil {
 				return nil, err
@@ -727,16 +732,25 @@ func classDescriptorReference(name string, classes map[string]*ClassDecl, contex
 		return ""
 	}
 	if target, ok := context.Targets[name]; ok {
+		if len(target.Class.TypeParamsAST) > 0 {
+			return ""
+		}
 		if target.Qualifier == "" {
 			return "Gpp" + target.Class.Name + "Class"
 		}
 		return target.Qualifier + ".Gpp" + target.Class.Name + "Class"
 	}
 	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		if target := classes[name]; target != nil && len(target.TypeParamsAST) > 0 {
+			return ""
+		}
 		return name[:dot] + ".Gpp" + name[dot+1:] + "Class"
 	}
 	if _, ok := classes[name]; ok {
 		candidate := classes[name]
+		if len(candidate.TypeParamsAST) > 0 {
+			return ""
+		}
 		for qualified, imported := range classes {
 			if !strings.Contains(qualified, ".") || imported != candidate {
 				continue
@@ -789,24 +803,24 @@ const (
 )
 
 var introspectionSelectorNames = map[string]string{
-	"name":        "Name",
-	"fields":      "Fields",
-	"owner":       "Owner",
-	"type":        "Type",
-	"get":         "Get",
-	"set":         "Set",
-	"addr":        "Addr",
-	"annotations": "Annotations",
-	"methods":     "Methods",
-	"parents":     "Parents",
-	"parameters":  "Parameters",
-	"result":      "Result",
-	"static":      "Static",
-	"has":         "Has",
-	"find":        "Find",
-	"all":         "All",
-	"fullName":    "FullName",
-	"args":        "Args",
+	"Name":        "Name",
+	"Fields":      "Fields",
+	"Owner":       "Owner",
+	"Type":        "Type",
+	"Get":         "Get",
+	"Set":         "Set",
+	"Addr":        "Addr",
+	"Annotations": "Annotations",
+	"Methods":     "Methods",
+	"Parents":     "Parents",
+	"Parameters":  "Parameters",
+	"Result":      "Result",
+	"Static":      "Static",
+	"Has":         "Has",
+	"Find":        "Find",
+	"All":         "All",
+	"FullName":    "FullName",
+	"Args":        "Args",
 }
 
 func transformIntrospection(src string, context constructorContext) (string, error) {

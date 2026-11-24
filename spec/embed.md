@@ -290,9 +290,10 @@ annotation (
     ...
 )
 
-enum (
-    ...
-)
+enum Status int {
+    Pending
+    Complete
+}
 ```
 
 ---

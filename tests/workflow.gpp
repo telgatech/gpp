@@ -1,0 +1,270 @@
+import (
+    "fmt"
+    "os"
+    "os/exec"
+    "strings"
+    "time"
+    queue "gpp/exp/queue"
+    workflow "gpp/exp/workflow"
+    "gpp/test"
+)
+
+enum OrderState string {
+    Authorize = "authorize"
+    AwaitPayment = "await-payment"
+    ConfirmPayment = "confirm-payment"
+    Reserve = "reserve"
+    Ship = "ship"
+    Notify = "notify"
+    Cancel = "cancel"
+    Done = "done"
+}
+
+enum OrderEvent string {
+    Approved = "approved"
+    Pending = "pending"
+    Declined = "declined"
+    PaymentSettled = "payment-settled"
+    PaymentTimedOut = "payment-timed-out"
+    Confirmed = "confirmed"
+    Reserved = "reserved"
+    Shipped = "shipped"
+    Notified = "notified"
+    Cancelled = "cancelled"
+}
+
+var workflowOrderResult chan string
+var workflowRetryAttempts map[string]int
+
+class TestOrder : workflow.Message {
+    OrderID string
+    PaymentPending bool
+    PaymentAuthorized bool
+    RetryReservation bool
+
+    func _states() []workflow.State {
+        return workflow.State[
+            (Name: OrderState.Authorize.Value),
+            (Name: OrderState.AwaitPayment.Value),
+            (Name: OrderState.ConfirmPayment.Value),
+            (Name: OrderState.Reserve.Value, Retries: 1, HasRetries: true),
+            (Name: OrderState.Ship.Value),
+            (Name: OrderState.Notify.Value),
+            (Name: OrderState.Cancel.Value),
+            (Name: OrderState.Done.Value, Terminal: true),
+        ]
+    }
+
+    func _transitions() []workflow.Transition {
+        return workflow.Transition[
+            (From: OrderState.Authorize.Value, On: OrderEvent.Approved.Value, To: OrderState.Reserve.Value),
+            (From: OrderState.Authorize.Value, On: OrderEvent.Pending.Value, To: OrderState.AwaitPayment.Value),
+            (From: OrderState.Authorize.Value, On: OrderEvent.Declined.Value, To: OrderState.Cancel.Value),
+            (From: OrderState.AwaitPayment.Value, On: OrderEvent.PaymentSettled.Value, To: OrderState.ConfirmPayment.Value),
+            (From: OrderState.AwaitPayment.Value, On: OrderEvent.PaymentTimedOut.Value, To: OrderState.Cancel.Value),
+            (From: OrderState.ConfirmPayment.Value, On: OrderEvent.Confirmed.Value, To: OrderState.Reserve.Value),
+            (From: OrderState.Reserve.Value, On: OrderEvent.Reserved.Value, To: OrderState.Ship.Value),
+            (From: OrderState.Ship.Value, On: OrderEvent.Shipped.Value, To: OrderState.Notify.Value),
+            (From: OrderState.Notify.Value, On: OrderEvent.Notified.Value, To: OrderState.Done.Value),
+            (From: OrderState.Cancel.Value, On: OrderEvent.Cancelled.Value, To: OrderState.Done.Value),
+        ]
+    }
+
+    func _waits() []workflow.Wait {
+        return workflow.Wait[
+            (State: OrderState.AwaitPayment.Value, Signal: OrderEvent.PaymentSettled.Value, Timeout: 100 * time.Millisecond, TimeoutEvent: OrderEvent.PaymentTimedOut.Value, HasTimeout: true),
+        ]
+    }
+
+    func _execute(state string) (string, error) {
+        typedState := OrderState.From(state)
+        switch typedState {
+        case OrderState.Authorize:
+            if this.PaymentPending {
+                return OrderEvent.Pending.Value, nil
+            }
+            this.PaymentAuthorized = true
+            return OrderEvent.Approved.Value, nil
+        case OrderState.ConfirmPayment:
+            this.PaymentAuthorized = true
+            return OrderEvent.Confirmed.Value, nil
+        case OrderState.Reserve:
+            if this.RetryReservation && workflowRetryAttempts[this.OrderID] == 0 {
+                workflowRetryAttempts[this.OrderID]++
+                return "", fmt.Errorf("temporary inventory failure")
+            }
+            if !this.PaymentAuthorized {
+                return "", fmt.Errorf("payment must be authorized before reservation")
+            }
+            return OrderEvent.Reserved.Value, nil
+        case OrderState.Ship:
+            return OrderEvent.Shipped.Value, nil
+        case OrderState.Notify:
+            workflowOrderResult <- this.OrderID
+            return OrderEvent.Notified.Value, nil
+        case OrderState.Cancel:
+            workflowOrderResult <- "cancelled:" + this.OrderID
+            return OrderEvent.Cancelled.Value, nil
+        case OrderState.AwaitPayment:
+            return "", fmt.Errorf("state %s is waiting for a signal", state)
+        case OrderState.Done:
+            return "", fmt.Errorf("state %s is terminal", state)
+        }
+        return "", fmt.Errorf("unknown state %q", state)
+    }
+}
+
+class CrashRecoveryOrder : workflow.Message {
+    OrderID string
+
+    func _states() []workflow.State {
+        return workflow.State[
+            (Name: "authorize"),
+            (Name: "reserve"),
+            (Name: "ship"),
+            (Name: "notify"),
+            (Name: "done", Terminal: true),
+        ]
+    }
+
+    func _transitions() []workflow.Transition {
+        return workflow.Transition[
+            (From: "authorize", On: "authorized", To: "reserve"),
+            (From: "reserve", On: "reserved", To: "ship"),
+            (From: "ship", On: "shipped", To: "notify"),
+            (From: "notify", On: "notified", To: "done"),
+        ]
+    }
+
+    func _execute(state string) (string, error) {
+        switch state {
+        case "authorize":
+            return "authorized", nil
+        case "reserve":
+            return "reserved", nil
+        case "ship":
+            if os.Getenv("GPP_WORKFLOW_CRASH_CHILD") == "1" {
+                panic("simulated worker process crash")
+            }
+            return "shipped", nil
+        case "notify":
+            workflowOrderResult <- this.OrderID
+            return "notified", nil
+        default:
+            return "", fmt.Errorf("unexpected crash-test state %q", state)
+        }
+    }
+}
+
+class TerminalStart : workflow.Message {
+    func _states() []workflow.State {
+        return workflow.State[(Name: "done", Terminal: true)]
+    }
+
+    func _transitions() []workflow.Transition {
+        return workflow.Transition[]
+    }
+
+    func _execute(state string) (string, error) {
+        return "", nil
+    }
+}
+
+class StateMachineDurabilityTest : test.Suite {
+    File string
+    Queue *queue.Queue
+
+    func _setup() {
+        temporary := os.CreateTemp("", "gpp-state-machine-test-*.app")
+        this.File = temporary.Name()
+        temporary.Close()
+        workflowOrderResult = make(chan string, 2)
+        workflowRetryAttempts = map[string]int{}
+    }
+
+    func _teardown() {
+        if this.Queue != nil {
+            this.Queue.Stop()
+        }
+        os.Remove(this.File)
+    }
+
+    func BranchesAndResumesAfterSignal() {
+        this.Queue = queue.New(this.File)
+        id, err := this.Queue.PushID(TestOrder(OrderID: "order-signal-42", PaymentPending: true))
+        this.Equal(nil, err)
+
+        deadline := time.Now().Add(5 * time.Second)
+        for {
+            err = this.Queue.Signal(id, OrderEvent.PaymentSettled.Value)
+            if err == nil {
+                break
+            }
+            if !strings.Contains(err.Error(), "is not waiting") || time.Now().After(deadline) {
+                this.Fail("state machine did not enter its payment wait")
+                return
+            }
+            time.Sleep(10 * time.Millisecond)
+        }
+
+        this.Queue.Drain(5 * time.Second)
+        this.Equal("order-signal-42", <-workflowOrderResult)
+        this.Queue = nil
+    }
+
+    func RoutesTimeoutToCancellation() {
+        this.Queue = queue.New(this.File)
+        this.Queue.Push(TestOrder(OrderID: "order-timeout-43", PaymentPending: true))
+        this.Queue.Drain(5 * time.Second)
+        this.Equal("cancelled:order-timeout-43", <-workflowOrderResult)
+        this.Queue = nil
+    }
+
+    func AppliesStateRetryLimit() {
+        this.Queue = queue.New(file: this.File, retries: 0)
+        this.Queue.Push(TestOrder(OrderID: "order-retry-44", RetryReservation: true))
+        this.Queue.Drain(5 * time.Second)
+        this.Equal("order-retry-44", <-workflowOrderResult)
+        this.Equal(1, workflowRetryAttempts["order-retry-44"])
+        this.Queue = nil
+    }
+
+    func RejectsTerminalFirstState() {
+        this.Queue = queue.New(file: this.File, retries: 0)
+        this.Queue.Push(TerminalStart())
+        this.Queue.Drain(5 * time.Second)
+        dead := this.Queue.Dead()
+        if len(dead) != 1 {
+            this.Fail("expected the invalid workflow to move to dead letters")
+            return
+        }
+        this.Equal(true, strings.Contains(dead[0].LastError, "first state"))
+        this.Queue = nil
+    }
+
+    func ResumesAfterWorkerProcessCrash() {
+        command := exec.Command(os.Args[0], "-test.run=CrashWorkerOnly")
+        command.Env = append(os.Environ(), "GPP_WORKFLOW_CRASH_CHILD=1", "GPP_WORKFLOW_FILE=" + this.File)
+        output, err := command.CombinedOutput()
+        this.Equal(true, err != nil)
+        if !strings.Contains(string(output), "simulated worker process crash") {
+            this.Fail("child process did not crash during shipment creation")
+            return
+        }
+
+        this.Queue = queue.New(this.File)
+        this.Queue.Drain(5 * time.Second)
+        this.Equal("order-crash-42", <-workflowOrderResult)
+        this.Queue = nil
+    }
+
+    func CrashWorkerOnly() {
+        if os.Getenv("GPP_WORKFLOW_CRASH_CHILD") != "1" {
+            return
+        }
+        this.File = os.Getenv("GPP_WORKFLOW_FILE")
+        this.Queue = queue.New(file: this.File, retries: 0)
+        this.Queue.Push(CrashRecoveryOrder(OrderID: "order-crash-42"))
+        this.Queue.Drain(10 * time.Second)
+    }
+}

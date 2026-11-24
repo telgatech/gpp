@@ -42,6 +42,8 @@ before each docs development or production build.
 - [Typed SQL queries](./specifications/std.sql)
 - [ORM](./specifications/std.orm)
 - [Experimental work queue](./specifications/std.exp.queue)
+- [Experimental typed cache](./specifications/std.exp.cache)
+- [Experimental workflows](./specifications/std.exp.workflow)
 - [OpenAPI and Swagger](./specifications/openapi-swagger)
 - [Swagger UI](./specifications/swagger-ui)
 - [Templates](./specifications/tpl)

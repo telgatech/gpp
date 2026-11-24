@@ -48,34 +48,8 @@ Member values may be omitted.
 
 ---
 
-# Grouped Enum Declarations
-
-Enums may be grouped:
-
-```go
-enum (
-    Status int {
-        Pending
-        Active
-        Suspended
-    }
-
-    Role string {
-        User
-        Admin
-    }
-
-    Priority int {
-        Low
-        Medium
-        High
-    }
-)
-```
-
-Grouping is purely syntactic.
-
-Each enum remains an independent type with its own members, backing type, metadata, and generated methods.
+Each `enum` declaration defines exactly one enum type. Declare additional
+enums separately; grouped `enum (...)` declarations are not supported.
 
 ---
 
@@ -419,14 +393,14 @@ No separate `.Parse` API is required.
 Enum values should expose:
 
 ```go
-.name
-.value
+.Name
+.Value
 ```
 
 Example:
 
 ```go
-Role.Admin.name
+Role.Admin.Name
 ```
 
 returns:
@@ -438,7 +412,7 @@ returns:
 while:
 
 ```go
-Role.Admin.value
+Role.Admin.Value
 ```
 
 returns:
@@ -467,7 +441,7 @@ enum Status int {
 then:
 
 ```go
-Status.Active.name
+Status.Active.Name
 ```
 
 is:
@@ -479,7 +453,7 @@ is:
 and:
 
 ```go
-Status.Active.value
+Status.Active.Value
 ```
 
 is:
@@ -495,8 +469,8 @@ is:
 Each enum exposes its declared values:
 
 ```go
-Status.values
-Role.values
+Status.Values
+Role.Values
 ```
 
 This should produce a deterministic collection in source declaration order.
@@ -504,8 +478,8 @@ This should produce a deterministic collection in source declaration order.
 Example:
 
 ```go
-for status := range Status.values {
-    fmt.Println(status.name)
+for status := range Status.Values {
+    fmt.Println(status.Name)
 }
 ```
 
@@ -574,7 +548,7 @@ enum Status int {
 Reason:
 
 * `.From(1)` would otherwise be ambiguous
-* `.name` would not have a canonical result
+* `.Name` would not have a canonical result
 * serialization round trips become less predictable
 
 Suggested diagnostic:
@@ -685,13 +659,13 @@ not:
 Serialization uses:
 
 ```text
-Status.Active.value
+Status.Active.Value
 ```
 
 not:
 
 ```text
-Status.Active.name
+Status.Active.Name
 ```
 
 ---
@@ -1154,12 +1128,12 @@ and:
 ```text
 typed enum
         ↓
-enum.value
+enum.Value
         ↓
 external representation
 ```
 
-Libraries may optimize this and need not literally invoke `.From` or `.value`.
+Libraries may optimize this and need not literally invoke `.From` or `.Value`.
 
 The semantics must remain equivalent.
 
@@ -1256,9 +1230,9 @@ Exact generated naming is implementation-defined.
 The compiler should generate static metadata sufficient to support:
 
 ```go
-Role.values
-Role.Admin.name
-Role.Admin.value
+Role.Values
+Role.Admin.Name
+Role.Admin.Value
 ```
 
 This metadata should be:
@@ -1281,7 +1255,7 @@ A type descriptor may expose enum-specific metadata such as:
 
 ```go
 Role.enum
-Role.values
+Role.Values
 ```
 
 or equivalent through the existing class/type metadata system.
@@ -1307,7 +1281,7 @@ If a generated or user-defined `String()` exists, it is a human-readable method.
 Serialization still uses:
 
 ```text
-.value
+.Value
 ```
 
 unless a specific encoder explicitly documents otherwise.
@@ -1315,8 +1289,8 @@ unless a specific encoder explicitly documents otherwise.
 For example:
 
 ```go
-Role.Admin.name   // "Admin"
-Role.Admin.value  // "admin"
+Role.Admin.Name   // "Admin"
+Role.Admin.Value  // "admin"
 ```
 
 must remain distinct concepts.
@@ -1474,7 +1448,7 @@ GPP code should not assume such a value is valid merely because the underlying s
 Operations such as:
 
 ```go
-.name
+.Name
 ```
 
 should detect invalid enum values.
@@ -1526,9 +1500,9 @@ with:
 
 ```go
 Role.Admin
-Role.Admin.name
-Role.Admin.value
-Role.values
+Role.Admin.Name
+Role.Admin.Value
+Role.Values
 Role.From("admin")
 ```
 

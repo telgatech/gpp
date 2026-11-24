@@ -19,19 +19,19 @@ Primary use cases:
 
 Instance introspection:
 
-obj.class
+obj.Class
 
 Inside methods:
 
-this.class
+this.Class
 
 Static type introspection:
 
-Employee.class
+Employee.Class
 
 Generic type introspection, when T is known to be a GPP class:
 
-T.class
+T.Class
 
 Examples:
 
@@ -43,26 +43,26 @@ class Employee {
 
 e := Employee()
 
-println(e.class.name)
-println(Employee.class.name)
+println(e.Class.Name)
+println(Employee.Class.Name)
 
-for f := range e.class.fields {
-    println(f.name)
+for f := range e.Class.Fields {
+    println(f.Name)
 }
 
 ## Required semantics
 
 1. Every GPP class has an associated class descriptor.
 
-2. `.class` returns that descriptor.
+2. `.Class` returns that descriptor.
 
-3. For an object instance, `.class` must return the descriptor of the most-derived runtime class.
+3. For an object instance, `.Class` must return the descriptor of the most-derived runtime class.
 
 Example:
 
 class Model {
     func Debug() {
-        println(this.class.name)
+        println(this.Class.Name)
     }
 }
 
@@ -78,7 +78,7 @@ It must NOT print Model.
 
 4. Static access is also allowed:
 
-Employee.class
+Employee.Class
 
 This refers directly to Employee's class descriptor.
 
@@ -86,7 +86,7 @@ This refers directly to Employee's class descriptor.
 
 Example:
 
-http.Request.class
+http.Request.Class
 
 should be invalid unless a separate reflection mechanism is explicitly added later.
 
@@ -98,23 +98,23 @@ Class
 
 Minimum required members:
 
-class.name
-class.fields
+class.Name
+class.Fields
 
 Example:
 
-let c = Employee.class
+let c = Employee.Class
 
-c.name
-c.fields
+c.Name
+c.Fields
 
 `name`
 
-`class.name` returns the GPP class name as a string.
+`class.Name` returns the GPP class name as a string.
 
 Example:
 
-Employee.class.name == "Employee"
+Employee.Class.Name == "Employee"
 
 For:
 
@@ -130,7 +130,7 @@ A fully-qualified name may be exposed separately later if needed.
 
 ## Fields
 
-`class.fields` returns metadata for all effective instance fields of the class.
+`class.Fields` returns metadata for all effective instance fields of the class.
 
 Example:
 
@@ -143,7 +143,7 @@ class Employee : Model {
     Salary int
 }
 
-Employee.class.fields
+Employee.Class.Fields
 
 must include:
 
@@ -161,31 +161,31 @@ Field
 
 Minimum required members:
 
-field.name
-field.type
-field.get(obj)
-field.set(obj, value)
-field.addr(obj)
+field.Name
+field.Type
+field.Get(obj)
+field.Set(obj, value)
+field.Addr(obj)
 
 Recommended initial surface:
 
-field.name        string
-field.type        Type
-field.get(obj)    any
-field.set(obj,v)
-field.addr(obj)   any
+field.Name        string
+field.Type        Type
+field.Get(obj)    any
+field.Set(obj,v)
+field.Addr(obj)   any
 
 Exact compiler/runtime representation is implementation-defined.
 
-`field.name`
+`field.Name`
 
 Returns the source field name.
 
 Example:
 
-Employee.class.fields[0].name
+Employee.Class.Fields[0].Name
 
-`field.type`
+`field.Type`
 
 Returns type metadata describing the declared field type.
 
@@ -193,7 +193,7 @@ Initial implementation may expose this as a lightweight built-in Type descriptor
 
 Required minimum capability:
 
-field.type.name
+field.Type.Name
 
 Examples:
 
@@ -204,14 +204,14 @@ time.Time
 
 Do not require a complete reflection system in v1.
 
-`field.get(obj)`
+`field.Get(obj)`
 
 Returns the current value of that field from obj.
 
 Example:
 
-for f := range e.class.fields {
-    println(f.name, f.get(e))
+for f := range e.Class.Fields {
+    println(f.Name, f.Get(e))
 }
 
 For:
@@ -222,19 +222,19 @@ the Name field returns "Bob".
 
 The compiler/runtime must correctly resolve inherited fields against the most-derived object.
 
-`field.set(obj, value)`
+`field.Set(obj, value)`
 
 Assigns a value to the corresponding field.
 
 Example:
 
-f.set(e, "Bob")
+f.Set(e, "Bob")
 
 Type checking should occur whenever the compiler knows the field/value types.
 
 For truly dynamic field iteration, runtime type validation may be necessary.
 
-`field.addr(obj)`
+`field.Addr(obj)`
 
 Returns a pointer/reference suitable for APIs that require field addresses.
 
@@ -246,8 +246,8 @@ Example:
 
 dest := []any{}
 
-for f := range Employee.class.fields {
-    dest = append(dest, f.addr(e))
+for f := range Employee.Class.Fields {
+    dest = append(dest, f.Addr(e))
 }
 
 err := row.Scan(dest...)
@@ -278,8 +278,8 @@ Example:
 
 class Model {
     func Fields() {
-        for f := range this.class.fields {
-            println(f.name)
+        for f := range this.Class.Fields {
+            println(f.Name)
         }
     }
 }
@@ -311,7 +311,7 @@ class C : A, B {
     CField bool
 }
 
-C.class.fields
+C.Class.Fields
 
 must expose all effective fields.
 
@@ -321,7 +321,7 @@ If inherited field names clash and GPP requires qualification for normal access,
 
 Recommended additional metadata:
 
-field.owner
+field.Owner
 
 Example:
 
@@ -329,7 +329,7 @@ class A { Name string }
 class B { Name string }
 class C : A, B {}
 
-C.class.fields contains two Name fields:
+C.Class.Fields contains two Name fields:
 
 Name, owner=A
 Name, owner=B
@@ -338,14 +338,14 @@ Do not silently collapse physically distinct inherited fields.
 
 For v1, Field should therefore preferably include:
 
-field.name
-field.owner
-field.type
-field.get(...)
-field.set(...)
-field.addr(...)
+field.Name
+field.Owner
+field.Type
+field.Get(...)
+field.Set(...)
+field.Addr(...)
 
-`field.owner`
+`field.Owner`
 
 Returns the class that physically declares the field.
 
@@ -449,7 +449,7 @@ object header:
 
 Therefore:
 
-this.class
+this.Class
 
 is constant-time metadata access.
 
@@ -465,7 +465,7 @@ GPP class metadata exists only for GPP classes.
 
 Generated Go fields remain ordinary Go fields.
 
-`field.addr(obj)` must return actual Go pointers usable with APIs such as:
+`field.Addr(obj)` must return actual Go pointers usable with APIs such as:
 
 database/sql
 encoding
@@ -473,7 +473,7 @@ other Go libraries accepting pointers/interfaces
 
 ## Visibility
 
-All fields may initially appear in `.fields`, including lowercase/private GPP fields.
+All fields may initially appear in `.Fields`, including lowercase/private GPP fields.
 
 Visibility affects source-code access, not necessarily metadata access.
 
@@ -486,14 +486,14 @@ Do not complicate v1 unless necessary.
 
 ## Class descriptor identity
 
-Employee.class should return the same descriptor identity for all Employee instances.
+Employee.Class should return the same descriptor identity for all Employee instances.
 
 Example:
 
 a := Employee()
 b := Employee()
 
-a.class == b.class
+a.Class == b.Class
 
 should be true.
 
@@ -503,11 +503,11 @@ class Manager : Employee {}
 
 m := Manager()
 
-m.class == Manager.class
+m.Class == Manager.Class
 
 and:
 
-m.class != Employee.class
+m.Class != Employee.Class
 
 ## Built-in descriptor types
 
@@ -540,14 +540,14 @@ This feature should make ordinary GPP code like this possible:
 
 class Model {
     func Create(db *sql.DB) error {
-        c := this.class
+        c := this.Class
 
         columns := []string{}
         values := []any{}
 
-        for f := range c.fields {
-            columns = append(columns, f.name)
-            values = append(values, f.get(this))
+        for f := range c.Fields {
+            columns = append(columns, f.Name)
+            values = append(values, f.Get(this))
         }
 
         // build ordinary SQL
@@ -564,8 +564,8 @@ No database behavior is compiler built-in.
 func scanInto[T](row *sql.Row, obj T) error {
     dest := []any{}
 
-    for f := range obj.class.fields {
-        dest = append(dest, f.addr(obj))
+    for f := range obj.Class.Fields {
+        dest = append(dest, f.Addr(obj))
     }
 
     return row.Scan(dest...)
@@ -577,19 +577,19 @@ This must lower to ordinary database/sql usage.
 
 Invalid:
 
-x.class
+x.Class
 
 when x is not a GPP class instance.
 
 Invalid:
 
-http.Request.class
+http.Request.Class
 
 for native Go types in v1.
 
 Invalid:
 
-field.addr(obj)
+field.Addr(obj)
 
 when obj is not compatible with the class/owner expected by the field.
 
@@ -601,16 +601,16 @@ Diagnostics should identify the mismatched class/type.
 2. Add Field descriptor representation.
 3. Generate one Class descriptor per GPP class.
 4. Add hidden class pointer to runtime object metadata.
-5. Implement instance `.class`.
-6. Implement `Class.name`.
-7. Implement `Class.fields`.
-8. Generate Field.get accessors.
-9. Generate Field.addr accessors.
-10. Generate Field.set accessors.
+5. Implement instance `.Class`.
+6. Implement `Class.Name`.
+7. Implement `Class.Fields`.
+8. Generate Field.Get accessors.
+9. Generate Field.Addr accessors.
+10. Generate Field.Set accessors.
 11. Support inherited fields.
 12. Support multiple-inheritance ownership metadata.
-13. Implement static `Employee.class`.
-14. Implement generic `T.class` only after normal static class access works.
+13. Implement static `Employee.Class`.
+14. Implement generic `T.Class` only after normal static class access works.
 
 ## Tests
 
@@ -618,13 +618,13 @@ Basic class name:
 
 class Employee {}
 
-assert(Employee.class.name == "Employee")
+assert(Employee.Class.Name == "Employee")
 
 Runtime derived name:
 
 class Model {
     func Name() string {
-        return this.class.name
+        return this.Class.Name
     }
 }
 
@@ -639,7 +639,7 @@ class Employee {
     Age int
 }
 
-assert(Employee.class.fields contains Name and Age)
+assert(Employee.Class.Fields contains Name and Age)
 
 Inherited fields:
 
@@ -651,7 +651,7 @@ class Employee : Model {
     Name string
 }
 
-Employee.class.fields must expose Id and Name.
+Employee.Class.Fields must expose Id and Name.
 
 Get:
 
@@ -659,16 +659,16 @@ e := Employee()
 e.Name = "Bob"
 
 find field "Name"
-assert(field.get(e) == "Bob")
+assert(field.Get(e) == "Bob")
 
 Set:
 
-field.set(e, "Alice")
+field.Set(e, "Alice")
 assert(e.Name == "Alice")
 
 Address:
 
-row.Scan(field.addr(e))
+row.Scan(field.Addr(e))
 
 must behave like:
 
@@ -686,8 +686,8 @@ metadata must preserve both fields and their owners.
 
 GPP classes should know what they are.
 
-`this.class` exposes the most-derived runtime class.
+`this.Class` exposes the most-derived runtime class.
 
-`Class.fields` exposes compiler-generated structural metadata.
+`Class.Fields` exposes compiler-generated structural metadata.
 
 This metadata should be sufficient for ordinary GPP libraries to implement generic persistence and other repetitive structural operations without baking those features into the language itself.

@@ -991,7 +991,7 @@ Likewise inherited `Listen(port)` must dispatch to overridden server lifecycle m
 Inside inherited server behavior:
 
 ```go
-this.class
+this.Class
 ```
 
 must refer to the most-derived server class.
@@ -1013,7 +1013,7 @@ Shutdown
 the runtime descriptor must still be:
 
 ```text
-App.class
+App.Class
 ```
 
 This remains important for route and annotation discovery.

@@ -993,6 +993,109 @@ func typeNodeSource(typeNode TypeNode) (string, error) {
 	}
 }
 
+// substituteTypeParameters clones a type tree while replacing named type
+// parameters with their instantiated types. It is used when a generic class
+// parent is embedded or inherited through a concrete instantiation.
+func substituteTypeParameters(typeNode TypeNode, substitutions map[string]TypeNode) TypeNode {
+	if typeNode == nil || len(substitutions) == 0 {
+		return typeNode
+	}
+	switch value := typeNode.(type) {
+	case *NamedType:
+		if len(value.Parts) == 1 && len(value.Arguments) == 0 {
+			if replacement := substitutions[value.Parts[0]]; replacement != nil {
+				return replacement
+			}
+		}
+		arguments := make([]TypeNode, len(value.Arguments))
+		for index, argument := range value.Arguments {
+			arguments[index] = substituteTypeParameters(argument, substitutions)
+		}
+		return &NamedType{Parts: append([]string(nil), value.Parts...), Arguments: arguments, SpanValue: value.SpanValue}
+	case *PointerType:
+		return &PointerType{Element: substituteTypeParameters(value.Element, substitutions), SpanValue: value.SpanValue}
+	case *SliceType:
+		return &SliceType{Element: substituteTypeParameters(value.Element, substitutions), SpanValue: value.SpanValue}
+	case *ArrayType:
+		return &ArrayType{Length: value.Length, Element: substituteTypeParameters(value.Element, substitutions), Ellipsis: value.Ellipsis, SpanValue: value.SpanValue}
+	case *MapType:
+		return &MapType{Key: substituteTypeParameters(value.Key, substitutions), Value: substituteTypeParameters(value.Value, substitutions), SpanValue: value.SpanValue}
+	case *ChannelType:
+		return &ChannelType{Direction: value.Direction, Element: substituteTypeParameters(value.Element, substitutions), SpanValue: value.SpanValue}
+	case *VariadicType:
+		return &VariadicType{Element: substituteTypeParameters(value.Element, substitutions), SpanValue: value.SpanValue}
+	case *FunctionType:
+		parameters := append([]ParameterNode(nil), value.Parameters...)
+		for index := range parameters {
+			parameters[index].Type = substituteTypeParameters(parameters[index].Type, substitutions)
+		}
+		results := make([]TypeNode, len(value.Results))
+		for index, result := range value.Results {
+			results[index] = substituteTypeParameters(result, substitutions)
+		}
+		return &FunctionType{Parameters: parameters, Results: results, SpanValue: value.SpanValue}
+	case *StructType:
+		fields := append([]StructFieldNode(nil), value.Fields...)
+		for index := range fields {
+			fields[index].Type = substituteTypeParameters(fields[index].Type, substitutions)
+		}
+		return &StructType{Fields: fields, SpanValue: value.SpanValue}
+	case *InterfaceType:
+		embeds := make([]TypeNode, len(value.Embeds))
+		for index, embed := range value.Embeds {
+			embeds[index] = substituteTypeParameters(embed, substitutions)
+		}
+		methods := append([]InterfaceMethodNode(nil), value.Methods...)
+		for index := range methods {
+			methods[index].Signature = substituteTypeParameters(methods[index].Signature, substitutions)
+		}
+		return &InterfaceType{Embeds: embeds, Methods: methods, SpanValue: value.SpanValue}
+	case *TupleType:
+		elements := make([]TypeNode, len(value.Elements))
+		for index, element := range value.Elements {
+			elements[index] = substituteTypeParameters(element, substitutions)
+		}
+		return &TupleType{Elements: elements, SpanValue: value.SpanValue}
+	case *UnderlyingType:
+		return &UnderlyingType{Element: substituteTypeParameters(value.Element, substitutions), SpanValue: value.SpanValue}
+	case *UnionType:
+		terms := make([]TypeNode, len(value.Terms))
+		for index, term := range value.Terms {
+			terms[index] = substituteTypeParameters(term, substitutions)
+		}
+		return &UnionType{Terms: terms, SpanValue: value.SpanValue}
+	case *TokenType:
+		tokens := append([]Token(nil), value.Tokens...)
+		for index := range tokens {
+			if tokens[index].Kind == TokenIdentifier {
+				if replacement := substitutions[tokens[index].Text]; replacement != nil {
+					if source, err := typeNodeSource(replacement); err == nil {
+						tokens[index].Text = source
+					}
+				}
+			}
+		}
+		return &TokenType{Tokens: tokens, SpanValue: value.SpanValue}
+	default:
+		return typeNode
+	}
+}
+
+func substituteTypeSource(source string, substitutions map[string]TypeNode) string {
+	if len(substitutions) == 0 {
+		return source
+	}
+	node := parseTypeText(source)
+	if node == nil {
+		return source
+	}
+	result, err := typeNodeSource(substituteTypeParameters(node, substitutions))
+	if err != nil {
+		return source
+	}
+	return result
+}
+
 // typeNodeSignatureKey is the canonical, source-independent spelling used for
 // overload and method-dispatch identity. It intentionally mirrors the compact
 // spelling of typeNodeSource, but walks the typed tree directly so hot-path

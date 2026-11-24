@@ -308,9 +308,9 @@ in the server's generated OpenAPI document.
 
 `Listen(port)` should introspect:
 
-this.class.annotations
-this.class.methods
-method.annotations
+this.Class.Annotations
+this.Class.Methods
+method.Annotations
 
 Because inherited methods execute with runtime class identity, `Server.Listen(port)` sees the actual subclass metadata.
 
@@ -435,9 +435,9 @@ or extension-based helpers.
 
 Implementation should use:
 
-.class
-.fields
-.annotations
+.Class
+.Fields
+.Annotations
 
 No validator semantics belong in the compiler.
 

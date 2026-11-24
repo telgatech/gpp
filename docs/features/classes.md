@@ -75,6 +75,23 @@ nameBox := Box[string](Value: "Ada")
 fmt.Println(numberBox.Get(), nameBox.Get())
 ```
 
+Generic classes can also be parent classes. Specify the parent's type arguments
+in the inheritance list; inherited fields, methods, and constructors use those
+instantiated types. The arguments can refer to the child class's type
+parameters or provide concrete types:
+
+```go
+class NamedBox[T] : Box[T] {
+    Label string
+}
+
+class IntBox : Box[int] {}
+
+named := NamedBox[int](Value: 42, Label: "answer")
+fixed := IntBox(Value: 7)
+fmt.Println(named.Get(), fixed.Get())
+```
+
 An omitted constraint defaults to `any`. Add a Go-compatible constraint when
 an operation requires one. For example, map keys must be `comparable`:
 
