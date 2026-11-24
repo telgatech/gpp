@@ -108,6 +108,9 @@ The examples cover:
   methods, renamed fields, ignored fields, and omitted empty fields. YAML uses
   `gopkg.in/yaml.v3`; run `go get gopkg.in/yaml.v3` in the generated module
   before running it.
+- `slices.gpp` — typed slice and array literals, nested slices, generic and
+  inherited class elements, and slice operations including append, range
+  slicing, deletion, search, sorting, and zip.
 - `string_interpolation.gpp` — basic and formatted interpolation, raw
   multiline strings, and escaped delimiters for generated template source.
 - `regexp.gpp` — `string.CompileRegex()`, `regexp(pattern)`, and regex switch

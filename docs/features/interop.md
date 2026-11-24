@@ -1,62 +1,105 @@
 # Go and GPP interop
 
-GPP supports gradual adoption. A GPP package can call handwritten Go, and a
-Go package can import a generated GPP package. Teams can keep trusted Go code
-in place and introduce GPP where its language features help.
-
-::: warning Limited interop coverage
-Using GPP-generated objects including classes and enums from Go may be unstable
-because these paths do not yet have sufficient test coverage. This warning
-does not apply to calling Go code from GPP.
-:::
+GPP and Go source can live in the same module. GPP code can call native Go
+functions, and Go code can import packages generated from GPP.
 
 ## Call Go from GPP
 
-Keep native code in an ordinary `.go` file and call its functions from `.gpp`
-source:
+Keep both files in the same Go package. GPP can call the Go functions directly,
+including functions that return an error; GPP promotes an unhandled error to an
+exception that can be caught locally.
 
-::: code-group
-```go [GPP]
+`main.gpp`:
+
+```gpp
+package main
+
 import "fmt"
 
 func main() {
-    fmt.Println(greeting("Ada"))
+    greeting := NativeGreeting("Ada")
+    fmt.Println(greeting)
+
+    try {
+        NativeGreeting(" ")
+    } catch err {
+        fmt.Println("GPP caught native Go error:", err)
+    }
 }
 ```
 
-```go [Go]
+`native.go`:
+
+```go
 package main
 
-func greeting(name string) string {
-    return "Hello, " + name
+import (
+    "errors"
+    "strings"
+)
+
+func NativeGreeting(name string) (string, error) {
+    name = strings.TrimSpace(name)
+    if name == "" {
+        return "", errors.New("name is required")
+    }
+    return "Hello, " + name + " from native Go", nil
 }
 ```
-:::
 
-Run the directory through GPP. `main.gpp` is the entry point, and `native.go`
-is compiled alongside it:
+Run the project directory. `main.gpp` is the entry point, and GPP compiles
+`native.go` alongside it:
 
 ```sh
 gpp run examples/interop/go_from_gpp
 ```
 
-## Call generated GPP from Go
+## Call GPP from Go
 
-GPP compiles source into Go packages. A normal Go consumer can import the
-generated package through the configured module path and use its exported
-surface. When a mixed source directory has a `go.mod`, `gpp run` detects its
-module path automatically. The repository examples show both interoperability
-directions in `examples/interop/`.
+Go imports a GPP package by its module import path, just like any other Go
+package. In the example, `main.go` imports
+`example.com/gpp-go-imports-gpp/greeting`. The `go.mod` in that project gives
+GPP the module path automatically.
 
-In the runnable example, GPP compiles `greeting.gpp` and then runs the Go
-`main.go` entry point. `New` returns `*Greeting`, so Go can read its exported
-`Name` field and call its `Message` method directly. `Hello` also shows GPP
-catching the error returned by `New`:
+The exported GPP `New` function returns `*Greeting`. Go receives the generated
+class as a regular Go type and can access its exported field and method:
+
+`main.go`:
+
+```go
+package main
+
+import (
+    "fmt"
+
+    "example.com/gpp-go-imports-gpp/greeting"
+)
+
+func main() {
+    person, err := greeting.New("Grace")
+    if err != nil {
+        fmt.Println("Go handled returned error:", err)
+        return
+    }
+    fmt.Println(person.Name, person.Message())
+}
+```
+
+The same example calls `greeting.Hello`, where GPP catches the error from `New`
+as an exception. Go can also call `New` directly and handle its returned error
+with ordinary Go error handling.
+
+::: warning Limited interop coverage
+Using GPP-generated class constructors and enums from Go may be unstable
+because these paths do not yet have sufficient test coverage. This warning
+applies to Go consuming GPP; calling Go code from GPP is stable.
+:::
+
+Run the directory to compile `greeting.gpp` and execute its Go `main.go`:
 
 ```sh
 gpp run examples/interop/go_imports_gpp
 ```
 
-This boundary keeps Go's types, libraries, and build tools central. See
-[working with existing Go](/guide/getting-started#working-with-existing-go)
-and the [compatibility contract](/reference/specifications/compat).
+See the complete [interop examples](/examples/) and the
+[compatibility contract](/reference/specifications/compat).

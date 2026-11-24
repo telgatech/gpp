@@ -107,7 +107,7 @@ export default defineConfig({
           text: 'Go workflow and tools',
           items: [
             { text: 'Go compatibility', link: '/features/packages' },
-            { text: 'Mixed Go and GPP builds', link: '/features/mixed-go' },
+            { text: 'Go and GPP interop', link: '/features/interop' },
             { text: 'Project CLI', link: '/features/project-cli' },
             { text: 'Formatter', link: '/features/formatter' },
             { text: 'Source documentation', link: '/features/source-docs' },
