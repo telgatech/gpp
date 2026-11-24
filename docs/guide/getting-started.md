@@ -145,11 +145,13 @@ gpp version
 ## Working with existing Go
 
 GPP accepts ordinary Go imports and can be mixed with `.go` files. The
-repository includes examples in `examples/mixed/` showing both directions:
+repository includes examples in `examples/interop/` showing both directions:
 
 ```bash
-gpp run examples/mixed/go_from_gpp
-gpp run examples/mixed/go_imports_gpp
+# Runs main.gpp with native.go compiled alongside it.
+gpp run examples/interop/go_from_gpp
+# Compiles greeting.gpp, then runs the Go main.go entry point.
+gpp run examples/interop/go_imports_gpp
 ```
 
 This makes adoption incremental: keep stable Go packages as they are and use

@@ -94,7 +94,7 @@ feature with comparisons and examples.
 - **[Go compatibility](docs/features/packages.md)** — Use ordinary Go imports
   and dotted GPP packages mapped to module paths; standalone programs can omit
   `package main`.
-- **[Mixed Go and GPP builds](docs/features/mixed-go.md)** — Call Go from GPP
+- **[Go and GPP interop](docs/features/interop.md)** — Call Go from GPP
   and GPP from Go while compiling both languages in one project.
 - **[Project CLI](docs/features/project-cli.md)** — Initialize, build, run,
   test, format, and inspect GPP projects with the `gpp` command.
@@ -314,12 +314,12 @@ GPP and Go can also live in the same build. The mixed-compilation examples
 demonstrate both directions:
 
 ```bash
-gpp run -output /tmp/gpp-go-from-gpp examples/mixed/go_from_gpp
-gpp run -output /tmp/gpp-go-imports-gpp examples/mixed/go_imports_gpp
+gpp run examples/interop/go_from_gpp
+gpp run examples/interop/go_imports_gpp
 ```
 
 The first lets GPP call functions from `native.go`; the second lets ordinary
-Go import the generated `generated/mixed` package.
+Go import the generated `example.com/gpp-go-imports-gpp/greeting` package.
 
 The ORM example also resolves its SQLite dependency automatically:
 

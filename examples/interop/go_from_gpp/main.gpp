@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+func main() {
+	greeting := NativeGreeting("Ada")
+	fmt.Println(greeting)
+	try {
+		NativeGreeting(" ")
+	} catch err {
+		fmt.Println("GPP caught native Go error:", err)
+	}
+	fmt.Println("native sum:", NativeAdd(20, 22))
+}

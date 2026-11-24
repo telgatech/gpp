@@ -851,7 +851,7 @@ Normal builds should not clutter source directories with generated Go.
 
 ---
 
-# Mixed Go and GPP Projects
+# Go and GPP Interop
 
 The toolchain should support projects containing both:
 

@@ -60,7 +60,7 @@ import FeatureCatalog from './.vitepress/theme/FeatureCatalog.vue'
 
 <details>
 <summary>Can I adopt GPP gradually?</summary>
-<p>Yes. Start with familiar Go syntax and compile <code>.go</code> files with <code>gpp run</code>. Add GPP features like classes or named arguments when they help, and keep existing Go code alongside it. See <a href="/features/mixed-go">how Go and GPP work together</a>.</p>
+<p>Yes. Start with familiar Go syntax and compile <code>.go</code> files with <code>gpp run</code>. Add GPP features like classes or named arguments when they help, and keep existing Go code alongside it. See <a href="/features/interop">how Go and GPP work together</a>.</p>
 </details>
 
 <details>

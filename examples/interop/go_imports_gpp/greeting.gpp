@@ -1,0 +1,29 @@
+package greeting
+
+import "errors"
+
+class Greeting {
+    Name string
+
+    func Message() string {
+        return "Hello " + this.Name + " from GPP"
+    }
+}
+
+func New(name string) (*Greeting, error) {
+    if name == "" {
+        return nil, errors.New("name is required")
+    }
+    greeting := Greeting(Name: name)
+    return greeting, nil
+}
+
+// Hello promotes New's trailing error to an exception.
+func Hello(name string) string {
+    try {
+        greeting := New(name)
+        return greeting.Message()
+    } catch err {
+        return "GPP caught exception: " + err.Error()
+    }
+}

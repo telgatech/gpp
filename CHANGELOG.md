@@ -6,6 +6,8 @@
 - Added concise named Go interface declarations with `interface Name { ... }` syntax.
 - Added experimental typed cache support in `gpp/exp/cache` with overloaded constructors, GOB encoding, TTL pruning, regex deletion, a replaceable store, and a bounded default 1 GiB LRU payload budget.
 - Fixed implicit error promotion for generic methods on imported classes, including factory-returned receivers.
+- Renamed mixed Go/GPP examples and docs to interop, added module-path auto-detection, and demonstrated GPP classes crossing into Go.
+- Bumped the build-cache schema so mixed Go source discovery changes invalidate generated output.
 
 ## 2026-11-23
 

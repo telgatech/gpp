@@ -112,7 +112,7 @@ The examples cover:
   multiline strings, and escaped delimiters for generated template source.
 - `regexp.gpp` — `string.CompileRegex()`, `regexp(pattern)`, and regex switch
   captures through `match.Items` and named capture fields.
-- `mixed/` — side-by-side compilation in both directions: GPP calling
+- `interop/` — side-by-side compilation in both directions: GPP calling
   handwritten Go functions and handwritten Go importing generated GPP code.
 - `http.gpp` — the bundled `gpp/http` module with an inherited server,
   annotated HTTP and WebSocket handlers, path parameters, status-aware JSON and text responses,

@@ -102,27 +102,30 @@ entries.push(await writeExamplePage({
 }))
 
 for (const project of ['go_from_gpp', 'go_imports_gpp']) {
-  const directory = `mixed/${project}`
+  const directory = `interop/${project}`
   const files = (await readdir(path.join(sourceDir, directory)))
     .filter((name) => !name.startsWith('.'))
     .sort((left, right) => left.localeCompare(right))
     .map((name) => `${directory}/${name}`)
+  const command = project === 'go_from_gpp'
+    ? `# Runs main.gpp with native.go compiled alongside it.\ngpp run examples/interop/${project}`
+    : `# Compiles greeting.gpp, then runs the Go main.go entry point.\ngpp run examples/interop/${project}`
   entries.push(await writeExamplePage({
     name: directory,
     title: project === 'go_from_gpp' ? 'GPP calling Go' : 'Go importing GPP',
-    summary: descriptions.get('mixed/') ?? 'A complete mixed-language project showing Go and GPP interoperability.',
-    command: `gpp run examples/mixed/${project}`,
+    summary: descriptions.get('interop/') ?? 'A complete Go and GPP interoperability project.',
+    command,
     files,
   }))
 }
 
 let index = `# Runnable examples\n\nThese examples are copied directly from the repository source during the docs build. Each page includes complete source files with copy buttons and the command to run the example from a repository checkout.\n\n`
 index += `## Standalone examples\n\n`
-for (const entry of entries.filter((item) => !['packages', 'mixed-go-from-gpp', 'mixed-go-imports-gpp'].includes(item.slug))) {
+for (const entry of entries.filter((item) => !['packages', 'interop-go-from-gpp', 'interop-go-imports-gpp'].includes(item.slug))) {
   index += `- [\`${entry.title}\`](/examples/${entry.slug}) — ${entry.summary}\n`
 }
 index += `\n## Multi-file projects\n\n`
-for (const entry of entries.filter((item) => ['packages', 'mixed-go-from-gpp', 'mixed-go-imports-gpp'].includes(item.slug))) {
+for (const entry of entries.filter((item) => ['packages', 'interop-go-from-gpp', 'interop-go-imports-gpp'].includes(item.slug))) {
   index += `- [${entry.title}](/examples/${entry.slug}) — ${entry.summary}\n`
 }
 await writeFile(path.join(destinationDir, 'index.md'), index)

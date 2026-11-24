@@ -407,6 +407,11 @@ func runRun(args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
+	if !hasModuleFlag(args[:separator]) {
+		if module := modulePathForMixedSources(sources); module != "" {
+			options.module = module
+		}
+	}
 	if err := setDefaultOutput(&options, sources); err != nil {
 		return reportError(err)
 	}
@@ -1465,11 +1470,11 @@ func discoverSources(args []string) ([]string, error) {
 	return sources, nil
 }
 
-// discoverRunSources accepts GPP inputs and Go files. For directories that
-// contain GPP sources, ordinary Go files remain native helpers as in the
-// mixed-project workflow. A Go-only directory is compiled from its Go files.
+// discoverRunSources accepts GPP inputs and Go files. In mixed directories,
+// native Go files must also be compiler inputs so GPP can resolve their full
+// signatures, including trailing errors that become GPP exceptions.
 func discoverRunSources(args []string) ([]string, error) {
-	var gppSources, goSources, explicitGoSources []string
+	var gppSources, goSources []string
 	seenGPP := map[string]bool{}
 	seenGo := map[string]bool{}
 	add := func(path string, target *[]string, seen map[string]bool) error {
@@ -1495,11 +1500,6 @@ func discoverRunSources(args []string) ([]string, error) {
 					return nil, err
 				}
 			case filepath.Ext(arg) == ".go":
-				absolute, err := filepath.Abs(arg)
-				if err != nil {
-					return nil, err
-				}
-				explicitGoSources = append(explicitGoSources, absolute)
 				if err := add(arg, &goSources, seenGo); err != nil {
 					return nil, err
 				}
@@ -1537,8 +1537,8 @@ func discoverRunSources(args []string) ([]string, error) {
 	sources := gppSources
 	if len(gppSources) == 0 {
 		sources = goSources
-	} else if len(explicitGoSources) > 0 {
-		sources = append(sources, explicitGoSources...)
+	} else {
+		sources = append(sources, goSources...)
 	}
 	uniqueSources := make([]string, 0, len(sources))
 	seenSources := map[string]bool{}
@@ -1554,6 +1554,34 @@ func discoverRunSources(args []string) ([]string, error) {
 		return nil, fmt.Errorf("no .gpp, .gpp.tpl, or .go source files found")
 	}
 	return sources, nil
+}
+
+func modulePathForMixedSources(sources []string) string {
+	hasGPP, hasGo := false, false
+	moduleRoot := ""
+	for _, source := range sources {
+		switch {
+		case isGPPSource(source):
+			hasGPP = true
+		case filepath.Ext(source) == ".go":
+			hasGo = true
+		default:
+			continue
+		}
+		root := nearestModuleRoot(filepath.Dir(source))
+		if root == "" {
+			return ""
+		}
+		if moduleRoot == "" {
+			moduleRoot = root
+		} else if moduleRoot != root {
+			return ""
+		}
+	}
+	if !hasGPP || !hasGo {
+		return ""
+	}
+	return modulePathAt(moduleRoot)
 }
 
 func isSourcePath(path string) bool {

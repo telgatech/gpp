@@ -16,7 +16,7 @@ Use the guides and examples below as the primary source for writing GPP code. GP
 
 - [Feature index](docs/features/index.md): supported language and runtime features.
 - [Examples index](examples/README.md): runnable examples.
-- [Mixed Go and GPP](docs/features/mixed-go.md): sharing a project with native Go files.
+- [Go and GPP interop](docs/features/interop.md): sharing a project with native Go files.
 - [Modules and packages](spec/modules.md): package and module behavior.
 
 ## Common library guides

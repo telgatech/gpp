@@ -102,7 +102,7 @@ echo "Running container tests..."
 }
 
 run_example packages examples/packages/people.gpp examples/packages/main.gpp
-run_example mixed-go-from-gpp examples/mixed/go_from_gpp
-run_example mixed-go-imports-gpp -module generated examples/mixed/go_imports_gpp
+run_example interop-go-from-gpp examples/interop/go_from_gpp
+run_example interop-go-imports-gpp examples/interop/go_imports_gpp
 
 echo "All GPP examples passed."

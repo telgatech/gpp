@@ -42,7 +42,7 @@ compares it with the Go approach where useful, and then shows how to apply it.
 ## Go workflow and tools
 
 - [Go compatibility](./packages)
-- [Mixed Go and GPP builds](./mixed-go)
+- [Go and GPP interop](./interop)
 - [Project CLI](./project-cli)
 - [Formatter](./formatter)
 - [Source documentation](./source-docs)
