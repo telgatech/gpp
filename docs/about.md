@@ -7,7 +7,7 @@ import DonationButton from './.vitepress/theme/DonationButton.vue'
 <div class="about-profile-card">
   <img
     class="about-profile-avatar"
-    src="https://telga.in/sunderrajan.png"
+    src="https://telga.in/sunder-rajan.png"
     alt="Sunder Rajan"
     width="88"
     height="88"
