@@ -193,6 +193,10 @@ func availableImportPackages(sources []string) (map[string][]importPackage, erro
 					if ast.IsExported(declaration.Name) {
 						packageInfo.Symbols[declaration.Name] = true
 					}
+				case *compiler.AnnotationDecl:
+					if ast.IsExported(declaration.Name) {
+						packageInfo.Symbols[declaration.Name] = true
+					}
 				case *compiler.FunctionDecl:
 					if ast.IsExported(declaration.Name) {
 						packageInfo.Symbols[declaration.Name] = true
@@ -276,6 +280,10 @@ func addExportedGPPSymbols(symbols map[string]bool, file *compiler.File) {
 				symbols[declaration.Name] = true
 			}
 		case *compiler.EnumDecl:
+			if ast.IsExported(declaration.Name) {
+				symbols[declaration.Name] = true
+			}
+		case *compiler.AnnotationDecl:
 			if ast.IsExported(declaration.Name) {
 				symbols[declaration.Name] = true
 			}
@@ -819,7 +827,7 @@ func chooseImportPackage(receiver, member string, packages map[string][]importPa
 	}
 	name := receiver
 	standardOnly := false
-	if strings.HasPrefix(receiver, "std") {
+	if receiver != "std" && strings.HasPrefix(receiver, "std") {
 		name = strings.TrimPrefix(receiver, "std")
 		standardOnly = true
 	}

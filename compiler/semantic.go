@@ -881,6 +881,17 @@ func validateClass(pkg *PackageSymbols, class *ClassDecl) error {
 	}
 	methods := map[string][]methodEntry{}
 	for index, method := range class.Methods {
+		if method.Name == "_afterInit" {
+			if method.IsStatic {
+				return methodDiagnosticf(class, &method, "class lifecycle hook `_afterInit` cannot be static")
+			}
+			if methodParametersSource(method) != "" || len(method.TypeParamsAST) > 0 {
+				return methodDiagnosticf(class, &method, "class lifecycle hook `_afterInit` must not take parameters")
+			}
+			if strings.TrimSpace(methodResultSource(method)) != "" {
+				return methodDiagnosticf(class, &method, "class lifecycle hook `_afterInit` must not return values")
+			}
+		}
 		if method.Name == "init" {
 			if method.IsStatic {
 				return methodDiagnosticf(class, &method, "class %s initializer `init` cannot be static", class.Name)

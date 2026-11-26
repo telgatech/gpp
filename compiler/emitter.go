@@ -369,6 +369,9 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		body = prependPreludeImports(body, preludeImportsForBody(preludeBody, context.PreludeImports))
 		body = insertAfterImports(body, preludeBody)
 	}
+	if needsFmtImport {
+		body = insertAfterImports(body, "import \"fmt\"\n\n")
+	}
 
 	localRuntimeDefinitions := ""
 	localRuntimeImports := ""
@@ -376,9 +379,6 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 		(len(context.Introspection.Classes) > 0 || len(context.Annotations) > 0 || fileUsesIntrospection(file)) &&
 		!context.Introspection.RuntimeEmitted {
 		runtimeImportBody := body
-		if needsFmtImport {
-			runtimeImportBody = "import \"fmt\"\n\n" + runtimeImportBody
-		}
 		fmtAlias, reflectAlias, strconvAlias, stringsAlias, imports := defaultObjectRuntimeImports(runtimeImportBody)
 		localRuntimeImports = imports
 		localRuntimeDefinitions = introspectionRuntimeDefinitionsWithAliases(
@@ -400,9 +400,6 @@ func emitFile(file *File, context constructorContext) ([]byte, error) {
 	if context.Exceptions != nil && !context.Exceptions.RuntimeEmitted {
 		declarationsPrefix += exceptionRuntimeSourceMarker + "\n" + exceptionRuntimeDefinitions()
 		context.Exceptions.RuntimeEmitted = true
-	}
-	if needsFmtImport {
-		declarationsPrefix += "import \"fmt\"\n\n"
 	}
 	if fileHasSafeAccess(file) {
 		declarationsPrefix += "func __gpp_safe[R any](isNil bool, access func() R) R {\n"

@@ -1,0 +1,23 @@
+package main
+
+import http "gpp/http"
+
+class App : http.Server {
+    func Home(ctx *http.Context) error @{http.GET("/")} {
+        return ctx.HTML()
+    }
+
+    func _afterInit() {
+        this.Mount(http.Blog(
+                contentDir: "./content",
+                title: "Northstar Journal",
+                stylesheet: "/blog.css",
+                pageSize: 10
+            ), "/blog")
+    }
+}
+
+func main() {
+    app := App(PublicDir: "./public", TemplateFiles: string["templates/blog.html"])
+    app.Listen(8080)
+}

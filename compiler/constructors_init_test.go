@@ -551,3 +551,122 @@ func TestGeneratedInitializerHelpersDoNotUsePackageInitName(t *testing.T) {
 		t.Fatalf("generated initializer bridge does not invoke the source initializer:\n%s", generated)
 	}
 }
+
+func TestAfterInitRunsForEveryMultipleInheritanceParentInOrder(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+var calls []string
+
+class Root {
+	func _afterInit() {
+		calls = append(calls, "Root")
+	}
+}
+
+class Left : Root {
+	func _afterInit() {
+		calls = append(calls, "Left")
+	}
+}
+
+class Right : Root {
+	func _afterInit() {
+		calls = append(calls, "Right")
+	}
+}
+
+class Leaf : Left, Right {
+	Value int
+
+	func _afterInit() {
+		calls = append(calls, fmt.Sprintf("Leaf:%d", this.Value))
+	}
+}
+
+class Initialized {
+	Value int
+
+	func init() {
+		this.Value = 1
+	}
+
+	func init(value int) {
+		this()
+		this.Value += value
+	}
+
+	func _afterInit() {
+		calls = append(calls, fmt.Sprintf("Initialized:%d", this.Value))
+	}
+}
+
+func main() {
+	_ = Leaf(Value: 3)
+	_ = Initialized(4)
+	fmt.Println(strings.Join(calls, ","))
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile after-init program: %v", err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated after-init program did not run: %v\n%s", err, output)
+	}
+	if got, want := strings.TrimSpace(string(output)), "Root,Left,Root,Right,Leaf:3,Initialized:5"; got != want {
+		t.Fatalf("unexpected after-init order: got %q, want %q", got, want)
+	}
+}
+
+func TestNamedConstructorAcceptsInvokedFunctionLiteralWithSemicolon(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+import "fmt"
+
+class PageData {
+	ApiKey string
+}
+
+func main() {
+	page := PageData(ApiKey: func() string {
+		if true { return "ready" }; return "fallback"
+	}())
+	fmt.Println(page.ApiKey)
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile constructor with invoked function literal: %v", err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE=/tmp/gpp-go-cache")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated function-literal constructor did not run: %v\n%s", err, output)
+	}
+	if got, want := strings.TrimSpace(string(output)), "ready"; got != want {
+		t.Fatalf("unexpected function-literal constructor result: got %q, want %q", got, want)
+	}
+}

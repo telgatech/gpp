@@ -411,6 +411,24 @@ the caller should capture the constructor error or handle it with `??`. See the
 [constructor specification](/reference/specifications/constructors) for the
 complete rules.
 
+Use `_afterInit()` for setup that should run after the whole object is ready,
+including setup shared by field-based construction and `init` constructors.
+After the selected initializer and parent constructor chain, parent hooks run
+base-first in declaration order, followed by the class's own hook. A child
+hook does not replace parent hooks; the compiler invokes every class's hook,
+so do not call `super._afterInit()`. For example, a server can register its
+mountables internally while callers still configure public fields:
+
+```gpp
+class App : http.Server {
+    func _afterInit() {
+        this.Mount(http.Blog(contentDir: "./content"), "/blog")
+    }
+}
+
+app := App(PublicDir: "./public")
+```
+
 ## When a builder pattern helps
 
 An initializer fits work every instance should share. A builder solves a

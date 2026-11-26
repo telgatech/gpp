@@ -414,6 +414,42 @@ func Greeting() string {
 	}
 }
 
+func TestCompileInterpolationAllowsMethodCallsWithoutFmtImport(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	sourcePath := filepath.Join(inputDir, "main.gpp")
+	source := `package main
+
+class App {
+	Name string
+
+	func QueuePath() string {
+		return "data/{{this.Name.ToLower()}}.queue"
+	}
+}
+
+func main() {
+	if App(Name: "ADA").QueuePath() != "data/ada.queue" {
+		panic("interpolation failed")
+	}
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompileFilesWithOptions([]string{sourcePath}, outputDir, CompileOptions{ModulePath: "generated"}); err != nil {
+		t.Fatalf("compile interpolation method call without fmt import: %v", err)
+	}
+
+	command := exec.Command("go", "run", ".")
+	command.Dir = outputDir
+	command.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "go-cache"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated interpolation method call did not run: %v\n%s", err, output)
+	}
+}
+
 func TestCompileFilesSupportsFormattedInterpolationAndLiteralRawStrings(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := t.TempDir()

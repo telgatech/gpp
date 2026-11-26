@@ -1,0 +1,275 @@
+:root {
+    color-scheme: light;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #202938;
+    background: #f3f5f8;
+}
+
+body {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem;
+    line-height: 1.65;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid #d8dee8;
+}
+
+header nav {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+header nav a:first-child {
+    color: #172b4d;
+    font-size: 1.25rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+header nav a:last-child {
+    text-decoration: none;
+}
+
+.site-search {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin: 1rem 0 -1rem;
+}
+
+main {
+    margin-top: 2rem;
+    padding: 2rem;
+    border: 1px solid #e1e6ee;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgb(23 43 77 / 6%);
+}
+
+.landing {
+    padding: 0;
+    overflow: hidden;
+}
+
+.hero {
+    padding: clamp(2rem, 8vw, 5.5rem);
+    background: linear-gradient(135deg, #eef6ff, #fff 70%);
+}
+
+.eyebrow {
+    color: #1769aa;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.hero h1 {
+    max-width: 700px;
+    margin: 0.5rem 0 1rem;
+    color: #172b4d;
+    font-size: clamp(2.4rem, 7vw, 4.5rem);
+    letter-spacing: -0.04em;
+}
+
+.lead {
+    max-width: 650px;
+    color: #536174;
+    font-size: 1.2rem;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+}
+
+.button {
+    display: inline-block;
+    padding: 0.65rem 1rem;
+    border: 1px solid #c8d0dc;
+    border-radius: 7px;
+    background: #fff;
+    text-decoration: none;
+}
+
+.button.primary {
+    border-color: #1769aa;
+    background: #1769aa;
+    color: #fff;
+}
+
+.services,
+.journal-callout {
+    padding: 2rem clamp(1.25rem, 5vw, 3.5rem);
+}
+
+.service-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.service-grid article {
+    padding: 1rem;
+    border: 1px solid #e8ebf0;
+    border-radius: 10px;
+}
+
+.service-grid h3 {
+    margin-top: 0;
+}
+
+.journal-callout {
+    border-top: 1px solid #e8ebf0;
+    background: #f8fafc;
+}
+
+h1,
+h2 {
+    line-height: 1.25;
+}
+
+a {
+    color: #1769aa;
+}
+
+.post-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.75rem;
+}
+
+.post-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+    padding: 1.4rem;
+    border: 1px solid #e1e6ee;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 4px 14px rgb(23 43 77 / 4%);
+    transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.post-card-image-link {
+    display: block;
+    margin: -1.4rem -1.4rem 1rem;
+    overflow: hidden;
+    border-radius: 12px 12px 0 0;
+}
+
+.post-card-image {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+}
+
+.article-image {
+    display: block;
+    width: 100%;
+    max-height: 32rem;
+    margin: 1.5rem 0;
+    border-radius: 12px;
+    object-fit: cover;
+}
+
+.post-card:hover {
+    transform: translateY(-2px);
+    border-color: #b8cbe0;
+    box-shadow: 0 10px 24px rgb(23 43 77 / 9%);
+}
+
+.post-card h2 {
+    margin: 0.25rem 0 0.5rem;
+    font-size: 1.35rem;
+}
+
+.post-card h2 a {
+    color: #172b4d;
+    text-decoration: none;
+}
+
+.post-card h2 a:hover {
+    color: #1769aa;
+}
+
+.post-card p:not(.post-meta) {
+    margin-top: 0;
+    color: #536174;
+}
+
+.post-meta {
+    margin: 0;
+    color: #687587;
+    font-size: 0.9rem;
+}
+
+.post-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: auto;
+    padding-top: 1rem;
+}
+
+.post-tags a {
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: #eef4fa;
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+
+.empty-state {
+    grid-column: 1 / -1;
+    color: #687587;
+}
+
+input,
+button {
+    padding: 0.45rem 0.65rem;
+    border: 1px solid #c8d0dc;
+    border-radius: 6px;
+    background: #fff;
+    font: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+@media (max-width: 560px) {
+    body {
+        padding: 1rem 0.75rem;
+    }
+
+    header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .service-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .post-grid {
+        grid-template-columns: 1fr;
+    }
+
+    main {
+        padding: 1.25rem;
+    }
+}

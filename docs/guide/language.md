@@ -36,7 +36,9 @@ Classes can define one instance `init()` method for setup and validation after
 constructor fields are assigned. Constructor-style calls run it after
 initializing fields; ordinary `User{...}` composite literals bypass it. The
 initializer can return an error, which construction returns or promotes using
-the normal trailing-error rules:
+the normal trailing-error rules. A protected `_afterInit()` hook runs once
+for each class after the full constructor chain, or after field assignment
+when the class has no `init`; parent hooks run first in declaration order:
 
 ```go
 class User {

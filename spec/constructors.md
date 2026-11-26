@@ -74,6 +74,44 @@ p := &Person{Name: "Bob", Age: 42}
 The exact generated helper names and dispatch machinery are implementation
 details.
 
+## Post-construction hook: `_afterInit()`
+
+A class may define one protected instance method named `_afterInit()` with no
+parameters and no return values. GPP calls it after the object has been fully
+constructed by a `Type(...)` expression:
+
+1. Assign fields when the class has no `init` constructor.
+2. Run the selected `init` constructor and its parent constructor chain, when
+   present.
+3. Call each parent class's `_afterInit()` in base-first order, following
+   parent declaration order.
+4. Call the constructed class's `_afterInit()`, when present.
+
+Hooks run for field-based construction as well as `init` construction.
+Delegating with `this(...)` does not call hooks for intermediate
+initializers; the complete hook sequence runs after the constructor chain
+returns. Ordinary Go composite literals such as `User{...}` do not call hooks.
+
+Each class contributes its own hook, so overriding `_afterInit()` does not
+skip parent setup. Do not call `super._afterInit()`; the compiler calls parent
+hooks automatically. With multiple inheritance, hooks run once for each
+embedded parent subobject, in declaration order, followed by the child hook.
+Hooks run through direct compiler-generated calls, without runtime reflection.
+An uncaught error inside a hook follows normal GPP exception propagation.
+
+For example, a server class can keep mount setup with its own configuration
+while callers supply only constructor fields:
+
+```gpp
+class App : http.Server {
+    func _afterInit() {
+        this.Mount(http.Blog(contentDir: "./content"), "/blog")
+    }
+}
+
+app := App(PublicDir: "./public")
+```
+
 ## Named struct construction
 
 Class constructor-style calls return pointers. Named struct constructor-style

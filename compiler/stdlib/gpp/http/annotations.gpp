@@ -1,32 +1,32 @@
 package gpp.http
 
 annotation (
-	IP(addr string) on class
-	Unix(path string) on class
-	Prefix(path string) on class
-	Mountable on class
+    IP(addr string) on class
+    Unix(path string) on class
+    Prefix(path string) on class
+    Mountable on class
 
-	GET(path string) on method
-	POST(path string) on method
-	PUT(path string) on method
-	PATCH(path string) on method
-	DELETE(path string) on method
-	Path(name string = "") on parameter
-	Query(name string = "") on parameter
-	Body on parameter
-	Summary(text string) on method
-	Description(text string) on method
-	Tags(names ...string) on method
-	RequestBody(contentType string, description string, example any) on method
-	ResponseBody(status int, description string, contentType string, example any) on method
+    GET(path string) on method
+    POST(path string) on method
+    PUT(path string) on method
+    PATCH(path string) on method
+    DELETE(path string) on method
+    Path(name string = "") on parameter
+    Query(name string = "") on parameter
+    Body on parameter
+    Summary(text string) on method
+    Description(text string) on method
+    Tags(names ...string) on method
+    RequestBody(contentType string, description string, example any) on method
+    ResponseBody(status int, description string, contentType string, example any) on method
 
-	WebSocket(path string) on method
-	SSE on method
-	Files(path string, dir string, DirListing bool = false) on class
-	OpenAPI(path string = "/openapi.json") on class
-	Swagger(path string = "/swagger") on class
-	OAuth(options ...any) on class
-	Auth on class, method
-	NoAuth on method
-	Role(name string) on class, method
+    WebSocket(path string) on method
+    SSE on method
+    Files(path string, dir string, DirListing bool = false) on class
+    OpenAPI(path string = "/openapi.json") on class
+    Swagger(path string = "/swagger") on class
+    OAuth(options ...any) on class
+    Auth on class, method
+    NoAuth on method
+    Role(name string) on class, method
 )

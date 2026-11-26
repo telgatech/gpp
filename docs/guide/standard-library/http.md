@@ -128,6 +128,7 @@ These are the annotations declared by `gpp/http`. The first group is read by the
 | `http.WebSocket(path)` | Handler method | WebSocket endpoint that handles a GET upgrade | Sends each connection to the annotated handler method. |
 | `http.SSE` | Handler method | Optional Server-Sent Events marker | Documents that a GET handler writes an event stream through `ctx.SSE`; it has no routing effect. |
 | `http.Files(path, dir, DirListing = false)` | Server class | Static-file mount | Replaces manual `FileServer` and `StripPrefix` registration; listings are opt-in. |
+| `http.Blog(contentDir, title = "Blog", baseURL = "", stylesheet = "", pageSize = 10)` | Mountable route group | Markdown blog routes and content directory | Builds post, author, tag, search, and sitemap pages from Markdown files. |
 | `http.OpenAPI(path)` | Server class | Generated OpenAPI endpoint; defaults to `/openapi.json` | Avoids maintaining a separate API description and serving handler. |
 | `http.Swagger(path)` | Server class | Bundled Swagger UI; defaults to `/swagger` | Avoids adding Swagger assets, page setup, and spec-loading code. Requires `http.OpenAPI`. |
 | `http.OAuth(options...)` | Server class | OAuth/OIDC provider login and callback routes | Replaces hand-written protocol routes and state/token-exchange plumbing; the app still chooses its user and session behavior. |
@@ -141,6 +142,93 @@ The package also declares the following policy annotations, but the current rout
 | `http.Role(name)` | Declare a required role for a server or method. | Metadata only; it does not enforce role checks. |
 
 Do not rely on `Auth`, `NoAuth`, or `Role` to protect a route yet. Use implemented OAuth/OIDC sign-in plus application-owned sessions and authorization middleware or checks.
+
+## Markdown blog
+
+Mount `http.Blog(contentDir)` to serve Markdown posts without writing route
+handlers. The mount address sets the blog URL base; named constructor arguments
+configure the site title, canonical base URL, stylesheet URL, and number of
+posts per page:
+
+```gpp
+class App : http.Server {
+    func _afterInit() {
+        this.Mount(http.Blog(
+            contentDir: "./content",
+            title: "Northstar Journal",
+            baseURL: "https://example.com",
+            stylesheet: "/blog.css",
+            pageSize: 10
+        ), "/blog")
+    }
+}
+
+App(PublicDir: "./public", TemplateFiles: []string{"templates/blog.html"}).Listen(8080)
+```
+
+Each `.md` file directly inside the content directory starts with YAML
+frontmatter. `title` is required; `date`, `slug`, `author`, `tags`,
+`description`, `image`, `imageAlt`, and `draft` are optional. `image` should be
+a browser-accessible URL, such as a path served by `http.Files`. When present,
+it is available to custom templates and appears on built-in pages and in Open
+Graph metadata. `imageAlt` supplies accessible text and defaults to the post
+title. A missing slug is derived from the title, and a missing date uses the
+file modification time:
+
+```yaml
+---
+title: Building with GPP
+date: 2026-11-25
+author: Ada Lovelace
+image: /building-with-gpp.png
+imageAlt: A blue illustration representing a new direction for the project.
+tags:
+  - gpp
+  - language
+description: A short summary for search results and social previews.
+---
+
+Markdown content goes here.
+```
+
+The blog serves `/blog/`, `/blog/{slug}`, `/blog/search?q=...`,
+`/blog/authors/{author}`, `/blog/tags/{tag}`, and `/blog/sitemap.xml`. Search
+matches post titles, descriptions, authors, tags, and Markdown source. Listing
+pages are paginated using `pageSize`. Drafts are omitted. Posts are loaded and
+indexed when the server starts; restart the server after changing content.
+`baseURL` must be an absolute HTTP or HTTPS URL and is used for canonical and
+sitemap links. Serve the `stylesheet` URL through `http.Files` or another route;
+use a trailing slash for a directory mount such as `http.Files("/assets/", "./public")`.
+Pages include canonical links and Open Graph title/description metadata;
+Markdown is rendered with raw HTML disabled.
+
+### Blog templates
+
+Blog routes use the server's `Templates` or `TemplateFiles` set when a template
+matches the request path. Define route templates such as `/blog`,
+`/blog/{slug}`, `/blog/search`, `/blog/authors/{author}`, and
+`/blog/tags/{tag}`; they receive an `http.BlogPage` value. Named partials in the
+same template set can provide the site's shared header, navigation, and footer.
+If no route template matches, Blog uses its built-in plain HTML page. A
+stylesheet is linked only when the `stylesheet` option is set.
+
+`BlogPage` exposes `Kind` (`index`, `post`, `search`, `author`, or `tag`),
+`BasePath`, `BaseURL`, `SiteTitle`, `Stylesheet`, `Title`, `Description`,
+`CanonicalURL`, `Query`, `Post`, `Posts`, `Page`, `PageSize`, `Total`,
+`PreviousURL`, and `NextURL`.
+`BlogPost` exposes article fields including `Title`, `Date`, `Slug`, `Author`,
+`AuthorURL`, `Tags`, `Description`, `Image`, `ImageAlt`, and rendered `Body`.
+Index entries use `BlogPostSummary`, with `BlogTag` values for tag names and
+URLs. The example demonstrates a responsive card grid with optional cover
+images on listings and article pages.
+The [blog example template](https://github.com/telgatech/gpp/blob/main/examples/blog/templates/blog.html)
+shows shared site header and footer templates around all five blog page types.
+
+Run the [blog example](https://github.com/telgatech/gpp/tree/main/examples/blog)
+from the repository root with `(cd examples/blog && gpp run .)`. Its two posts
+demonstrate generated author and tag archives as well as search. `gpp run`
+executes the application with the caller's working directory, so relative
+content directories resolve as expected.
 
 ## Bind handler parameters
 

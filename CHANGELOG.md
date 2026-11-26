@@ -1,7 +1,19 @@
 # Changelog
 
+## 2026-11-25
+
+- Fixed function and extension-method calls inside string interpolation, including required prelude helpers and generated `fmt` imports.
+- Fixed semicolon handling after blocks, including inline function literals passed to class constructors.
+- Fixed `fiximports` to recognize imports used by GPP annotations such as `std.Hook`.
+- Added the `_afterInit()` class hook, called after construction for each class in the parent chain.
+- Added `http.Blog(...)` as a mountable route group for `Server.Mount`.
+- Added optional image and alt text frontmatter to blog posts, exposed in templates and rendered in blog cards and article pages.
+- Expanded the blog example with a company landing page and image-based card grid.
+
 ## 2026-11-24
 
+- Added configurable `http.Blog` pages with Markdown posts, archives, search, pagination, sitemap generation, and shared server templates.
+- Treat intentional HTTP server shutdown as a normal return.
 - Removed grouped enum declarations; each enum now has its own declaration.
 - Added concise named Go interface declarations with `interface Name { ... }` syntax.
 - Added experimental typed cache support in `gpp/exp/cache` with overloaded constructors, GOB encoding, TTL pruning, regex deletion, a replaceable store, and a bounded default 1 GiB LRU payload budget.

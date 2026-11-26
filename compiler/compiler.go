@@ -207,6 +207,16 @@ func CompileProgramWithOptions(program *Program, outputDir string, options Compi
 				return err
 			}
 		}
+		if programUsesModule(model, "github.com/yuin/goldmark") {
+			if err := ensureGoModuleRequirement(outputDir, "github.com/yuin/goldmark", "v1.8.7"); err != nil {
+				return err
+			}
+		}
+		if programUsesModule(model, "gopkg.in/yaml.v3") {
+			if err := ensureGoModuleRequirement(outputDir, "gopkg.in/yaml.v3", "v3.0.1"); err != nil {
+				return err
+			}
+		}
 		if err := ensureGeneratedMarker(outputDir); err != nil {
 			return err
 		}
@@ -1205,7 +1215,24 @@ func ensureGoModuleRequirement(outputDir, modulePath, version string) error {
 }
 
 func ensureGoModuleSums(outputDir, modulePath, version string) error {
-	if modulePath != "golang.org/x/net" || version != "v0.58.0" {
+	var entries []string
+	switch {
+	case modulePath == "golang.org/x/net" && version == "v0.58.0":
+		entries = []string{
+			"golang.org/x/net v0.58.0 h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=",
+			"golang.org/x/net v0.58.0/go.mod h1:YwCddHnFlT7eLQqVprV19OnhLGtc5xOKgE0RyqgfWAU=",
+		}
+	case modulePath == "github.com/yuin/goldmark" && version == "v1.8.7":
+		entries = []string{
+			"github.com/yuin/goldmark v1.8.7 h1:XT/tNqCIbabh0ln675w4x3dv04kQBKi8NwYqi9IJaxI=",
+			"github.com/yuin/goldmark v1.8.7/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=",
+		}
+	case modulePath == "gopkg.in/yaml.v3" && version == "v3.0.1":
+		entries = []string{
+			"gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=",
+			"gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=",
+		}
+	default:
 		return nil
 	}
 	goSumPath := filepath.Join(outputDir, "go.sum")
@@ -1214,10 +1241,6 @@ func ensureGoModuleSums(outputDir, modulePath, version string) error {
 		return err
 	}
 	lines := strings.Split(string(content), "\n")
-	entries := []string{
-		"golang.org/x/net v0.58.0 h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=",
-		"golang.org/x/net v0.58.0/go.mod h1:YwCddHnFlT7eLQqVprV19OnhLGtc5xOKgE0RyqgfWAU=",
-	}
 	for _, entry := range entries {
 		found := false
 		for _, line := range lines {

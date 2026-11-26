@@ -422,7 +422,11 @@ func runRun(args []string) int {
 	if err := runGoModTidyCached(options.output, cache.Key); err != nil {
 		return reportError(err)
 	}
-	if err := runGoProgram(options.output, programArgs); err != nil {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return reportError(err)
+	}
+	if err := runGoProgramIn(options.output, workingDirectory, programArgs); err != nil {
 		return reportError(err)
 	}
 	return 0
@@ -1629,6 +1633,10 @@ func runGoCommand(directory string, args ...string) error {
 // run` as one command hides output from long-running processes (including HTTP
 // server startup logs) until they exit.
 func runGoProgram(directory string, arguments []string) error {
+	return runGoProgramIn(directory, directory, arguments)
+}
+
+func runGoProgramIn(directory string, workingDirectory string, arguments []string) error {
 	goPath, err := findGo()
 	if err != nil {
 		return err
@@ -1660,7 +1668,7 @@ func runGoProgram(directory string, arguments []string) error {
 	}
 
 	program := exec.Command(binaryPath, arguments...)
-	program.Dir = directory
+	program.Dir = workingDirectory
 	program.Stdout = os.Stdout
 	program.Stderr = os.Stderr
 	if err := program.Run(); err != nil {

@@ -1,0 +1,108 @@
+{{define "site-header"}}
+<header>
+  <nav aria-label="Site navigation">
+    <a href="/">Northstar Studio</a>
+    <a href="/blog/">Journal</a>
+  </nav>
+</header>
+{{end}}
+
+{{define "site-footer"}}
+<footer><p>Notes from the GPP example site.</p></footer>
+{{end}}
+
+{{define "/"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northstar Studio</title>
+  <meta name="description" content="Northstar Studio helps teams turn complex ideas into useful digital products.">
+  <link rel="canonical" href="/">
+  <link rel="stylesheet" href="/blog.css">
+</head>
+<body>
+{{template "site-header" .}}
+<main class="landing">
+  <section class="hero">
+    <p class="eyebrow">Independent product studio</p>
+    <h1>Make your next big idea useful.</h1>
+    <p class="lead">Northstar Studio helps ambitious teams turn complex ideas into clear, dependable digital products.</p>
+    <p class="actions"><a class="button primary" href="/blog/">Read our journal</a> <a class="button" href="#services">What we do</a></p>
+  </section>
+  <section id="services" class="services">
+    <h2>Good work, from first sketch to launch</h2>
+    <div class="service-grid">
+      <article><h3>Product strategy</h3><p>Find the right problem, shape a useful plan, and give the team a clear direction.</p></article>
+      <article><h3>Design and engineering</h3><p>Build thoughtful, accessible software that feels simple to use and solid underneath.</p></article>
+      <article><h3>Long-term partnership</h3><p>Keep improving after launch with a small team that knows the product and its people.</p></article>
+    </div>
+  </section>
+  <section class="journal-callout">
+    <h2>Notes from the studio</h2>
+    <p>Ideas, lessons, and updates from the people doing the work.</p>
+    <a href="/blog/">Visit the Northstar Journal →</a>
+  </section>
+</main>
+{{template "site-footer" .}}
+</body>
+</html>
+{{end}}
+
+{{define "blog-page"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · {{.SiteTitle}}</title>
+  <meta name="description" content="{{.Description}}">
+  <link rel="canonical" href="{{.CanonicalURL}}">
+  {{with .Post}}{{if .Image}}<meta property="og:image" content="{{.Image}}">{{end}}{{end}}
+  {{if .Stylesheet}}<link rel="stylesheet" href="{{.Stylesheet}}">{{end}}
+</head>
+<body>
+{{template "site-header" .}}
+<form class="site-search" action="/blog/search" method="get">
+  <label>Search the journal <input name="q" value="{{.Query}}"></label>
+  <button>Search</button>
+</form>
+<main>
+  {{if .Post}}
+  <article>
+    <h1>{{.Post.Title}}</h1>
+    <p><time>{{.Post.Date}}</time>{{if .Post.Author}} · <a href="{{.Post.AuthorURL}}">{{.Post.Author}}</a>{{end}}</p>
+    {{if .Post.Image}}<img class="article-image" src="{{.Post.Image}}" alt="{{.Post.ImageAlt}}">{{end}}
+    <div>{{.Post.Body}}</div>
+    <nav aria-label="Tags">{{range .Post.Tags}}<a href="{{.URL}}">{{.Name}}</a> {{end}}</nav>
+  </article>
+  {{else}}
+  <h1>{{.Title}}</h1>
+  <p>{{.Description}}</p>
+  <section class="post-grid" aria-label="Blog posts">
+    {{range .Posts}}
+      <article class="post-card">
+        {{if .Image}}<a class="post-card-image-link" href="{{.URL}}"><img class="post-card-image" src="{{.Image}}" alt="{{.ImageAlt}}" loading="lazy"></a>{{end}}
+        <p class="post-meta"><time>{{.Date}}</time>{{if .Author}} · <a href="{{.AuthorURL}}">{{.Author}}</a>{{end}}</p>
+        <h2><a href="{{.URL}}">{{.Title}}</a></h2>
+        {{if .Description}}<p>{{.Description}}</p>{{end}}
+        <nav class="post-tags" aria-label="Tags">{{range .Tags}}<a href="{{.URL}}">{{.Name}}</a>{{end}}</nav>
+      </article>
+    {{else}}
+    <p class="empty-state">No posts found.</p>
+    {{end}}
+  </section>
+  <nav aria-label="Pagination">{{if .PreviousURL}}<a rel="prev" href="{{.PreviousURL}}">Previous</a>{{end}}{{if .NextURL}} <a rel="next" href="{{.NextURL}}">Next</a>{{end}}</nav>
+  {{end}}
+</main>
+{{template "site-footer" .}}
+</body>
+</html>
+{{end}}
+
+{{define "/blog"}}{{template "blog-page" .}}{{end}}
+{{define "/blog/{slug}"}}{{template "blog-page" .}}{{end}}
+{{define "/blog/search"}}{{template "blog-page" .}}{{end}}
+{{define "/blog/authors/{author}"}}{{template "blog-page" .}}{{end}}
+{{define "/blog/tags/{tag}"}}{{template "blog-page" .}}{{end}}

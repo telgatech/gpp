@@ -159,6 +159,22 @@ func preludeExtensionsUsedInFile(file *File) (map[string]bool, error) {
 					used[name] = true
 				}
 			}
+			for _, sourceToken := range tokens {
+				if sourceToken.Kind != TokenString {
+					continue
+				}
+				interpolated, parseErr := parseInterpolatedString(sourceToken)
+				if parseErr != nil || interpolated == nil {
+					continue
+				}
+				collectExtensionASTExpression(interpolated, func(call *CallExpr) bool {
+					selector, ok := call.Callee.(*SelectorExpr)
+					if ok && names[selector.Name] {
+						used[selector.Name] = true
+					}
+					return true
+				})
+			}
 		}
 	}
 	return used, nil

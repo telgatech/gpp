@@ -124,6 +124,11 @@ The examples cover:
   shutdown, configurable ports, path and hostname mounts for independent route
   classes, and opt-in OpenAPI JSON plus self-contained Swagger UI endpoints
   under the configured prefix.
+- `blog/` — a dummy company landing page at `/` alongside a mountable Markdown
+  blog with frontmatter-driven posts, automatic author and tag archives,
+  search, a sitemap, and shared site templates. Its blog uses a responsive card
+  grid with optional frontmatter cover images. Run it from the repository root
+  with `(cd examples/blog && gpp run .)`.
 - `html_template.gpp` — passes a standard `html/template` set to
   `http.Context` and matches a `/users/{id}` definition against `/users/123`.
 - `sse.gpp` — a GET endpoint that streams periodic multiline events with

@@ -1,0 +1,665 @@
+package gpp.http
+
+import (
+    "bytes"
+    "encoding/xml"
+    "fmt"
+    htmltemplate "html/template"
+    "io/fs"
+    "net/url"
+    stdhttp "net/http"
+    "os"
+    "path/filepath"
+    "sort"
+    "strconv"
+    "strings"
+    "time"
+    "unicode"
+
+    "github.com/yuin/goldmark"
+    "github.com/yuin/goldmark/extension"
+    yaml "gopkg.in/yaml.v3"
+)
+
+// Blog is a mountable Markdown blog route group.
+class Blog @{Mountable} {
+    ContentDir string
+    Title string
+    BaseURL string
+    Stylesheet string
+    PageSize int
+
+    func init(contentDir string, title string = "Blog", baseURL string = "", stylesheet string = "", pageSize int = 10) {
+        this.ContentDir = contentDir
+        this.Title = title
+        this.BaseURL = baseURL
+        this.Stylesheet = stylesheet
+        this.PageSize = pageSize
+    }
+}
+
+type gppHTTPBlogFrontMatter struct {
+    Title string `yaml:"title"`
+    Date string `yaml:"date"`
+    Slug string `yaml:"slug"`
+    Author string `yaml:"author"`
+    Tags []string `yaml:"tags"`
+    Description string `yaml:"description"`
+    Image string `yaml:"image"`
+    ImageAlt string `yaml:"imageAlt"`
+    Draft bool `yaml:"draft"`
+}
+
+type gppHTTPBlogPost struct {
+    Title string
+    Date string
+    DateTime time.Time
+    Slug string
+    Author string
+    AuthorSlug string
+    Tags []string
+    TagSlugs []string
+    Description string
+    Image string
+    ImageAlt string
+    Body htmltemplate.HTML
+    SearchText string
+}
+
+type gppHTTPBlogLink struct {
+    Title string
+    URL string
+    Date string
+    Author string
+    AuthorURL string
+    Description string
+    Image string
+    ImageAlt string
+    Tags []gppHTTPBlogTagLink
+}
+
+type gppHTTPBlogTagLink struct {
+    Name string
+    URL string
+}
+
+// BlogPage is the data passed to a custom HTML template for a blog route.
+type BlogPage struct {
+    Kind string
+    BasePath string
+    BaseURL string
+    SiteTitle string
+    Stylesheet string
+    Title string
+    Description string
+    CanonicalURL string
+    Query string
+    Post * BlogPost
+    Posts []BlogPostSummary
+    Page int
+    PageSize int
+    Total int
+    PreviousURL string
+    NextURL string
+}
+
+// BlogPost is the public data for a rendered blog article.
+type BlogPost struct {
+    Title string
+    Date string
+    Slug string
+    Author string
+    AuthorURL string
+    Tags []BlogTag
+    Description string
+    Image string
+    ImageAlt string
+    Body htmltemplate.HTML
+}
+
+// BlogPostSummary is a post entry used in blog indexes and archives.
+type BlogPostSummary struct {
+    Title string
+    URL string
+    Date string
+    Author string
+    AuthorURL string
+    Tags []BlogTag
+    Description string
+    Image string
+    ImageAlt string
+}
+
+// BlogTag is a tag label and its archive URL.
+type BlogTag struct {
+    Name string
+    URL string
+}
+
+type gppHTTPBlogResponseWriter struct {
+    stdhttp.ResponseWriter
+    Status int
+}
+
+func (writer *gppHTTPBlogResponseWriter) WriteHeader(status int) {
+    if writer.Status != 0 {
+        return
+    }
+    writer.Status = status
+    writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *gppHTTPBlogResponseWriter) Write(data []byte) (int, error) {
+    if writer.Status == 0 {
+        writer.WriteHeader(stdhttp.StatusOK)
+    }
+    return writer.ResponseWriter.Write(data)
+}
+
+func (writer *gppHTTPBlogResponseWriter) Unwrap() stdhttp.ResponseWriter {
+    return writer.ResponseWriter
+}
+
+var gppHTTPBlogMarkdown = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
+var gppHTTPBlogPageTemplate *htmltemplate.Template
+
+func init() {
+    pageTemplate, err := htmltemplate.New("gpp-http-blog").Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<meta name="description" content="{{.Description}}">
+<link rel="canonical" href="{{.CanonicalURL}}">
+<meta property="og:url" content="{{.CanonicalURL}}">
+<meta property="og:title" content="{{.Title}}">
+<meta property="og:description" content="{{.Description}}">
+{{with .Post}}{{if .Image}}<meta property="og:image" content="{{.Image}}">{{end}}{{end}}
+<meta property="og:type" content="{{if .Post}}article{{else}}website{{end}}">
+<meta property="og:site_name" content="{{.SiteTitle}}">
+{{if .Stylesheet}}<link rel="stylesheet" href="{{.Stylesheet}}">{{end}}
+</head>
+<body>
+<header><a href="{{.BasePath}}/">{{.SiteTitle}}</a>
+<form action="{{.BasePath}}/search" method="get"><label>Search <input name="q" value="{{.Query}}"></label><button>Search</button></form></header>
+<main>
+{{if .Post}}
+<article><h1>{{.Post.Title}}</h1><p><time>{{.Post.Date}}</time>{{if .Post.Author}} · <a href="{{.Post.AuthorURL}}">{{.Post.Author}}</a>{{end}}</p>
+{{with .Post}}{{if .Image}}<img src="{{.Image}}" alt="{{.ImageAlt}}">{{end}}{{end}}
+<div>{{.Post.Body}}</div>
+<nav aria-label="Tags">{{range $index, $tag := .Post.Tags}}{{if $index}} · {{end}}<a href="{{$tag.URL}}">{{$tag.Name}}</a>{{end}}</nav></article>
+{{else}}
+<h1>{{.Title}}</h1><p>{{.Description}}</p>
+<ul>{{range .Posts}}<li><article>{{if .Image}}<img src="{{.Image}}" alt="{{.ImageAlt}}">{{end}}<h2><a href="{{.URL}}">{{.Title}}</a></h2><p><time>{{.Date}}</time>{{if .Author}} · <a href="{{.AuthorURL}}">{{.Author}}</a>{{end}}</p><p>{{.Description}}</p><nav aria-label="Tags">{{range .Tags}}<a href="{{.URL}}">{{.Name}}</a> {{end}}</nav></article></li>{{else}}<li>No posts found.</li>{{end}}</ul>
+<nav aria-label="Pagination">{{if .PreviousURL}}<a rel="prev" href="{{.PreviousURL}}">Previous</a>{{end}}{{if .NextURL}} <a rel="next" href="{{.NextURL}}">Next</a>{{end}}</nav>
+{{end}}
+</main>
+</body>
+</html>`)
+    if err != nil {
+        panic(err)
+    }
+    gppHTTPBlogPageTemplate = pageTemplate
+}
+
+func gppHTTPBlogSlug(value string) string {
+    var slug strings.Builder
+    pendingSeparator := false
+    for _, character := range strings.ToLower(strings.TrimSpace(value)) {
+        if unicode.IsLetter(character) || unicode.IsDigit(character) {
+            if pendingSeparator && slug.Len() > 0 {
+                slug.WriteByte('-')
+            }
+            slug.WriteRune(character)
+            pendingSeparator = false
+        } else {
+            pendingSeparator = true
+        }
+    }
+    return slug.String()
+}
+
+func gppHTTPBlogSplitFrontMatter(content string) ([]byte, string, error) {
+    content = strings.TrimPrefix(content, "\ufeff")
+    content = strings.ReplaceAll(content, "\r\n", "\n")
+    if !strings.HasPrefix(content, "---\n") {
+        return nil, "", fmt.Errorf("blog: Markdown file must start with YAML frontmatter")
+    }
+    end := strings.Index(content[4:], "\n---\n")
+    if end < 0 {
+        return nil, "", fmt.Errorf("blog: YAML frontmatter is missing its closing delimiter")
+    }
+    frontMatter := []byte(content[4:4+end])
+    body := content[4+end+5:]
+    return frontMatter, body, nil
+}
+
+func gppHTTPBlogDate(value string, fallback time.Time) time.Time {
+    if strings.TrimSpace(value) == "" {
+        return fallback
+    }
+    for _, layout := range []string { time.RFC3339, "2006-01-02" } {
+        if parsed, err := time.Parse(layout, value); err == nil {
+            return parsed
+        }
+    }
+    return time.Time{}
+}
+
+func gppHTTPBlogPlainText(markdown string) string {
+    text := strings.Builder{}
+    for _, line := range strings.Split(markdown, "\n") {
+        line = strings.TrimSpace(line)
+        if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "```") {
+            continue
+        }
+        text.WriteString(line)
+        text.WriteByte(' ')
+    }
+    return strings.Join(strings.Fields(text.String()), " ")
+}
+
+func gppHTTPBlogPostFromFile(path string, info fs.FileInfo) (gppHTTPBlogPost, bool, error) {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return gppHTTPBlogPost{}, false, err
+    }
+    frontMatter, body, err := gppHTTPBlogSplitFrontMatter(string(data))
+    if err != nil {
+        return gppHTTPBlogPost{}, false, fmt.Errorf("%s: %w", filepath.Base(path), err)
+    }
+    metadata := gppHTTPBlogFrontMatter{}
+    if err := yaml.Unmarshal(frontMatter, &metadata); err != nil {
+        return gppHTTPBlogPost{}, false, fmt.Errorf("%s: invalid YAML frontmatter: %w", filepath.Base(path), err)
+    }
+    if metadata.Draft {
+        return gppHTTPBlogPost{}, false, nil
+    }
+    if metadata.Title == "" {
+        return gppHTTPBlogPost{}, false, fmt.Errorf("%s: frontmatter title is required", filepath.Base(path))
+    }
+    slug := gppHTTPBlogSlug(metadata.Slug)
+    if slug == "" {
+        slug = gppHTTPBlogSlug(metadata.Title)
+    }
+    if slug == "" {
+        slug = gppHTTPBlogSlug(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+    }
+    if slug == "" {
+        return gppHTTPBlogPost{}, false, fmt.Errorf("%s: could not create a URL slug", filepath.Base(path))
+    }
+    dateTime := gppHTTPBlogDate(metadata.Date, info.ModTime())
+    if dateTime.IsZero() {
+        return gppHTTPBlogPost{}, false, fmt.Errorf("%s: invalid date %q (use YYYY-MM-DD or RFC3339)", filepath.Base(path), metadata.Date)
+    }
+    var rendered bytes.Buffer
+    if err := gppHTTPBlogMarkdown.Convert([]byte(body), &rendered); err != nil {
+        return gppHTTPBlogPost{}, false, fmt.Errorf("%s: render Markdown: %w", filepath.Base(path), err)
+    }
+    description := strings.TrimSpace(metadata.Description)
+    if description == "" {
+        description = gppHTTPBlogPlainText(body)
+        if len([]rune(description)) > 180 {
+            description = string([]rune(description)[:177]) + "..."
+        }
+    }
+    tags := []string{}
+    tagSlugs := []string{}
+    for _, tag := range metadata.Tags {
+        tag = strings.TrimSpace(tag)
+        tagSlug := gppHTTPBlogSlug(tag)
+        if tag == "" || tagSlug == "" {
+            continue
+        }
+        tags = append(tags, tag)
+        tagSlugs = append(tagSlugs, tagSlug)
+    }
+    author := strings.TrimSpace(metadata.Author)
+    searchText := strings.ToLower(strings.Join([]string{metadata.Title, description, author, strings.Join(tags, " "), body}, " "))
+    image := strings.TrimSpace(metadata.Image)
+    imageAlt := strings.TrimSpace(metadata.ImageAlt)
+    if imageAlt == "" {
+        imageAlt = metadata.Title
+    }
+    return gppHTTPBlogPost{
+        Title: metadata.Title, Date: dateTime.Format("2006-01-02"), DateTime: dateTime,
+        Slug: slug, Author: author, AuthorSlug: gppHTTPBlogSlug(author), Tags: tags,
+        TagSlugs: tagSlugs, Description: description, Image: image, ImageAlt: imageAlt,
+        Body: htmltemplate.HTML(rendered.String()), SearchText: searchText,
+    }, true, nil
+}
+
+func gppHTTPBlogLoadPosts(directory string) ([]gppHTTPBlogPost, error) {
+    entries, err := os.ReadDir(directory)
+    if err != nil {
+        return nil, fmt.Errorf("http: read blog content directory %q: %w", directory, err)
+    }
+    posts := []gppHTTPBlogPost{}
+    seen := map[string]bool{}
+    for _, entry := range entries {
+        if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+            continue
+        }
+        info, err := entry.Info()
+        if err != nil {
+            return nil, fmt.Errorf("http: inspect blog file %q: %w", entry.Name(), err)
+        }
+        if !info.Mode().IsRegular() {
+            continue
+        }
+        post, include, err := gppHTTPBlogPostFromFile(filepath.Join(directory, entry.Name()), info)
+        if err != nil {
+            return nil, fmt.Errorf("http: load blog post: %w", err)
+        }
+        if !include {
+            continue
+        }
+        if seen[post.Slug] {
+            return nil, fmt.Errorf("http: duplicate blog post slug %q", post.Slug)
+        }
+        seen[post.Slug] = true
+        posts = append(posts, post)
+    }
+    sort.Slice(posts, func(left int, right int) bool {
+            if posts[left].DateTime.Equal(posts[right].DateTime) {
+                return posts[left].Slug < posts[right].Slug
+            }
+            return posts[left].DateTime.After(posts[right].DateTime)
+    })
+    return posts, nil
+}
+
+func gppHTTPBlogLinkForPost(post gppHTTPBlogPost, base string) gppHTTPBlogLink {
+    link := gppHTTPBlogLink{
+        Title: post.Title, URL: base + "/" + post.Slug, Date: post.Date,
+        Author: post.Author, Description: post.Description, Image: post.Image, ImageAlt: post.ImageAlt,
+    }
+    if post.Author != "" {
+        link.AuthorURL = base + "/authors/" + post.AuthorSlug
+    }
+    for index, tag := range post.Tags {
+        link.Tags = append(link.Tags, gppHTTPBlogTagLink{Name: tag, URL: base + "/tags/" + post.TagSlugs[index]})
+    }
+    return link
+}
+
+func gppHTTPBlogPostView(post gppHTTPBlogPost, base string) BlogPost {
+    view := BlogPost{
+        Title: post.Title, Date: post.Date, Slug: post.Slug, Author: post.Author,
+        Description: post.Description, Image: post.Image, ImageAlt: post.ImageAlt, Body: post.Body,
+    }
+    if post.Author != "" {
+        view.AuthorURL = base + "/authors/" + post.AuthorSlug
+    }
+    for index, tag := range post.Tags {
+        view.Tags = append(view.Tags, BlogTag{Name: tag, URL: base + "/tags/" + post.TagSlugs[index]})
+    }
+    return view
+}
+
+func gppHTTPBlogPostSummaryViews(links []gppHTTPBlogLink) []BlogPostSummary {
+    views := make([]BlogPostSummary, 0, len(links))
+    for _, link := range links {
+        view := BlogPostSummary{
+            Title: link.Title, URL: link.URL, Date: link.Date, Author: link.Author,
+            AuthorURL: link.AuthorURL, Description: link.Description, Image: link.Image, ImageAlt: link.ImageAlt,
+        }
+        for _, tag := range link.Tags {
+            view.Tags = append(view.Tags, BlogTag{Name: tag.Name, URL: tag.URL})
+        }
+        views = append(views, view)
+    }
+    return views
+}
+
+func gppHTTPBlogCanonical(request *stdhttp.Request, path string, baseURL string) string {
+    if baseURL != "" {
+        return baseURL + path
+    }
+    scheme := "http"
+    if request.TLS != nil || request.Header.Get("X-Forwarded-Proto") == "https" {
+        scheme = "https"
+    }
+    return scheme + "://" + request.Host + path
+}
+
+func gppHTTPBlogPaginate(links []gppHTTPBlogLink, request *stdhttp.Request, pageSize int) ([]gppHTTPBlogLink, int, string, string) {
+    page := 1
+    if requested, err := strconv.Atoi(request.URL.Query().Get("page")); err == nil && requested > 0 {
+        page = requested
+    }
+    start := len(links)
+    if page-1 <= len(links)/pageSize {
+        start = (page - 1) * pageSize
+    }
+    end := len(links)
+    if pageSize < len(links)-start {
+        end = start + pageSize
+    }
+    pageURL := func(number int) string {
+        query := request.URL.Query()
+        query.Set("page", strconv.Itoa(number))
+        return request.URL.Path + "?" + query.Encode()
+    }
+    previousURL := ""
+    nextURL := ""
+    if page > 1 {
+        previousURL = pageURL(page - 1)
+    }
+    if end < len(links) {
+        nextURL = pageURL(page + 1)
+    }
+    return links[start:end], page, previousURL, nextURL
+}
+
+func gppHTTPBlogRender(writer stdhttp.ResponseWriter, request *stdhttp.Request, page BlogPage) {
+
+    page.CanonicalURL = gppHTTPBlogCanonical(request, request.URL.Path, page.BaseURL)
+    var body bytes.Buffer
+    var renderErr error
+    templateName := ""
+    if state := gppHTTPRequestStateFor(request); state != nil && state.Context != nil && state.Context.Templates != nil {
+        templateName, _ = gppHTTPTemplateNameForPath(state.Context.Templates, request.URL.Path)
+        if templateName != "" {
+            renderErr = state.Context.Templates.ExecuteTemplate(&body, templateName, page)
+        }
+    }
+    if templateName == "" {
+        renderErr = gppHTTPBlogPageTemplate.Execute(&body, page)
+    }
+    if renderErr != nil {
+        stdhttp.Error(writer, "Internal Server Error", stdhttp.StatusInternalServerError)
+        return
+    }
+    writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+    _, _ = writer.Write(body.Bytes())
+}
+
+func gppHTTPBlogRegister(mux *stdhttp.ServeMux, blog *Blog, base string, host string) error {
+    if blog == nil {
+        return nil
+    }
+    directory := strings.TrimSpace(blog.ContentDir)
+    siteTitle := strings.TrimSpace(blog.Title)
+    if siteTitle == "" {
+        siteTitle = "Blog"
+    }
+    baseURL := strings.TrimRight(strings.TrimSpace(blog.BaseURL), "/")
+    stylesheet := strings.TrimSpace(blog.Stylesheet)
+    pageSize := blog.PageSize
+    if pageSize < 1 {
+        return fmt.Errorf("http: Blog pageSize must be a positive integer")
+    }
+    if directory == "" {
+        return fmt.Errorf("http: Blog content directory cannot be empty")
+    }
+    if baseURL != "" {
+        parsedURL, parseErr := url.Parse(baseURL)
+        if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+            return fmt.Errorf("http: Blog baseURL must be an absolute HTTP or HTTPS URL without a query or fragment")
+        }
+    }
+    posts, err := gppHTTPBlogLoadPosts(directory)
+    if err != nil {
+        return err
+    }
+    base = strings.TrimRight(strings.TrimSpace(base), "/")
+    if base == "/" {
+        base = ""
+    }
+    postsFor := func(predicate func(gppHTTPBlogPost) bool) []gppHTTPBlogLink {
+        result := []gppHTTPBlogLink{}
+        for _, post := range posts {
+            if predicate(post) {
+                result = append(result, gppHTTPBlogLinkForPost(post, base))
+            }
+        }
+        return result
+    }
+    register := func(route string, handler func(stdhttp.ResponseWriter, *stdhttp.Request)) error {
+        trackedHandler := func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+            trackedWriter := &gppHTTPBlogResponseWriter{ResponseWriter: writer}
+            handler(trackedWriter, request)
+            if state := gppHTTPRequestStateFor(request); state != nil && state.Context != nil && trackedWriter.Status != 0 {
+                state.Context.Status = trackedWriter.Status
+                state.Context.Written = true
+            }
+        }
+        method, path, found := strings.Cut(route, " ")
+        if !found {
+            return fmt.Errorf("http: invalid blog route %q", route)
+        }
+        return gppRegisterMuxHandler(mux, method+" "+gppMuxPattern(host, path), trackedHandler)
+    }
+    renderListing := func(writer stdhttp.ResponseWriter, request *stdhttp.Request, page BlogPage, links []gppHTTPBlogLink) {
+        page.BasePath = base
+        page.BaseURL = baseURL
+        page.SiteTitle = siteTitle
+        page.Stylesheet = stylesheet
+        page.Total = len(links)
+        pagedLinks, pageNumber, previousURL, nextURL := gppHTTPBlogPaginate(links, request, pageSize)
+        page.Posts = gppHTTPBlogPostSummaryViews(pagedLinks)
+        page.Page = pageNumber
+        page.PreviousURL = previousURL
+        page.NextURL = nextURL
+        page.PageSize = pageSize
+        gppHTTPBlogRender(writer, request, page)
+    }
+    index := func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+        expectedPath := base + "/"
+        if base == "" {
+            expectedPath = "/"
+        }
+        if request.URL.Path != expectedPath {
+            stdhttp.NotFound(writer, request)
+            return
+        }
+        links := postsFor(func(gppHTTPBlogPost) bool { return true })
+        renderListing(writer, request, BlogPage{Kind: "index", Title: siteTitle, Description: "Latest posts"}, links)
+    }
+    if base == "" {
+        if err := register("GET /", index); err != nil {
+            return err
+        }
+    } else {
+        if err := register("GET "+base, func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+                stdhttp.Redirect(writer, request, base+"/", stdhttp.StatusMovedPermanently)
+        }); err != nil {
+            return err
+        }
+        if err := register("GET "+base+"/", index); err != nil {
+            return err
+        }
+    }
+    if err := register("GET "+base+"/search", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+            query := strings.TrimSpace(request.URL.Query().Get("q"))
+            needle := strings.ToLower(query)
+            links := postsFor(func(post gppHTTPBlogPost) bool { return needle == "" || strings.Contains(post.SearchText, needle) })
+            title := "Search"
+            if query != "" {
+                title = "Search: " + query
+            }
+            renderListing(writer, request, BlogPage{Kind: "search", Title: title, Description: "Search blog posts", Query: query}, links)
+    }); err != nil {
+        return err
+    }
+    if err := register("GET "+base+"/authors/{author}", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+            author := request.PathValue("author")
+            links := postsFor(func(post gppHTTPBlogPost) bool { return post.AuthorSlug == author })
+            if len(links) == 0 {
+                stdhttp.NotFound(writer, request)
+                return
+            }
+            renderListing(writer, request, BlogPage{Kind: "author", Title: "Posts by " + links[0].Author, Description: "Posts by " + links[0].Author}, links)
+    }); err != nil {
+        return err
+    }
+    if err := register("GET "+base+"/tags/{tag}", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+            tag := request.PathValue("tag")
+            tagName := tag
+            links := postsFor(func(post gppHTTPBlogPost) bool {
+                    for index, slug := range post.TagSlugs {
+                        if slug == tag {
+                            tagName = post.Tags[index]
+                            return true
+                        }
+                    }
+                    return false
+            })
+            if len(links) == 0 {
+                stdhttp.NotFound(writer, request)
+                return
+            }
+            renderListing(writer, request, BlogPage{Kind: "tag", Title: "Posts tagged " + tagName, Description: "Posts tagged " + tagName}, links)
+    }); err != nil {
+        return err
+    }
+    if err := register("GET "+base+"/sitemap.xml", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+            writer.Header().Set("Content-Type", "application/xml; charset=utf-8")
+            writer.Write([]byte(xml.Header + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`))
+            seenURLs := map[string]bool{}
+            writeURL := func(url string, lastModified string) {
+                if seenURLs[url] {
+                    return
+                }
+                seenURLs[url] = true
+                var escaped bytes.Buffer
+                _ = xml.EscapeText(&escaped, []byte(gppHTTPBlogCanonical(request, url, baseURL)))
+                if lastModified == "" {
+                    fmt.Fprintf(writer, "<url><loc>%s</loc></url>", escaped.String())
+                } else {
+                    fmt.Fprintf(writer, "<url><loc>%s</loc><lastmod>%s</lastmod></url>", escaped.String(), lastModified)
+                }
+            }
+            writeURL(base+"/", "")
+            for _, post := range posts {
+                writeURL(base+"/"+post.Slug, post.DateTime.Format("2006-01-02"))
+                if post.AuthorSlug != "" {
+                    writeURL(base+"/authors/"+post.AuthorSlug, "")
+                }
+                for _, tagSlug := range post.TagSlugs {
+                    writeURL(base+"/tags/"+tagSlug, "")
+                }
+            }
+            writer.Write([]byte("</urlset>"))
+    }); err != nil {
+        return err
+    }
+    return register("GET "+base+"/{slug}", func(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+            slug := request.PathValue("slug")
+            for _, post := range posts {
+                if post.Slug == slug {
+                    postView := gppHTTPBlogPostView(post, base)
+                    gppHTTPBlogRender(writer, request, BlogPage{
+                        Kind: "post", BasePath: base, BaseURL: baseURL, SiteTitle: siteTitle,
+                        Stylesheet: stylesheet, Title: post.Title, Description: post.Description,
+                        Post: &postView,
+                    })
+                    return
+                }
+            }
+            stdhttp.NotFound(writer, request)
+    })
+}

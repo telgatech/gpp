@@ -15,6 +15,7 @@ func Sqrt(value int) int { return value }
 `,
 		"nested/root.gpp": `package nested.math
 class Root {}
+annotation RootHook on method
 `,
 		"nested/extra.gpp": `package nested.math
 func RootValue() int { return 1 }
@@ -45,6 +46,9 @@ func RootValue() int { return 1 }
 	if !nestedPackage.Symbols["Root"] {
 		t.Fatalf("class symbol from the first package file was lost: %#v", nestedPackage.Symbols)
 	}
+	if !nestedPackage.Symbols["RootHook"] {
+		t.Fatalf("annotation symbol from the first package file was lost: %#v", nestedPackage.Symbols)
+	}
 }
 
 func TestAvailableImportPackagesIncludesCurrentModuleGPPPackages(t *testing.T) {
@@ -69,6 +73,38 @@ func Root(value int) int { return value }
 	selected, ok := chooseImportPackage("math", "Root", packages, nil)
 	if !ok || selected.ImportPath != "example.com/project/internal/math" || !selected.Module {
 		t.Fatalf("current-module package was not available to fiximports: %#v, %t", selected, ok)
+	}
+}
+
+func TestFixImportsAddsBundledAnnotationPackage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/project\n\ngo 1.27\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(root, "main.gpp")
+	source := []byte(`package main
+
+class Server {
+	func _beforeShutdown() error @{std.Hook} { return nil }
+}
+`)
+	if err := os.WriteFile(sourcePath, source, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	packages, err := availableImportPackages([]string{sourcePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed, added, err := fixImports(sourcePath, source, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !added {
+		t.Fatal("expected fiximports to add the std.Hook package import")
+	}
+	if !strings.Contains(string(fixed), `"gpp/std"`) {
+		t.Fatalf("std.Hook import was not added:\n%s", fixed)
 	}
 }
 

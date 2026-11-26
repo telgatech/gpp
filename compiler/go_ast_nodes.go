@@ -1134,10 +1134,53 @@ func constructorExprNode(call *CallExpr, context constructorContext) (ExprNode, 
 		}
 		constructorInitializers = parentInitializers
 	}
-	if len(constructorInitializers) == 0 {
+	afterInit, err := classAfterInitMethods(class, classes, nil, map[*ClassDecl]bool{})
+	if err != nil {
+		return nil, true, sourceLineError(call.Span(), err)
+	}
+	if len(constructorInitializers) == 0 && len(afterInit) == 0 {
 		return instance, true, nil
 	}
-	return constructorInitializationExpr(name, instance, constructorInitializers), true, nil
+	return constructorInitializationExpr(name, instance, constructorInitializers, afterInit), true, nil
+}
+
+type constructorAfterInit struct {
+	Path   []string
+	Method string
+}
+
+func classAfterInitMethods(class *ClassDecl, classes map[string]*ClassDecl, path []string, visiting map[*ClassDecl]bool) ([]constructorAfterInit, error) {
+	if class == nil || visiting[class] {
+		return nil, nil
+	}
+	visiting[class] = true
+	defer delete(visiting, class)
+
+	var hooks []constructorAfterInit
+	for _, parentName := range classParentNames(class) {
+		parent := classes[parentName]
+		parentPath := append(append([]string(nil), path...), classParentFieldName(parentName))
+		parentHooks, err := classAfterInitMethods(parent, classes, parentPath, visiting)
+		if err != nil {
+			return nil, err
+		}
+		hooks = append(hooks, parentHooks...)
+	}
+
+	for _, method := range class.Methods {
+		if method.Name != "_afterInit" || method.IsStatic {
+			continue
+		}
+		arity, err := parameterCount(methodParametersSource(method))
+		if err != nil {
+			return nil, fmt.Errorf("_afterInit has invalid parameters: %w", err)
+		}
+		if arity != 0 || strings.TrimSpace(methodResultSource(method)) != "" {
+			return nil, fmt.Errorf("_afterInit must have no parameters or results")
+		}
+		hooks = append(hooks, constructorAfterInit{Path: append([]string(nil), path...), Method: methodOutputName(method)})
+	}
+	return hooks, nil
 }
 
 func constructorCallMayReturnError(call *CallExpr, target constructorTarget, context constructorContext) bool {
@@ -1429,7 +1472,7 @@ func initializerDelegationCall(initializer Method) *CallExpr {
 	return nil
 }
 
-func constructorInitializationExpr(typeName string, instance ExprNode, initializers []constructorInitializer) ExprNode {
+func constructorInitializationExpr(typeName string, instance ExprNode, initializers []constructorInitializer, afterInit []constructorAfterInit) ExprNode {
 	valueName := "__gpp_instance"
 	errName := "__gpp_initErr"
 	statements := []Stmt{&DeclarationStmt{
@@ -1464,6 +1507,14 @@ func constructorInitializationExpr(typeName string, instance ExprNode, initializ
 		} else {
 			statements = append(statements, &ExpressionStmt{Expression: call})
 		}
+	}
+	for _, hook := range afterInit {
+		receiver := ExprNode(&NameExpr{Name: valueName})
+		for _, part := range hook.Path {
+			receiver = &SelectorExpr{Receiver: receiver, Name: part}
+		}
+		call := &CallExpr{Callee: &SelectorExpr{Receiver: receiver, Name: hook.Method}}
+		statements = append(statements, &ExpressionStmt{Expression: call})
 	}
 	results := []TypeNode{parseTypeText("*" + typeName)}
 	returnValues := []ExprNode{&NameExpr{Name: valueName}}

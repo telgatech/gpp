@@ -1599,6 +1599,10 @@ func (parser *bodyParser) consumeSeparators(block *BlockStmt) {
 			parser.index++
 			continue
 		}
+		if token.Kind == TokenPunctuation && token.Text == ";" {
+			parser.index++
+			continue
+		}
 		return
 	}
 }

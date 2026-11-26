@@ -128,6 +128,7 @@ export default defineConfig({
               text: 'gpp/http',
               items: [
                 { text: 'Server, routes, and context', link: '/guide/standard-library/http' },
+                { text: 'Markdown blog', link: '/guide/standard-library/http#markdown-blog' },
                 { text: 'OpenAPI and Swagger UI', link: '/guide/standard-library/http#openapi-and-swagger-ui' },
                 { text: 'OAuth and OIDC', link: '/guide/standard-library/http#oauth-and-oidc' }
               ]

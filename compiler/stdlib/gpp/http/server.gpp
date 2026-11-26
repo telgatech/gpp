@@ -1430,6 +1430,12 @@ class Server {
 					_ = listener.Close()
 					return err
 				}
+				if blog, isBlog := mount.Router.(*Blog); isBlog {
+					if err := gppHTTPBlogRegister(mux, blog, mountPrefix, host); err != nil {
+						_ = listener.Close()
+						return err
+					}
+				}
 			}
 		}
 		if err := gppRegisterOAuthRoutes(mux, app, descriptor, prefix, oauthEngine); err != nil {
@@ -1475,6 +1481,9 @@ class Server {
 		}
 		serveErr := <-done
 		this.stopTemplateWatcher()
+		if serveErr == stdhttp.ErrServerClosed {
+			return nil
+		}
 		return serveErr
 	}
 
